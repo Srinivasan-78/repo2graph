@@ -1,0 +1,28 @@
+name: Index this repository
+
+# Keeps a fresh graph of the repository the workflow lives in.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so CO_CHANGE edges are meaningful
+
+      - uses: ./  # the composite action at the repo root
+        with:
+          path: .
+          out: .r2g
+          git-history: "500"
+          artifact-name: repo-graph
+          commit-branch: graph  # drop this line to only publish an artifact
