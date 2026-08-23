@@ -65,6 +65,7 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
     from .chunks import build_chunks
     from .export import dump_all
     from .graph import build
+    from .layout import make_path
 
     owner, repo = parse_spec(spec)
     workdir = Path(keep_clone) if keep_clone else Path(tempfile.mkdtemp(prefix="r2g-"))
@@ -81,7 +82,8 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
         meta = {"repo": f"{owner}/{repo}", "ref": ref or "default", "commit": sha,
                 "nodes": len(g.nodes), "edges": len(g.edges), "chunks": len(chunks),
                 "stats": dict(g.stats), "written": written, "out": str(outdir)}
-        (outdir / "index.json").write_text(json.dumps(meta, indent=2), encoding="utf8")
+        make_path(outdir, "index.json").write_text(json.dumps(meta, indent=2),
+                                                   encoding="utf8")
         return meta
     finally:
         if keep_clone is None:

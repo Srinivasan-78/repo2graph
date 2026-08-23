@@ -8,6 +8,7 @@ import pytest
 from repo2graph.chunks import _split, build_chunks
 from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, path_index, resolve_import
+from repo2graph.layout import path as artifact_path
 from repo2graph.parse import parse_source
 from repo2graph.query import Index, tokenize
 from repo2graph.viz import LoadedGraph, node_label, payload, select
@@ -347,22 +348,72 @@ def test_build_writes_all_artifacts(tmp_path, sample_repo, capsys):
     main(["build", str(sample_repo), "-o", str(out)])
     for name in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl", "graph.graphml",
                  "graph.cypher", "overview.md", "stats.json"):
-        assert (out / name).exists(), name
+        assert artifact_path(out, name).exists(), name
     report = json.loads(capsys.readouterr().out)
     assert report["chunks"] > 0
-    assert json.loads((out / "stats.json").read_text())["files"] > 0
+    assert json.loads((artifact_path(out, "stats.json")).read_text())["files"] > 0
+
+
+def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, capsys):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    assert sorted(p.name for p in (out / "human").iterdir()) == [
+        "graph.graphml", "graph.html", "overview.md"]
+    assert sorted(p.name for p in (out / "agent").iterdir()) == [
+        "chunks.jsonl", "edges.jsonl", "graph.cypher", "manifest.json",
+        "nodes.jsonl", "overview.md", "stats.json"]
+    assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
+    written = json.loads(capsys.readouterr().out)["written"]
+    assert "agent/nodes.jsonl" in written and "human/overview.md" in written
+
+
+def test_entrypoints_are_marked_and_ranked(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    nodes = {n["id"]: n for n in
+             (json.loads(l) for l in artifact_path(out, "nodes.jsonl").read_text().splitlines())}
+    entry = {nid for nid, n in nodes.items() if n.get("entrypoint")}
+    assert "sym:pkg/main.py::entry" in entry        # nothing in the repo calls it
+    assert "sym:pkg/util.py::helper" not in entry   # Runner.run() calls it
+    assert nodes["sym:pkg/main.py::entry"]["reach"] >= 1
+
+
+def test_manifest_describes_the_agent_output(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    m = json.loads(artifact_path(out, "manifest.json").read_text())
+    assert m["format"] == "repo2graph/1"
+    assert "agent/chunks.jsonl" in m["written"]
+    assert set(m["files"]) >= {"nodes.jsonl", "edges.jsonl", "chunks.jsonl", "manifest.json"}
+    assert "CALLS" in m["edge_types"] and "symbol" in m["node_types"]
+    assert m["id_grammar"]["symbol"] == "sym:<path>::<qualname>"
+    assert any(e["qualname"] == "entry" for e in m["entrypoints"])
+    assert m["how_to_read"] and m["approximations"]
+
+
+def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    chunks = [json.loads(l) for l in
+              artifact_path(out, "chunks.jsonl").read_text().splitlines()]
+    run = next(c for c in chunks if c["qualname"] == "Runner.run")
+    assert run["callees"] == ["pkg/util.py::helper"]
+    assert run["callees_external"] == ["getpid"]
+    assert "# calls: pkg/util.py::helper" in run["text"]
+    assert "# calls (outside the repo): getpid" in run["text"]
+    assert "# entry point:" in run["text"]
 
 
 def test_no_chunks_flag(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl", "--no-chunks"])
-    assert not (out / "chunks.jsonl").exists()
+    assert not (artifact_path(out, "chunks.jsonl")).exists()
 
 
 def test_cypher_output_is_quoted(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "cypher"])
-    text = (out / "graph.cypher").read_text()
+    text = (artifact_path(out, "graph.cypher")).read_text()
     assert "CREATE CONSTRAINT" in text
     assert 'MERGE (n:R2G:File {id: "file:pkg/main.py"})' in text
     assert "MERGE (a)-[:CALLS" in text
@@ -372,7 +423,7 @@ def test_graphml_is_loadable(tmp_path, sample_repo):
     nx = pytest.importorskip("networkx")
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "graphml"])
-    G = nx.read_graphml(out / "graph.graphml")
+    G = nx.read_graphml(artifact_path(out, "graph.graphml"))
     assert "sym:pkg/util.py::helper" in G
 
 
@@ -380,7 +431,7 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
     pytest.importorskip("networkx")
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "graphml"])
-    text = (out / "graph.graphml").read_text()
+    text = (artifact_path(out, "graph.graphml")).read_text()
     assert 'yfiles.type="nodegraphics"' in text
     assert "<y:ShapeNode>" in text
     coords = re.findall(r'<y:Geometry x="([-\d.]+)" y="([-\d.]+)"', text)
@@ -391,7 +442,7 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
 def test_overview_lists_hubs(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
-    text = (out / "overview.md").read_text()
+    text = (artifact_path(out, "overview.md")).read_text()
     assert "# Repo map:" in text
     assert "pkg/util.py" in text
 
@@ -401,7 +452,7 @@ def test_overview_lists_hubs(tmp_path, sample_repo):
 def test_build_writes_html_map(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out)])
-    page = (out / "graph.html").read_text(encoding="utf8")
+    page = (artifact_path(out, "graph.html")).read_text(encoding="utf8")
     assert "<svg" in page and "__R2G_DATA__" not in page
     assert "sym:pkg/util.py::helper" in page
     assert "CALLS" in page
@@ -421,7 +472,7 @@ def test_html_map_data_is_self_contained(sample_graph):
 def test_viz_nodes_caps_the_drawing(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--viz-nodes", "5"])
-    page = (out / "graph.html").read_text(encoding="utf8")
+    page = (artifact_path(out, "graph.html")).read_text(encoding="utf8")
     data = json.loads(page.split("const DATA = ", 1)[1].split(";\nconst NS", 1)[0])
     assert len(data["nodes"]) == 5
     assert data["totals"]["nodes"] > 5
@@ -438,11 +489,11 @@ def test_select_keeps_the_best_connected_nodes(sample_graph):
 def test_map_command_redraws_from_a_built_index(tmp_path, sample_repo, capsys):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
-    assert not (out / "graph.html").exists()
+    assert not (artifact_path(out, "graph.html")).exists()
     capsys.readouterr()  # drop the build report; only the map report is asserted
     main(["map", "-o", str(out), "--viz-nodes", "4"])
     assert json.loads(capsys.readouterr().out)["nodes"] == 4
-    assert "<svg" in (out / "graph.html").read_text(encoding="utf8")
+    assert "<svg" in (artifact_path(out, "graph.html")).read_text(encoding="utf8")
 
 
 def test_map_command_needs_an_index(tmp_path):
@@ -464,7 +515,7 @@ def test_html_escapes_a_script_tag_in_the_source(tmp_path):
     (repo / "x.py").write_text('def f():\n    """</script><script>alert(1)</script>"""\n')
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out)])
-    page = (out / "graph.html").read_text(encoding="utf8")
+    page = (artifact_path(out, "graph.html")).read_text(encoding="utf8")
     assert "</script><script>alert(1)" not in page
     assert "<\\/script>" in page
 

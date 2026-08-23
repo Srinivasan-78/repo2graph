@@ -5,6 +5,8 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
+from .layout import path as artifact_path
+
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 
 
@@ -32,9 +34,10 @@ def tokenize(text: str) -> list[str]:
 class Index:
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
-        self.chunks = read_jsonl(self.dir / "chunks.jsonl")
-        self.nodes = {n["id"]: n for n in read_jsonl(self.dir / "nodes.jsonl")}
-        self.edges = read_jsonl(self.dir / "edges.jsonl")
+        self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
+        self.nodes = {n["id"]: n
+                      for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
+        self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
         self.adj = defaultdict(list)
         for e in self.edges:
             self.adj[e["src"]].append((e["dst"], e["type"], "out"))

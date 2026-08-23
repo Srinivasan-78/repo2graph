@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from .layout import AGENT_DIR, HUMAN_DIR, make_paths, rels
 from .viz import MAX_NODES, write_html
 
 SCALAR = (str, int, float, bool)
@@ -350,28 +351,117 @@ def write_overview(g, path: Path, top: int = 25):
     path.write_text("\n".join(out), encoding="utf8")
 
 
+NODE_TYPES = {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)",
+}
+
+EDGE_TYPES = {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
+}
+
+ID_GRAMMAR = {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root.",
+}
+
+FILE_NOTES = {
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "chunks.jsonl": "retrieval chunks, one per symbol (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "graph.cypher": "idempotent MERGE script for Neo4j / Memgraph",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "index.json": "repo slug and indexed commit; written by `repo2graph github` only",
+    "manifest.json": "this file",
+    "graph.html": "the interactive map, for a person in a browser",
+    "graph.graphml": "the graph with a layout and yFiles node graphics, for yEd, Gephi, NetworkX or igraph",
+}
+
+HOW_TO_READ = [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true — nothing in the repo calls it — and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+]
+
+
+def write_manifest(g, path: Path, written: list[str]):
+    """Describe the agent-facing output so a reader needs no other docs."""
+    entry = sorted((n for n in g.nodes.values() if n.get("entrypoint")),
+                   key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]))
+    manifest = {
+        "format": "repo2graph/1",
+        "repo": g.name,
+        "written": written,
+        "sections": {
+            HUMAN_DIR: "for people: prose map and drawings",
+            AGENT_DIR: "for programs: the graph, the chunks, this manifest",
+        },
+        "files": {name: FILE_NOTES[name] for name in sorted(
+            {w.split("/", 1)[1] for w in written} & set(FILE_NOTES))},
+        "node_types": NODE_TYPES,
+        "edge_types": EDGE_TYPES,
+        "id_grammar": ID_GRAMMAR,
+        "chunk_fields": ["id", "node_id", "type", "kind", "path", "lang", "name",
+                         "qualname", "start_line", "end_line", "entrypoint",
+                         "callers", "callees", "callees_external", "text"],
+        "counts": dict(g.stats),
+        "entrypoints": [{"id": n["id"], "path": n["path"], "qualname": n["qualname"],
+                         "kind": n["kind"], "reach": n.get("reach")}
+                        for n in entry[:25]],
+        "entrypoint_rule": ("a function or method that no CALLS edge points at and that is "
+                            "not nested inside another function"),
+        "how_to_read": HOW_TO_READ,
+        "approximations": [
+            "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+            "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+            "Absence of an edge is not proof of absence of a call.",
+        ],
+    }
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf8")
+
+
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
+
+    def out(name: str) -> list[Path]:
+        written.extend(rels(name))
+        return make_paths(outdir, name)
+
     if "jsonl" in formats:
-        write_jsonl(outdir / "nodes.jsonl", g.nodes.values())
-        write_jsonl(outdir / "edges.jsonl", g.edges)
-        written += ["nodes.jsonl", "edges.jsonl"]
+        write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
+        write_jsonl(out("edges.jsonl")[0], g.edges)
     if chunks is not None:
-        write_jsonl(outdir / "chunks.jsonl", chunks)
-        written.append("chunks.jsonl")
+        write_jsonl(out("chunks.jsonl")[0], chunks)
     if "graphml" in formats:
-        write_graphml(g, outdir / "graph.graphml")
-        written.append("graph.graphml")
+        write_graphml(g, out("graph.graphml")[0])
     if "cypher" in formats:
-        write_cypher(g, outdir / "graph.cypher")
-        written.append("graph.cypher")
+        write_cypher(g, out("graph.cypher")[0])
     if "overview" in formats:
-        write_overview(g, outdir / "overview.md")
-        written.append("overview.md")
+        first, *copies = out("overview.md")
+        write_overview(g, first)
+        for extra in copies:   # the same map, one per section
+            extra.write_text(first.read_text(encoding="utf8"), encoding="utf8")
     if "html" in formats:
-        write_html(g, outdir / "graph.html", viz_nodes)
-        written.append("graph.html")
-    (outdir / "stats.json").write_text(json.dumps(dict(g.stats), indent=2),
-                                       encoding="utf8")
-    return written + ["stats.json"]
+        write_html(g, out("graph.html")[0], viz_nodes)
+    out("stats.json")[0].write_text(json.dumps(dict(g.stats), indent=2), encoding="utf8")
+    write_manifest(g, out("manifest.json")[0], list(written))
+    return written

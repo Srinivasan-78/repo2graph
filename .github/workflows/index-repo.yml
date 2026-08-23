@@ -81,7 +81,7 @@ jobs:
             echo '```'
             echo
             # overview.md only exists when 'overview' is one of the formats
-            if [ -f "out/$slug/overview.md" ]; then sed -n '1,40p' "out/$slug/overview.md"; fi
+            if [ -f "out/$slug/human/overview.md" ]; then sed -n '1,40p' "out/$slug/human/overview.md"; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload graph artifact
@@ -103,6 +103,6 @@ jobs:
           tag="graph-$slug-$(date -u +%Y%m%d%H%M%S)"
           (cd out && zip -qr "$slug.zip" "$slug")
           notes=(--notes "Graph artifacts for $R2G_REPO")
-          if [ -f "out/$slug/overview.md" ]; then notes=(--notes-file "out/$slug/overview.md"); fi
+          if [ -f "out/$slug/human/overview.md" ]; then notes=(--notes-file "out/$slug/human/overview.md"); fi
           gh release create "$tag" "out/$slug.zip" \
             --title "Graph: $R2G_REPO" "${notes[@]}"

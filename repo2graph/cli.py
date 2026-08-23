@@ -7,6 +7,8 @@ from pathlib import Path
 from .chunks import build_chunks
 from .export import dump_all
 from .graph import build
+from .layout import make_path
+from .layout import path as artifact_path
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -46,7 +48,7 @@ def cmd_github(args):
 
 
 def _require_index(out: Path, name: str) -> Path:
-    path = out / name
+    path = artifact_path(out, name)
     if not path.exists():
         raise SystemExit(f"no index at {out}: run `repo2graph build <repo> -o {out}` first")
     return path
@@ -70,8 +72,9 @@ def cmd_map(args):
     out = Path(args.out)
     _require_index(out, "nodes.jsonl")
     _require_index(out, "edges.jsonl")
-    data = write_html(LoadedGraph(out), out / "graph.html", args.viz_nodes)
-    print(json.dumps({"html": str(out / "graph.html"),
+    html = make_path(out, "graph.html")
+    data = write_html(LoadedGraph(out), html, args.viz_nodes)
+    print(json.dumps({"html": str(html),
                       "nodes": len(data["nodes"]), "edges": len(data["edges"]),
                       "of": data["totals"]}, indent=2))
 
