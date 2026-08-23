@@ -1,33 +1,50 @@
 # repo2graph
 
-Point it at a codebase, and it reads the code, works out how the pieces connect, and writes that
-out as a graph you can query — plus text chunks ready to drop into a RAG pipeline.
+repo2graph reads a folder full of code and draws you a map of it.
 
-## What it actually does
+## The idea
 
-Imagine reading an unfamiliar repo and drawing a map on a whiteboard: these files live in these
-folders, this function calls that one, this class inherits from that one, this file imports that
-package. repo2graph draws that map for you, automatically.
+Imagine you get handed a big box of Lego that someone else already built things with. You want to
+know what connects to what. You could look at every brick one at a time, or someone could hand you
+a map.
 
-It does this in three steps:
+Code is like that box. A project has hundreds of files, and the files use each other in ways you
+cannot see by looking at one file at a time.
 
-1. **Read the code.** It parses every source file with tree-sitter, the same parsing engine
-   editors use for syntax highlighting. That means it understands real code structure — not
-   regexes — and it works on a repo it has never seen before with no configuration.
-2. **Build the map.** Files, folders, functions, classes and imports become *nodes*. The
-   relationships between them — "defines", "calls", "imports", "inherits" — become *edges*.
-   The result is a graph you can load into Neo4j, Gephi, or NetworkX.
-3. **Cut the code into chunks.** Roughly one chunk per function or class, and here is the useful
-   part: each chunk gets a short header describing its neighbourhood in the graph — who calls it,
-   what it calls, its docstring. When you embed those chunks, a question like *"how does login
-   work?"* matches the code that actually handles login, instead of matching whatever happens to
-   share a few words with the question.
+repo2graph makes the map. On the map:
 
-Why bother? Plain text search over a repo finds files that *mention* a thing. A graph finds the
-files that *do* the thing, and then hands you their neighbours too. That extra context is usually
-what an LLM was missing.
+- Every **thing** is a dot. A folder is a dot. A file is a dot. A function (a small named piece of
+  code that does a job) is a dot. We call these dots **nodes**.
+- Every **connection** is an arrow. "This file is inside that folder." "This function uses that
+  function." "This file borrows code from that library." We call these arrows **edges**.
 
-## Install
+Dots joined by arrows are called a **graph**. That is the whole idea.
+
+## Why a map helps
+
+If you search a project for the word "login", you get every file that happens to say "login",
+including comments and typos.
+
+The map is better, because it knows which function actually does the login work, and it also knows
+which functions call it and which functions it calls. So you get the real answer plus its
+neighbours.
+
+That matters most when a chatbot or AI helper is reading the code for you. Giving it the right
+piece of code plus the pieces around it is usually what it was missing.
+
+## How it works, in three steps
+
+1. **It reads the code.** It uses a tool called tree-sitter, the same one code editors use to
+   colour your code. So it understands real code structure instead of guessing from words. It
+   needs no setup and works on a project it has never seen.
+2. **It builds the map.** Folders, files, functions, classes and imports become dots. "contains",
+   "defines", "calls", "imports", "inherits" become arrows.
+3. **It cuts the code into small pieces.** Roughly one piece per function or class. Each piece gets
+   a few lines at the top saying who calls this function, what it calls, and what its description
+   says. Those little pieces are what you feed to an AI when you want it to answer questions about
+   the code.
+
+## Install it
 
 You need Python 3.10 or newer.
 
@@ -38,75 +55,76 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
-The `repo2graph` command now lives at `.venv/bin/repo2graph`. Activate the venv
-(`source .venv/bin/activate`) if you would rather just type `repo2graph`.
+Now the command lives at `.venv/bin/repo2graph`. If you run `source .venv/bin/activate` first, you
+can type just `repo2graph`.
 
-## Run it
+## Use it
 
-### 1. Index a repo on your machine
-
-```bash
-repo2graph build /path/to/your/repo -o .r2g --git-history 200
-```
-
-That is the whole thing. It walks the repo, parses it, and drops everything into a `.r2g`
-directory. On a medium repo this takes seconds; large ones take a minute or two.
-
-`--git-history 200` is optional — it reads the last 200 commits and adds "these files keep
-changing together" links, which are surprisingly good at revealing hidden coupling.
-
-### 2. Look at what you got
+### Step 1: make the map
 
 ```bash
-open .r2g/graph.html      # the map, drawn: circles for nodes, labelled arrows for edges
-cat .r2g/overview.md      # human-readable repo map: languages, hub files, hot symbols
-repo2graph stats -o .r2g  # counts of nodes, edges, symbols, parse errors
+repo2graph build /path/to/your/project -o .r2g --git-history 200
 ```
 
-`graph.html` is a single self-contained file — no server, no CDN, no internet. Open it in a
-browser and you get the whiteboard drawing: drag to pan, scroll to zoom, drag a node to pin it,
-click one to see its signature, docstring and every relationship it has. The sidebar filters by
-node and relationship type, and search jumps to a symbol by name.
+That is it. It walks the project, reads it, and puts everything in a folder called `.r2g`. A
+medium project takes seconds. A very big one takes a minute or two.
 
-By default it draws the 300 best-connected nodes and leaves stdlib/third-party call targets
-switched off, because those triple the edge count and say little about your code — tick
-`external` / `CALLS_EXTERNAL` in the sidebar to bring them back. Change the budget with
-`--viz-nodes N`, or redraw an index you already built:
+`--git-history 200` is optional. It looks at the last 200 saves (commits) in the project's history
+and adds links between files that keep getting changed together. Those links are a good clue about
+which files secretly depend on each other.
+
+### Step 2: look at the map
 
 ```bash
-repo2graph map -o .r2g --viz-nodes 80    # a cleaner, higher-altitude map
+open .r2g/human/graph.html   # the picture
+cat .r2g/human/overview.md   # the same thing written out in words
+repo2graph stats -o .r2g     # how many dots, arrows and functions there are
 ```
 
-`overview.md` is the same map in prose. It is written for a person to read and it is the fastest
-way to get oriented in a codebase you do not know.
+`graph.html` is one single file. No internet needed, nothing to install. Open it in a browser and
+you get the picture: drag to move around, scroll to zoom, drag a dot to pin it in place, click a
+dot to see what that function looks like and everything it is connected to. The panel on the side
+lets you hide kinds of dots and arrows, and the search box jumps to a name.
 
-### 3. Ask it questions
+By default the picture shows the 300 busiest dots, and hides calls that go out to other people's
+code, because those triple the number of arrows and tell you little about your own project. Tick
+`external` and `CALLS_EXTERNAL` in the side panel to show them.
 
-There is a retriever built in, so you can search straight away — no embedding model, no vector
-database, no API key:
+Want a simpler picture? Redraw it with fewer dots:
+
+```bash
+repo2graph map -o .r2g --viz-nodes 80
+```
+
+### Step 3: ask it questions
+
+A search tool is built in. No AI account, no password, no extra setup:
 
 ```bash
 repo2graph query "how does routing match a path" -o .r2g -k 8 --hops 1
 ```
 
-It scores chunks lexically, then walks one hop out across the graph so the callers and callees of
-each hit come along for the ride. Add `--json` to pipe the results somewhere:
+It finds the best matching pieces of code, then follows the arrows one step out, so the functions
+around each answer come along too.
+
+Want the answer as data instead of text?
 
 ```bash
 repo2graph query "auth middleware" -o .r2g --json | jq '.[].path'
 ```
 
-### 4. Index a repo you do not have locally
+### Step 4: map a project you do not have on your computer
 
 ```bash
 repo2graph github psf/requests -o out/requests --git-history 200
 ```
 
-It clones to a temp directory, builds the graph, cleans up after itself, and writes an extra
-`index.json` recording the repo slug and the exact commit it indexed. `gh` works as a shorthand
-for `github`, and full URLs are fine too. For a private repo, pass `--token` or set `$GH_TOKEN` /
-`$GITHUB_TOKEN`. Use `--ref` to pin a branch or tag, and `--keep-clone DIR` if you want the clone
-kept around.
+It downloads the project to a temporary spot, builds the map, tidies up after itself, and writes an
+extra file, `agent/index.json`, saying exactly which project and which version it read. You can
+write `gh` instead of `github`, and full web links work too.
+
+For a private project, pass `--token` or set `$GH_TOKEN` or `$GITHUB_TOKEN`. Use `--ref` to pick a
+branch or tag, and `--keep-clone DIR` if you want to keep the downloaded copy.
 
 ### Running the tests
 
@@ -115,129 +133,176 @@ kept around.
 .venv/bin/python -m pytest
 ```
 
-## What lands in the output directory
+## What you get in the `.r2g` folder
+
+The output is split in two, because people and programs want different things.
+
+### `human/` — for you
 
 | File | What it is |
 |---|---|
-| `overview.md` | the repo map, written for humans — read this first |
-| `graph.html` | the interactive graph map: open it in a browser, no dependencies |
-| `chunks.jsonl` | retrieval chunks: code text with a graph-context header |
-| `nodes.jsonl` | one JSON object per node |
-| `edges.jsonl` | one JSON object per edge |
-| `graph.graphml` | load into yEd, Gephi, NetworkX or igraph (ships a layout + yFiles node graphics, so it opens laid out: a spring layout up to 1500 nodes, packed rows above that) |
-| `graph.cypher` | idempotent `MERGE` script for Neo4j / Memgraph |
-| `stats.json` | node / edge / symbol counts and parse errors |
+| `overview.md` | the map written out in words. Read this first. |
+| `graph.html` | the picture. Open it in a browser. |
+| `graph.graphml` | the map in a format drawing programs understand (yEd, Gephi). It opens already laid out, so it does not look like a hairball. |
 
-Handy flags for `build`: `--include '**/*.py'`, `--exclude '**/test/**'`, `--max-files N`,
-`--formats jsonl,cypher` (skip the formats you do not want), `--viz-nodes N`, `--no-chunks`,
-`--jobs N` (parser processes; the default is one per core, capped at 8, and `--jobs 1`
-parses serially). Parsing runs in parallel, so on a large repo more cores means a faster
-build; the output is identical whatever `--jobs` you pass.
+### `agent/` — for programs and AI helpers
 
-## Using it in a RAG stack
+| File | What it is |
+|---|---|
+| `overview.md` | the same words as above, so an AI can read the whole project summary cheaply |
+| `manifest.json` | the instruction sheet: what every other file is, what the dots and arrows mean, how names are built, and where the code starts. A program needs nothing else to make sense of this folder. |
+| `chunks.jsonl` | the small pieces of code, each with its "who calls me" header |
+| `nodes.jsonl` | one line of data per dot |
+| `edges.jsonl` | one line of data per arrow |
+| `graph.cypher` | a script that loads the map into a graph database (Neo4j or Memgraph). Running it twice is safe. |
+| `stats.json` | the counts: dots, arrows, functions, reading errors, starting points |
+| `index.json` | which project and version was read. Only written by `repo2graph github`. |
 
-`chunks.jsonl` is your embedding input. Keep each chunk's `node_id` as vector metadata — that is
-the handle you need to jump back into the graph after retrieval.
+`graph.graphml` also works in the Python libraries NetworkX and igraph. It lives under `human/`
+because the layout it carries is there for a person looking at a picture.
 
-The pattern that works well: vector search to find seed chunks, then one hop of graph expansion to
-pull in the surrounding code, with `overview.md` prepended as repo-level system context.
+Useful extras for `build`: `--include '**/*.py'` and `--exclude '**/test/**'` to pick files,
+`--max-files N` to stop early, `--formats jsonl,cypher` to skip outputs you do not want,
+`--viz-nodes N` to change how many dots the picture draws, `--no-chunks` to skip the code pieces,
+and `--jobs N` to say how many files to read at once (default: one per processor core, up to 8).
+More cores means a faster build, and the result is exactly the same either way.
+
+## Where the code starts
+
+Some functions are called by other functions. Some are called by nobody, because they are the door
+into the project: the commands you type, the handlers that answer web requests, the tests.
+
+repo2graph marks those with `entrypoint: true`. If you want to follow how the program actually
+runs, start at one of those and follow the `CALLS` arrows forward.
+
+For the 200 busiest ones it also counts `reach`: how many other functions that door can eventually
+get to. A big `reach` means a main path through the project. `agent/manifest.json` lists the top 25.
+
+## Giving the map to an AI
+
+`chunks.jsonl` is the file you hand to an AI system. Each piece already carries its neighbours in
+the header, which is what makes the answers good.
+
+If you use a vector database, keep each piece's `node_id`. That is the handle that lets you jump
+back onto the map after a search.
+
+The pattern that works well: search for a few pieces, then follow the arrows one step to pull in
+the code around them, and put `overview.md` at the top as background.
 
 ```python
 import json
 from repo2graph.query import Index
 
-chunks = [json.loads(l) for l in open(".r2g/chunks.jsonl")]
-# embed chunk["text"], store chunk["node_id"] and chunk["path"] as metadata
+chunks = [json.loads(l) for l in open(".r2g/agent/chunks.jsonl")]
+# store each chunk's "text" in your search system, and keep "node_id" and "path" alongside it
 
-idx = Index(".r2g")                       # graph + chunks, no embeddings needed
-hits = ["sym:app/auth.py::login"]         # node_ids your vector store returned
+idx = Index(".r2g")                       # the map plus the pieces, no AI account needed
+hits = ["sym:app/auth.py::login"]         # node_ids your search returned
 for node_id, edge_type, direction, src in idx.expand(hits, hops=1):
     for extra in idx.by_node.get(node_id, [])[:1]:
         print(edge_type, direction, extra["path"], extra["qualname"])
 ```
 
-### Into Neo4j
+### Loading it into Neo4j
 
 ```bash
-repo2graph build /path/to/repo -o .r2g --formats jsonl,cypher
-cypher-shell -u neo4j -p password -f .r2g/graph.cypher
+repo2graph build /path/to/project -o .r2g --formats jsonl,cypher
+cypher-shell -u neo4j -p password -f .r2g/agent/graph.cypher
 ```
 
-## The graph model
+## What the dots and arrows mean
 
-**Nodes:** `repo`, `dir`, `file`, `symbol` (function / method / class / struct / trait /
-interface / type / module), `module` (an external import target), `external` (a call target that
-could not be resolved in-repo).
+**Dots (nodes):**
 
-**Edges:**
+| Kind | Meaning |
+|---|---|
+| `repo` | the project itself |
+| `dir` | a folder |
+| `file` | a file |
+| `symbol` | a function, method, class, struct, trait, interface, type or module |
+| `module` | something the project borrows that is not one of its own files |
+| `external` | a name the project calls that could not be found anywhere in the project |
 
-- `CONTAINS` — repo → dir → file
-- `DEFINES` — file → symbol, and symbol → nested symbol
-- `IMPORTS` — file → file (`internal: true`) or file → external module
-- `CALLS` — symbol → symbol, carrying `count` and `confidence`
-- `CALLS_EXTERNAL` — symbol → an external name (stdlib or third-party)
-- `INHERITS` — symbol → base class or interface
-- `CO_CHANGE` — file ↔ file, from `--git-history`, when files were edited together in 3 or more
-  commits
+**Arrows (edges):**
 
-Node ids are stable and readable, so you can construct them by hand: `file:pkg/mod.py`,
-`sym:pkg/mod.py::Class.method`, `module:requests`, `dir:pkg`.
+| Kind | Meaning |
+|---|---|
+| `CONTAINS` | project holds folder, folder holds file |
+| `DEFINES` | a file creates a function or class, or one function creates another inside it |
+| `IMPORTS` | a file borrows from another file (`internal: true`) or from an outside library |
+| `CALLS` | one function uses another. Carries `count` and `confidence`. |
+| `CALLS_EXTERNAL` | a function uses something from outside the project |
+| `INHERITS` | a class is built on top of another class |
+| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
 
-## What a chunk looks like
+Names on the map are built the same way every time, so you can write one yourself:
+`file:pkg/mod.py`, `sym:pkg/mod.py::Class.method`, `module:requests`, `dir:pkg`.
 
-One chunk per symbol (split at roughly 4000 characters with 8 lines of overlap), plus a residual
-chunk per file covering code that no symbol claimed, plus whole-file chunks for docs and config.
-Every chunk's text opens with its graph neighbourhood:
+## What one piece of code looks like
+
+One piece per function or class, cut at about 4000 characters with 8 lines of overlap so nothing
+gets lost at the seam. Files also get a piece for whatever code no function claimed, and documents
+and settings files get one piece each.
+
+Every piece starts with a few lines describing its neighbourhood:
 
 ```
 # file: repo2graph/graph.py
 # function: resolve_import  (lines 66-99, python)
 # called by: repo2graph/graph.py::build
-# calls: Path, replace, str, list, startswith, sub, append
+# calls: repo2graph/graph.py::path_index
+# calls (outside the repo): Path, replace, str, list, startswith, sub, append
 # doc: Map an import target to an in-repo file path when possible.
 def resolve_import(...):
     ...
 ```
 
-Fields on each chunk: `id`, `node_id`, `type`, `kind`, `path`, `lang`, `name`, `qualname`,
-`start_line`, `end_line`, `callers`, `callees`, `text`.
+Each piece carries these fields: `id`, `node_id`, `type`, `kind`, `path`, `lang`, `name`,
+`qualname`, `start_line`, `end_line`, `entrypoint`, `callers`, `callees`, `callees_external`,
+`text`.
 
-## Languages
+`callees` lists functions inside the project, written as `path::qualname`. `callees_external` lists
+plain names from outside it. If a call could not be pinned to one place, the header says so, like
+`helper (confidence 0.5)`, so nobody treats a guess as a fact.
 
-Python, JavaScript, TypeScript/TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala
-and Bash get full symbol and call extraction.
+## Languages it understands
 
-Files in any other language still show up as `file` nodes with their directory structure and
-doc/config chunks, so nothing disappears from the map. Adding a language means adding one entry to
-`LANG_CFG` in `repo2graph/langs.py`.
+Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala
+and Bash get the full treatment: functions, classes and calls.
 
-## Where it is approximate
+Files in any other language still appear on the map as files in their folders, so nothing goes
+missing. Teaching it a new language means adding one entry to `LANG_CFG` in `repo2graph/langs.py`.
 
-Worth knowing before you trust the output:
+## Where it guesses
 
-- **Call resolution is name-based, not type-based.** If a name is overloaded or shadowed,
-  repo2graph emits up to 5 candidate edges, each with `1/n` confidence. Local definitions win ties.
-  Filter on `confidence == 1.0` when you need precision.
-- **Import resolution is path-based, per language** — Python packages and relative imports, JS/TS
-  relative specifiers (including `.js` → `.ts`), Go via the `go.mod` module path, Java package
-  paths, C/C++ include basenames. Anything it cannot resolve becomes an external `module` node.
-- **Some files are skipped**: binaries, anything over 1.5 MB, and the usual vendor and build
-  directories. `.gitignore` is honoured when the repo is a git checkout.
+The map is very good, but it is not perfect. Worth knowing before you trust it:
 
-## Automating it with GitHub Actions
+- **It matches calls by name, not by type.** If two functions share a name, repo2graph draws up to
+  5 possible arrows and marks each one `1/n` sure. A function defined in the same file wins ties.
+  If you need certainty, keep only the arrows where `confidence` is `1.0`.
+- **It works out imports by path, one language at a time.** Python packages and relative imports,
+  JavaScript and TypeScript relative paths (including `.js` standing in for `.ts`), Go through
+  `go.mod`, Java package folders, C and C++ include names. Anything it cannot place becomes an
+  outside `module` dot.
+- **Some files are skipped:** pictures and other non-text files, anything bigger than 1.5 MB, and
+  the usual vendor and build folders. If the project is a git checkout, `.gitignore` is respected.
+- **No arrow does not prove no call.** Code that decides while running which function to call is
+  invisible to a reader like this one.
 
-### Index any repo from the Actions tab
+## Doing it automatically with GitHub Actions
 
-`.github/workflows/index-repo.yml` is a `workflow_dispatch` job: type a repo name, get a graph
-back. It clones the target, builds the graph, prints the repo map into the job summary, uploads
-`graph-<owner>__<repo>` as a downloadable artifact, and — if you set `publish_release: true` —
+### Map any project from the Actions tab
+
+`.github/workflows/index-repo.yml` is a button you press. Type a project name, get a map back. It
+downloads the project, builds the map, prints the summary into the job page, and uploads
+`graph-<owner>__<repo>` as a file you can download. Set `publish_release: true` and it also
 attaches a zip to a GitHub Release.
 
-The artifact includes `graph.html`, so downloading it and opening that one file gives you the
-graph view with nothing installed.
+The download includes `graph.html`, so opening that one file gives you the picture with nothing
+installed.
 
-Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For private
-targets, add a `TARGET_REPO_TOKEN` secret with repo read scope; otherwise the job token is used.
+Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For a private
+project, add a `TARGET_REPO_TOKEN` secret that can read it. Otherwise the job's own token is used.
 
 All from the terminal:
 
@@ -247,9 +312,9 @@ gh run watch
 gh run download --name graph-psf__requests --dir ./graph
 ```
 
-### Keep a graph next to your own code
+### Keep a fresh map next to your own code
 
-`action.yml` is a composite action you can drop into any repository:
+`action.yml` is a ready-made step you can drop into any project:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -259,14 +324,14 @@ gh run download --name graph-psf__requests --dir ./graph
     path: .              # or: repo: some-org/other-repo
     git-history: "500"
     artifact-name: repo-graph
-    commit-branch: graph # optional: force-push the graph to an orphan `graph` branch
+    commit-branch: graph # optional: push the map to a branch called `graph`
 ```
 
 Outputs: `out`, `nodes`, `edges`, `chunks`.
 
-`.github/workflows/self-index.yml` wires this up on every push to `main` plus a weekly cron, which
-means a RAG pipeline can always pull a fresh `chunks.jsonl`:
+`.github/workflows/self-index.yml` runs this on every push to `main` and once a week, so an AI
+pipeline can always grab an up-to-date copy of the code pieces:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/srinivasan-78/repo2graph/graph/chunks.jsonl -o chunks.jsonl
+curl -sL https://raw.githubusercontent.com/srinivasan-78/repo2graph/graph/agent/chunks.jsonl -o chunks.jsonl
 ```

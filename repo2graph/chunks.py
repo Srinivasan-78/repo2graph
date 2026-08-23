@@ -21,6 +21,12 @@ def _split(text: str, max_chars: int = MAX_CHARS):
     return out
 
 
+def _conf(text: str, edge: dict) -> str:
+    """Label a CALLS edge with its confidence when the call was ambiguous."""
+    c = edge.get("confidence", 1.0)
+    return text if c >= 1.0 else f"{text} (confidence {c})"
+
+
 def build_chunks(g, include_files: bool = True):
     """Yield chunk dicts ready for embedding."""
     out_edges, in_edges = defaultdict(list), defaultdict(list)
@@ -56,20 +62,31 @@ def build_chunks(g, include_files: bool = True):
         lines = src.splitlines()
         body = "\n".join(lines[n["start_line"] - 1: n["end_line"]])
         covered[n["path"]].append((n["start_line"], n["end_line"]))
-        callees = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "CALLS"][:12]
+        call_out = [e for e in out_edges[nid] if e["type"] == "CALLS"][:12]
+        call_in = [e for e in in_edges[nid] if e["type"] == "CALLS"][:12]
+        callees = [label(e["dst"]) for e in call_out]
+        callers = [label(e["src"]) for e in call_in]
         ext = [g.nodes[e["dst"]]["name"] for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:12]
-        callers = [label(e["src"]) for e in in_edges[nid] if e["type"] == "CALLS"][:12]
         bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:6]
+        # a call to an overloaded name fans out to every candidate at 1/n
+        # confidence; say so in the header, or a reader follows the wrong edge
+        # believing it is the only one.
+        out_conf = [_conf(t, e) for t, e in zip(callees, call_out)]
+        in_conf = [_conf(t, e) for t, e in zip(callers, call_in)]
         header = [
             f"# file: {n['path']}",
             f"# {n['kind']}: {n['qualname']}  (lines {n['start_line']}-{n['end_line']}, {n['lang']})",
         ]
+        if n.get("entrypoint"):
+            header.append("# entry point: nothing in this repo calls it — a flow starts here")
         if bases:
             header.append(f"# inherits: {', '.join(bases)}")
-        if callers:
-            header.append(f"# called by: {', '.join(callers)}")
-        if callees or ext:
-            header.append(f"# calls: {', '.join(callees + ext)}")
+        if in_conf:
+            header.append(f"# called by: {', '.join(in_conf)}")
+        if out_conf:
+            header.append(f"# calls: {', '.join(out_conf)}")
+        if ext:
+            header.append(f"# calls (outside the repo): {', '.join(ext)}")
         if n.get("docstring"):
             header.append("# doc: " + n["docstring"].replace("\n", " ")[:300])
         for i, part in enumerate(_split(body)):
@@ -78,7 +95,8 @@ def build_chunks(g, include_files: bool = True):
                 "node_id": nid, "type": "symbol", "kind": n["kind"], "path": n["path"],
                 "lang": n["lang"], "name": n["name"], "qualname": n["qualname"],
                 "start_line": n["start_line"], "end_line": n["end_line"],
-                "callers": callers, "callees": callees + ext,
+                "entrypoint": bool(n.get("entrypoint")),
+                "callers": callers, "callees": callees, "callees_external": ext,
                 "text": "\n".join(header) + "\n" + part,
             })
 
@@ -119,7 +137,8 @@ def build_chunks(g, include_files: bool = True):
                 "kind": n.get("file_type", "other"), "path": n["path"],
                 "lang": n.get("lang"), "name": n["name"], "qualname": n["path"],
                 "start_line": 1, "end_line": n.get("lines", 0),
-                "callers": [], "callees": [],
+                "entrypoint": False,
+                "callers": [], "callees": [], "callees_external": [],
                 "text": "\n".join(header) + "\n" + part,
             })
     return chunks

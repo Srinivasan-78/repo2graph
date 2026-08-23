@@ -111,16 +111,18 @@ class LoadedGraph:
     """The parts of Graph the map needs, read back from nodes/edges.jsonl."""
 
     def __init__(self, outdir: Path):
+        from .layout import path as artifact_path
         from .query import read_jsonl
         outdir = Path(outdir)
         self.name = outdir.name
-        self.nodes = {n["id"]: n for n in read_jsonl(outdir / "nodes.jsonl")}
-        self.edges = read_jsonl(outdir / "edges.jsonl")
-        overview = outdir / "overview.md"
+        self.nodes = {n["id"]: n
+                      for n in read_jsonl(artifact_path(outdir, "nodes.jsonl"))}
+        self.edges = read_jsonl(artifact_path(outdir, "edges.jsonl"))
+        overview = artifact_path(outdir, "overview.md")
         if overview.exists():
             first = overview.read_text(encoding="utf8").split("\n", 1)[0]
             self.name = first.removeprefix("# Repo map:").strip() or self.name
-        index = outdir / "index.json"
+        index = artifact_path(outdir, "index.json")
         if index.exists():
             self.name = json.loads(index.read_text(encoding="utf8")).get("repo", self.name)
 

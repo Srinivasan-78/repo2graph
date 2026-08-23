@@ -54,7 +54,7 @@ inputs:
 
 outputs:
   out:
-    description: "Directory holding graph.html, nodes.jsonl, edges.jsonl, chunks.jsonl, ..."
+    description: "Directory holding human/ (overview.md, graph.html, ...) and agent/ (chunks.jsonl, ...)"
     value: ${{ inputs.out }}
   nodes:
     description: "Node count"
@@ -134,8 +134,8 @@ runs:
           echo "### repo2graph"
           echo
           # overview.md only exists when 'overview' is one of the formats
-          if [ -f "$R2G_OUT/overview.md" ]; then
-            sed -n '1,40p' "$R2G_OUT/overview.md"
+          if [ -f "$R2G_OUT/human/overview.md" ]; then
+            sed -n '1,40p' "$R2G_OUT/human/overview.md"
           else
             echo '```json'
             cat "$R2G_OUT/summary.json"

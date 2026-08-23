@@ -301,9 +301,53 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
 
     if git_history:
         add_cochange(g, root, git_history, file_index)
+    mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
     return g
+
+
+ENTRY_KINDS = ("function", "method")
+SCORED_ENTRYPOINTS = 200   # exact reach is a BFS each, so only rank the busiest
+
+
+def mark_entrypoints(g: Graph):
+    """Flag the call-graph roots: symbols nothing else in the repo calls.
+
+    Those are the doors into a codebase — CLI commands, request handlers, test
+    bodies, public API — and they are where a reader tracing a flow has to
+    start. A symbol nested inside a function is skipped: an uncalled closure is
+    dead weight, not a door. `reach` (how many symbols the root can reach
+    through CALLS) is filled in for the busiest roots only, so ranking them
+    stays cheap on a big repo.
+    """
+    called, out = set(), defaultdict(list)
+    for e in g.edges:
+        if e["type"] == "CALLS":
+            called.add(e["dst"])
+            out[e["src"]].append(e["dst"])
+    nested = {e["dst"] for e in g.edges if e["type"] == "DEFINES"
+              and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS}
+    roots = [nid for nid, n in g.nodes.items()
+             if n["type"] == "symbol" and n.get("kind") in ENTRY_KINDS
+             and nid not in called and nid not in nested]
+    for nid in roots:
+        g.nodes[nid]["entrypoint"] = True
+    roots.sort(key=lambda nid: -len(out[nid]))
+    for nid in roots[:SCORED_ENTRYPOINTS]:
+        g.nodes[nid]["reach"] = _reach(nid, out)
+    g.stats["entrypoints"] = len(roots)
+
+
+def _reach(start: str, out: dict) -> int:
+    """How many distinct symbols `start` reaches through CALLS edges."""
+    seen, stack = {start}, [start]
+    while stack:
+        for dst in out[stack.pop()]:
+            if dst not in seen:
+                seen.add(dst)
+                stack.append(dst)
+    return len(seen) - 1
 
 
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
