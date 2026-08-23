@@ -28,31 +28,61 @@ CHAR_WIDTH = 7.0
 LABEL_CHARS = 40
 
 
+_NEIGHBOR_CELLS = ((1, 0), (1, 1), (0, 1), (-1, 1))
+
+
+def _grid_pairs(pos, cell):
+    """Yield the node pairs sitting within one grid cell of each other.
+
+    Every pair lands in the same bucket or in two adjacent ones, and each
+    unordered pair is yielded once: only four of the eight neighbouring cells
+    are scanned, the other four see the pair from their own side.
+    """
+    from collections import defaultdict
+    cells = defaultdict(list)
+    for nid, (x, y) in pos.items():
+        cells[(int(x // cell), int(y // cell))].append(nid)
+    for (cx, cy), members in cells.items():
+        near = [b for dx, dy in _NEIGHBOR_CELLS
+                for b in cells.get((cx + dx, cy + dy), ())]
+        for i, a in enumerate(members):
+            for b in members[i + 1:]:
+                yield a, b
+            for b in near:
+                yield a, b
+
+
 def _spring(nodes, adjacency, iterations):
-    """Fruchterman-Reingold in pure Python: networkx's needs numpy, we do not."""
+    """Fruchterman-Reingold in pure Python: networkx's needs numpy, we do not.
+
+    Repulsion runs only between nodes less than 2k apart, bucketed on a grid.
+    Past that distance the k^2/d term moves a node by a rounding error, while
+    the all-pairs form costs O(n^2) per iteration and dominates big exports.
+    """
     import math
     import random
     n = len(nodes)
     rng = random.Random(17)
     pos = {nid: [rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)] for nid in nodes}
     k = 1.0 / math.sqrt(n)
+    k2 = k * k
+    cutoff = 2.0 * k
     temp = 0.1
     cooling = temp / (iterations + 1)
     for _ in range(iterations):
         disp = {nid: [0.0, 0.0] for nid in nodes}
-        for i, a in enumerate(nodes):
+        for a, b in _grid_pairs(pos, cutoff):
             ax, ay = pos[a]
-            for b in nodes[i + 1:]:
-                dx, dy = ax - pos[b][0], ay - pos[b][1]
+            dx, dy = ax - pos[b][0], ay - pos[b][1]
+            dist2 = dx * dx + dy * dy
+            if dist2 < 1e-9:
+                dx, dy = rng.uniform(-1e-3, 1e-3), rng.uniform(-1e-3, 1e-3)
                 dist2 = dx * dx + dy * dy
-                if dist2 < 1e-9:
-                    dx, dy = rng.uniform(-1e-3, 1e-3), rng.uniform(-1e-3, 1e-3)
-                    dist2 = dx * dx + dy * dy
-                force = k * k / dist2          # repulsion, 1/d scaled by 1/d
-                disp[a][0] += dx * force
-                disp[a][1] += dy * force
-                disp[b][0] -= dx * force
-                disp[b][1] -= dy * force
+            force = k2 / dist2             # repulsion, 1/d scaled by 1/d
+            disp[a][0] += dx * force
+            disp[a][1] += dy * force
+            disp[b][0] -= dx * force
+            disp[b][1] -= dy * force
         for a, b in adjacency:
             dx, dy = pos[a][0] - pos[b][0], pos[a][1] - pos[b][1]
             dist = math.hypot(dx, dy) or 1e-6
@@ -72,17 +102,32 @@ def _spring(nodes, adjacency, iterations):
     return {nid: (xy[0], xy[1]) for nid, xy in pos.items()}
 
 
-def _grid(nodes):
-    """Deterministic fallback for graphs too big to force-lay-out in Python."""
+def _shelf(nodes, sizes, pad: float = 24.0):
+    """Row-pack the boxes for graphs too big to force-lay-out in Python.
+
+    Rows are filled in node order, which keeps a file next to the symbols it
+    defines, and boxes cannot overlap, so no separation pass is needed.
+    """
     import math
-    side = max(1, math.ceil(math.sqrt(len(nodes))))
-    return {nid: ((i % side) / side - 0.5, (i // side) / side - 0.5)
-            for i, nid in enumerate(nodes)}
+    area = sum((sizes[nid][0] + pad) * (sizes[nid][1] + pad) for nid in nodes)
+    row_width = max(math.sqrt(area * 1.6),
+                    max(sizes[nid][0] for nid in nodes) + pad)
+    pos = {}
+    x = y = row_height = 0.0
+    for nid in nodes:
+        width, height = sizes[nid]
+        if x and x + width > row_width:
+            x, y, row_height = 0.0, y + row_height + pad, 0.0
+        pos[nid] = (x + width / 2, y + height / 2)
+        x += width + pad
+        row_height = max(row_height, height)
+    return pos
 
 
-# Force layout is O(n^2) per iteration in Python, so past a few thousand nodes
-# a grid beats waiting minutes for the export.
-SPRING_MAX_NODES = 1200
+# Even bucketed, force layout costs seconds once the graph collapses into dense
+# clusters, and its clustering stops being readable at that size anyway: past
+# this many nodes the packed rows are both faster and easier to look at.
+SPRING_MAX_NODES = 1500
 
 
 def _layout(G, sizes):
@@ -93,12 +138,10 @@ def _layout(G, sizes):
         return {}
     if n == 1:
         return {nodes[0]: (0.0, 0.0)}
-    if n <= SPRING_MAX_NODES:
-        adjacency = [(u, v) for u, v in G.to_undirected().edges() if u != v]
-        iterations = 120 if n <= 400 else 50
-        pos = _spring(nodes, adjacency, iterations)
-    else:
-        pos = _grid(nodes)
+    if n > SPRING_MAX_NODES:
+        return _shelf(nodes, sizes)
+    adjacency = [(u, v) for u, v in G.to_undirected().edges() if u != v]
+    pos = _spring(nodes, adjacency, 120 if n <= 400 else 50)
     # Scale the unit layout so the median node box fits between neighbours.
     span = max(sum(w for w, _ in sizes.values()) / n * 2.0, 160.0) * (n ** 0.5)
     xs = [p[0] for p in pos.values()]
@@ -117,32 +160,36 @@ def _node_size(label: str, degree: int) -> tuple[float, float]:
 
 
 def _separate(pos, sizes, iterations):
-    """Push overlapping boxes apart; the spring layout only knows points."""
+    """Push overlapping boxes apart; the spring layout only knows points.
+
+    The grid cell is as wide as the widest box, so two overlapping boxes always
+    share a cell or sit in adjacent ones and no pair is missed.
+    """
     nodes = list(pos)
     pad = 16.0
+    cell = max(max(w, h) for w, h in sizes.values()) + pad
     for _ in range(iterations):
         shift = {nid: [0.0, 0.0] for nid in nodes}
         overlaps = 0
-        for i, a in enumerate(nodes):
+        for a, b in _grid_pairs(pos, cell):
             ax, ay = pos[a]
             aw, ah = sizes[a]
-            for b in nodes[i + 1:]:
-                bx, by = pos[b]
-                bw, bh = sizes[b]
-                gap_x = (aw + bw) / 2 + pad - abs(ax - bx)
-                gap_y = (ah + bh) / 2 + pad - abs(ay - by)
-                if gap_x <= 0 or gap_y <= 0:
-                    continue
-                overlaps += 1
-                # Separate along the axis that needs the smaller move.
-                if gap_x < gap_y:
-                    push = gap_x / 2 * (1.0 if ax >= bx else -1.0)
-                    shift[a][0] += push
-                    shift[b][0] -= push
-                else:
-                    push = gap_y / 2 * (1.0 if ay >= by else -1.0)
-                    shift[a][1] += push
-                    shift[b][1] -= push
+            bx, by = pos[b]
+            bw, bh = sizes[b]
+            gap_x = (aw + bw) / 2 + pad - abs(ax - bx)
+            gap_y = (ah + bh) / 2 + pad - abs(ay - by)
+            if gap_x <= 0 or gap_y <= 0:
+                continue
+            overlaps += 1
+            # Separate along the axis that needs the smaller move.
+            if gap_x < gap_y:
+                push = gap_x / 2 * (1.0 if ax >= bx else -1.0)
+                shift[a][0] += push
+                shift[b][0] -= push
+            else:
+                push = gap_y / 2 * (1.0 if ay >= by else -1.0)
+                shift[a][1] += push
+                shift[b][1] -= push
         if not overlaps:
             break
         # Apply every pair's push at once, so a node squeezed by two

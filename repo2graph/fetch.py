@@ -60,7 +60,7 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
                  formats: str = "jsonl,graphml,cypher,overview,html",
                  include=None, exclude=None, max_files: int = 0,
                  keep_clone: Path | None = None, token: str | None = None,
-                 viz_nodes: int = 300) -> dict:
+                 viz_nodes: int = 300, jobs: int = 0) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import build_chunks
     from .export import dump_all
@@ -73,7 +73,7 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
         src = clone(spec, workdir, ref=ref, depth=depth, token=token)
         sha = head_sha(src)
         g = build(src, include=include, exclude=exclude,
-                  git_history=git_history, max_files=max_files)
+                  git_history=git_history, max_files=max_files, jobs=jobs)
         g.name = f"{owner}/{repo}"
         chunks = build_chunks(g)
         outdir = Path(outdir)

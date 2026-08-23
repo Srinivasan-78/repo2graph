@@ -191,17 +191,18 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
     stack: list[tuple[object, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
     while stack:
         node, scope, owner = stack.pop()
-        if node.type == "ERROR":
+        ntype = node.type
+        if ntype == "ERROR":
             errors += 1
-        if node.type in import_types:
+        if ntype in import_types:
             raw = _text(source, node).strip()
             if raw:
                 imports.append(raw[:300])
-        if node.type in call_types:
+        if ntype in call_types:
             callee = _callee_name(source, node)
             if callee:
                 (owner.calls if owner is not None else file_calls).append(callee)
-        kind = kind_map.get(node.type)
+        kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner
         if kind is not None:
             name = _name_of(source, node, lang)
@@ -224,8 +225,10 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
                 )
                 symbols.append(sym)
                 child_scope, child_owner = scope + (name,), sym
+        # named_children skips punctuation and keyword tokens: no configured
+        # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order
-        for c in reversed(node.children):
+        for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
     return ParsedFile(lang=lang, symbols=symbols, imports=imports,
                       file_calls=file_calls, parse_errors=errors)
