@@ -14,9 +14,9 @@ on:
         required: false
         default: "200"
       formats:
-        description: "Comma list: jsonl,graphml,cypher,overview"
+        description: "Comma list: jsonl,graphml,cypher,overview,html"
         required: false
-        default: "jsonl,graphml,cypher,overview"
+        default: "jsonl,graphml,cypher,overview,html"
       exclude:
         description: "Space-separated globs to exclude, e.g. '**/test/**'"
         required: false

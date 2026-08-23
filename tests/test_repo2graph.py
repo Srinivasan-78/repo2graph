@@ -10,6 +10,7 @@ from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, path_index, resolve_import
 from repo2graph.parse import parse_source
 from repo2graph.query import Index, tokenize
+from repo2graph.viz import LoadedGraph, node_label, payload, select, write_html
 from repo2graph.walker import discover, matches_any
 
 PKG_INIT = ""
@@ -381,3 +382,81 @@ def test_overview_lists_hubs(tmp_path, sample_repo):
     text = (out / "overview.md").read_text()
     assert "# Repo map:" in text
     assert "pkg/util.py" in text
+
+
+# ---------- html map ----------
+
+def test_build_writes_html_map(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out)])
+    page = (out / "graph.html").read_text(encoding="utf8")
+    assert "<svg" in page and "__R2G_DATA__" not in page
+    assert "sym:pkg/util.py::helper" in page
+    assert "CALLS" in page
+
+
+def test_html_map_data_is_self_contained(sample_graph):
+    data = payload(sample_graph)
+    assert data["nodes"] and data["edges"]
+    labels = {n["id"]: n["label"] for n in data["nodes"]}
+    assert labels["sym:pkg/util.py::helper"] == "helper"
+    for e in data["edges"]:
+        assert 0 <= e["s"] < len(data["nodes"]) and 0 <= e["t"] < len(data["nodes"])
+    assert set(dict(data["nodeTypes"])) <= set(data["colors"])
+    assert data["totals"]["nodes"] == len(sample_graph.nodes)
+
+
+def test_viz_nodes_caps_the_drawing(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--viz-nodes", "5"])
+    page = (out / "graph.html").read_text(encoding="utf8")
+    data = json.loads(page.split("const DATA = ", 1)[1].split(";\nconst NS", 1)[0])
+    assert len(data["nodes"]) == 5
+    assert data["totals"]["nodes"] > 5
+
+
+def test_select_keeps_the_best_connected_nodes(sample_graph):
+    nodes, edges = select(sample_graph.nodes, sample_graph.edges, max_nodes=6)
+    assert len(nodes) == 6
+    kept = {n["id"] for n in nodes}
+    assert all(e["src"] in kept and e["dst"] in kept for e in edges)
+    assert "file:pkg/main.py" in kept  # the hub of the sample repo
+
+
+def test_map_command_redraws_from_a_built_index(tmp_path, sample_repo, capsys):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    assert not (out / "graph.html").exists()
+    capsys.readouterr()  # drop the build report; only the map report is asserted
+    main(["map", "-o", str(out), "--viz-nodes", "4"])
+    assert json.loads(capsys.readouterr().out)["nodes"] == 4
+    assert "<svg" in (out / "graph.html").read_text(encoding="utf8")
+
+
+def test_map_command_needs_an_index(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["map", "-o", str(tmp_path / "missing")])
+
+
+def test_loaded_graph_round_trips(tmp_path, sample_repo):
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    g = LoadedGraph(out)
+    assert "sym:pkg/util.py::helper" in g.nodes
+    assert any(e["type"] == "CALLS" for e in g.edges)
+
+
+def test_html_escapes_a_script_tag_in_the_source(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "x.py").write_text('def f():\n    """</script><script>alert(1)</script>"""\n')
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out)])
+    page = (out / "graph.html").read_text(encoding="utf8")
+    assert "</script><script>alert(1)" not in page
+    assert "<\\/script>" in page
+
+
+def test_node_label_truncates(sample_graph):
+    long = {"id": "sym:a.py::x", "qualname": "SomeVeryLongClassName.method"}
+    assert node_label(long).endswith("…") and len(node_label(long)) == 15

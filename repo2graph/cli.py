@@ -7,8 +7,9 @@ from pathlib import Path
 from .chunks import build_chunks
 from .export import dump_all
 from .graph import build
+from .viz import MAX_NODES
 
-FORMATS = ("jsonl", "graphml", "cypher", "overview")
+FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
 
 
 def parse_formats(spec: str) -> set[str]:
@@ -26,7 +27,7 @@ def cmd_build(args):
               git_history=args.git_history, max_files=args.max_files)
     chunks = None if args.no_chunks else build_chunks(g)
     outdir = Path(args.out)
-    written = dump_all(g, chunks, outdir, formats)
+    written = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     print(json.dumps({"out": str(outdir), "written": written,
                       "stats": dict(g.stats),
                       "chunks": len(chunks) if chunks else 0}, indent=2))
@@ -39,7 +40,7 @@ def cmd_github(args):
         args.repo, Path(args.out), ref=args.ref, depth=args.depth,
         git_history=args.git_history, formats=args.formats,
         include=args.include, exclude=args.exclude, max_files=args.max_files,
-        keep_clone=args.keep_clone, token=args.token)
+        keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes)
     print(json.dumps(meta, indent=2))
 
 
@@ -61,6 +62,19 @@ def cmd_query(args):
         print(format_pack(res))
 
 
+def cmd_map(args):
+    """Redraw graph.html from an index that is already on disk."""
+    from .viz import LoadedGraph, write_html
+
+    out = Path(args.out)
+    _require_index(out, "nodes.jsonl")
+    _require_index(out, "edges.jsonl")
+    data = write_html(LoadedGraph(out), out / "graph.html", args.viz_nodes)
+    print(json.dumps({"html": str(out / "graph.html"),
+                      "nodes": len(data["nodes"]), "edges": len(data["edges"]),
+                      "of": data["totals"]}, indent=2))
+
+
 def cmd_stats(args):
     print(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
@@ -72,8 +86,10 @@ def main(argv=None):
     b = sub.add_parser("build", help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
     b.add_argument("-o", "--out", default=".r2g")
-    b.add_argument("--formats", default="jsonl,graphml,cypher,overview",
-                   help="comma list: jsonl,graphml,cypher,overview")
+    b.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
+                   help="comma list: jsonl,graphml,cypher,overview,html")
+    b.add_argument("--viz-nodes", type=int, default=MAX_NODES,
+                   help="best-connected nodes to draw in graph.html")
     b.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     b.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
     b.add_argument("--git-history", type=int, default=0,
@@ -89,7 +105,9 @@ def main(argv=None):
     gh.add_argument("--ref", default=None, help="branch or tag (default: default branch)")
     gh.add_argument("--depth", type=int, default=0,
                     help="shallow clone depth; 0 = full history (needed for --git-history)")
-    gh.add_argument("--formats", default="jsonl,graphml,cypher,overview")
+    gh.add_argument("--formats", default="jsonl,graphml,cypher,overview,html")
+    gh.add_argument("--viz-nodes", type=int, default=MAX_NODES,
+                    help="best-connected nodes to draw in graph.html")
     gh.add_argument("--include", nargs="*", default=None)
     gh.add_argument("--exclude", nargs="*", default=None)
     gh.add_argument("--git-history", type=int, default=0)
@@ -107,6 +125,12 @@ def main(argv=None):
     q.add_argument("--budget", type=int, default=24000)
     q.add_argument("--json", action="store_true")
     q.set_defaults(func=cmd_query)
+
+    m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
+    m.add_argument("-o", "--out", default=".r2g")
+    m.add_argument("--viz-nodes", type=int, default=MAX_NODES,
+                   help="how many of the best-connected nodes to draw")
+    m.set_defaults(func=cmd_map)
 
     s = sub.add_parser("stats", help="print index stats")
     s.add_argument("-o", "--out", default=".r2g")

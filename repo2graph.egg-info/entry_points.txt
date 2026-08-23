@@ -1,2 +1,0 @@
-[console_scripts]
-repo2graph = repo2graph.cli:main

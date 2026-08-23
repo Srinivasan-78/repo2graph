@@ -1,6 +1,8 @@
-"""Serialize the graph: JSONL, GraphML, Cypher, Mermaid summary."""
+"""Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 import json
 from pathlib import Path
+
+from .viz import MAX_NODES, write_html
 
 SCALAR = (str, int, float, bool)
 
@@ -73,7 +75,7 @@ def write_overview(g, path: Path, top: int = 25):
     path.write_text("\n".join(out), encoding="utf8")
 
 
-def dump_all(g, chunks, outdir: Path, formats: set[str]):
+def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
     if "jsonl" in formats:
@@ -92,6 +94,9 @@ def dump_all(g, chunks, outdir: Path, formats: set[str]):
     if "overview" in formats:
         write_overview(g, outdir / "overview.md")
         written.append("overview.md")
+    if "html" in formats:
+        write_html(g, outdir / "graph.html", viz_nodes)
+        written.append("graph.html")
     (outdir / "stats.json").write_text(json.dumps(dict(g.stats), indent=2),
                                        encoding="utf8")
     return written + ["stats.json"]

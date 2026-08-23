@@ -58,12 +58,27 @@ changing together" links, which are surprisingly good at revealing hidden coupli
 ### 2. Look at what you got
 
 ```bash
+open .r2g/graph.html      # the map, drawn: circles for nodes, labelled arrows for edges
 cat .r2g/overview.md      # human-readable repo map: languages, hub files, hot symbols
 repo2graph stats -o .r2g  # counts of nodes, edges, symbols, parse errors
 ```
 
-Start with `overview.md`. It is written for a person to read and it is the fastest way to get
-oriented in a codebase you do not know.
+`graph.html` is a single self-contained file — no server, no CDN, no internet. Open it in a
+browser and you get the whiteboard drawing: drag to pan, scroll to zoom, drag a node to pin it,
+click one to see its signature, docstring and every relationship it has. The sidebar filters by
+node and relationship type, and search jumps to a symbol by name.
+
+By default it draws the 300 best-connected nodes and leaves stdlib/third-party call targets
+switched off, because those triple the edge count and say little about your code — tick
+`external` / `CALLS_EXTERNAL` in the sidebar to bring them back. Change the budget with
+`--viz-nodes N`, or redraw an index you already built:
+
+```bash
+repo2graph map -o .r2g --viz-nodes 80    # a cleaner, higher-altitude map
+```
+
+`overview.md` is the same map in prose. It is written for a person to read and it is the fastest
+way to get oriented in a codebase you do not know.
 
 ### 3. Ask it questions
 
@@ -105,6 +120,7 @@ kept around.
 | File | What it is |
 |---|---|
 | `overview.md` | the repo map, written for humans — read this first |
+| `graph.html` | the interactive graph map: open it in a browser, no dependencies |
 | `chunks.jsonl` | retrieval chunks: code text with a graph-context header |
 | `nodes.jsonl` | one JSON object per node |
 | `edges.jsonl` | one JSON object per edge |
@@ -113,7 +129,7 @@ kept around.
 | `stats.json` | node / edge / symbol counts and parse errors |
 
 Handy flags for `build`: `--include '**/*.py'`, `--exclude '**/test/**'`, `--max-files N`,
-`--formats jsonl,cypher` (skip the formats you do not want), `--no-chunks`.
+`--formats jsonl,cypher` (skip the formats you do not want), `--viz-nodes N`, `--no-chunks`.
 
 ## Using it in a RAG stack
 
@@ -213,6 +229,9 @@ Worth knowing before you trust the output:
 back. It clones the target, builds the graph, prints the repo map into the job summary, uploads
 `graph-<owner>__<repo>` as a downloadable artifact, and — if you set `publish_release: true` —
 attaches a zip to a GitHub Release.
+
+The artifact includes `graph.html`, so downloading it and opening that one file gives you the
+graph view with nothing installed.
 
 Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For private
 targets, add a `TARGET_REPO_TOKEN` secret with repo read scope; otherwise the job token is used.

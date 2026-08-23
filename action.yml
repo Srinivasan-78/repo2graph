@@ -20,9 +20,9 @@ inputs:
     required: false
     default: ".r2g"
   formats:
-    description: "Comma list: jsonl,graphml,cypher,overview"
+    description: "Comma list: jsonl,graphml,cypher,overview,html"
     required: false
-    default: "jsonl,graphml,cypher,overview"
+    default: "jsonl,graphml,cypher,overview,html"
   git-history:
     description: "Commits to scan for CO_CHANGE edges (0 = skip)"
     required: false
@@ -54,7 +54,7 @@ inputs:
 
 outputs:
   out:
-    description: "Directory holding nodes.jsonl, edges.jsonl, chunks.jsonl, ..."
+    description: "Directory holding graph.html, nodes.jsonl, edges.jsonl, chunks.jsonl, ..."
     value: ${{ inputs.out }}
   nodes:
     description: "Node count"

@@ -56,9 +56,11 @@ def head_sha(path: Path) -> str:
 
 
 def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0,
-                 git_history: int = 0, formats: str = "jsonl,graphml,cypher,overview",
+                 git_history: int = 0,
+                 formats: str = "jsonl,graphml,cypher,overview,html",
                  include=None, exclude=None, max_files: int = 0,
-                 keep_clone: Path | None = None, token: str | None = None) -> dict:
+                 keep_clone: Path | None = None, token: str | None = None,
+                 viz_nodes: int = 300) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import build_chunks
     from .export import dump_all
@@ -75,7 +77,7 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
         g.name = f"{owner}/{repo}"
         chunks = build_chunks(g)
         outdir = Path(outdir)
-        written = dump_all(g, chunks, outdir, set(formats.split(",")))
+        written = dump_all(g, chunks, outdir, set(formats.split(",")), viz_nodes)
         meta = {"repo": f"{owner}/{repo}", "ref": ref or "default", "commit": sha,
                 "nodes": len(g.nodes), "edges": len(g.edges), "chunks": len(chunks),
                 "stats": dict(g.stats), "written": written, "out": str(outdir)}
