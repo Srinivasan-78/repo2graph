@@ -8,6 +8,17 @@ from pathlib import Path
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 
 
+def read_jsonl(path: Path) -> list:
+    """Load a JSONL file written by export.write_jsonl.
+
+    newline="\n" matters: json.dumps(ensure_ascii=False) passes U+2028, U+2029
+    and U+0085 through verbatim, and both str.splitlines() and universal-newline
+    mode treat those as line breaks, which would cut records in half.
+    """
+    with open(path, encoding="utf8", newline="\n") as fh:
+        return [json.loads(line) for line in fh if line.strip()]
+
+
 def tokenize(text: str) -> list[str]:
     out = []
     for t in TOKEN_RE.findall(text):
@@ -21,10 +32,9 @@ def tokenize(text: str) -> list[str]:
 class Index:
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
-        self.chunks = [json.loads(l) for l in (self.dir / "chunks.jsonl").read_text().splitlines()]
-        self.nodes = {n["id"]: n for n in
-                      (json.loads(l) for l in (self.dir / "nodes.jsonl").read_text().splitlines())}
-        self.edges = [json.loads(l) for l in (self.dir / "edges.jsonl").read_text().splitlines()]
+        self.chunks = read_jsonl(self.dir / "chunks.jsonl")
+        self.nodes = {n["id"]: n for n in read_jsonl(self.dir / "nodes.jsonl")}
+        self.edges = read_jsonl(self.dir / "edges.jsonl")
         self.adj = defaultdict(list)
         for e in self.edges:
             self.adj[e["src"]].append((e["dst"], e["type"], "out"))

@@ -10,7 +10,7 @@ from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, path_index, resolve_import
 from repo2graph.parse import parse_source
 from repo2graph.query import Index, tokenize
-from repo2graph.walker import discover
+from repo2graph.walker import discover, matches_any
 
 PKG_INIT = ""
 PKG_UTIL = '''
@@ -75,6 +75,28 @@ def test_discover_include_exclude(sample_repo):
     assert "pkg/util.py" not in without_util
 
 
+def test_double_star_spans_zero_directories(sample_repo):
+    """'**/*.py' must also pick up top-level files; Path.match does not."""
+    (sample_repo / "setup.py").write_text("x = 1\n")
+    found = {rel for rel, _ in discover(sample_repo, ["**/*.py"], None)}
+    assert {"setup.py", "pkg/main.py"} <= found
+
+
+def test_glob_patterns():
+    assert matches_any("setup.py", ["**/*.py"])
+    assert matches_any("a/b/c.py", ["*.py"])          # bare pattern: any depth
+    assert matches_any("a/test/x.py", ["**/test/**"])
+    assert not matches_any("a/b.py", ["**/test/**"])
+    assert not matches_any("src/b/c.ts", ["src/*.ts"])  # a single * stops at "/"
+
+
+def test_discover_finds_non_ascii_filenames(tmp_path):
+    """git ls-files escapes such paths unless asked for NUL-separated output."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / "caf\u00e9.py").write_text("x = 1\n")
+    assert "caf\u00e9.py" in {rel for rel, _ in discover(tmp_path)}
+
+
 # ---------- parse ----------
 
 def test_parse_extracts_symbols_calls_and_imports():
@@ -87,6 +109,27 @@ def test_parse_extracts_symbols_calls_and_imports():
     assert "helper" in run.calls
     assert any("from .util import helper" in i for i in pf.imports)
     assert pf.parse_errors == 0
+
+
+def test_parse_bases_are_names_not_keywords():
+    """Grammars wrap supertypes in clauses; 'extends B' is not a usable name."""
+    for lang, src, expected in [
+        ("python", b"class A(B, C):\n    pass\n", ["B", "C"]),
+        ("java", b"class A extends B implements C, D {}\n", ["B", "C", "D"]),
+        ("typescript", b"class A extends B implements C {}\n", ["B", "C"]),
+        ("ruby", b"class A < B\nend\n", ["B"]),
+        ("cpp", b"class A : public B {};\n", ["B"]),
+        ("kotlin", b"class A : B(), C\n", ["B", "C"]),
+    ]:
+        sym = next(s for s in parse_source(src, lang).symbols if s.name == "A")
+        assert sym.bases == expected, (lang, sym.bases)
+
+
+def test_inherits_edges_for_non_python(tmp_path):
+    (tmp_path / "A.java").write_text("class A extends B {}\n")
+    (tmp_path / "B.java").write_text("class B {}\n")
+    g = build(tmp_path)
+    assert ("sym:A.java::A", "sym:B.java::B") in edges_of(g, "INHERITS")
 
 
 def test_parse_records_docstring_and_parent():
@@ -263,6 +306,25 @@ def test_score_matches_bruteforce(tmp_path, sample_repo):
     for _, i in scored:
         text = idx.chunks[i]["text"] + idx.chunks[i]["qualname"]
         assert {"helper", "runner"} & set(tokenize(text))
+
+
+def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
+    """U+2028 is a line break for splitlines() but not for JSON; it must not
+    split a chunk record in half."""
+    (sample_repo / "pkg" / "sep.py").write_text(
+        'MSG = "a\u2028b\u2029c\u0085d"\n\n\ndef uses_sep():\n    return MSG\n')
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    idx = Index(out)
+    assert any(c["path"] == "pkg/sep.py" for c in idx.chunks)
+    assert idx.retrieve("uses_sep", k=3)
+
+
+def test_query_without_an_index_exits_cleanly(tmp_path):
+    with pytest.raises(SystemExit):
+        main(["query", "anything", "-o", str(tmp_path / "missing")])
+    with pytest.raises(SystemExit):
+        main(["stats", "-o", str(tmp_path / "missing")])
 
 
 def test_score_unknown_term_returns_nothing(tmp_path, sample_repo):

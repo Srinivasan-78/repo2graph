@@ -39,6 +39,13 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     if proc.returncode != 0:
         msg = proc.stderr.strip().replace(token or "\0", "***")
         raise RuntimeError(f"git clone failed: {msg}")
+    if token:
+        # git records the clone URL, credential and all, in .git/config; with
+        # --keep-clone that would leave the token sitting on disk.
+        subprocess.run(
+            ["git", "-C", str(target), "remote", "set-url", "origin",
+             f"https://github.com/{owner}/{repo}.git"],
+            capture_output=True, text=True)
     return target
 
 
@@ -72,7 +79,7 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
         meta = {"repo": f"{owner}/{repo}", "ref": ref or "default", "commit": sha,
                 "nodes": len(g.nodes), "edges": len(g.edges), "chunks": len(chunks),
                 "stats": dict(g.stats), "written": written, "out": str(outdir)}
-        (outdir / "index.json").write_text(json.dumps(meta, indent=2))
+        (outdir / "index.json").write_text(json.dumps(meta, indent=2), encoding="utf8")
         return meta
     finally:
         if keep_clone is None:

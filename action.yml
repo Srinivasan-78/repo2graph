@@ -75,37 +75,56 @@ runs:
 
     - name: Install repo2graph
       shell: bash
+      env:
+        R2G_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
         if [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
           pip install -q -e "$GITHUB_ACTION_PATH"
         else
-          pip install -q "${{ inputs.version }}"
+          pip install -q "$R2G_VERSION"
         fi
 
     - name: Build the graph
       id: build
       shell: bash
+      # Inputs go through the environment, never straight into the script:
+      # ${{ }} is substituted before bash sees it, so an input containing shell
+      # metacharacters would otherwise execute.
       env:
         GH_TOKEN: ${{ inputs.token }}
+        R2G_REPO: ${{ inputs.repo }}
+        R2G_PATH: ${{ inputs.path }}
+        R2G_REF: ${{ inputs.ref }}
+        R2G_OUT: ${{ inputs.out }}
+        R2G_FORMATS: ${{ inputs.formats }}
+        R2G_HISTORY: ${{ inputs.git-history }}
+        R2G_INCLUDE: ${{ inputs.include }}
+        R2G_EXCLUDE: ${{ inputs.exclude }}
       run: |
         set -euo pipefail
         args=()
-        if [ -n "${{ inputs.repo }}" ]; then
-          args=(github "${{ inputs.repo }}")
-          if [ -n "${{ inputs.ref }}" ]; then args+=(--ref "${{ inputs.ref }}"); fi
+        if [ -n "$R2G_REPO" ]; then
+          args=(github "$R2G_REPO")
+          if [ -n "$R2G_REF" ]; then args+=(--ref "$R2G_REF"); fi
         else
-          args=(build "${{ inputs.path }}")
+          args=(build "$R2G_PATH")
         fi
-        args+=(-o "${{ inputs.out }}" --formats "${{ inputs.formats }}"
-               --git-history "${{ inputs.git-history }}")
-        if [ -n "${{ inputs.include }}" ]; then args+=(--include ${{ inputs.include }}); fi
-        if [ -n "${{ inputs.exclude }}" ]; then args+=(--exclude ${{ inputs.exclude }}); fi
-        mkdir -p "${{ inputs.out }}"
-        repo2graph "${args[@]}" > "${{ inputs.out }}/summary.json"
+        args+=(-o "$R2G_OUT" --formats "$R2G_FORMATS" --git-history "$R2G_HISTORY")
+        # read -a splits on spaces without letting bash expand the globs
+        if [ -n "$R2G_INCLUDE" ]; then
+          read -r -a inc <<< "$R2G_INCLUDE"
+          args+=(--include "${inc[@]}")
+        fi
+        if [ -n "$R2G_EXCLUDE" ]; then
+          read -r -a exc <<< "$R2G_EXCLUDE"
+          args+=(--exclude "${exc[@]}")
+        fi
+        mkdir -p "$R2G_OUT"
+        repo2graph "${args[@]}" > "$R2G_OUT/summary.json"
         python - <<'PY' >> "$GITHUB_OUTPUT"
         import json, os
-        d = json.load(open(os.path.join("${{ inputs.out }}", "summary.json")))
+        d = json.load(open(os.path.join(os.environ["R2G_OUT"], "summary.json")))
         s = d.get("stats", d)
         print(f"nodes={s.get('nodes', 0)}")
         print(f"edges={s.get('edges', 0)}")
@@ -114,7 +133,14 @@ runs:
         {
           echo "### repo2graph"
           echo
-          sed -n '1,40p' "${{ inputs.out }}/overview.md"
+          # overview.md only exists when 'overview' is one of the formats
+          if [ -f "$R2G_OUT/overview.md" ]; then
+            sed -n '1,40p' "$R2G_OUT/overview.md"
+          else
+            echo '```json'
+            cat "$R2G_OUT/summary.json"
+            echo '```'
+          fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload artifact
@@ -128,19 +154,21 @@ runs:
     - name: Push graph to branch
       if: ${{ inputs.commit-branch != '' }}
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        R2G_OUT: ${{ inputs.out }}
+        R2G_BRANCH: ${{ inputs.commit-branch }}
       run: |
         set -euo pipefail
         tmp="$(mktemp -d)"
-        cp -r "${{ inputs.out }}/." "$tmp/"
+        cp -r "$R2G_OUT/." "$tmp/"
         cd "$tmp"
         git init -q
-        git checkout -q -b "${{ inputs.commit-branch }}"
+        git checkout -q -b "$R2G_BRANCH"
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add -A
         git commit -qm "graph for ${GITHUB_SHA:0:12}"
         git push -q --force \
-          "https://x-access-token:${GITHUB_TOKEN:-$GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-          "${{ inputs.commit-branch }}"
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
+          "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+          "$R2G_BRANCH"

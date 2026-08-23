@@ -118,17 +118,60 @@ def _signature(src: bytes, node) -> str:
     return src[node.start_byte:end].decode("utf8", "replace").strip()[:300]
 
 
+# Node types that hold a class's supertypes. Grammars differ: some expose them
+# through a field, others only as an unnamed child clause.
+_BASE_NODES = {
+    "class_heritage", "extends_clause", "implements_clause", "superclass",
+    "super_interfaces", "type_list", "base_list", "base_clause",
+    "class_interface_clause", "delegation_specifier", "inheritance_specifier",
+    "base_class_clause",
+}
+# Keywords and access specifiers that sit inside those clauses.
+_BASE_WORDS = {
+    "extends", "implements", "with", "public", "private", "protected", "internal",
+    "virtual", "open", "abstract", "final", "sealed", "override", "case", "class",
+    "interface", "struct", "typename",
+}
+
+
+def _clean_base(text: str) -> str:
+    """'public B', 'extends B', '< B' -> 'B'."""
+    words = [w for w in text.replace(":", " ").replace("<", " <").split()
+             if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")]
+    return words[0].split("(")[0].strip(",;") if words else ""
+
+
+def _base_clauses(node):
+    """Supertype clauses of a definition, preferring the innermost one.
+
+    TypeScript wraps extends_clause/implements_clause in a class_heritage and
+    Java wraps a type_list in super_interfaces; the outer node's text would join
+    several names into one string, so descend when a child is a clause too.
+    """
+    out = []
+    for child in node.children:
+        if child.type not in _BASE_NODES:
+            continue
+        inner = [c for c in child.children if c.type in _BASE_NODES]
+        out += inner or [child]
+    return out
+
+
 def _bases(src: bytes, node, lang: str) -> list[str]:
     out = []
-    for fname in ("superclasses", "superclass", "interfaces", "bases"):
+    for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
             out += [t.strip() for t in _text(src, n).strip("(): ").split(",") if t.strip()]
-    if lang == "python" and not out:
-        args = node.child_by_field_name("argument_list") if node.type == "class_definition" else None
-        if args is not None:
-            out += [t.strip() for t in _text(src, args).strip("()").split(",") if t.strip()]
-    return out[:8]
+    for clause in _base_clauses(node):
+        raw = _text(src, clause).replace(" with ", ",")
+        out += [c for c in (_clean_base(t) for t in raw.split(",")) if c]
+    seen, uniq = set(), []
+    for b in out:
+        if b not in seen:
+            seen.add(b)
+            uniq.append(b)
+    return uniq[:8]
 
 
 def parse_source(source: bytes, lang: str) -> ParsedFile:

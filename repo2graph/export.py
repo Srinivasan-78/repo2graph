@@ -92,5 +92,6 @@ def dump_all(g, chunks, outdir: Path, formats: set[str]):
     if "overview" in formats:
         write_overview(g, outdir / "overview.md")
         written.append("overview.md")
-    (outdir / "stats.json").write_text(json.dumps(dict(g.stats), indent=2))
+    (outdir / "stats.json").write_text(json.dumps(dict(g.stats), indent=2),
+                                       encoding="utf8")
     return written + ["stats.json"]

@@ -43,8 +43,16 @@ def cmd_github(args):
     print(json.dumps(meta, indent=2))
 
 
+def _require_index(out: Path, name: str) -> Path:
+    path = out / name
+    if not path.exists():
+        raise SystemExit(f"no index at {out}: run `repo2graph build <repo> -o {out}` first")
+    return path
+
+
 def cmd_query(args):
     from .query import Index, format_pack
+    _require_index(Path(args.out), "chunks.jsonl")
     idx = Index(Path(args.out))
     res = idx.retrieve(args.query, k=args.k, hops=args.hops, budget_chars=args.budget)
     if args.json:
@@ -54,7 +62,7 @@ def cmd_query(args):
 
 
 def cmd_stats(args):
-    print((Path(args.out) / "stats.json").read_text())
+    print(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
 
 def main(argv=None):

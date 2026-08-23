@@ -172,7 +172,8 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
     ctx.update(path_index(file_index))
-    parsed: dict[str, object] = {}
+    parsed: dict[str, object] = {}  # ParsedFile only: keeping raw bytes here
+                                    # would hold the whole repo in memory
 
     for rel, abspath in files:
         ext = abspath.suffix.lower()
@@ -202,7 +203,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
         if not lang:
             continue
         pf = parse_source(raw, lang)
-        parsed[rel] = (pf, raw)
+        parsed[rel] = pf
         g.stats["parsed"] += 1
         g.stats["parse_errors"] += pf.parse_errors
 
@@ -231,7 +232,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
 
-    for rel, (pf, _raw) in parsed.items():
+    for rel, pf in parsed.items():
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
             for callee, count in Counter(sym.calls).items():
