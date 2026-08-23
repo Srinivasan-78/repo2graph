@@ -1,0 +1,92 @@
+name: Index repository
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Target repo: owner/repo or a GitHub URL"
+        required: true
+      ref:
+        description: "Branch or tag (blank = default branch)"
+        required: false
+        default: ""
+      git_history:
+        description: "Commits to scan for CO_CHANGE edges (0 = skip)"
+        required: false
+        default: "200"
+      formats:
+        description: "Comma list: jsonl,graphml,cypher,overview"
+        required: false
+        default: "jsonl,graphml,cypher,overview"
+      exclude:
+        description: "Space-separated globs to exclude, e.g. '**/test/**'"
+        required: false
+        default: ""
+      publish_release:
+        description: "Also attach the graph to a GitHub Release in this repo"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo2graph
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install repo2graph
+        run: pip install -e .
+
+      - name: Build the graph
+        id: build
+        env:
+          # Needed only for private targets; the default token can read this repo's org
+          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          slug="$(echo '${{ inputs.repo }}' | sed -E 's#.*github\.com[:/]##; s#\.git/?$##; s#/#__#g')"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+          mkdir -p "out/$slug"
+          args=(github "${{ inputs.repo }}" -o "out/$slug"
+                --git-history "${{ inputs.git_history }}"
+                --formats "${{ inputs.formats }}")
+          if [ -n "${{ inputs.ref }}" ]; then args+=(--ref "${{ inputs.ref }}"); fi
+          if [ -n "${{ inputs.exclude }}" ]; then args+=(--exclude ${{ inputs.exclude }}); fi
+          repo2graph "${args[@]}" | tee "out/$slug/summary.json"
+          {
+            echo "### Graph for \`${{ inputs.repo }}\`"
+            echo
+            echo '```json'
+            jq 'del(.stats)' "out/$slug/summary.json"
+            echo '```'
+            echo
+            sed -n '1,40p' "out/$slug/overview.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload graph artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: graph-${{ steps.build.outputs.slug }}
+          path: out/${{ steps.build.outputs.slug }}
+          retention-days: 30
+
+      - name: Attach graph to a release
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          slug="${{ steps.build.outputs.slug }}"
+          tag="graph-$slug-$(date -u +%Y%m%d%H%M%S)"
+          (cd out && zip -qr "$slug.zip" "$slug")
+          gh release create "$tag" "out/$slug.zip" \
+            --title "Graph: ${{ inputs.repo }}" \
+            --notes-file "out/$slug/overview.md"
