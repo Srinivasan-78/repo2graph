@@ -24,7 +24,7 @@ def parse_formats(spec: str) -> set[str]:
 def cmd_build(args):
     formats = parse_formats(args.formats)
     g = build(Path(args.repo), include=args.include, exclude=args.exclude,
-              git_history=args.git_history, max_files=args.max_files)
+              git_history=args.git_history, max_files=args.max_files, jobs=args.jobs)
     chunks = None if args.no_chunks else build_chunks(g)
     outdir = Path(args.out)
     written = dump_all(g, chunks, outdir, formats, args.viz_nodes)
@@ -40,7 +40,8 @@ def cmd_github(args):
         args.repo, Path(args.out), ref=args.ref, depth=args.depth,
         git_history=args.git_history, formats=args.formats,
         include=args.include, exclude=args.exclude, max_files=args.max_files,
-        keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes)
+        keep_clone=args.keep_clone, token=args.token, viz_nodes=args.viz_nodes,
+        jobs=args.jobs)
     print(json.dumps(meta, indent=2))
 
 
@@ -95,6 +96,8 @@ def main(argv=None):
     b.add_argument("--git-history", type=int, default=0,
                    help="add CO_CHANGE edges from the last N commits")
     b.add_argument("--max-files", type=int, default=0)
+    b.add_argument("--jobs", type=int, default=0,
+                   help="parser processes; 0 = one per core (capped at 8), 1 = serial")
     b.add_argument("--no-chunks", action="store_true")
     b.set_defaults(func=cmd_build)
 
@@ -112,6 +115,8 @@ def main(argv=None):
     gh.add_argument("--exclude", nargs="*", default=None)
     gh.add_argument("--git-history", type=int, default=0)
     gh.add_argument("--max-files", type=int, default=0)
+    gh.add_argument("--jobs", type=int, default=0,
+                    help="parser processes; 0 = one per core (capped at 8), 1 = serial")
     gh.add_argument("--keep-clone", default=None, help="clone here instead of a temp dir")
     gh.add_argument("--token", default=None,
                     help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)")

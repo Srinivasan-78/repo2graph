@@ -1,5 +1,6 @@
 """Build the repository graph: nodes + edges."""
 import itertools
+import os
 import re
 import subprocess
 from collections import Counter, defaultdict
@@ -10,6 +11,8 @@ from .parse import parse_source
 from .walker import discover
 
 MAX_CALL_CANDIDATES = 5
+# Under this many files a process pool costs more to start than it saves.
+PARALLEL_MIN_FILES = 64
 
 
 class Graph:
@@ -158,9 +161,52 @@ def repo_context(root: Path) -> dict:
     return ctx
 
 
+# ---------- parsing ----------
+def _read_and_parse(item):
+    """Read one file and parse it if it is code.
+
+    Top level, and returns only counts plus the ParsedFile, so a process pool
+    can pickle both the call and its result.
+    """
+    rel, abspath, lang = item
+    try:
+        raw = abspath.read_bytes()
+    except OSError:
+        return rel, lang, None
+    return rel, lang, (len(raw), raw.count(b"\n") + 1,
+                       parse_source(raw, lang) if lang else None)
+
+
+def resolve_jobs(jobs: int) -> int:
+    """0 means one worker per core, capped so the parent keeps up with results."""
+    if jobs > 0:
+        return jobs
+    return max(1, min(os.cpu_count() or 1, 8))
+
+
+def parse_all(files, jobs: int):
+    """Read and parse every file, in discovery order, across `jobs` processes.
+
+    tree-sitter parsing is CPU bound and dominates a large build, so this is
+    the difference between one core and all of them. Order is preserved, which
+    keeps node ids and edge order identical to a serial run.
+    """
+    items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()))
+             for rel, abspath in files]
+    if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
+        return [_read_and_parse(i) for i in items]
+    from concurrent.futures import ProcessPoolExecutor
+    try:
+        with ProcessPoolExecutor(max_workers=jobs) as pool:
+            return list(pool.map(_read_and_parse, items,
+                                 chunksize=max(1, len(items) // (jobs * 8))))
+    except (OSError, ValueError):  # no fork, or no POSIX semaphores to build on
+        return [_read_and_parse(i) for i in items]
+
+
 # ---------- build ----------
 def build(root: Path, include=None, exclude=None, git_history: int = 0,
-          max_files: int = 0) -> Graph:
+          max_files: int = 0, jobs: int = 0) -> Graph:
     root = Path(root).resolve()
     g = Graph(root, root.name)
     repo_id = f"repo:{root.name}"
@@ -175,18 +221,16 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     parsed: dict[str, object] = {}  # ParsedFile only: keeping raw bytes here
                                     # would hold the whole repo in memory
 
-    for rel, abspath in files:
-        ext = abspath.suffix.lower()
-        lang = EXT_LANG.get(ext)
+    for rel, lang, read in parse_all(files, resolve_jobs(jobs)):
+        if read is None:  # unreadable file
+            continue
+        size, lines, pf = read
+        ext = Path(rel).suffix.lower()
         ftype = "code" if lang else ("doc" if ext in DOC_EXT else
                                      "config" if ext in CONFIG_EXT else "other")
-        try:
-            raw = abspath.read_bytes()
-        except OSError:
-            continue
         fid = f"file:{rel}"
         g.add_node(fid, type="file", name=Path(rel).name, path=rel, lang=lang or ext.lstrip("."),
-                   file_type=ftype, size=len(raw), lines=raw.count(b"\n") + 1)
+                   file_type=ftype, size=size, lines=lines)
         g.stats["files"] += 1
 
         # directory chain
@@ -200,9 +244,8 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
             parent = did
         g.add_edge(parent, fid, "CONTAINS")
 
-        if not lang:
+        if pf is None:
             continue
-        pf = parse_source(raw, lang)
         parsed[rel] = pf
         g.stats["parsed"] += 1
         g.stats["parse_errors"] += pf.parse_errors

@@ -124,12 +124,15 @@ kept around.
 | `chunks.jsonl` | retrieval chunks: code text with a graph-context header |
 | `nodes.jsonl` | one JSON object per node |
 | `edges.jsonl` | one JSON object per edge |
-| `graph.graphml` | load into yEd, Gephi, NetworkX or igraph (ships a spring layout + yFiles node graphics, so it opens laid out) |
+| `graph.graphml` | load into yEd, Gephi, NetworkX or igraph (ships a layout + yFiles node graphics, so it opens laid out: a spring layout up to 1500 nodes, packed rows above that) |
 | `graph.cypher` | idempotent `MERGE` script for Neo4j / Memgraph |
 | `stats.json` | node / edge / symbol counts and parse errors |
 
 Handy flags for `build`: `--include '**/*.py'`, `--exclude '**/test/**'`, `--max-files N`,
-`--formats jsonl,cypher` (skip the formats you do not want), `--viz-nodes N`, `--no-chunks`.
+`--formats jsonl,cypher` (skip the formats you do not want), `--viz-nodes N`, `--no-chunks`,
+`--jobs N` (parser processes; the default is one per core, capped at 8, and `--jobs 1`
+parses serially). Parsing runs in parallel, so on a large repo more cores means a faster
+build; the output is identical whatever `--jobs` you pass.
 
 ## Using it in a RAG stack
 

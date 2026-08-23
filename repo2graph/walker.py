@@ -1,6 +1,7 @@
 """Repo file discovery. Uses git when available, falls back to os.walk."""
 import os
 import re
+import stat as statmod
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -103,17 +104,18 @@ def discover(root: Path, include_globs=None, exclude_globs=None):
             continue
         if any(part in DEFAULT_SKIP_DIRS for part in rel.parts):
             continue
-        if not abspath.is_file() or abspath.is_symlink():
+        # one lstat answers regular-file, symlink and size: three syscalls per
+        # file adds up once a repo has tens of thousands of them
+        try:
+            st = abspath.lstat()
+        except OSError:
+            continue
+        if not statmod.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
             continue
         rp = rel.as_posix()
         if include_globs and not matches_any(rp, include_globs):
             continue
         if exclude_globs and matches_any(rp, exclude_globs):
-            continue
-        try:
-            if abspath.stat().st_size > MAX_BYTES:
-                continue
-        except OSError:
             continue
         if is_binary(abspath):
             continue
