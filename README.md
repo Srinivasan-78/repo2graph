@@ -124,7 +124,7 @@ kept around.
 | `chunks.jsonl` | retrieval chunks: code text with a graph-context header |
 | `nodes.jsonl` | one JSON object per node |
 | `edges.jsonl` | one JSON object per edge |
-| `graph.graphml` | load into NetworkX, Gephi or igraph |
+| `graph.graphml` | load into yEd, Gephi, NetworkX or igraph (ships a spring layout + yFiles node graphics, so it opens laid out) |
 | `graph.cypher` | idempotent `MERGE` script for Neo4j / Memgraph |
 | `stats.json` | node / edge / symbol counts and parse errors |
 
