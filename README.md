@@ -2,6 +2,11 @@
 
 repo2graph reads a folder full of code and draws you a map of it.
 
+![The whole map of a project: 300 dots and the arrows between them](docs/images/graph-overview.png)
+
+*One project, drawn by `repo2graph`. Each dot is a folder, file, function or library. Each arrow is
+a real connection found in the code.*
+
 ## The idea
 
 Imagine you get handed a big box of Lego that someone else already built things with. You want to
@@ -33,6 +38,16 @@ That matters most when a chatbot or AI helper is reading the code for you. Givin
 piece of code plus the pieces around it is usually what it was missing.
 
 ## How it works, in three steps
+
+```mermaid
+flowchart LR
+    A[your code] --> B[tree-sitter<br/>reads the code]
+    B --> C[graph<br/>dots + arrows]
+    C --> D[graph.html<br/>the picture]
+    C --> E[overview.md<br/>the words]
+    C --> F[chunks.jsonl<br/>pieces for an AI]
+    C --> G[graph.graphml / graph.cypher<br/>other tools, Neo4j]
+```
 
 1. **It reads the code.** It uses a tool called tree-sitter, the same one code editors use to
    colour your code. So it understands real code structure instead of guessing from words. It
@@ -85,6 +100,14 @@ repo2graph stats -o .r2g     # how many dots, arrows and functions there are
 you get the picture: drag to move around, scroll to zoom, drag a dot to pin it in place, click a
 dot to see what that function looks like and everything it is connected to. The panel on the side
 lets you hide kinds of dots and arrows, and the search box jumps to a name.
+
+Zoom in and every dot is named, so you can read the real call paths:
+
+![Zoomed into the map: named functions, files and libraries joined by arrows](docs/images/graph-zoom.png)
+
+The side panel counts what is on screen and lets you switch each kind of dot and arrow on or off:
+
+![Side panel with search box, node kinds and relationship kinds, each with a count](docs/images/graph-sidebar.png)
 
 By default the picture shows the 300 busiest dots, and hides calls that go out to other people's
 code, because those triple the number of arrows and tell you little about your own project. Tick
@@ -214,14 +237,17 @@ cypher-shell -u neo4j -p password -f .r2g/agent/graph.cypher
 
 **Dots (nodes):**
 
-| Kind | Meaning |
-|---|---|
-| `repo` | the project itself |
-| `dir` | a folder |
-| `file` | a file |
-| `symbol` | a function, method, class, struct, trait, interface, type or module |
-| `module` | something the project borrows that is not one of its own files |
-| `external` | a name the project calls that could not be found anywhere in the project |
+| Kind | Colour on the picture | Meaning |
+|---|---|---|
+| `repo` | 🔴 red | the project itself |
+| `dir` | 🟤 tan | a folder |
+| `file` | 🟠 orange | a file |
+| `symbol` | 🔵 blue | a function, method, class, struct, trait, interface, type or module |
+| `module` | 🟢 green | something the project borrows that is not one of its own files |
+| `external` | 🩷 pink | a name the project calls that could not be found anywhere in the project |
+
+A dot is drawn bigger when more arrows touch it, so the busiest parts of the project stand out
+without you looking for them.
 
 **Arrows (edges):**
 
@@ -234,6 +260,19 @@ cypher-shell -u neo4j -p password -f .r2g/agent/graph.cypher
 | `CALLS_EXTERNAL` | a function uses something from outside the project |
 | `INHERITS` | a class is built on top of another class |
 | `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
+
+A small corner of a real map looks like this:
+
+```mermaid
+flowchart LR
+    R((repo)) -->|CONTAINS| D((app))
+    D -->|CONTAINS| F((auth.py))
+    F -->|DEFINES| L((login))
+    F -->|IMPORTS| M((requests))
+    L -->|CALLS| H((hash_password))
+    L -->|CALLS_EXTERNAL| G((get))
+    F -.->|CO_CHANGE| F2((routes.py))
+```
 
 Names on the map are built the same way every time, so you can write one yourself:
 `file:pkg/mod.py`, `sym:pkg/mod.py::Class.method`, `module:requests`, `dir:pkg`.
