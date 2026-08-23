@@ -1,4 +1,5 @@
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
+import re
 import json
 import subprocess
 
@@ -373,6 +374,18 @@ def test_graphml_is_loadable(tmp_path, sample_repo):
     main(["build", str(sample_repo), "-o", str(out), "--formats", "graphml"])
     G = nx.read_graphml(out / "graph.graphml")
     assert "sym:pkg/util.py::helper" in G
+
+
+def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
+    pytest.importorskip("networkx")
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "graphml"])
+    text = (out / "graph.graphml").read_text()
+    assert 'yfiles.type="nodegraphics"' in text
+    assert "<y:ShapeNode>" in text
+    coords = re.findall(r'<y:Geometry x="([-\d.]+)" y="([-\d.]+)"', text)
+    assert len(coords) > 1
+    assert len(set(coords)) == len(coords)   # no stack of boxes at the origin
 
 
 def test_overview_lists_hubs(tmp_path, sample_repo):
