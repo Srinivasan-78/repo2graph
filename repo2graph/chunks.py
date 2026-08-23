@@ -1,6 +1,5 @@
 """Turn graph nodes into retrieval chunks: code text + graph context header."""
 from collections import defaultdict
-from pathlib import Path
 
 MAX_CHARS = 4000
 OVERLAP_LINES = 8

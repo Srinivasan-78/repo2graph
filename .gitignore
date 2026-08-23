@@ -8,3 +8,7 @@ dist/
 venv/
 .pytest_cache/
 .r2g/
+.env
+.env.*
+.DS_Store
+out/

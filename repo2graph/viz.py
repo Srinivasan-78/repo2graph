@@ -73,7 +73,7 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
     for n in nodes:
         item = {"id": n["id"], "label": node_label(n), "type": n["type"],
                 "deg": deg[n["id"]]}
-        for key in ("path", "kind", "lang", "file_type", "start_line", "end_line", "lines"):
+        for key in ("path", "kind", "lang", "start_line", "end_line", "lines"):
             if n.get(key) not in (None, "", []):
                 item[key] = n[key]
         if n.get("signature"):

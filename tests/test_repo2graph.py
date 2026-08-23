@@ -1,7 +1,6 @@
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import json
 import subprocess
-import sys
 
 import pytest
 
@@ -10,7 +9,7 @@ from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, path_index, resolve_import
 from repo2graph.parse import parse_source
 from repo2graph.query import Index, tokenize
-from repo2graph.viz import LoadedGraph, node_label, payload, select, write_html
+from repo2graph.viz import LoadedGraph, node_label, payload, select
 from repo2graph.walker import discover, matches_any
 
 PKG_INIT = ""
