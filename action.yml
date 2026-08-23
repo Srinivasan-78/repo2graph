@@ -1,0 +1,146 @@
+name: repo2graph
+description: Build a code graph and graph-aware RAG chunks for a repository
+author: repo2graph
+
+inputs:
+  repo:
+    description: "Target repo (owner/repo or URL). Leave blank to index `path` in the workspace."
+    required: false
+    default: ""
+  path:
+    description: "Local path to index when `repo` is blank"
+    required: false
+    default: "."
+  ref:
+    description: "Branch or tag to index when cloning a remote repo"
+    required: false
+    default: ""
+  out:
+    description: "Output directory for the graph artifacts"
+    required: false
+    default: ".r2g"
+  formats:
+    description: "Comma list: jsonl,graphml,cypher,overview"
+    required: false
+    default: "jsonl,graphml,cypher,overview"
+  git-history:
+    description: "Commits to scan for CO_CHANGE edges (0 = skip)"
+    required: false
+    default: "0"
+  include:
+    description: "Space-separated globs to include"
+    required: false
+    default: ""
+  exclude:
+    description: "Space-separated globs to exclude"
+    required: false
+    default: ""
+  artifact-name:
+    description: "Upload the output under this artifact name (blank = no upload)"
+    required: false
+    default: "repo-graph"
+  commit-branch:
+    description: "Push the output to this orphan branch (blank = no push)"
+    required: false
+    default: ""
+  version:
+    description: "repo2graph version spec passed to pip"
+    required: false
+    default: "git+https://github.com/srinivasan-78/repo2graph@main"
+  token:
+    description: "Token used to clone a private target repo"
+    required: false
+    default: ""
+
+outputs:
+  out:
+    description: "Directory holding nodes.jsonl, edges.jsonl, chunks.jsonl, ..."
+    value: ${{ inputs.out }}
+  nodes:
+    description: "Node count"
+    value: ${{ steps.build.outputs.nodes }}
+  edges:
+    description: "Edge count"
+    value: ${{ steps.build.outputs.edges }}
+  chunks:
+    description: "Chunk count"
+    value: ${{ steps.build.outputs.chunks }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install repo2graph
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
+          pip install -q -e "$GITHUB_ACTION_PATH"
+        else
+          pip install -q "${{ inputs.version }}"
+        fi
+
+    - name: Build the graph
+      id: build
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        args=()
+        if [ -n "${{ inputs.repo }}" ]; then
+          args=(github "${{ inputs.repo }}")
+          if [ -n "${{ inputs.ref }}" ]; then args+=(--ref "${{ inputs.ref }}"); fi
+        else
+          args=(build "${{ inputs.path }}")
+        fi
+        args+=(-o "${{ inputs.out }}" --formats "${{ inputs.formats }}"
+               --git-history "${{ inputs.git-history }}")
+        if [ -n "${{ inputs.include }}" ]; then args+=(--include ${{ inputs.include }}); fi
+        if [ -n "${{ inputs.exclude }}" ]; then args+=(--exclude ${{ inputs.exclude }}); fi
+        mkdir -p "${{ inputs.out }}"
+        repo2graph "${args[@]}" > "${{ inputs.out }}/summary.json"
+        python - <<'PY' >> "$GITHUB_OUTPUT"
+        import json, os
+        d = json.load(open(os.path.join("${{ inputs.out }}", "summary.json")))
+        s = d.get("stats", d)
+        print(f"nodes={s.get('nodes', 0)}")
+        print(f"edges={s.get('edges', 0)}")
+        print(f"chunks={d.get('chunks', 0)}")
+        PY
+        {
+          echo "### repo2graph"
+          echo
+          sed -n '1,40p' "${{ inputs.out }}/overview.md"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload artifact
+      if: ${{ inputs.artifact-name != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.out }}
+        retention-days: 30
+
+    - name: Push graph to branch
+      if: ${{ inputs.commit-branch != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        tmp="$(mktemp -d)"
+        cp -r "${{ inputs.out }}/." "$tmp/"
+        cd "$tmp"
+        git init -q
+        git checkout -q -b "${{ inputs.commit-branch }}"
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git commit -qm "graph for ${GITHUB_SHA:0:12}"
+        git push -q --force \
+          "https://x-access-token:${GITHUB_TOKEN:-$GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+          "${{ inputs.commit-branch }}"
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
