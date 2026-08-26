@@ -1,6 +1,10 @@
 name: repo2graph
 description: Build a code graph and graph-aware RAG chunks for a repository
-author: repo2graph
+author: Srinivasan-78
+
+branding:
+  icon: share-2
+  color: purple
 
 inputs:
   repo:
@@ -46,7 +50,7 @@ inputs:
   version:
     description: "repo2graph version spec passed to pip"
     required: false
-    default: "git+https://github.com/srinivasan-78/repo2graph@main"
+    default: "git+https://github.com/Srinivasan-78/repo2graph@v1"
   token:
     description: "Token used to clone a private target repo"
     required: false

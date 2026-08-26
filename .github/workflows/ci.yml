@@ -1,0 +1,60 @@
+name: CI
+
+# Runs the test suite and smoke-tests the composite action itself, so a tag
+# never ships an action that cannot build a graph.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run the action against this repository
+        id: r2g
+        uses: ./
+        with:
+          path: .
+          out: .r2g
+          git-history: "50"
+          artifact-name: ""   # smoke test only, nothing to upload
+
+      - name: Check the outputs are non-empty
+        env:
+          NODES: ${{ steps.r2g.outputs.nodes }}
+          EDGES: ${{ steps.r2g.outputs.edges }}
+          CHUNKS: ${{ steps.r2g.outputs.chunks }}
+        run: |
+          set -euo pipefail
+          echo "nodes=$NODES edges=$EDGES chunks=$CHUNKS"
+          test "${NODES:-0}" -gt 0
+          test "${EDGES:-0}" -gt 0
+          test "${CHUNKS:-0}" -gt 0
+          test -f .r2g/human/graph.html
+          test -f .r2g/agent/chunks.jsonl
