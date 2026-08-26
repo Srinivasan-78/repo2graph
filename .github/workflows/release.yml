@@ -31,6 +31,10 @@ jobs:
             v[0-9]*) ;;
             *) echo "Tag '$TAG' is not of the form vX.Y.Z"; exit 1 ;;
           esac
+          if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag '$TAG' does not exist. Create the release first; publishing it runs this workflow."
+            exit 1
+          fi
           major="${TAG%%.*}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
