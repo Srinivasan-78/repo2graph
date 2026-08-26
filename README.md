@@ -64,7 +64,7 @@ flowchart LR
 You need Python 3.10 or newer.
 
 ```bash
-git clone https://github.com/srinivasan-78/repo2graph
+git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv
 .venv/bin/pip install -e .
@@ -353,24 +353,97 @@ gh run download --name graph-psf__requests --dir ./graph
 
 ### Keep a fresh map next to your own code
 
-`action.yml` is a ready-made step you can drop into any project:
+repo2graph is published on the GitHub Marketplace, so it is one step in any workflow:
 
 ```yaml
 - uses: actions/checkout@v4
-  with: { fetch-depth: 0 }
-- uses: srinivasan-78/repo2graph@main
+  with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
+- uses: Srinivasan-78/repo2graph@v1
   with:
     path: .              # or: repo: some-org/other-repo
     git-history: "500"
     artifact-name: repo-graph
-    commit-branch: graph # optional: push the map to a branch called `graph`
 ```
 
-Outputs: `out`, `nodes`, `edges`, `chunks`.
+`@v1` follows every 1.x release. Pin an exact version (`@v1.0.0`) if you would rather upgrade by
+hand.
 
-`.github/workflows/self-index.yml` runs this on every push to `main` and once a week, so an AI
-pipeline can always grab an up-to-date copy of the code pieces:
+#### Inputs
+
+| Input | Default | What it does |
+| --- | --- | --- |
+| `repo` | `""` | Map a different project: `owner/repo` or a GitHub URL. Leave blank to map the checked-out one. |
+| `path` | `.` | Folder in the workspace to map, used when `repo` is blank. |
+| `ref` | `""` | Branch or tag to map, used with `repo`. Blank means the default branch. |
+| `out` | `.r2g` | Where the map is written. |
+| `formats` | `jsonl,graphml,cypher,overview,html` | Which files to write. Drop the ones you do not need to save time. |
+| `git-history` | `0` | Commits to read for CO_CHANGE arrows. `0` skips it. Needs `fetch-depth: 0`. |
+| `include` | `""` | Space-separated globs to keep, e.g. `"src/**"`. |
+| `exclude` | `""` | Space-separated globs to skip, e.g. `"**/test/** vendor/**"`. |
+| `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
+| `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
+| `token` | `""` | Token that can read `repo` when the target is private. |
+| `version` | `git+…@v1` | Version spec passed to pip. Only used if the action folder has no source next to it. |
+
+#### Outputs
+
+| Output | What it holds |
+| --- | --- |
+| `out` | The output folder: `human/` (`overview.md`, `graph.html`, …) and `agent/` (`chunks.jsonl`, …). |
+| `nodes` | How many dots the map has. |
+| `edges` | How many arrows. |
+| `chunks` | How many code pieces were cut. |
+
+The action also writes the first 40 lines of `overview.md` into the job summary page, so the map
+shows up in the run without downloading anything.
+
+#### Permissions
+
+Reading is enough for the default setup. `commit-branch` pushes a branch, so that one needs write:
+
+```yaml
+permissions:
+  contents: write
+```
+
+#### A whole workflow
+
+`.github/workflows/self-index.yml` is the copy this project runs on itself, on every push to
+`main` and once a week:
+
+```yaml
+name: Index this repository
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Srinivasan-78/repo2graph@v1
+        with:
+          path: .
+          git-history: "500"
+          artifact-name: repo-graph
+          commit-branch: graph   # drop this line to only publish an artifact
+```
+
+With `commit-branch: graph`, an AI pipeline can always grab an up-to-date copy of the code pieces
+with one request:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/srinivasan-78/repo2graph/graph/agent/chunks.jsonl -o chunks.jsonl
+curl -sL https://raw.githubusercontent.com/Srinivasan-78/repo2graph/graph/agent/chunks.jsonl -o chunks.jsonl
 ```
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).

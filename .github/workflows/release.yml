@@ -1,0 +1,39 @@
+name: Release
+
+# Publishing a release with tag `vX.Y.Z` moves the floating `vX` tag, so
+# consumers can pin `uses: Srinivasan-78/repo2graph@v1` and keep getting fixes.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to re-point the major tag at, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Move the major tag
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "Tag '$TAG' is not of the form vX.Y.Z"; exit 1 ;;
+          esac
+          major="${TAG%%.*}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "$major" "$TAG"
+          git push -f origin "refs/tags/$major"
+          echo "Moved $major to $TAG" >> "$GITHUB_STEP_SUMMARY"
