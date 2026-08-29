@@ -1,0 +1,20 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​‌‌​‌​​​‌‌‌​‌‌​‌‌​‌​‌‌​‌​‌‌​‌‌​‌‌‌​​‌​​‌‌​​​‌​‌‌​​​​‌‌‌​‌‌‌​‌​‌​‌‌​​​‌‌​​‌​​‌‌​‌​​‌​‌‌​‌​‌​​‌‌‌​‌​​​​‌‌​‌‌‌​​‌‌​‌​​​​‌‌​‌​​​‌‌​​‌​​​‌​​‌‌‌‌​‌​‌​​​​​‌​‌​‌​​​‌​‌​​‌​​‌‌​‌‌​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.SGmknLXwV2ijt744dOPTRl
+name: authormark
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify authorship watermarks are intact
+        run: node .authormark/authormark.mjs check --presence .
