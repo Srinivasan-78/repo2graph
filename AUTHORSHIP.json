@@ -1,0 +1,127 @@
+{
+  "schema": "authormark/manifest/1",
+  "author": "Srinivasan Vijayaraghavan",
+  "email": "srinivasan.shyam2000@gmail.com",
+  "github": "https://github.com/Srinivasan-78",
+  "sealedAt": "2026-08-29T13:21:27.275Z",
+  "fileCount": 23,
+  "digest": "e048febd8dec93162a06f8d5e2513c998b3267112249d6d3aa495b74e246e710",
+  "proof": "b48195bb3017d135a2b2331041cd2de6ec6d6c0633b6b65f826e690c31f9ebb7",
+  "files": [
+    {
+      "path": ".github/workflows/authormark.yml",
+      "sha256": "b5cab2b0d7b18cd416758ec39f9677144704f615095f279d00e6f47ed2164e11",
+      "bytes": 1138
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "d100d26e149b5d7d0080500cd229f19f269355ba7bdc7b4acabd45975aa6b6ea",
+      "bytes": 2247
+    },
+    {
+      "path": ".github/workflows/index-repo.yml",
+      "sha256": "4c25f67fd7010f38784a64ddd9dc3191345b7e8fa4e69e7a969a5431930cf718",
+      "bytes": 4663
+    },
+    {
+      "path": ".github/workflows/release.yml",
+      "sha256": "1638b3084acb46ade9ae1c9546f0733036c92f0f5caf7669f4af9da79148732d",
+      "bytes": 2123
+    },
+    {
+      "path": ".github/workflows/self-index.yml",
+      "sha256": "9bd2106f39ae45598dbb524bd6256d4d7d7b55c7f7f99f60d905608c47f04518",
+      "bytes": 1432
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "6f4bb78900bf58971b266a4df35ff4137cd210494cc71089ecc7f3feb6130012",
+      "bytes": 1511
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "a4f80ec424ce2382e519318c7cdbc38276dc8575a452e566c67f21c1eb0ca882",
+      "bytes": 822
+    },
+    {
+      "path": "README.md",
+      "sha256": "8ab36835775bae3bd87ff0062d6b2ec5878b05419e0a7b0e5d69edb6e40e012d",
+      "bytes": 18845
+    },
+    {
+      "path": "action.yml",
+      "sha256": "5c755f570d02571443d6b4fd8e7083a873ac8bda19fe17dd7cb813e09b2fb5b4",
+      "bytes": 6361
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "553141ab15cb993ec16dd6d17490767291b70450072b3ba2f523dee344f8044c",
+      "bytes": 1352
+    },
+    {
+      "path": "repo2graph/__init__.py",
+      "sha256": "524bccac7951a0d63caf42c577e20d8133bb2c76961c2f0a4fc263ff5ab4c607",
+      "bytes": 963
+    },
+    {
+      "path": "repo2graph/chunks.py",
+      "sha256": "beab228725ffd7176b7b6ff6800cf15a0be50aeb2dbd295a27c0cf78b45d9c5b",
+      "bytes": 6691
+    },
+    {
+      "path": "repo2graph/cli.py",
+      "sha256": "597198e43d1f6c1d0d728bfe8cd1a39578514bd88efe6fb4d4886c77960b7748",
+      "bytes": 7203
+    },
+    {
+      "path": "repo2graph/export.py",
+      "sha256": "7ebceb17aac545dacd1d4824a2d139723c26545602478afe7add998513d37a4f",
+      "bytes": 21151
+    },
+    {
+      "path": "repo2graph/fetch.py",
+      "sha256": "884c1f167bba6ab1ee64911a103ef1298a64a2652d23712bd8de113b5c6fdbcd",
+      "bytes": 4536
+    },
+    {
+      "path": "repo2graph/graph.py",
+      "sha256": "7fa404d4b0d60403e1fe361288265ca37af45372737e78bb21d103de7f3e7451",
+      "bytes": 16058
+    },
+    {
+      "path": "repo2graph/langs.py",
+      "sha256": "00e12f695412c38671276865a7b68b277e9ce6e8c1b29d2a9eef5488a5b3e59f",
+      "bytes": 6169
+    },
+    {
+      "path": "repo2graph/layout.py",
+      "sha256": "f6d7c33224525c78af286373712eaf93f2855b88f494d382a2bd7b07b488c3d5",
+      "bytes": 2533
+    },
+    {
+      "path": "repo2graph/parse.py",
+      "sha256": "239dd818cff80fd60b377117656711ce6777818de752ea02a8513ffee5fead08",
+      "bytes": 9586
+    },
+    {
+      "path": "repo2graph/query.py",
+      "sha256": "ebb15355074e865588c41881d565681945b112a981ed7b2880b46c1e6a85092f",
+      "bytes": 5645
+    },
+    {
+      "path": "repo2graph/viz.py",
+      "sha256": "0748dc812b1d05f6d4bb33ecbc2c31ec9e73bbd7566e742c43b2cdaa55120d91",
+      "bytes": 24442
+    },
+    {
+      "path": "repo2graph/walker.py",
+      "sha256": "cba3ebcfc4874c1727d040b9e24096ce285189e1088818eedfb64359484b9610",
+      "bytes": 4843
+    },
+    {
+      "path": "tests/test_repo2graph.py",
+      "sha256": "24c1efa2c0a171f3d822850a4f639332fba8c6405c0a36352d130ece3538ee5e",
+      "bytes": 21555
+    }
+  ]
+}

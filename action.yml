@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌​​​‌​​‌​‌‌​‌‌‌​​‌​​‌​​‌‌​‌​‌​‌​‌‌‌​‌​​‌‌‌‌​‌​‌​‌​​​​‌​‌‌​‌​‌​‌​​​‌​‌​‌​‌​‌​‌​‌​‌‌‌​‌​‌​​​​​‌‌‌​‌‌‌​‌​‌​‌‌‌​​‌‌​​​​​​‌‌‌​​​​‌‌​​​‌‌​‌​​​‌​‌​​‌‌‌​​‌​‌​​‌‌​‌​‌‌​‌‌​​​​‌‌‌​​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.TKrMWOT-QUWPwW08cE9Ml8
 name: repo2graph
 description: Build a code graph and graph-aware RAG chunks for a repository
 author: Srinivasan-78

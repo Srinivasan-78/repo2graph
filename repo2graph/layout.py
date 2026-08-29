@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​‌​‌‌‌​​‌‌​​‌‌​‌‌‌​‌‌‌​‌‌​​‌‌​‌​​‌​‌‌‌‌​​​​‌​​​‌​‌​​‌‌​‌‌‌​‌‌‌​​‌​​‌‌‌​​​‌​‌​​​‌​‌​‌​‌​‌​‌​‌​‌​​​‌​‌​‌​​​​​​‌‌​​​‌​‌​​‌​‌‌​‌​​‌​‌‌​‌​​‌‌​‌​‌‌‌​​‌​​‌​​​‌​​​‌​​​‌‌‌​​‌‌​‌‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.Ys7vixE7rqEUQP1KKMrDG6
 """Where each artifact lands inside the output directory.
 
 The output is split in two: `human/` holds what a person opens — the prose map,
