@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌‌​‌​​‌‌​​‌​​​‌‌‌​​​​​‌‌​‌‌​​​‌​​​‌​​​‌​‌‌​​‌​​‌‌​‌​‌​‌‌​​​‌‌​‌‌​‌​‌​​‌​‌‌‌‌‌​​‌‌​​​​​‌‌​‌‌‌‌​‌​​‌‌​‌​‌​‌‌‌‌‌​‌‌‌​‌‌​​‌​‌‌​‌​​‌​‌​​‌​​‌​​​‌‌​​‌‌‌‌​‌​​‌‌​‌​‌​​‌‌‌‌​​​​‌​​‌​‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.zdplDY5cj_0oM_vZRFzjxK
+# Fingerprint: AMK1.9dZTVVmTVd7w95HGye3vt5
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
 import json
 import math
@@ -83,13 +83,19 @@ class Index:
         seen, frontier, order = set(seed_nodes), list(seed_nodes), []
         for _ in range(hops):
             nxt = []
+            # The cap is per hop, not per frontier node: breaking only the inner
+            # loop let each later frontier node add another 60 edges after the
+            # budget was already spent.
+            cap = per_hop * len(frontier)
             for nid in frontier:
+                if len(nxt) >= cap:
+                    break
                 for dst, etype, direction in self.adj.get(nid, [])[:60]:
                     if etype in edge_types and dst not in seen:
                         seen.add(dst)
                         nxt.append(dst)
                         order.append((dst, etype, direction, nid))
-                        if len(nxt) >= per_hop * len(frontier):
+                        if len(nxt) >= cap:
                             break
             frontier = nxt
         return order

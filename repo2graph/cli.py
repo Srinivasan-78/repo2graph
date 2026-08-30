@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌‌​​​‌‌‌​‌‌​​‌‌​‌​‌‌​‌​​‌‌‌​​‌​​​​​‌​‌​‌‌​​​​‌‌​‌​‌‌​‌‌​​​​‌​‌​​‌‌​‌​‌​‌‌​​​​‌‌​‌‌‌​​‌‌​‌​‌‌​‌​​‌​‌‌​‌​​​​‌‌​‌​​​‌‌​​‌‌​​​‌‌​‌​​​‌‌​​‌‌‌‌​​​​‌​‌​​‌​​‌‌​‌​‌​​​‌‌​‌​‌​‌‌​‌‌‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.LvkNAXkaMXnkKCFcFxRj5o
+# Fingerprint: AMK1.fiIfsnUsnmQ0uPwuhZ-WrZ
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 import argparse
 import json
@@ -55,14 +55,29 @@ def cmd_github(args):
 def _require_index(out: Path, name: str) -> Path:
     path = artifact_path(out, name)
     if not path.exists():
+        # A directory holding some artifacts but not this one is a different
+        # problem from an empty one: the build ran, it just did not write the
+        # jsonl format. Say which, so the fix is not a guess.
+        partial = out.exists() and any(out.rglob("*.jsonl"))
+        if partial:
+            raise SystemExit(
+                f"index at {out} has no {name}: rebuild with "
+                f"`repo2graph build <repo> -o {out} --formats jsonl`"
+            )
         raise SystemExit(f"no index at {out}: run `repo2graph build <repo> -o {out}` first")
     return path
 
 
 def cmd_query(args):
     from .query import Index, format_pack
-    _require_index(Path(args.out), "chunks.jsonl")
-    idx = Index(Path(args.out))
+    out = Path(args.out)
+    # Index reads all three, and `build --formats overview` writes chunks.jsonl
+    # without the graph files -- checking only chunks turned that combination
+    # into a FileNotFoundError traceback instead of this message.
+    _require_index(out, "chunks.jsonl")
+    _require_index(out, "nodes.jsonl")
+    _require_index(out, "edges.jsonl")
+    idx = Index(out)
     res = idx.retrieve(args.query, k=args.k, hops=args.hops, budget_chars=args.budget)
     if args.json:
         print(json.dumps(res, indent=2))
