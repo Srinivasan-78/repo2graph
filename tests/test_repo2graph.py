@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​​​​‌​‌​​‌‌​‌​​​​​‌​​‌‌‌​​​​‌​​‌‌‌​​‌‌​​‌‌‌​‌‌‌​​‌​​​‌‌​‌‌‌​‌‌​​​​‌​‌​‌​​​‌​​‌‌‌​​​​‌​​​​‌​​‌​​‌​‌‌​‌‌​​​​‌​‌​​‌​‌‌​‌‌​​‌‌‌​​‌‌​​​‌​‌‌​​‌‌‌​‌‌​​​​‌​​‌‌​​‌​​‌‌​​​​‌​‌​​‌​‌‌⁠
+# @authormark v1 -- do not remove (authorship watermark)
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.PSA8Ngr7aQ8BKaKg1ga2aK
+# Fingerprint: AMK1.zNqhSl10aJsYzMOOMFttoV
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
@@ -332,6 +332,19 @@ def test_query_without_an_index_exits_cleanly(tmp_path):
         main(["query", "anything", "-o", str(tmp_path / "missing")])
     with pytest.raises(SystemExit):
         main(["stats", "-o", str(tmp_path / "missing")])
+
+
+def test_query_on_a_partial_index_exits_cleanly(tmp_path, sample_repo):
+    """A build that excludes the jsonl format still writes chunks.jsonl but no
+    nodes/edges. Querying that used to raise FileNotFoundError out of Index,
+    because the pre-flight check only looked at chunks.jsonl."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "overview"])
+    assert artifact_path(out, "chunks.jsonl").exists()
+    assert not artifact_path(out, "nodes.jsonl").exists()
+    with pytest.raises(SystemExit) as exc:
+        main(["query", "anything", "-o", str(out)])
+    assert "nodes.jsonl" in str(exc.value)
 
 
 def test_score_unknown_term_returns_nothing(tmp_path, sample_repo):
