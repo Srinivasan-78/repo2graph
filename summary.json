@@ -1,0 +1,32 @@
+{
+  "out": ".r2g",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/graph.graphml",
+    "agent/graph.cypher",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/manifest.json"
+  ],
+  "stats": {
+    "files": 32,
+    "edge:CONTAINS": 37,
+    "parsed": 14,
+    "parse_errors": 0,
+    "symbol:function": 191,
+    "edge:DEFINES": 196,
+    "edge:IMPORTS": 86,
+    "symbol:class": 5,
+    "edge:CALLS_EXTERNAL": 721,
+    "edge:CALLS": 268,
+    "edge:CO_CHANGE": 45,
+    "entrypoints": 74,
+    "nodes": 436,
+    "edges": 1353
+  },
+  "chunks": 247
+}

@@ -1,0 +1,280 @@
+{
+  "format": "repo2graph/1",
+  "repo": "repo2graph",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/graph.graphml",
+    "agent/graph.cypher",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, one per symbol (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.cypher": "idempotent MERGE script for Neo4j / Memgraph",
+    "graph.graphml": "the graph with a layout and yFiles node graphics, for yEd, Gephi, NetworkX or igraph",
+    "graph.html": "the interactive map, for a person in a browser",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "files": 32,
+    "edge:CONTAINS": 37,
+    "parsed": 14,
+    "parse_errors": 0,
+    "symbol:function": 191,
+    "edge:DEFINES": 196,
+    "edge:IMPORTS": 86,
+    "symbol:class": 5,
+    "edge:CALLS_EXTERNAL": 721,
+    "edge:CALLS": 268,
+    "edge:CO_CHANGE": 45,
+    "entrypoints": 74,
+    "nodes": 436,
+    "edges": 1353
+  },
+  "entrypoints": [
+    {
+      "id": "sym:repo2graph/cli.py::cmd_github",
+      "path": "repo2graph/cli.py",
+      "qualname": "cmd_github",
+      "kind": "function",
+      "reach": 72
+    },
+    {
+      "id": "sym:repo2graph/cli.py::cmd_build",
+      "path": "repo2graph/cli.py",
+      "qualname": "cmd_build",
+      "kind": "function",
+      "reach": 65
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_cochange_edges_from_git_history",
+      "kind": "function",
+      "reach": 34
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_inherits_edges_for_non_python",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_inherits_edges_for_non_python",
+      "kind": "function",
+      "reach": 34
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::sample_graph",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "sample_graph",
+      "kind": "function",
+      "reach": 33
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_max_files_limit",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_max_files_limit",
+      "kind": "function",
+      "reach": 33
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdImage",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdImage",
+      "kind": "function",
+      "reach": 24
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdStamp",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdStamp",
+      "kind": "function",
+      "reach": 19
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdScan",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdScan",
+      "kind": "function",
+      "reach": 18
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdCheck",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdCheck",
+      "kind": "function",
+      "reach": 14
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_parse_bases_are_names_not_keywords",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_parse_bases_are_names_not_keywords",
+      "kind": "function",
+      "reach": 12
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_parse_extracts_symbols_calls_and_imports",
+      "kind": "function",
+      "reach": 12
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_parse_records_docstring_and_parent",
+      "kind": "function",
+      "reach": 12
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_parse_survives_deep_nesting",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_parse_survives_deep_nesting",
+      "kind": "function",
+      "reach": 12
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_parse_unknown_language_is_empty",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_parse_unknown_language_is_empty",
+      "kind": "function",
+      "reach": 12
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdSeal",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdSeal",
+      "kind": "function",
+      "reach": 11
+    },
+    {
+      "id": "sym:repo2graph/cli.py::cmd_map",
+      "path": "repo2graph/cli.py",
+      "qualname": "cmd_map",
+      "kind": "function",
+      "reach": 11
+    },
+    {
+      "id": "sym:repo2graph/cli.py::cmd_query",
+      "path": "repo2graph/cli.py",
+      "qualname": "cmd_query",
+      "kind": "function",
+      "reach": 8
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_discover_finds_non_ascii_filenames",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_discover_finds_non_ascii_filenames",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_discover_include_exclude",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_discover_include_exclude",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_discover_skips_binary_and_vendored",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_discover_skips_binary_and_vendored",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_double_star_spans_zero_directories",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_double_star_spans_zero_directories",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_index_retrieves_and_expands",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators",
+      "path": "tests/test_repo2graph.py",
+      "qualname": "test_index_survives_unicode_line_separators",
+      "kind": "function",
+      "reach": 7
+    },
+    {
+      "id": "sym:.authormark/authormark.mjs::cmdVerify",
+      "path": ".authormark/authormark.mjs",
+      "qualname": "cmdVerify",
+      "kind": "function",
+      "reach": 6
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}

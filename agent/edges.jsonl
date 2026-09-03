@@ -1,0 +1,1353 @@
+{"src": "repo:repo2graph", "dst": "file:.authormark.json", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "dir:.authormark", "type": "CONTAINS"}
+{"src": "dir:.authormark", "dst": "file:.authormark/authormark.mjs", "type": "CONTAINS"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::isHeaderLine", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::styleFor", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::keyPath", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::canonical", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::fingerprint", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::headerLines", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::renderHeader", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::splitHeader", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::insertIndex", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::zwEncode", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::zwDecode", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::walk", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::ignored", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::collect", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdInit", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdStamp", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdCheck", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdSeal", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdVerify", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdScan", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::crc32", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::pngChunks", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::pngSerialize", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::unfilter", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::unpackBits", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::decodePng", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::encodePng", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::lsbEmbed", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::lsbExtract", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::textMask", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::drawText", "type": "DEFINES"}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "sym:.authormark/authormark.mjs::drawText.at", "type": "DEFINES"}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "sym:.authormark/authormark.mjs::drawText.blend", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::buildExif", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::app", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::jpegStamp", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::esc", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdImage", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::scanPng", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::scanJpeg", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::cmdHook", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::flag", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::positional", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::tryGit", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::log", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::warn", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "sym:.authormark/authormark.mjs::die", "type": "DEFINES"}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:fs", "type": "IMPORTS", "target": "node:fs", "internal": false}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:path", "type": "IMPORTS", "target": "node:path", "internal": false}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:zlib", "type": "IMPORTS", "target": "node:zlib", "internal": false}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:crypto", "type": "IMPORTS", "target": "node:crypto", "internal": false}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:os", "type": "IMPORTS", "target": "node:os", "internal": false}
+{"src": "file:.authormark/authormark.mjs", "dst": "module:node:child_process", "type": "IMPORTS", "target": "node:child_process", "internal": false}
+{"src": "repo:repo2graph", "dst": "dir:.github", "type": "CONTAINS"}
+{"src": "dir:.github", "dst": "file:.github/CONTRIBUTING.md", "type": "CONTAINS"}
+{"src": "dir:.github", "dst": "file:.github/SECURITY.md", "type": "CONTAINS"}
+{"src": "dir:.github", "dst": "file:.github/dependabot.yml", "type": "CONTAINS"}
+{"src": "dir:.github", "dst": "dir:.github/workflows", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/authormark.yml", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/ci.yml", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/dependabot-automerge.yml", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/index-repo.yml", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/release.yml", "type": "CONTAINS"}
+{"src": "dir:.github/workflows", "dst": "file:.github/workflows/self-index.yml", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:.gitignore", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:AGENTS.md", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:AUTHORSHIP.json", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:CLAUDE.md", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:LICENSE", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:README.md", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:action.yml", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "file:pyproject.toml", "type": "CONTAINS"}
+{"src": "repo:repo2graph", "dst": "dir:repo2graph", "type": "CONTAINS"}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/__init__.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/__init__.py", "dst": "file:repo2graph/graph.py", "type": "IMPORTS", "target": ".graph", "internal": true}
+{"src": "file:repo2graph/__init__.py", "dst": "file:repo2graph/chunks.py", "type": "IMPORTS", "target": ".chunks", "internal": true}
+{"src": "file:repo2graph/__init__.py", "dst": "file:repo2graph/viz.py", "type": "IMPORTS", "target": ".viz", "internal": true}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/chunks.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/chunks.py", "dst": "sym:repo2graph/chunks.py::_split", "type": "DEFINES"}
+{"src": "file:repo2graph/chunks.py", "dst": "sym:repo2graph/chunks.py::_conf", "type": "DEFINES"}
+{"src": "file:repo2graph/chunks.py", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "DEFINES"}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::build_chunks.source_of", "type": "DEFINES"}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::build_chunks.label", "type": "DEFINES"}
+{"src": "file:repo2graph/chunks.py", "dst": "module:collections", "type": "IMPORTS", "target": "collections", "internal": false}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/cli.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::parse_formats", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::cmd_build", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::cmd_github", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::_require_index", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::cmd_query", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::cmd_map", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::cmd_stats", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "sym:repo2graph/cli.py::main", "type": "DEFINES"}
+{"src": "file:repo2graph/cli.py", "dst": "module:argparse", "type": "IMPORTS", "target": "argparse", "internal": false}
+{"src": "file:repo2graph/cli.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:repo2graph/cli.py", "dst": "module:sys", "type": "IMPORTS", "target": "sys", "internal": false}
+{"src": "file:repo2graph/cli.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/chunks.py", "type": "IMPORTS", "target": ".chunks", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/export.py", "type": "IMPORTS", "target": ".export", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/graph.py", "type": "IMPORTS", "target": ".graph", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": ".layout", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/viz.py", "type": "IMPORTS", "target": ".viz", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/fetch.py", "type": "IMPORTS", "target": ".fetch", "internal": true}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/query.py", "type": "IMPORTS", "target": ".query", "internal": true}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/export.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_flat", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::write_jsonl", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_grid_pairs", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_spring", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_shelf", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_layout", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_node_size", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_separate", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_graphml_label", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::write_graphml", "type": "DEFINES"}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::write_graphml.key_for", "type": "DEFINES"}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::write_graphml.add_data", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::_cy", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::write_cypher", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::write_overview", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::write_manifest", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "sym:repo2graph/export.py::dump_all", "type": "DEFINES"}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::dump_all.out", "type": "DEFINES"}
+{"src": "file:repo2graph/export.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": ".layout", "internal": true}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/viz.py", "type": "IMPORTS", "target": ".viz", "internal": true}
+{"src": "file:repo2graph/export.py", "dst": "module:collections", "type": "IMPORTS", "target": "collections", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "module:math", "type": "IMPORTS", "target": "math", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "module:random", "type": "IMPORTS", "target": "random", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "module:xml.etree.ElementTree", "type": "IMPORTS", "target": "xml.etree.ElementTree", "internal": false}
+{"src": "file:repo2graph/export.py", "dst": "module:networkx", "type": "IMPORTS", "target": "networkx", "internal": false}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/fetch.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/fetch.py", "dst": "sym:repo2graph/fetch.py::parse_spec", "type": "DEFINES"}
+{"src": "file:repo2graph/fetch.py", "dst": "sym:repo2graph/fetch.py::clone", "type": "DEFINES"}
+{"src": "file:repo2graph/fetch.py", "dst": "sym:repo2graph/fetch.py::head_sha", "type": "DEFINES"}
+{"src": "file:repo2graph/fetch.py", "dst": "sym:repo2graph/fetch.py::index_github", "type": "DEFINES"}
+{"src": "file:repo2graph/fetch.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:os", "type": "IMPORTS", "target": "os", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:re", "type": "IMPORTS", "target": "re", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:shutil", "type": "IMPORTS", "target": "shutil", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:subprocess", "type": "IMPORTS", "target": "subprocess", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:tempfile", "type": "IMPORTS", "target": "tempfile", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/chunks.py", "type": "IMPORTS", "target": ".chunks", "internal": true}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/export.py", "type": "IMPORTS", "target": ".export", "internal": true}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/graph.py", "type": "IMPORTS", "target": ".graph", "internal": true}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": ".layout", "internal": true}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/graph.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::Graph", "type": "DEFINES"}
+{"src": "sym:repo2graph/graph.py::Graph", "dst": "sym:repo2graph/graph.py::Graph.__init__", "type": "DEFINES"}
+{"src": "sym:repo2graph/graph.py::Graph", "dst": "sym:repo2graph/graph.py::Graph.add_node", "type": "DEFINES"}
+{"src": "sym:repo2graph/graph.py::Graph", "dst": "sym:repo2graph/graph.py::Graph.add_edge", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::import_targets", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::path_index", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::repo_context", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::_read_and_parse", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::resolve_jobs", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::parse_all", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::build", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::mark_entrypoints", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::_reach", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "sym:repo2graph/graph.py::add_cochange", "type": "DEFINES"}
+{"src": "file:repo2graph/graph.py", "dst": "module:itertools", "type": "IMPORTS", "target": "itertools", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "module:os", "type": "IMPORTS", "target": "os", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "module:re", "type": "IMPORTS", "target": "re", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "module:subprocess", "type": "IMPORTS", "target": "subprocess", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "module:collections", "type": "IMPORTS", "target": "collections", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/langs.py", "type": "IMPORTS", "target": ".langs", "internal": true}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/parse.py", "type": "IMPORTS", "target": ".parse", "internal": true}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/walker.py", "type": "IMPORTS", "target": ".walker", "internal": true}
+{"src": "file:repo2graph/graph.py", "dst": "module:concurrent.futures", "type": "IMPORTS", "target": "concurrent.futures", "internal": false}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/langs.py", "type": "CONTAINS"}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/layout.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::rels", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::rel", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::path", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::paths", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::make_path", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "sym:repo2graph/layout.py::make_paths", "type": "DEFINES"}
+{"src": "file:repo2graph/layout.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/parse.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::parser_for", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::Symbol", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::ParsedFile", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_text", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_name_of", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_callee_name", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_docstring", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_signature", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_clean_base", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_base_clauses", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::_bases", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "sym:repo2graph/parse.py::parse_source", "type": "DEFINES"}
+{"src": "file:repo2graph/parse.py", "dst": "module:dataclasses", "type": "IMPORTS", "target": "dataclasses", "internal": false}
+{"src": "file:repo2graph/parse.py", "dst": "module:functools", "type": "IMPORTS", "target": "functools", "internal": false}
+{"src": "file:repo2graph/parse.py", "dst": "file:repo2graph/langs.py", "type": "IMPORTS", "target": ".langs", "internal": true}
+{"src": "file:repo2graph/parse.py", "dst": "module:tree_sitter_language_pack", "type": "IMPORTS", "target": "tree_sitter_language_pack", "internal": false}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/query.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/query.py", "dst": "sym:repo2graph/query.py::read_jsonl", "type": "DEFINES"}
+{"src": "file:repo2graph/query.py", "dst": "sym:repo2graph/query.py::tokenize", "type": "DEFINES"}
+{"src": "file:repo2graph/query.py", "dst": "sym:repo2graph/query.py::Index", "type": "DEFINES"}
+{"src": "sym:repo2graph/query.py::Index", "dst": "sym:repo2graph/query.py::Index.__init__", "type": "DEFINES"}
+{"src": "sym:repo2graph/query.py::Index", "dst": "sym:repo2graph/query.py::Index.score", "type": "DEFINES"}
+{"src": "sym:repo2graph/query.py::Index", "dst": "sym:repo2graph/query.py::Index.expand", "type": "DEFINES"}
+{"src": "sym:repo2graph/query.py::Index", "dst": "sym:repo2graph/query.py::Index.retrieve", "type": "DEFINES"}
+{"src": "file:repo2graph/query.py", "dst": "sym:repo2graph/query.py::format_pack", "type": "DEFINES"}
+{"src": "file:repo2graph/query.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:repo2graph/query.py", "dst": "module:math", "type": "IMPORTS", "target": "math", "internal": false}
+{"src": "file:repo2graph/query.py", "dst": "module:re", "type": "IMPORTS", "target": "re", "internal": false}
+{"src": "file:repo2graph/query.py", "dst": "module:collections", "type": "IMPORTS", "target": "collections", "internal": false}
+{"src": "file:repo2graph/query.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/query.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": ".layout", "internal": true}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/viz.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::_trim", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::node_label", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::select", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::payload", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::write_html", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "sym:repo2graph/viz.py::LoadedGraph", "type": "DEFINES"}
+{"src": "sym:repo2graph/viz.py::LoadedGraph", "dst": "sym:repo2graph/viz.py::LoadedGraph.__init__", "type": "DEFINES"}
+{"src": "file:repo2graph/viz.py", "dst": "module:html", "type": "IMPORTS", "target": "html", "internal": false}
+{"src": "file:repo2graph/viz.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:repo2graph/viz.py", "dst": "module:collections", "type": "IMPORTS", "target": "collections", "internal": false}
+{"src": "file:repo2graph/viz.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "file:repo2graph/viz.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": ".layout", "internal": true}
+{"src": "file:repo2graph/viz.py", "dst": "file:repo2graph/query.py", "type": "IMPORTS", "target": ".query", "internal": true}
+{"src": "dir:repo2graph", "dst": "file:repo2graph/walker.py", "type": "CONTAINS"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::_git_files", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::_walk_files", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::_glob_re", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::matches_any", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::is_binary", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "sym:repo2graph/walker.py::discover", "type": "DEFINES"}
+{"src": "file:repo2graph/walker.py", "dst": "module:os", "type": "IMPORTS", "target": "os", "internal": false}
+{"src": "file:repo2graph/walker.py", "dst": "module:re", "type": "IMPORTS", "target": "re", "internal": false}
+{"src": "file:repo2graph/walker.py", "dst": "module:stat", "type": "IMPORTS", "target": "stat", "internal": false}
+{"src": "file:repo2graph/walker.py", "dst": "module:subprocess", "type": "IMPORTS", "target": "subprocess", "internal": false}
+{"src": "file:repo2graph/walker.py", "dst": "module:functools", "type": "IMPORTS", "target": "functools", "internal": false}
+{"src": "file:repo2graph/walker.py", "dst": "module:pathlib", "type": "IMPORTS", "target": "pathlib", "internal": false}
+{"src": "repo:repo2graph", "dst": "dir:tests", "type": "CONTAINS"}
+{"src": "dir:tests", "dst": "file:tests/test_repo2graph.py", "type": "CONTAINS"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::sample_repo", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::sample_graph", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::edges_of", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_discover_skips_binary_and_vendored", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_discover_include_exclude", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_double_star_spans_zero_directories", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_glob_patterns", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_discover_finds_non_ascii_filenames", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_bases_are_names_not_keywords", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_inherits_edges_for_non_python", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_survives_deep_nesting", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_unknown_language_is_empty", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_import_targets_python", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_resolve_import_relative_and_absolute", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_resolve_import_keeps_dot_directories", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_resolve_import_is_deterministic_across_duplicates", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_resolve_import_javascript_relative", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_resolve_import_go_uses_module_path", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_build_nodes_and_containment", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_build_edges", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_build_file_types_and_stats", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_max_files_limit", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_edges_are_deduplicated", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_split_terminates_on_one_huge_line", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_chunks_carry_graph_context", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_chunks_cover_docs_and_residual_code", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_chunk_ids_are_unique", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_tokenize_splits_identifiers", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_query_without_an_index_exits_cleanly", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_query_on_a_partial_index_exits_cleanly", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_score_unknown_term_returns_nothing", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_parse_formats_rejects_unknown", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_no_chunks_flag", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_cypher_output_is_quoted", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_overview_lists_hubs", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_build_writes_html_map", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_html_map_data_is_self_contained", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_select_keeps_the_best_connected_nodes", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_map_command_needs_an_index", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_loaded_graph_round_trips", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_html_escapes_a_script_tag_in_the_source", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "sym:tests/test_repo2graph.py::test_node_label_truncates", "type": "DEFINES"}
+{"src": "file:tests/test_repo2graph.py", "dst": "module:re", "type": "IMPORTS", "target": "re", "internal": false}
+{"src": "file:tests/test_repo2graph.py", "dst": "module:json", "type": "IMPORTS", "target": "json", "internal": false}
+{"src": "file:tests/test_repo2graph.py", "dst": "module:subprocess", "type": "IMPORTS", "target": "subprocess", "internal": false}
+{"src": "file:tests/test_repo2graph.py", "dst": "module:pytest", "type": "IMPORTS", "target": "pytest", "internal": false}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/chunks.py", "type": "IMPORTS", "target": "repo2graph.chunks", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/cli.py", "type": "IMPORTS", "target": "repo2graph.cli", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/graph.py", "type": "IMPORTS", "target": "repo2graph.graph", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/layout.py", "type": "IMPORTS", "target": "repo2graph.layout", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/parse.py", "type": "IMPORTS", "target": "repo2graph.parse", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/query.py", "type": "IMPORTS", "target": "repo2graph.query", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/viz.py", "type": "IMPORTS", "target": "repo2graph.viz", "internal": true}
+{"src": "file:tests/test_repo2graph.py", "dst": "file:repo2graph/walker.py", "type": "IMPORTS", "target": "repo2graph.walker", "internal": true}
+{"src": "sym:.authormark/authormark.mjs::isHeaderLine", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::styleFor", "dst": "external:basename", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::styleFor", "dst": "external:extname", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadConfig", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadConfig", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadConfig", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::loadConfig", "dst": "external:parse", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadConfig", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::keyPath", "dst": "external:homedir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadKey", "dst": "sym:.authormark/authormark.mjs::keyPath", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::loadKey", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadKey", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::loadKey", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::loadKey", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::canonical", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:.authormark/authormark.mjs::fingerprint", "dst": "external:createHmac", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::fingerprint", "dst": "sym:.authormark/authormark.mjs::canonical", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::headerLines", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::renderHeader", "dst": "sym:.authormark/authormark.mjs::headerLines", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::renderHeader", "dst": "sym:.authormark/authormark.mjs::zwEncode", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::renderHeader", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::splitHeader", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::splitHeader", "dst": "external:findIndex", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::splitHeader", "dst": "external:/^\\s", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::splitHeader", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::splitHeader", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:.authormark/authormark.mjs::insertIndex", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::insertIndex", "dst": "external:findIndex", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::insertIndex", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::insertIndex", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::insertIndex", "dst": "external:/^\\s", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::zwEncode", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::zwEncode", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::zwEncode", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:RegExp", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:exec", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:parseInt", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::zwDecode", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:statSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:isFile", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:extname", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:has", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:basename", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:readdirSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "sym:.authormark/authormark.mjs::walk", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::walk", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:some", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:has", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::ignored", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "external:Set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "sym:.authormark/authormark.mjs::warn", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "sym:.authormark/authormark.mjs::walk", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "external:relative", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "sym:.authormark/authormark.mjs::ignored", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::collect", "dst": "external:sort", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "sym:.authormark/authormark.mjs::flag", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "sym:.authormark/authormark.mjs::tryGit", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:new Date", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:Date", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:writeFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:stringify", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "sym:.authormark/authormark.mjs::keyPath", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdInit", "dst": "external:randomBytes", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::flag", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::collect", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::styleFor", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::splitHeader", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::fingerprint", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::renderHeader", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::insertIndex", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "external:writeFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdStamp", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::keyPath", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::flag", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:execFileSync", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:extname", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:has", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:basename", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::ignored", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::collect", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::splitHeader", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:match", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::fingerprint", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:error", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "external:exit", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdCheck", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::flag", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::collect", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:createHash", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:new Date", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:Date", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:createHmac", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:writeFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "external:stringify", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdSeal", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 5, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:parse", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:createHash", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:createHmac", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:error", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdVerify", "dst": "external:exit", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::keyPath", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 6, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:extname", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::scanPng", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::scanJpeg", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::splitHeader", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:trim", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "external:match", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::fingerprint", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdScan", "dst": "sym:.authormark/authormark.mjs::zwDecode", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::pngChunks", "dst": "external:readUInt32BE", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::pngChunks", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::pngChunks", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::pngChunks", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::pngChunks", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "external:writeUInt32BE", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "sym:.authormark/authormark.mjs::crc32", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::pngSerialize", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::unfilter", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::unfilter", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::unfilter", "dst": "external:abs", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::unfilter", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::unpackBits", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "sym:.authormark/authormark.mjs::pngChunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:find", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:readUInt32BE", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:inflateSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:filter", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:ceil", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "sym:.authormark/authormark.mjs::unfilter", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "sym:.authormark/authormark.mjs::unpackBits", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::decodePng", "dst": "external:round", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:writeUInt32BE", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "external:deflateSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::encodePng", "dst": "sym:.authormark/authormark.mjs::pngSerialize", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:writeUInt16BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:writeUInt32BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "sym:.authormark/authormark.mjs::crc32", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:ceil", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbEmbed", "dst": "external:floor", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:floor", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:Set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:readUInt16BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:readUInt32BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "sym:.authormark/authormark.mjs::crc32", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::lsbExtract", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::textMask", "dst": "external:toUpperCase", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::textMask", "dst": "external:Uint8Array", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::textMask", "dst": "external:forEach", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "sym:.authormark/authormark.mjs::textMask", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "external:floor", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "sym:.authormark/authormark.mjs::drawText.at", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::drawText", "dst": "sym:.authormark/authormark.mjs::drawText.blend", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::drawText.blend", "dst": "external:round", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::drawText.blend", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:write", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:writeUInt16LE", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:writeUInt32LE", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:forEach", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:copy", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::buildExif", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::app", "dst": "external:alloc", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::app", "dst": "external:writeUInt16BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::app", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::app", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:readUInt16BE", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "sym:.authormark/authormark.mjs::buildExif", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "sym:.authormark/authormark.mjs::esc", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "external:concat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::jpegStamp", "dst": "sym:.authormark/authormark.mjs::app", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::esc", "dst": "external:String", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::loadConfig", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::loadKey", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::positional", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::flag", "type": "CALLS", "count": 5, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:Number", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:extname", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:writeFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::jpegStamp", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::warn", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::decodePng", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:round", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::textMask", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::drawText", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:from", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:stringify", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:new Date", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:Date", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:createHmac", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "external:basename", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::lsbEmbed", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdImage", "dst": "sym:.authormark/authormark.mjs::encodePng", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "sym:.authormark/authormark.mjs::decodePng", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "sym:.authormark/authormark.mjs::pngChunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "external:indexOf", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "external:slice", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "sym:.authormark/authormark.mjs::lsbExtract", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanPng", "dst": "external:forEach", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:readUInt16BE", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:subarray", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:toString", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:match", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:test", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::scanJpeg", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:existsSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "sym:.authormark/authormark.mjs::die", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:resolve", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:readFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:appendFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::cmdHook", "dst": "external:writeFileSync", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::flag", "dst": "external:indexOf", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::flag", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::positional", "dst": "external:startsWith", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::positional", "dst": "external:includes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::positional", "dst": "external:push", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::tryGit", "dst": "external:execFileSync", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:.authormark/authormark.mjs::log", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:.authormark/authormark.mjs::warn", "dst": "external:error", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::die", "dst": "external:error", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:.authormark/authormark.mjs::die", "dst": "external:exit", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::_split", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/chunks.py::_split", "dst": "external:splitlines", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::_split", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/chunks.py::_split", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::_split", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::_conf", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 13}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::build_chunks.source_of", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:splitlines", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 11}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::build_chunks.label", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::_conf", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:zip", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 10}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:enumerate", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "sym:repo2graph/chunks.py::_split", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:bool", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/chunks.py::build_chunks.label", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:SystemExit", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::parse_formats", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "sym:repo2graph/cli.py::parse_formats", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "sym:repo2graph/export.py::dump_all", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:print", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_build", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_github", "dst": "sym:repo2graph/cli.py::parse_formats", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_github", "dst": "sym:repo2graph/fetch.py::index_github", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_github", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_github", "dst": "external:print", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_github", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::_require_index", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::_require_index", "dst": "external:exists", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::_require_index", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::_require_index", "dst": "external:rglob", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::_require_index", "dst": "external:SystemExit", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "sym:repo2graph/cli.py::_require_index", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "sym:repo2graph/query.py::Index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "sym:repo2graph/query.py::Index.retrieve", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "external:print", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_query", "dst": "sym:repo2graph/query.py::format_pack", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "sym:repo2graph/cli.py::_require_index", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "sym:repo2graph/layout.py::make_path", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "sym:repo2graph/viz.py::write_html", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "sym:repo2graph/viz.py::LoadedGraph", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "external:print", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_map", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/cli.py::cmd_stats", "dst": "external:print", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::cmd_stats", "dst": "sym:repo2graph/cli.py::_require_index", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/cli.py::cmd_stats", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:ArgumentParser", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:add_subparsers", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:add_parser", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:add_argument", "type": "CALLS_EXTERNAL", "count": 32}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:set_defaults", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:parse_args", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/cli.py::main", "dst": "external:func", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_flat", "dst": "external:isinstance", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_flat", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_flat", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_jsonl", "dst": "external:open", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_jsonl", "dst": "external:write", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_jsonl", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:cells[", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:int", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_grid_pairs", "dst": "external:enumerate", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:Random", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:uniform", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:sqrt", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "sym:repo2graph/export.py::_grid_pairs", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:hypot", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_spring", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_shelf", "dst": "external:sum", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_shelf", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::_shelf", "dst": "external:sqrt", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "sym:repo2graph/export.py::_shelf", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:to_undirected", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "sym:repo2graph/export.py::_spring", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:sum", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_layout", "dst": "sym:repo2graph/export.py::_separate", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::_node_size", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_node_size", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_node_size", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "sym:repo2graph/export.py::_grid_pairs", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::_separate", "dst": "external:abs", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_graphml_label", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::_graphml_label", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_graphml_label", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_graphml_label", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:MultiDiGraph", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/graph.py::Graph.add_node", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::_flat", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/graph.py::Graph.add_edge", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:degree", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::_graphml_label", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::_node_size", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::_layout", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:register_namespace", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:Element", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:nodes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:SubElement", "type": "CALLS_EXTERNAL", "count": 14}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::write_graphml.add_data", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "sym:repo2graph/export.py::write_graphml.key_for", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:edges", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:findall", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:indent", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml", "dst": "external:ElementTree", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_graphml.key_for", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml.key_for", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml.key_for", "dst": "external:isinstance", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_graphml.key_for", "dst": "external:SubElement", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml.add_data", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml.add_data", "dst": "external:SubElement", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_graphml.add_data", "dst": "sym:repo2graph/export.py::write_graphml.key_for", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_graphml.add_data", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::_cy", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::_cy", "dst": "external:isinstance", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "external:capitalize", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "sym:repo2graph/export.py::_cy", "type": "CALLS", "count": 5, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_cypher", "dst": "external:write_text", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:most_common", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_overview", "dst": "external:write_text", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:write_text", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::write_manifest", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::write_jsonl", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::dump_all.out", "type": "CALLS", "count": 10, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::write_graphml", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::write_cypher", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::write_overview", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:write_text", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:read_text", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/viz.py::write_html", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "sym:repo2graph/export.py::write_manifest", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all.out", "dst": "external:extend", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/export.py::dump_all.out", "dst": "sym:repo2graph/layout.py::rels", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/export.py::dump_all.out", "dst": "sym:repo2graph/layout.py::make_paths", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::parse_spec", "dst": "external:match", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::parse_spec", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::parse_spec", "dst": "external:ValueError", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::parse_spec", "dst": "external:group", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "sym:repo2graph/fetch.py::parse_spec", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/fetch.py::clone", "dst": "external:RuntimeError", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::head_sha", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::head_sha", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::head_sha", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/fetch.py::parse_spec", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:mkdtemp", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/fetch.py::clone", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/fetch.py::head_sha", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/export.py::dump_all", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "sym:repo2graph/layout.py::make_path", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/fetch.py::index_github", "dst": "external:rmtree", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.__init__", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.__init__", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_node", "dst": "external:update", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_node", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_node", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_edge", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_edge", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::Graph.add_edge", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::import_targets", "dst": "external:match", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::import_targets", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/graph.py::import_targets", "dst": "external:group", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/graph.py::import_targets", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::import_targets", "dst": "external:finditer", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::path_index", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::path_index", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::path_index", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::path_index", "dst": "external:as_posix", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::path_index", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "sym:repo2graph/graph.py::path_index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:lstrip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:as_posix", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:sub", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:endswith", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:target[len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_import", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::repo_context", "dst": "external:exists", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::repo_context", "dst": "external:read_text", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::repo_context", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::repo_context", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::_read_and_parse", "dst": "external:read_bytes", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_read_and_parse", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_read_and_parse", "dst": "external:count", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_read_and_parse", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::resolve_jobs", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_jobs", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::resolve_jobs", "dst": "external:cpu_count", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:lower", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "sym:repo2graph/graph.py::_read_and_parse", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:ProcessPoolExecutor", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:map", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::parse_all", "dst": "external:max", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::Graph", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::Graph.add_node", "type": "CALLS", "count": 6, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/walker.py::discover", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::repo_context", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:update", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::path_index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::parse_all", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::resolve_jobs", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:lstrip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::Graph.add_edge", "type": "CALLS", "count": 9, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::import_targets", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:round", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::build", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::add_cochange", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::build", "dst": "sym:repo2graph/graph.py::mark_entrypoints", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:sort", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/graph.py::mark_entrypoints", "dst": "sym:repo2graph/graph.py::_reach", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/graph.py::_reach", "dst": "external:pop", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_reach", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_reach", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::_reach", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:splitlines", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:combinations", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/graph.py::add_cochange", "dst": "sym:repo2graph/graph.py::Graph.add_edge", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::rel", "dst": "sym:repo2graph/layout.py::rels", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::path", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/layout.py::path", "dst": "sym:repo2graph/layout.py::rel", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::paths", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/layout.py::paths", "dst": "sym:repo2graph/layout.py::rels", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::make_path", "dst": "sym:repo2graph/layout.py::path", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::make_path", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/layout.py::make_paths", "dst": "sym:repo2graph/layout.py::paths", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/layout.py::make_paths", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::parser_for", "dst": "external:_get_parser", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::Symbol", "dst": "external:field", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::_text", "dst": "external:decode", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_name_of", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/parse.py::_name_of", "dst": "sym:repo2graph/parse.py::_text", "type": "CALLS", "count": 6, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_callee_name", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/parse.py::_callee_name", "dst": "sym:repo2graph/parse.py::_text", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_callee_name", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/parse.py::_callee_name", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_docstring", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_docstring", "dst": "sym:repo2graph/parse.py::_text", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_docstring", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_docstring", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::_docstring", "dst": "external:reversed", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_signature", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_signature", "dst": "external:min", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_signature", "dst": "external:decode", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::_clean_base", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/parse.py::_clean_base", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "sym:repo2graph/parse.py::_text", "type": "CALLS", "count": 5, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "sym:repo2graph/parse.py::_base_clauses", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "sym:repo2graph/parse.py::_clean_base", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::_bases", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::parser_for", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::ParsedFile", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:parse", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:pop", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_text", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_callee_name", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_name_of", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:child_by_field_name", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::Symbol", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_signature", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_docstring", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "sym:repo2graph/parse.py::_bases", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/parse.py::parse_source", "dst": "external:reversed", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::read_jsonl", "dst": "external:open", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::read_jsonl", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::read_jsonl", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::tokenize", "dst": "external:findall", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::tokenize", "dst": "external:lower", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::tokenize", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::tokenize", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::tokenize", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "sym:repo2graph/query.py::read_jsonl", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:enumerate", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "sym:repo2graph/query.py::tokenize", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:sum", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:update", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:keys", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.__init__", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "sym:repo2graph/query.py::tokenize", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "external:defaultdict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "sym:.authormark/authormark.mjs::log", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.score", "dst": "external:sort", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:list", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:add", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.expand", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "sym:repo2graph/query.py::Index.score", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "external:round", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "sym:repo2graph/query.py::Index.expand", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/query.py::Index.retrieve", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/query.py::format_pack", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/query.py::format_pack", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::_trim", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::_trim", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::_trim", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::node_label", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/viz.py::node_label", "dst": "sym:repo2graph/viz.py::_trim", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:values", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::select", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "sym:repo2graph/viz.py::select", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:enumerate", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:Counter", "type": "CALLS_EXTERNAL", "count": 5}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "sym:repo2graph/viz.py::node_label", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "sym:repo2graph/viz.py::_trim", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::payload", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "sym:repo2graph/viz.py::payload", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "external:dumps", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "external:escape", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::write_html", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "sym:repo2graph/query.py::read_jsonl", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:exists", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:read_text", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:removeprefix", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/viz.py::LoadedGraph.__init__", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/walker.py::_git_files", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_git_files", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_git_files", "dst": "external:decode", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/walker.py::_walk_files", "dst": "sym:.authormark/authormark.mjs::walk", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/walker.py::_walk_files", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_walk_files", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_walk_files", "dst": "external:Path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:strip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:append", "type": "CALLS_EXTERNAL", "count": 7}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:find", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:escape", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:replace", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:compile", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::_glob_re", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::matches_any", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::matches_any", "dst": "sym:repo2graph/walker.py::_glob_re", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/walker.py::is_binary", "dst": "external:open", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::is_binary", "dst": "external:read", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:resolve", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "sym:repo2graph/walker.py::_git_files", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "sym:repo2graph/walker.py::_walk_files", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:relative_to", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:lstat", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:S_ISREG", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "external:as_posix", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "sym:repo2graph/walker.py::matches_any", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:repo2graph/walker.py::discover", "dst": "sym:repo2graph/walker.py::is_binary", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::sample_repo", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::sample_graph", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_discover_skips_binary_and_vendored", "dst": "sym:repo2graph/walker.py::discover", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_discover_include_exclude", "dst": "sym:repo2graph/walker.py::discover", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_discover_include_exclude", "dst": "external:all", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_discover_include_exclude", "dst": "external:endswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_double_star_spans_zero_directories", "dst": "sym:repo2graph/walker.py::discover", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_glob_patterns", "dst": "sym:repo2graph/walker.py::matches_any", "type": "CALLS", "count": 5, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_discover_finds_non_ascii_filenames", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_discover_finds_non_ascii_filenames", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_discover_finds_non_ascii_filenames", "dst": "sym:repo2graph/walker.py::discover", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports", "dst": "external:encode", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports", "dst": "external:next", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_extracts_symbols_calls_and_imports", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_bases_are_names_not_keywords", "dst": "external:next", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_bases_are_names_not_keywords", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_inherits_edges_for_non_python", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_inherits_edges_for_non_python", "dst": "sym:tests/test_repo2graph.py::edges_of", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent", "dst": "external:encode", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent", "dst": "external:next", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_parse_records_docstring_and_parent", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_survives_deep_nesting", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_parse_survives_deep_nesting", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_unknown_language_is_empty", "dst": "sym:repo2graph/parse.py::parse_source", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_import_targets_python", "dst": "sym:repo2graph/graph.py::import_targets", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_relative_and_absolute", "dst": "sym:repo2graph/graph.py::path_index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_relative_and_absolute", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_keeps_dot_directories", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_is_deterministic_across_duplicates", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_is_deterministic_across_duplicates", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_javascript_relative", "dst": "sym:repo2graph/graph.py::path_index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_javascript_relative", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_go_uses_module_path", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_go_uses_module_path", "dst": "sym:repo2graph/graph.py::path_index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_resolve_import_go_uses_module_path", "dst": "sym:repo2graph/graph.py::resolve_import", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_build_nodes_and_containment", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_build_nodes_and_containment", "dst": "sym:tests/test_repo2graph.py::edges_of", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_build_edges", "dst": "sym:tests/test_repo2graph.py::edges_of", "type": "CALLS", "count": 4, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_build_file_types_and_stats", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_max_files_limit", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_edges_are_deduplicated", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_edges_are_deduplicated", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "dst": "external:run", "type": "CALLS_EXTERNAL", "count": 6}
+{"src": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "dst": "sym:repo2graph/graph.py::build", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_cochange_edges_from_git_history", "dst": "sym:tests/test_repo2graph.py::edges_of", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "dst": "external:join", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "dst": "external:range", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "dst": "sym:repo2graph/chunks.py::_split", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_split_respects_size_and_overlaps", "dst": "external:all", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_split_terminates_on_one_huge_line", "dst": "sym:repo2graph/chunks.py::_split", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_carry_graph_context", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_carry_graph_context", "dst": "external:next", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_carry_graph_context", "dst": "external:startswith", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_cover_docs_and_residual_code", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_cover_docs_and_residual_code", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_cover_docs_and_residual_code", "dst": "external:all", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunk_ids_are_unique", "dst": "sym:repo2graph/chunks.py::build_chunks", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_chunk_ids_are_unique", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_tokenize_splits_identifiers", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_tokenize_splits_identifiers", "dst": "sym:repo2graph/query.py::tokenize", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "dst": "sym:repo2graph/query.py::Index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "dst": "sym:repo2graph/query.py::Index.retrieve", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_retrieves_and_expands", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "sym:repo2graph/query.py::Index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "sym:repo2graph/query.py::Index.score", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_score_matches_bruteforce", "dst": "sym:repo2graph/query.py::tokenize", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "dst": "sym:repo2graph/query.py::Index", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_index_survives_unicode_line_separators", "dst": "sym:repo2graph/query.py::Index.retrieve", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_query_without_an_index_exits_cleanly", "dst": "external:raises", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_query_without_an_index_exits_cleanly", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_query_without_an_index_exits_cleanly", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_query_on_a_partial_index_exits_cleanly", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_query_on_a_partial_index_exits_cleanly", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:tests/test_repo2graph.py::test_query_on_a_partial_index_exits_cleanly", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 4}
+{"src": "sym:tests/test_repo2graph.py::test_query_on_a_partial_index_exits_cleanly", "dst": "external:raises", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_score_unknown_term_returns_nothing", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_score_unknown_term_returns_nothing", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_score_unknown_term_returns_nothing", "dst": "sym:repo2graph/query.py::Index", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_formats_rejects_unknown", "dst": "sym:repo2graph/cli.py::parse_formats", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_parse_formats_rejects_unknown", "dst": "external:raises", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_all_artifacts", "dst": "external:readouterr", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "external:sorted", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "external:iterdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_output_is_split_into_human_and_agent_sections", "dst": "external:readouterr", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "external:items", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_entrypoints_are_marked_and_ranked", "dst": "external:get", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_manifest_describes_the_agent_output", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_chunks_separate_in_repo_and_external_calls", "dst": "external:next", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_no_chunks_flag", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_no_chunks_flag", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_no_chunks_flag", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_cypher_output_is_quoted", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_cypher_output_is_quoted", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_cypher_output_is_quoted", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "dst": "external:importorskip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "dst": "external:read_graphml", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_is_loadable", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:importorskip", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:findall", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_graphml_carries_yfiles_layout", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_overview_lists_hubs", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_overview_lists_hubs", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_overview_lists_hubs", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_html_map", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_html_map", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_build_writes_html_map", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_html_map_data_is_self_contained", "dst": "sym:repo2graph/viz.py::payload", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_html_map_data_is_self_contained", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_html_map_data_is_self_contained", "dst": "external:set", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_html_map_data_is_self_contained", "dst": "external:dict", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "external:split", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_viz_nodes_caps_the_drawing", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_select_keeps_the_best_connected_nodes", "dst": "sym:repo2graph/viz.py::select", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_select_keeps_the_best_connected_nodes", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_select_keeps_the_best_connected_nodes", "dst": "external:all", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 2, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 3}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "dst": "external:readouterr", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_redraws_from_a_built_index", "dst": "external:loads", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_needs_an_index", "dst": "external:raises", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_needs_an_index", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_map_command_needs_an_index", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_loaded_graph_round_trips", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_loaded_graph_round_trips", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_loaded_graph_round_trips", "dst": "sym:repo2graph/viz.py::LoadedGraph", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_loaded_graph_round_trips", "dst": "external:any", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_html_escapes_a_script_tag_in_the_source", "dst": "external:mkdir", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_html_escapes_a_script_tag_in_the_source", "dst": "sym:repo2graph/cli.py::main", "type": "CALLS", "count": 1, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_html_escapes_a_script_tag_in_the_source", "dst": "external:str", "type": "CALLS_EXTERNAL", "count": 2}
+{"src": "sym:tests/test_repo2graph.py::test_html_escapes_a_script_tag_in_the_source", "dst": "external:artifact_path", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "sym:tests/test_repo2graph.py::test_node_label_truncates", "dst": "sym:repo2graph/viz.py::node_label", "type": "CALLS", "count": 3, "confidence": 1.0}
+{"src": "sym:tests/test_repo2graph.py::test_node_label_truncates", "dst": "external:len", "type": "CALLS_EXTERNAL", "count": 1}
+{"src": "file:.github/workflows/index-repo.yml", "dst": "file:action.yml", "type": "CO_CHANGE", "count": 5}
+{"src": "file:.github/workflows/ci.yml", "dst": "file:.github/workflows/index-repo.yml", "type": "CO_CHANGE", "count": 3}
+{"src": "file:.github/workflows/ci.yml", "dst": "file:.github/workflows/release.yml", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/query.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/cli.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:repo2graph/query.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:README.md", "dst": "file:action.yml", "type": "CO_CHANGE", "count": 4}
+{"src": "file:.github/workflows/index-repo.yml", "dst": "file:repo2graph/cli.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:.github/workflows/index-repo.yml", "dst": "file:repo2graph/export.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:.github/workflows/index-repo.yml", "dst": "file:repo2graph/fetch.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:.github/workflows/index-repo.yml", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:README.md", "dst": "file:repo2graph/cli.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:README.md", "dst": "file:repo2graph/export.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:README.md", "dst": "file:repo2graph/fetch.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:README.md", "dst": "file:repo2graph/graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:README.md", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:action.yml", "dst": "file:repo2graph/cli.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:action.yml", "dst": "file:repo2graph/export.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:action.yml", "dst": "file:repo2graph/fetch.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:action.yml", "dst": "file:repo2graph/graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:action.yml", "dst": "file:repo2graph/query.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:action.yml", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/chunks.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/export.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/fetch.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/fetch.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/query.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/export.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 5}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/query.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/fetch.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 4}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/query.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/graph.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/viz.py", "dst": "file:tests/test_repo2graph.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/parse.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/cli.py", "dst": "file:repo2graph/walker.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/parse.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/export.py", "dst": "file:repo2graph/walker.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/parse.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/fetch.py", "dst": "file:repo2graph/walker.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/parse.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/graph.py", "dst": "file:repo2graph/walker.py", "type": "CO_CHANGE", "count": 3}
+{"src": "file:repo2graph/parse.py", "dst": "file:repo2graph/walker.py", "type": "CO_CHANGE", "count": 3}
