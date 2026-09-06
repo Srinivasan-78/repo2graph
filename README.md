@@ -77,6 +77,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e .
 ```
 
+*Note: `repo2graph` builds and exports graphs with zero external graph libraries (pure Python degree computation, layout, and GraphML generation without NetworkX).*
+
 Now the command lives at `.venv/bin/repo2graph`. If you run `source .venv/bin/activate` first, you
 can type just `repo2graph`.
 

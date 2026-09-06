@@ -136,9 +136,9 @@ def _shelf(nodes, sizes, pad: float = 24.0):
 SPRING_MAX_NODES = 1500
 
 
-def _layout(G, sizes):
+def _layout(g, sizes):
     """Node positions in points, spread so labels do not collide."""
-    nodes = list(G)
+    nodes = list(g.nodes)
     n = len(nodes)
     if n == 0:
         return {}
@@ -146,7 +146,15 @@ def _layout(G, sizes):
         return {nodes[0]: (0.0, 0.0)}
     if n > SPRING_MAX_NODES:
         return _shelf(nodes, sizes)
-    adjacency = [(u, v) for u, v in G.to_undirected().edges() if u != v]
+    seen = set()
+    adjacency = []
+    for e in g.edges:
+        u, v = e["src"], e["dst"]
+        if u != v:
+            key = (u, v) if u < v else (v, u)
+            if key not in seen:
+                seen.add(key)
+                adjacency.append((u, v))
     pos = _spring(nodes, adjacency, 120 if n <= 400 else 50)
     # Scale the unit layout so the median node box fits between neighbours.
     span = max(sum(w for w, _ in sizes.values()) / n * 2.0, 160.0) * (n ** 0.5)
@@ -213,23 +221,15 @@ def _graphml_label(n: dict) -> str:
 
 
 def write_graphml(g, path: Path):
+    from collections import Counter
     import xml.etree.ElementTree as ET
-
-    import networkx as nx
 
     from .viz import NODE_COLORS, OTHER_COLOR
 
-    G = nx.MultiDiGraph()
-    for nid, n in g.nodes.items():
-        G.add_node(nid, **_flat(n))
-    for e in g.edges:
-        attrs = _flat({k: v for k, v in e.items() if k not in ("src", "dst")})
-        G.add_edge(e["src"], e["dst"], **attrs)
-
-    degree = dict(G.degree())
+    degree = Counter(e["src"] for e in g.edges) + Counter(e["dst"] for e in g.edges)
     labels = {nid: _graphml_label(n) for nid, n in g.nodes.items()}
-    sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in G}
-    pos = _layout(G, sizes)
+    sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in g.nodes}
+    pos = _layout(g, sizes)
 
     ET.register_namespace("", GRAPHML_NS)
     ET.register_namespace("y", Y_NS)
@@ -259,7 +259,8 @@ def write_graphml(g, path: Path):
                                  {"key": key_for(scope, name, value)})
             data.text = "true" if value is True else "false" if value is False else str(value)
 
-    for nid, attrs in G.nodes(data=True):
+    for nid, n in g.nodes.items():
+        attrs = _flat(n)
         node = ET.SubElement(graph, f"{{{GRAPHML_NS}}}node", {"id": nid})
         add_data(node, "node", attrs)
         label = labels[nid]
@@ -283,7 +284,9 @@ def write_graphml(g, path: Path):
         ET.SubElement(shape, f"{{{Y_NS}}}Shape", {
             "type": "ellipse" if attrs.get("type") == "symbol" else "roundrectangle"})
 
-    for src, dst, attrs in G.edges(data=True):
+    for e in g.edges:
+        src, dst = e["src"], e["dst"]
+        attrs = _flat({k: v for k, v in e.items() if k not in ("src", "dst")})
         edge = ET.SubElement(graph, f"{{{GRAPHML_NS}}}edge",
                              {"source": src, "target": dst})
         add_data(edge, "edge", attrs)
@@ -308,7 +311,6 @@ def write_graphml(g, path: Path):
     root.append(graph)
     ET.indent(root, space="  ")
     ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
-    return G
 
 
 def _cy(v):
