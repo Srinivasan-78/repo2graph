@@ -20,4 +20,4 @@ jobs:
         with:
           node-version: '20'
       - name: Verify authorship watermarks are intact
-        run: node .authormark/authormark.mjs check --presence .
+        uses: Srinivasan-78/authormark-watch@main

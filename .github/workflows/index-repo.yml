@@ -42,59 +42,24 @@ jobs:
       - name: Check out repo2graph
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install repo2graph
-        run: pip install -e .
-
-      - name: Build the graph
-        id: build
-        # Inputs go through the environment, never straight into the script:
-        # ${{ }} is substituted before bash sees it, so an input containing shell
-        # metacharacters would otherwise execute.
-        env:
-          # Needed only for private targets; the default token can read this repo's org
-          GH_TOKEN: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
-          R2G_REPO: ${{ inputs.repo }}
-          R2G_REF: ${{ inputs.ref }}
-          R2G_HISTORY: ${{ inputs.git_history }}
-          R2G_FORMATS: ${{ inputs.formats }}
-          R2G_EXCLUDE: ${{ inputs.exclude }}
+      - name: Compute slug
+        id: slug
         run: |
-          set -euo pipefail
-          slug="$(printf '%s' "$R2G_REPO" | sed -E 's#.*github\.com[:/]##; s#\.git/?$##; s#/#__#g')"
+          slug="$(printf '%s' "${{ inputs.repo }}" | sed -E 's#.*github\.com[:/]##; s#\.git/?$##; s#/#__#g')"
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
-          mkdir -p "out/$slug"
-          args=(github "$R2G_REPO" -o "out/$slug"
-                --git-history "$R2G_HISTORY"
-                --formats "$R2G_FORMATS")
-          if [ -n "$R2G_REF" ]; then args+=(--ref "$R2G_REF"); fi
-          # read -a splits on spaces without letting bash expand the globs
-          if [ -n "$R2G_EXCLUDE" ]; then
-            read -r -a exc <<< "$R2G_EXCLUDE"
-            args+=(--exclude "${exc[@]}")
-          fi
-          repo2graph "${args[@]}" | tee "out/$slug/summary.json"
-          {
-            echo "### Graph for \`$R2G_REPO\`"
-            echo
-            echo '```json'
-            jq 'del(.stats)' "out/$slug/summary.json"
-            echo '```'
-            echo
-            # overview.md only exists when 'overview' is one of the formats
-            if [ -f "out/$slug/human/overview.md" ]; then sed -n '1,40p' "out/$slug/human/overview.md"; fi
-          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload graph artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - name: Build graph
+        id: build
+        uses: ./
         with:
-          name: graph-${{ steps.build.outputs.slug }}
-          path: out/${{ steps.build.outputs.slug }}
-          retention-days: 30
+          repo: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          out: out/${{ steps.slug.outputs.slug }}
+          git-history: ${{ inputs.git_history }}
+          formats: ${{ inputs.formats }}
+          exclude: ${{ inputs.exclude }}
+          artifact-name: graph-${{ steps.slug.outputs.slug }}
+          token: ${{ secrets.TARGET_REPO_TOKEN || github.token }}
 
       - name: Attach graph to a release
         if: ${{ inputs.publish_release }}
