@@ -66,7 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           R2G_REPO: ${{ inputs.repo }}
-          R2G_SLUG: ${{ steps.build.outputs.slug }}
+          R2G_SLUG: ${{ steps.slug.outputs.slug }}
         run: |
           set -euo pipefail
           slug="$R2G_SLUG"
