@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​​‌​‌‌‌​‌​‌​​‌‌​‌​‌​‌​‌​‌‌‌​‌‌‌​‌‌​​​‌‌​‌‌​​‌‌‌​​‌​​​‌‌​‌​​​‌​​‌​‌‌​‌‌‌​‌​‌​‌​​​​‌‌​‌‌​‌​‌‌​‌​​‌​​‌​‌‌‌​​​‌​‌‌​​‌​‌​‌​‌​​​​​‌​‌​‌​‌​​‌‌​​‌​​​‌​‌‌​‌​‌​‌​​​​​‌​​‌‌‌‌​​‌‌​‌​​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.zNqhSl10aJsYzMOOMFttoV
+# Fingerprint: AMK1.Iu5Wv6r4KuCkIqePU2-PO4
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
@@ -319,7 +319,9 @@ def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
     """U+2028 is a line break for splitlines() but not for JSON; it must not
     split a chunk record in half."""
     (sample_repo / "pkg" / "sep.py").write_text(
-        'MSG = "a\u2028b\u2029c\u0085d"\n\n\ndef uses_sep():\n    return MSG\n')
+        'MSG = "a\u2028b\u2029c\u0085d"\n\n\ndef uses_sep():\n    return MSG\n',
+        encoding="utf-8",
+    )
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
     idx = Index(out)
