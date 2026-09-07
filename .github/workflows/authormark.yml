@@ -20,4 +20,4 @@ jobs:
         with:
           node-version: '20'
       - name: Verify authorship watermarks are intact
-        uses: Srinivasan-78/authormark-watch@main
+        uses: Srinivasan-78/authormark-watch@a9ec3a6a6a1047eca6fd2bada07ec27643ed632e  # main
