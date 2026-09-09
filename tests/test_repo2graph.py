@@ -1183,3 +1183,35 @@ def test_iss21_cochange_commits_skipped_counter(monkeypatch):
     add_cochange(g, Path("."), 1, set(files))
     assert g.stats["cochange_commits_skipped"] == 1
 
+
+def test_iss23_write_jsonl_always_uses_lf_newlines(tmp_path):
+    """Issue 23 (ISS-28): write_jsonl writes LF newlines on all platforms, including Windows."""
+    from repo2graph.export import write_jsonl
+    p = tmp_path / "test.jsonl"
+    write_jsonl(p, [{"a": 1}, {"b": 2}])
+    raw = p.read_bytes()
+    assert b"\r\n" not in raw
+    assert raw.count(b"\n") == 2
+
+
+def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
+    """Issue 23 (SH-4): write_graphml applies _xml_safe to node id and edge endpoints."""
+    import xml.etree.ElementTree as ET
+    from repo2graph.export import write_graphml
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    # Node id with C0 control character \x0c (form feed)
+    nid_bad = "sym:bad\x0cname"
+    g.add_node(nid_bad, type="symbol", name="bad", path="x.py", qualname="bad")
+    g.add_node("sym:good", type="symbol", name="good", path="x.py", qualname="good")
+    g.add_edge(nid_bad, "sym:good", "CALLS")
+
+    out = tmp_path / "graph.graphml"
+    write_graphml(g, out)
+
+    # Must parse without XML ParseError
+    ET.parse(out)
+    # Confirm no \x0c character remains in XML
+    assert "\x0c" not in out.read_text(encoding="utf-8")
+

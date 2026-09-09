@@ -5,10 +5,14 @@
 # Fingerprint: AMK1.0kr4VP4shTZykev18YiqII
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 import json
+import math
+import random
+import xml.etree.ElementTree as ET
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from .layout import AGENT_DIR, HUMAN_DIR, make_paths, rels
-from .viz import MAX_NODES, write_html
+from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
 
 SCALAR = (str, int, float, bool)
 
@@ -19,7 +23,8 @@ def _flat(d: dict) -> dict:
 
 
 def write_jsonl(path: Path, rows):
-    with open(path, "w", encoding="utf8") as fh:
+    # ISS-28: newline="\n" so Windows does not write \r\r\n
+    with open(path, "w", encoding="utf8", newline="\n") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
 
@@ -44,7 +49,6 @@ def _grid_pairs(pos, cell):
     unordered pair is yielded once: only four of the eight neighbouring cells
     are scanned, the other four see the pair from their own side.
     """
-    from collections import defaultdict
     cells = defaultdict(list)
     for nid, (x, y) in pos.items():
         cells[(int(x // cell), int(y // cell))].append(nid)
@@ -65,8 +69,6 @@ def _spring(nodes, adjacency, iterations):
     Past that distance the k^2/d term moves a node by a rounding error, while
     the all-pairs form costs O(n^2) per iteration and dominates big exports.
     """
-    import math
-    import random
     n = len(nodes)
     rng = random.Random(17)
     pos = {nid: [rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)] for nid in nodes}
@@ -114,7 +116,6 @@ def _shelf(nodes, sizes, pad: float = 24.0):
     Rows are filled in node order, which keeps a file next to the symbols it
     defines, and boxes cannot overlap, so no separation pass is needed.
     """
-    import math
     area = sum((sizes[nid][0] + pad) * (sizes[nid][1] + pad) for nid in nodes)
     row_width = max(math.sqrt(area * 1.6),
                     max(sizes[nid][0] for nid in nodes) + pad)
@@ -232,17 +233,11 @@ def _xml_safe(text: str) -> str:
 
 
 def _graphml_label(n: dict) -> str:
-    text = n.get("qualname") or n.get("name") or n.get("path") or n["id"]
-    text = " ".join(str(text).split())
-    return text if len(text) <= LABEL_CHARS else text[: LABEL_CHARS - 1] + "\u2026"
+    # ISS-29: reuse shared node_label logic from viz
+    return node_label(n)
 
 
 def write_graphml(g, path: Path):
-    from collections import Counter
-    import xml.etree.ElementTree as ET
-
-    from .viz import NODE_COLORS, OTHER_COLOR
-
     degree = Counter(e["src"] for e in g.edges) + Counter(e["dst"] for e in g.edges)
     labels = {nid: _graphml_label(n) for nid, n in g.nodes.items()}
     sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in g.nodes}
@@ -267,8 +262,9 @@ def write_graphml(g, path: Path):
                 "id": ident, "for": scope, "attr.name": name, "attr.type": kind})
         return ident
 
+    # SH-4: apply _xml_safe to graph, node and edge id/source/target attributes
     graph = ET.Element(f"{{{GRAPHML_NS}}}graph",
-                       {"id": str(g.name), "edgedefault": "directed"})
+                       {"id": _xml_safe(str(g.name)), "edgedefault": "directed"})
 
     def add_data(parent, scope: str, attrs: dict):
         for name, value in attrs.items():
@@ -279,7 +275,7 @@ def write_graphml(g, path: Path):
 
     for nid, n in g.nodes.items():
         attrs = _flat(n)
-        node = ET.SubElement(graph, f"{{{GRAPHML_NS}}}node", {"id": nid})
+        node = ET.SubElement(graph, f"{{{GRAPHML_NS}}}node", {"id": _xml_safe(nid)})
         add_data(node, "node", attrs)
         label = labels[nid]
         x, y = pos.get(nid, (0.0, 0.0))
@@ -306,7 +302,7 @@ def write_graphml(g, path: Path):
         src, dst = e["src"], e["dst"]
         attrs = _flat({k: v for k, v in e.items() if k not in ("src", "dst")})
         edge = ET.SubElement(graph, f"{{{GRAPHML_NS}}}edge",
-                             {"source": src, "target": dst})
+                             {"source": _xml_safe(src), "target": _xml_safe(dst)})
         add_data(edge, "edge", attrs)
         gfx = ET.SubElement(edge, f"{{{GRAPHML_NS}}}data",
                             {"key": key_for("edge", "edgegraphics", "")})
@@ -353,7 +349,6 @@ def write_cypher(g, path: Path):
 
 def write_overview(g, path: Path, top: int = 25):
     """Human/LLM-readable repo map: top directories, hub files, entry points."""
-    from collections import Counter
     indeg, outdeg = Counter(), Counter()
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
@@ -408,7 +403,7 @@ ID_GRAMMAR = {
 FILE_NOTES = {
     "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
     "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
-    "chunks.jsonl": "retrieval chunks, one per symbol (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
     "graph.cypher": "idempotent MERGE script for Neo4j / Memgraph",
     "stats.json": "node, edge and symbol counts, parse errors, entrypoint count",
     "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
