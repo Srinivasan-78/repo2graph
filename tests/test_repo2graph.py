@@ -915,3 +915,59 @@ def test_iss45_ci_workflow_tests_job_covers_windows():
     assert "windows-latest" in tests_job
     assert "ubuntu-latest" in tests_job
     assert '"3.10"' in tests_job and '"3.12"' in tests_job
+
+
+def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
+    """Issue 26 (NC-4, NC-5): GIT_TERMINAL_PROMPT is 0 unconditionally, and
+    GIT_CONFIG_COUNT preserves inherited count."""
+    from repo2graph.fetch import _auth_env
+    env_empty = _auth_env(None)
+    assert env_empty.get("GIT_TERMINAL_PROMPT") == "0"
+    assert "GIT_CONFIG_KEY_0" not in env_empty
+
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "2")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "foo.bar")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "val")
+    env_with_token = _auth_env("tok123")
+    assert env_with_token.get("GIT_TERMINAL_PROMPT") == "0"
+    assert env_with_token.get("GIT_CONFIG_COUNT") == "3"
+    assert env_with_token.get("GIT_CONFIG_KEY_2") == "http.https://github.com/.extraheader"
+    assert "basic" in env_with_token.get("GIT_CONFIG_VALUE_2", "")
+
+
+def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
+    """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
+    import base64
+    from repo2graph import fetch
+    token = "secrettoken123"
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+
+    class _FailingClone:
+        returncode = 128
+        stdout = ""
+        stderr = f"fatal: invalid config value AUTHORIZATION: basic {basic} with {token}"
+
+    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _FailingClone())
+    with pytest.raises(RuntimeError) as exc:
+        fetch.clone("owner/repo", tmp_path, token=token)
+    msg = str(exc.value)
+    assert token not in msg
+    assert basic not in msg
+    assert "***" in msg
+
+
+def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
+    """Issue 26 (ISS-21): clone detects an existing checkout and reuses it."""
+    from repo2graph import fetch
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+    (target / "dummy.txt").write_text("hello", encoding="utf-8")
+
+    # Should not call subprocess git clone
+    def _fail(*a, **k):
+        raise AssertionError("should not run subprocess when repo exists")
+
+    monkeypatch.setattr(fetch.subprocess, "run", _fail)
+    res = fetch.clone("owner/repo", tmp_path)
+    assert res == target
+
