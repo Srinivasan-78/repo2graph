@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 CLONE_TIMEOUT = 900
@@ -20,6 +21,20 @@ GITHUB_SPEC = re.compile(
     r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
     r"(?P<owner>[\w.\-]+)/(?P<repo>[\w.\-]+?)(?:\.git)?/?$"
 )
+
+
+@lru_cache(maxsize=1)
+def _git_version() -> tuple[int, ...]:
+    try:
+        out = subprocess.run(["git", "--version"], capture_output=True,
+                             encoding="utf8", errors="replace", timeout=10)
+        if out.returncode == 0 and out.stdout:
+            m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout)
+            if m:
+                return tuple(int(x) for x in m.groups() if x is not None)
+    except Exception:
+        pass
+    return (2, 40, 0)
 
 
 def parse_spec(spec: str) -> tuple[str, str]:
@@ -37,23 +52,33 @@ def parse_spec(spec: str) -> tuple[str, str]:
     return owner, repo
 
 
-def _auth_env(token: str | None) -> dict | None:
+def _auth_env(token: str | None) -> dict:
     """Environment carrying the clone credential out of band.
 
     The token must never be an argv element (ISS-16): it would be visible in
     `ps`/`/proc` to every other user. git reads http.extraheader from
     GIT_CONFIG_* for this one invocation only, so nothing lands on disk either.
     """
+    env = dict(os.environ)
+    # NC-4: Prevent git from hanging on a terminal credential prompt
+    env["GIT_TERMINAL_PROMPT"] = "0"
     if not token:
-        return None
+        return env
+
+    # SH-2: GIT_CONFIG_* requires git >= 2.31
+    if _git_version() < (2, 31):
+        raise RuntimeError("git >= 2.31 is required for token-authenticated clone")
+
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    return {
-        **os.environ,
-        "GIT_TERMINAL_PROMPT": "0",
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
-    }
+    # NC-5: preserve any existing GIT_CONFIG_COUNT set by the caller
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    except ValueError:
+        count = 0
+    env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+    env[f"GIT_CONFIG_VALUE_{count}"] = f"AUTHORIZATION: basic {basic}"
+    env["GIT_CONFIG_COUNT"] = str(count + 1)
+    return env
 
 
 def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
@@ -63,6 +88,20 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     url = f"https://github.com/{owner}/{repo}.git"
     target = Path(dest) / repo
+
+    # ISS-21: detect an existing checkout and reuse it
+    if target.is_dir() and (target / ".git").exists():
+        if ref:
+            try:
+                subprocess.run(["git", "-C", str(target), "checkout", ref],
+                               capture_output=True, encoding="utf8", errors="replace",
+                               timeout=GIT_TIMEOUT, env=_auth_env(token))
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("git checkout timed out") from None
+        return target
+    if target.exists() and any(target.iterdir()):
+        raise RuntimeError(f"destination directory '{target}' exists and is not an empty directory")
+
     cmd = ["git", "clone", "--quiet"]
     if depth:
         cmd += ["--depth", str(depth)]
@@ -77,8 +116,10 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
         raise RuntimeError("git clone timed out") from None
     if proc.returncode != 0:
         msg = (proc.stderr or "").strip()
+        # SH-3: Redact both the raw token and the base64 basic credential
         if token:
-            msg = msg.replace(token, "***")
+            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            msg = msg.replace(token, "***").replace(basic, "***")
         raise RuntimeError(f"git clone failed: {msg}")
     return target
 
