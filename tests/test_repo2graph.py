@@ -1148,3 +1148,38 @@ def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
     assert not any(rel.startswith(".ruff_cache") for rel in found)
     assert stats.get("discovery") in ("git", "walk")
 
+
+def test_iss21_docstring_inner_quotes_preserved(tmp_path):
+    """Issue 21 (ISS-03): Python docstring outer quote stripping does not strip inner quotes."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "doc.py").write_text('def f():\n    """\'inner\'"""\n    pass\n', encoding="utf-8")
+    g = build(repo)
+    chunk = next(c for c in build_chunks(g) if c["qualname"] == "f")
+    assert "'inner'" in chunk["text"]
+
+
+def test_iss21_add_node_preserves_zero_and_false():
+    """Issue 21 (ISS-11): add_node preserves legitimate 0 and False values on re-add."""
+    from repo2graph.graph import Graph
+    g = Graph(Path("."), "test")
+    g.add_node("n1", count=1, flag=True)
+    # Re-add with 0 and False
+    g.add_node("n1", count=0, flag=False)
+    assert g.nodes["n1"]["count"] == 0
+    assert g.nodes["n1"]["flag"] is False
+
+
+def test_iss21_cochange_commits_skipped_counter(monkeypatch):
+    """Issue 21 (ISS-12): commits touching > 25 files increment stats['cochange_commits_skipped']."""
+    from repo2graph.graph import Graph, add_cochange
+    # 26 files in one commit
+    files = [f"f{i}.py" for i in range(26)]
+    log = "H1\n" + "\n".join(files) + "\n\n"
+    fake = subprocess.CompletedProcess([], 0, stdout=log.encode("utf8"), stderr=b"")
+    monkeypatch.setattr("repo2graph.graph.subprocess.run", lambda *a, **k: fake)
+
+    g = Graph(Path("."), "root")
+    add_cochange(g, Path("."), 1, set(files))
+    assert g.stats["cochange_commits_skipped"] == 1
+

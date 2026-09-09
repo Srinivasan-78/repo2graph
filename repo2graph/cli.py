@@ -107,39 +107,31 @@ def main(argv=None):
     p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    b = sub.add_parser("build", help="parse a repo into a graph + RAG chunks")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("-o", "--out", default=".r2g")
+    common.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
+                        help="comma list: jsonl,graphml,cypher,overview,html")
+    common.add_argument("--viz-nodes", type=int, default=MAX_NODES,
+                        help="best-connected nodes to draw in graph.html")
+    common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
+    common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
+    common.add_argument("--git-history", type=int, default=0,
+                        help="add CO_CHANGE edges from the last N commits")
+    common.add_argument("--max-files", type=int, default=0)
+    common.add_argument("--jobs", type=int, default=0,
+                        help="parser processes; 0 = one per core (capped at 8), 1 = serial")
+
+    b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
-    b.add_argument("-o", "--out", default=".r2g")
-    b.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
-                   help="comma list: jsonl,graphml,cypher,overview,html")
-    b.add_argument("--viz-nodes", type=int, default=MAX_NODES,
-                   help="best-connected nodes to draw in graph.html")
-    b.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
-    b.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
-    b.add_argument("--git-history", type=int, default=0,
-                   help="add CO_CHANGE edges from the last N commits")
-    b.add_argument("--max-files", type=int, default=0)
-    b.add_argument("--jobs", type=int, default=0,
-                   help="parser processes; 0 = one per core (capped at 8), 1 = serial")
     b.add_argument("--no-chunks", action="store_true")
     b.set_defaults(func=cmd_build)
 
-    gh = sub.add_parser("github", aliases=["gh"],
+    gh = sub.add_parser("github", aliases=["gh"], parents=[common],
                         help="clone a GitHub repo (owner/repo or URL) and index it")
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
-    gh.add_argument("-o", "--out", default=".r2g")
     gh.add_argument("--ref", default=None, help="branch or tag (default: default branch)")
     gh.add_argument("--depth", type=int, default=0,
                     help="shallow clone depth; 0 = full history (needed for --git-history)")
-    gh.add_argument("--formats", default="jsonl,graphml,cypher,overview,html")
-    gh.add_argument("--viz-nodes", type=int, default=MAX_NODES,
-                    help="best-connected nodes to draw in graph.html")
-    gh.add_argument("--include", nargs="*", default=None)
-    gh.add_argument("--exclude", nargs="*", default=None)
-    gh.add_argument("--git-history", type=int, default=0)
-    gh.add_argument("--max-files", type=int, default=0)
-    gh.add_argument("--jobs", type=int, default=0,
-                    help="parser processes; 0 = one per core (capped at 8), 1 = serial")
     gh.add_argument("--keep-clone", default=None, help="clone here instead of a temp dir")
     gh.add_argument("--token", default=None,
                     help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)")

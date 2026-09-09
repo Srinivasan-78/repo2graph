@@ -30,7 +30,9 @@ class Graph:
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
-            self.nodes[nid].update({k: v for k, v in attrs.items() if v not in (None, "", [])})
+            # ISS-11: preserve legitimate 0 and False values on re-add
+            self.nodes[nid].update({k: v for k, v in attrs.items()
+                                    if v is not None and v != "" and (not isinstance(v, (list, tuple)) or len(v) > 0)})
         else:
             self.nodes[nid] = dict(id=nid, **attrs)
         return nid
@@ -90,9 +92,8 @@ def path_index(file_index) -> dict:
 def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
                    ctx: dict | None = None) -> str | None:
     """Map an import target to an in-repo file path when possible."""
-    ctx = ctx or {}
-    if "by_name" not in ctx:
-        ctx = dict(ctx, **path_index(file_index))
+    if ctx is None:
+        ctx = path_index(file_index)
     by_name, by_dir = ctx["by_name"], ctx["by_dir"]
     src_dir = Path(from_path).parent
     cands: list[str] = []
@@ -202,6 +203,7 @@ def parse_all(files, jobs: int):
         return [_read_and_parse(i) for i in items]
     import concurrent.futures
     try:
+        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
         with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
             return list(pool.map(_read_and_parse, items,
                                  chunksize=max(1, len(items) // (jobs * 8))))
@@ -386,6 +388,8 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             if 1 < len(current) <= 25:
                 for a, b in itertools.combinations(sorted(set(current)), 2):
                     pairs[(a, b)] += 1
+            elif len(current) > 25:
+                g.stats["cochange_commits_skipped"] += 1
             current = []
         elif line in file_index:
             current.append(line)
