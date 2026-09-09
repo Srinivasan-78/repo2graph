@@ -27,8 +27,16 @@ def read_jsonl(path: Path) -> list:
     and U+0085 through verbatim, and both str.splitlines() and universal-newline
     mode treat those as line breaks, which would cut records in half.
     """
+    rows = []
     with open(path, encoding="utf8", newline="\n") as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+        for lineno, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}: line {lineno} is not valid JSON: {e}") from None
+    return rows
 
 
 def tokenize(text: str) -> list[str]:
@@ -61,7 +69,10 @@ class Index:
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lengths: list[int] = []
         for i, c in enumerate(self.chunks):
-            counts = Counter(tokenize(c["text"]) + tokenize(c["qualname"]) * 3)
+            # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
+            # inspectable) with a null text/qualname must not TypeError in re.findall.
+            counts = Counter(tokenize(c.get("text") or "")
+                             + tokenize(c.get("qualname") or "") * 3)
             self.lengths.append(sum(counts.values()) or 1)
             for term, n in counts.items():
                 self.postings[term].append((i, n))
@@ -113,7 +124,7 @@ class Index:
             nid = c["node_id"]
             if nid in seen_nodes_set:
                 continue
-            chunk_len = len(c["text"])
+            chunk_len = len(c.get("text") or "")
             # ISS-37: test budget before appending so we do not overshoot by a whole chunk
             if picked and used + chunk_len > budget_chars:
                 break
@@ -129,7 +140,7 @@ class Index:
             if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
-                chunk_len = len(c["text"])
+                chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break
                 picked.append({"score": 0.0,

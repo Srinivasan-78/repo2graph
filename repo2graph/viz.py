@@ -10,6 +10,8 @@ import re
 from collections import Counter
 from pathlib import Path
 
+from .layout import atomic_write
+
 # The Neo4j browser palette, so the map reads the way their graph view does.
 NODE_COLORS = {
     "repo": "#F16667",
@@ -104,8 +106,15 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
 
 def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     data = payload(g, max_nodes)
+    # Escape every "<": json.dumps only emits it inside a string literal, and
+    # "\u003c" parses back to "<" through JSON.parse. This stops not just a
+    # literal "</script>" but "<!--" followed by "<script" — which drive the
+    # HTML tokeniser into "script data double escaped" state, where the
+    # template's own "</script>" no longer closes the block and every source
+    # file that mentions both tokens (web frameworks, this repo) silently kills
+    # the map with a SyntaxError.
     blob = (json.dumps(data, ensure_ascii=False)
-            .replace("</", "<\\/")            # never close the <script> early
+            .replace("<", "\\u003c")
             .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
     # ISS-33: Single-pass replace prevents __R2G_DATA__ in repo title from expanding
     replacements = {
@@ -114,7 +123,11 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     }
     pattern = re.compile("|".join(re.escape(k) for k in replacements))
     page = pattern.sub(lambda m: replacements[m.group(0)], TEMPLATE)
-    Path(path).write_text(page, encoding="utf8")
+    # newline="\n": keep graph.html byte-identical across a Linux CI run and a
+    # local Windows rebuild, so the commit-branch push carries no CRLF churn.
+    # atomic_write: a crash mid-write never leaves a half-rendered page.
+    with atomic_write(Path(path), "w", encoding="utf8", newline="\n") as fh:
+        fh.write(page)
     return data
 
 

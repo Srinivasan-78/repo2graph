@@ -270,6 +270,26 @@ def test_split_terminates_on_one_huge_line():
     assert _split("x" * 10_000 + "\ny\n", max_chars=100)
 
 
+def test_iter_chunks_streams_without_materialising(sample_graph):
+    """iter_chunks is a generator (chunk text is the biggest allocation on a big
+    repo); build_chunks stays a list for API stability."""
+    import inspect
+
+    from repo2graph.chunks import iter_chunks
+
+    assert inspect.isgeneratorfunction(iter_chunks)
+    assert isinstance(build_chunks(sample_graph), list)
+    seen_symbol = seen_file = False
+    for c in iter_chunks(sample_graph):        # single pass, nothing materialised
+        seen_symbol |= c["type"] == "symbol"
+        seen_file |= c["type"] in ("file", "file_residual")
+        assert c["text"]
+    assert seen_symbol and seen_file           # covered[] was complete before the file pass
+    # residual chunks still get real spans -> the file pass saw the full covered map
+    residual = [c for c in iter_chunks(sample_graph) if c["type"] == "file_residual"]
+    assert all(isinstance(c["start_line"], int) for c in residual)
+
+
 def test_chunks_carry_graph_context(sample_graph):
     chunks = build_chunks(sample_graph)
     run = next(c for c in chunks if c["node_id"] == "sym:pkg/main.py::Runner.run")
@@ -544,12 +564,22 @@ def test_loaded_graph_round_trips(tmp_path, sample_repo):
 def test_html_escapes_a_script_tag_in_the_source(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "x.py").write_text('def f():\n    """</script><script>alert(1)</script>"""\n')
+    # both the classic "</script>" breakout and the "<!--" + "<script" pair that
+    # drives the tokeniser into script-data-double-escaped state
+    (repo / "x.py").write_text(
+        'def f():\n'
+        '    """</script><script>alert(1)</script>"""\n\n'
+        'def g():\n'
+        '    """open <!-- a comment then a bare <script tag, never closed"""\n')
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out)])
     page = (artifact_path(out, "graph.html")).read_text(encoding="utf8")
-    assert "</script><script>alert(1)" not in page
-    assert "<\\/script>" in page
+    blob = page.split("const DATA = ", 1)[1].split(";\nconst NS", 1)[0]
+    # no bare "<" survives into the data blob, so no tag/comment token can form
+    assert "<" not in blob
+    # but it still parses as JSON and the payload text is intact (< decodes back)
+    docs = " ".join(n.get("doc", "") for n in json.loads(blob)["nodes"])
+    assert "</script>" in docs and "<!--" in docs
 
 
 def test_node_label_truncates(sample_graph):
@@ -1270,4 +1300,255 @@ def test_iss22_chunk_caps_and_residual_span(tmp_path):
     assert residual is not None
     assert residual["start_line"] == 1
     assert residual["end_line"] == 10
+
+
+# ---------- follow-up audit round: newly found defects ----------
+
+def test_split_does_not_break_a_chunk_on_u2028():
+    """_split must cut only on "\\n"; a U+2028 inside a line is not a row break
+    for tree-sitter and must not become a chunk boundary (the ISS-22 class)."""
+    from repo2graph.chunks import _keepends_lf
+
+    plain = "first line\n" + "x" * 5000 + "\nlast"
+    weird = "first   line\n" + "x" * 5000 + "\nlast"
+    assert "".join(_keepends_lf(weird)) == weird           # lossless, "\n"-only
+    assert _keepends_lf("a b c\x85d") == ["a b c\x85d"]
+    assert len(_split(plain)) == len(_split(weird))        # separator does not add a split
+
+
+def test_import_targets_kotlin_csharp_php():
+    """Kotlin was mapped to the Rust `use` pattern, C# to Java's `import`, PHP to
+    JS quoted-string — none matched real syntax, so imports vanished silently."""
+    assert import_targets("import com.example.foo.Bar", "kotlin") == ["com.example.foo.Bar"]
+    assert import_targets("import com.example.foo.*", "kotlin") == ["com.example.foo.*"]
+    assert import_targets("using System.Text.Json;", "csharp") == ["System.Text.Json"]
+    assert import_targets("using static System.Math;", "csharp") == ["System.Math"]
+    assert import_targets("using Json = System.Text.Json;", "csharp") == ["System.Text.Json"]
+    assert import_targets(r"use App\Models\User;", "php") == [r"App\Models\User"]
+    assert import_targets(r"use App\Models\User as U;", "php") == [r"App\Models\User"]
+
+
+def test_ruby_call_resolves_to_method_not_receiver():
+    """Ruby's `call` node keeps receiver and method in separate fields; the old
+    fallback picked named_children[0] (the receiver), so `logger.info(x)` was
+    recorded as a call to `logger`."""
+    pf = parse_source(b"def greet(n)\n  puts n\n  logger.info(n)\n  User.find(1)\nend\n", "ruby")
+    if not pf.symbols:
+        pytest.skip("ruby grammar unavailable")
+    calls = pf.symbols[0].calls
+    assert "info" in calls and "find" in calls
+    assert "logger" not in calls and "User" not in calls
+
+
+def test_glob_re_tolerates_malformed_bracket_classes():
+    """A stray/empty bracket in --include/--exclude must not raise re.error."""
+    from repo2graph.walker import _glob_re
+
+    for pat in ("[]", "[!]", "foo[]", "test[!].py", "unclosed[abc"):
+        _glob_re(pat)  # must not raise
+    assert matches_any("foo.c", ["*.[ch]"])          # valid classes still work
+    assert matches_any("ayb", ["a[!x]b"])
+    assert not matches_any("axb", ["a[!x]b"])
+
+
+def test_negative_max_files_is_not_a_tail_slice(sample_repo):
+    """`if max_files:` made a negative limit `files[:-n]`, silently dropping the
+    last n files instead of being ignored."""
+    full = len({n["path"] for n in build(sample_repo).nodes.values()
+                if n.get("type") == "file"})
+    neg = len({n["path"] for n in build(sample_repo, max_files=-1).nodes.values()
+               if n.get("type") == "file"})
+    assert neg == full
+
+
+def test_build_has_no_dangling_edges(sample_graph):
+    """Every edge endpoint must be a node — exporters (GraphML especially) rely
+    on it; a file skipped as unreadable used to leave IMPORTS/CO_CHANGE dangling."""
+    ids = set(sample_graph.nodes)
+    assert all(e["src"] in ids and e["dst"] in ids for e in sample_graph.edges)
+
+
+def test_dangling_edge_prune_drops_edges_to_unreadable_files(tmp_path, monkeypatch):
+    from pathlib import Path as _P
+    import repo2graph.graph as graphmod
+
+    (tmp_path / "a.py").write_text("from b import thing\nthing()\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
+
+    real_read_bytes = _P.read_bytes
+
+    def flaky_read_bytes(self):
+        if self.name == "b.py":
+            raise OSError("simulated unreadable file")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(graphmod.Path, "read_bytes", flaky_read_bytes, raising=False)
+    monkeypatch.setattr(_P, "read_bytes", flaky_read_bytes, raising=False)
+    g = build(tmp_path, jobs=1)
+    ids = set(g.nodes)
+    assert "file:b.py" not in ids
+    assert all(e["src"] in ids and e["dst"] in ids for e in g.edges)
+
+
+def test_clone_reuse_raises_when_checkout_of_ref_fails(tmp_path, monkeypatch):
+    """A cached clone can be shallow or simply lack `ref`; a silently ignored
+    `git checkout` failure would index the wrong commit with no error."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    class _FailedCheckout:
+        returncode = 1
+        stdout = ""
+        stderr = "error: pathspec 'v9.9.9' did not match any file(s) known to git"
+
+    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _FailedCheckout())
+    with pytest.raises(RuntimeError, match="git checkout"):
+        fetch.clone("owner/repo", tmp_path, ref="v9.9.9")
+
+
+def test_index_build_survives_a_null_qualname_in_chunks(tmp_path, sample_repo):
+    """chunks.jsonl is documented as inspectable/hand-constructible; a null
+    qualname must not TypeError out of re.findall while building the index."""
+    from repo2graph.query import Index
+
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    cp = artifact_path(out, "chunks.jsonl")
+    rows = [json.loads(x) for x in cp.read_text(encoding="utf8").splitlines() if x.strip()]
+    rows[0]["qualname"] = None
+    cp.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf8", newline="\n")
+    idx = Index(out)                       # must not raise
+    assert idx.N == len(rows)
+
+
+def test_rmtree_removes_read_only_files(tmp_path):
+    """index_github's temp-clone cleanup must survive the read-only bit Git puts
+    on Windows pack files, or it leaks the whole clone (matters only on Windows;
+    on POSIX unlink needs write on the parent dir, not the file)."""
+    import stat as _stat
+
+    from repo2graph.fetch import _rmtree
+
+    d = tmp_path / "clone" / ".git" / "objects" / "pack"
+    d.mkdir(parents=True)
+    for name in ("pack-deadbeef.pack", "pack-deadbeef.idx"):
+        f = d / name
+        f.write_bytes(b"x")
+        f.chmod(_stat.S_IREAD)
+    _rmtree(tmp_path / "clone")
+    assert not (tmp_path / "clone").exists()
+
+
+def test_atomic_write_leaves_previous_file_on_failure(tmp_path):
+    """A crash mid-write must not truncate an artifact a later `query`/`map` reads."""
+    from repo2graph.layout import atomic_write
+
+    target = tmp_path / "nodes.jsonl"
+    target.write_text("OLD GOOD CONTENT\n", encoding="utf8")
+    with pytest.raises(RuntimeError):
+        with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
+            fh.write("half a line")
+            raise RuntimeError("boom before commit")
+    assert target.read_text(encoding="utf8") == "OLD GOOD CONTENT\n"
+    assert not list(tmp_path.glob(".*.tmp"))            # temp file cleaned up
+
+    with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
+        fh.write("NEW\n")
+    assert target.read_text(encoding="utf8") == "NEW\n"
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+@pytest.mark.parametrize("args", [
+    ["build", ".", "--max-files", "-1"],
+    ["build", ".", "--git-history", "-5"],
+    ["build", ".", "--jobs", "-2"],
+    ["build", ".", "--viz-nodes", "-3"],
+    ["github", "o/r", "--depth", "-1"],
+    ["query", "x", "-k", "-1"],
+    ["query", "x", "--hops", "-1"],
+    ["query", "x", "--budget", "-100"],
+])
+def test_cli_rejects_negative_numeric_flags(args):
+    with pytest.raises(SystemExit) as exc:
+        main(args)
+    assert exc.value.code == 2          # argparse usage error
+
+
+def test_add_cochange_caps_the_history_window(monkeypatch):
+    """`git log --name-only` output is captured whole; an absurd --git-history
+    must be clamped so it cannot buffer gigabytes."""
+    from collections import Counter
+
+    import repo2graph.graph as graphmod
+    from repo2graph.graph import MAX_COCHANGE_COMMITS, Graph, add_cochange
+
+    seen = {}
+
+    class _Res:
+        returncode = 1
+        stdout = b""
+
+    def fake_run(cmd, **kw):
+        seen["n"] = next(a for a in cmd if a.startswith("-n"))
+        return _Res()
+
+    monkeypatch.setattr(graphmod.subprocess, "run", fake_run)
+    g = Graph(Path("."), "x")
+    g.stats = Counter()
+    add_cochange(g, Path("."), 10 ** 9, set())
+    assert seen["n"] == f"-n{MAX_COCHANGE_COMMITS}"
+    assert g.stats["cochange_history_capped"] == 10 ** 9
+
+
+def test_read_jsonl_reports_file_and_line_on_bad_json(tmp_path):
+    from repo2graph.query import read_jsonl
+
+    p = tmp_path / "chunks.jsonl"
+    p.write_text('{"ok": 1}\n{ this is not json\n', encoding="utf8")
+    with pytest.raises(ValueError, match="line 2"):
+        read_jsonl(p)
+
+
+def test_query_rejects_an_index_with_no_manifest(tmp_path, sample_repo):
+    """manifest.json is written last; its absence beside real artifacts means the
+    build was interrupted, so the index must not be consumed silently."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    artifact_path(out, "manifest.json").unlink()
+    with pytest.raises(SystemExit, match="interrupted"):
+        main(["query", "helper", "-o", str(out)])
+
+
+def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
+    """Cover index_github's clone -> build -> dump -> cleanup orchestration for
+    real (the github URL/auth path is unit-tested separately)."""
+    from repo2graph import fetch
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "app.py").write_text("import os\n\n\ndef main():\n    return os.getpid()\n")
+    subprocess.run(["git", "init", "-q", str(origin)], check=True, capture_output=True)
+    g = lambda *a: subprocess.run(["git", "-C", str(origin), *a], check=True, capture_output=True)
+    g("config", "user.email", "t@e.com")
+    g("config", "user.name", "t")
+    g("add", "-A")
+    g("commit", "-qm", "init")
+
+    def fake_clone(spec, dest, ref=None, depth=0, token=None):
+        target = Path(dest) / "repo"
+        subprocess.run(["git", "clone", "-q", origin.as_uri(), str(target)],
+                       check=True, capture_output=True)
+        return target
+
+    monkeypatch.setattr(fetch, "clone", fake_clone)
+    out = tmp_path / "idx"
+    meta = fetch.index_github("octocat/repo", out)
+    assert meta["repo"] == "octocat/repo"
+    assert meta["nodes"] > 0 and meta["chunks"] > 0
+    assert len(meta["commit"]) == 12 and meta["commit"] != "unknown"   # head_sha ran for real
+    assert artifact_path(out, "manifest.json").exists()
+    node_lines = artifact_path(out, "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
 

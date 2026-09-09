@@ -11,10 +11,31 @@ retrieval chunks, the Cypher load script, the manifest that describes them.
 `overview.md` is written to both, because the repo-level map is the cheapest
 orientation either audience can get.
 """
+import os
+from contextlib import contextmanager
 from pathlib import Path
 
 HUMAN_DIR = "human"
 AGENT_DIR = "agent"
+
+
+@contextmanager
+def atomic_write(path: Path, mode: str = "w", **open_kw):
+    """Write via a sibling temp file renamed onto `path` only on a clean exit.
+
+    A crash, exception or Ctrl-C mid-write then leaves the previous artifact (or
+    none) intact rather than a truncated file that `query`/`map` would choke on.
+    The temp file is in the target's own directory, so os.replace is atomic.
+    """
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(tmp, mode, **open_kw) as fh:
+            yield fh
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 SECTIONS: dict[str, tuple[str, ...]] = {
     "overview.md": (HUMAN_DIR, AGENT_DIR),

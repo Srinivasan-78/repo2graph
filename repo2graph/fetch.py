@@ -9,13 +9,34 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 from functools import lru_cache
 from pathlib import Path
 
 CLONE_TIMEOUT = 900
 GIT_TIMEOUT = 120
+
+
+def _rmtree(path: Path) -> None:
+    """Best-effort recursive delete of a temp clone.
+
+    Git marks pack files under .git/objects read-only; on Windows os.unlink then
+    raises PermissionError and shutil.rmtree(ignore_errors=True) would leave the
+    whole clone (often hundreds of MB) behind. Clear the bit and retry.
+    """
+    def _on_error(func, p, _exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+
+    # onerror was renamed onexc in 3.12; the callback signature is compatible.
+    key = "onexc" if sys.version_info >= (3, 12) else "onerror"
+    shutil.rmtree(path, **{key: _on_error})
 
 GITHUB_SPEC = re.compile(
     r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
@@ -32,9 +53,9 @@ def _git_version() -> tuple[int, ...]:
             m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout)
             if m:
                 return tuple(int(x) for x in m.groups() if x is not None)
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
-    return (2, 40, 0)
+    return (2, 40, 0)  # assume a conservative baseline when `git --version` won't answer
 
 
 def parse_spec(spec: str) -> tuple[str, str]:
@@ -50,6 +71,14 @@ def parse_spec(spec: str) -> tuple[str, str]:
         if not part or part in (".", "..") or part.startswith("-"):
             raise ValueError(f"not a GitHub repo spec: {spec!r}")
     return owner, repo
+
+
+def _redact(msg: str, token: str | None) -> str:
+    """Strip the token and its base64 'basic' form from user-facing text (SH-3)."""
+    if not token:
+        return msg
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return msg.replace(token, "***").replace(basic, "***")
 
 
 def _auth_env(token: str | None) -> dict:
@@ -93,11 +122,18 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     if target.is_dir() and (target / ".git").exists():
         if ref:
             try:
-                subprocess.run(["git", "-C", str(target), "checkout", ref],
-                               capture_output=True, encoding="utf8", errors="replace",
-                               timeout=GIT_TIMEOUT, env=_auth_env(token))
+                proc = subprocess.run(["git", "-C", str(target), "checkout", ref],
+                                      capture_output=True, encoding="utf8", errors="replace",
+                                      timeout=GIT_TIMEOUT, env=_auth_env(token))
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git checkout timed out") from None
+            # A cached clone can be shallow or simply not carry `ref`; a silently
+            # ignored failure here indexes whatever was already checked out (the
+            # wrong commit) with no error, so surface it like the clone path does.
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"git checkout {ref!r} in existing clone failed: "
+                    f"{_redact((proc.stderr or '').strip(), token)}")
         return target
     if target.exists() and any(target.iterdir()):
         raise RuntimeError(f"destination directory '{target}' exists and is not an empty directory")
@@ -115,12 +151,8 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     except subprocess.TimeoutExpired:
         raise RuntimeError("git clone timed out") from None
     if proc.returncode != 0:
-        msg = (proc.stderr or "").strip()
-        # SH-3: Redact both the raw token and the base64 basic credential
-        if token:
-            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-            msg = msg.replace(token, "***").replace(basic, "***")
-        raise RuntimeError(f"git clone failed: {msg}")
+        # SH-3: redact both the raw token and the base64 basic credential
+        raise RuntimeError(f"git clone failed: {_redact((proc.stderr or '').strip(), token)}")
     return target
 
 
@@ -141,10 +173,10 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
                  keep_clone: Path | None = None, token: str | None = None,
                  viz_nodes: int = 300, jobs: int = 0) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
-    from .chunks import build_chunks
+    from .chunks import iter_chunks
     from .export import dump_all
     from .graph import build
-    from .layout import make_path
+    from .layout import atomic_write, make_path
 
     owner, repo = parse_spec(spec)
     workdir = Path(keep_clone) if keep_clone else Path(tempfile.mkdtemp(prefix="r2g-"))
@@ -155,15 +187,19 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
         g = build(src, include=include, exclude=exclude,
                   git_history=git_history, max_files=max_files, jobs=jobs)
         g.name = f"{owner}/{repo}"
-        chunks = build_chunks(g)
+        chunks = iter_chunks(g)   # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
-        written = dump_all(g, chunks, outdir, set(formats.split(",")), viz_nodes)
+        # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,
+        # empty items) so a format the caller asked for is not silently dropped.
+        fmts = {f.strip() for f in formats.split(",") if f.strip()}
+        written, n_chunks = dump_all(g, chunks, outdir, fmts, viz_nodes)
         meta = {"repo": f"{owner}/{repo}", "ref": ref or "default", "commit": sha,
-                "nodes": len(g.nodes), "edges": len(g.edges), "chunks": len(chunks),
+                "nodes": len(g.nodes), "edges": len(g.edges), "chunks": n_chunks,
                 "stats": dict(g.stats), "written": written, "out": str(outdir)}
-        make_path(outdir, "index.json").write_text(json.dumps(meta, indent=2),
-                                                   encoding="utf8")
+        with atomic_write(make_path(outdir, "index.json"), "w",
+                          encoding="utf8", newline="\n") as fh:
+            fh.write(json.dumps(meta, indent=2))
         return meta
     finally:
         if keep_clone is None:
-            shutil.rmtree(workdir, ignore_errors=True)
+            _rmtree(workdir)

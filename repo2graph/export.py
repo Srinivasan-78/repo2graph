@@ -11,7 +11,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .layout import AGENT_DIR, HUMAN_DIR, make_paths, rels
+from .layout import AGENT_DIR, HUMAN_DIR, atomic_write, make_paths, rels
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
 
 SCALAR = (str, int, float, bool)
@@ -22,11 +22,19 @@ def _flat(d: dict) -> dict:
             for k, v in d.items() if v is not None}
 
 
-def write_jsonl(path: Path, rows):
-    # ISS-28: newline="\n" so Windows does not write \r\r\n
-    with open(path, "w", encoding="utf8", newline="\n") as fh:
+def write_jsonl(path: Path, rows) -> int:
+    """Stream `rows` to `path` as JSONL; return how many were written.
+
+    newline="\n" (ISS-28) + atomic: a crash mid-write must not leave a truncated
+    last line that read_jsonl's json.loads then dies on. Streaming means `rows`
+    may be a generator (build_chunks) that is never fully materialised.
+    """
+    n = 0
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            n += 1
+    return n
 
 
 # yEd draws whatever geometry the file carries, and networkx writes none, so a
@@ -36,7 +44,8 @@ Y_NS = "http://www.yworks.com/xml/graphml"
 GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
 NODE_HEIGHT = 26.0
 CHAR_WIDTH = 7.0
-LABEL_CHARS = 40
+# GraphML label length is not set here: _graphml_label delegates to
+# viz.node_label, which trims to viz.LABEL_CHARS (ISS-29).
 
 
 _NEIGHBOR_CELLS = ((1, 0), (1, 1), (0, 1), (-1, 1))
@@ -324,7 +333,8 @@ def write_graphml(g, path: Path):
 
     root.append(graph)
     ET.indent(root, space="  ")
-    ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+    with atomic_write(path, "wb") as fh:
+        ET.ElementTree(root).write(fh, encoding="utf-8", xml_declaration=True)
 
 
 def _cy(v):
@@ -344,7 +354,11 @@ def write_cypher(g, path: Path):
         lines.append(
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
             f"MERGE (a)-[:{e['type']}{pstr}]->(b);")
-    path.write_text("\n".join(lines) + "\n", encoding="utf8")
+    # newline="\n" on every artifact writer (ISS-28): a Windows rebuild must
+    # produce the same bytes as a Linux CI run, or the commit-branch push is all
+    # CRLF churn. atomic_write: no half-written file for a reader.
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write("\n".join(lines) + "\n")
 
 
 def write_overview(g, path: Path, top: int = 25):
@@ -368,7 +382,8 @@ def write_overview(g, path: Path, top: int = 25):
     out += ["", "## Most called symbols"]
     out += [f"- {n['path']}::{n['qualname']} ({n['kind']}, in={indeg[n['id']]})"
             for n in key_syms if indeg[n["id"]]]
-    path.write_text("\n".join(out), encoding="utf8")
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write("\n".join(out))
 
 
 NODE_TYPES = {
@@ -455,12 +470,16 @@ def write_manifest(g, path: Path, written: list[str]):
             "Absence of an edge is not proof of absence of a call.",
         ],
     }
-    path.write_text(json.dumps(manifest, indent=2), encoding="utf8")
+    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(manifest, indent=2))
 
 
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
+    """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
+    build_chunks generator) or None. Returns (written_paths, chunk_count)."""
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
+    n_chunks = 0
 
     def out(name: str) -> list[Path]:
         written.extend(rels(name))
@@ -470,7 +489,8 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
         write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
         write_jsonl(out("edges.jsonl")[0], g.edges)
     if chunks is not None:
-        write_jsonl(out("chunks.jsonl")[0], chunks)
+        # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
+        n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
     if "graphml" in formats:
         write_graphml(g, out("graph.graphml")[0])
     if "cypher" in formats:
@@ -478,10 +498,13 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     if "overview" in formats:
         first, *copies = out("overview.md")
         write_overview(g, first)
+        text = first.read_text(encoding="utf8")
         for extra in copies:   # the same map, one per section
-            extra.write_text(first.read_text(encoding="utf8"), encoding="utf8")
+            with atomic_write(extra, "w", encoding="utf8", newline="\n") as fh:
+                fh.write(text)
     if "html" in formats:
         write_html(g, out("graph.html")[0], viz_nodes)
-    out("stats.json")[0].write_text(json.dumps(dict(g.stats), indent=2), encoding="utf8")
+    with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(dict(g.stats), indent=2))
     write_manifest(g, out("manifest.json")[0], list(written))
-    return written
+    return written, n_chunks
