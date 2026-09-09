@@ -29,8 +29,11 @@ def parse_formats(spec: str) -> set[str]:
 
 
 def cmd_build(args):
+    repo_path = Path(args.repo)
+    if not repo_path.is_dir():
+        raise SystemExit(f"error: repository directory does not exist or is not a directory: {repo_path}")
     formats = parse_formats(args.formats)
-    g = build(Path(args.repo), include=args.include, exclude=args.exclude,
+    g = build(repo_path, include=args.include, exclude=args.exclude,
               git_history=args.git_history, max_files=args.max_files, jobs=args.jobs)
     chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     outdir = Path(args.out)

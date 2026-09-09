@@ -148,7 +148,10 @@ class LoadedGraph:
             self.name = first.removeprefix("# Repo map:").strip() or self.name
         index = artifact_path(outdir, "index.json")
         if index.exists():
-            self.name = json.loads(index.read_text(encoding="utf8")).get("repo", self.name)
+            try:
+                self.name = json.loads(index.read_text(encoding="utf8")).get("repo", self.name)
+            except (json.JSONDecodeError, OSError):
+                pass
 
 
 TEMPLATE = r"""<!doctype html>

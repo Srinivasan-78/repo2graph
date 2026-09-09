@@ -22,10 +22,12 @@ MAX_BYTES = 1_500_000
 
 def _git_files(root: Path):
     try:
-        # -z: NUL-separated and never quoted. Without it git escapes paths with
-        # non-ASCII or special characters, and those files silently vanish.
+        # -c core.quotepath=false + -z: NUL-separated and never quoted. Without it
+        # git escapes paths with non-ASCII or special characters, and those files
+        # silently vanish.
         out = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-z", "-co", "--exclude-standard"],
+            ["git", "-c", "core.quotepath=false", "-C", str(root),
+             "ls-files", "-z", "-co", "--exclude-standard"],
             capture_output=True, timeout=60,
         )
         if out.returncode != 0:
@@ -77,8 +79,8 @@ def _glob_re(pattern: str) -> re.Pattern:
         elif pat[i] == "[":
             j = pat.find("]", i + 1)
             cls = pat[i + 1:j].replace("\\", "\\\\") if j != -1 else ""
-            body = "^" + cls[1:] if cls.startswith("!") else cls
-            if j == -1 or body in ("", "^"):
+            body = ("^/" + cls[1:]) if cls.startswith("!") else cls
+            if j == -1 or body in ("", "^", "^/"):
                 # no closing "]", or "[]" / "[!]" — an empty class is not valid
                 # regex; treat the "[" as a literal so a stray bracket in a
                 # --include/--exclude pattern cannot crash discovery.

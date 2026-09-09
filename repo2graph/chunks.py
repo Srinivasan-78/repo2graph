@@ -118,7 +118,8 @@ def iter_chunks(g, include_files: bool = True):
         call_in = [e for e in in_edges[nid] if e["type"] == "CALLS"][:MAX_CALLERS]
         callees = [label(e["dst"]) for e in call_out]
         callers = [label(e["src"]) for e in call_in]
-        ext = [g.nodes[e["dst"]]["name"] for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:MAX_EXT_CALLS]
+        ext = [g.nodes.get(e["dst"], {}).get("name", e["dst"])
+               for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:MAX_EXT_CALLS]
         bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:MAX_BASES]
         # a call to an overloaded name fans out to every candidate at 1/n
         # confidence; say so in the header, or a reader follows the wrong edge
@@ -191,7 +192,8 @@ def iter_chunks(g, include_files: bool = True):
             body, label_kind = src, "file"
             span_start, span_end = 1, n.get("lines", 0)
         imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][:MAX_IMPORTS]
-        defines = [g.nodes[e["dst"]]["qualname"] for e in out_edges[nid] if e["type"] == "DEFINES"][:MAX_DEFINES]
+        defines = [g.nodes.get(e["dst"], {}).get("qualname", e["dst"])
+                   for e in out_edges[nid] if e["type"] == "DEFINES"][:MAX_DEFINES]
         header = [f"# file: {n['path']} ({n.get('lang')}, {n.get('lines')} lines)"]
         if imports:
             header.append(f"# imports: {', '.join(i for i in imports if i)}")

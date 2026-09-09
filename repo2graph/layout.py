@@ -12,6 +12,7 @@ retrieval chunks, the Cypher load script, the manifest that describes them.
 orientation either audience can get.
 """
 import os
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -28,13 +29,17 @@ def atomic_write(path: Path, mode: str = "w", **open_kw):
     The temp file is in the target's own directory, so os.replace is atomic.
     """
     path = Path(path)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         with open(tmp, mode, **open_kw) as fh:
             yield fh
         os.replace(tmp, path)
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise
 
 SECTIONS: dict[str, tuple[str, ...]] = {

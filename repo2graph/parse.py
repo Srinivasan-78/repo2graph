@@ -80,9 +80,10 @@ def _callee_name(src: bytes, node) -> str | None:
     # "method": Ruby's `call` node keeps the receiver and the method in separate
     # fields, so named_children[0] is the receiver — `logger.info(x)` would be
     # recorded as a call to `logger`. Read the method field directly instead.
+    # "macro": Rust `macro_invocation` nodes expose the macro name in `macro`.
     fn = (node.child_by_field_name("function") or node.child_by_field_name("name")
           or node.child_by_field_name("method") or node.child_by_field_name("constructor")
-          or node.child_by_field_name("type"))
+          or node.child_by_field_name("macro") or node.child_by_field_name("type"))
     if fn is None:
         if node.named_child_count:
             fn = node.named_children[0]
@@ -91,6 +92,9 @@ def _callee_name(src: bytes, node) -> str | None:
     txt = _text(src, fn).strip()
     if not txt:
         return None
+    # Strip wrapping parens for function-pointer / expression invocations e.g. (*fn)(arg) or (cb)(arg)
+    while txt.startswith("(") and txt.endswith(")") and len(txt) >= 2:
+        txt = txt[1:-1].strip()
     txt = txt.split("(")[0].split("<")[0]
     for sep in ("::", ".", "->"):
         if sep in txt:
@@ -98,6 +102,13 @@ def _callee_name(src: bytes, node) -> str | None:
     # ISS-05: Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
+
+
+_ATTR_OR_COMMENT_TYPES = (
+    "comment", "line_comment", "block_comment", "doc_comment",
+    "attribute_item", "attribute", "decorator", "annotation",
+)
+_COMMENT_TYPES = ("comment", "line_comment", "block_comment", "doc_comment")
 
 
 def _docstring(src: bytes, node, lang: str) -> str:
@@ -109,18 +120,23 @@ def _docstring(src: bytes, node, lang: str) -> str:
             if first.type == "expression_statement" and first.named_child_count:
                 first = first.named_children[0]
             if first.type == "string":
-                # ISS-03: Strip only the matching outer quote delimiter
+                # ISS-03: Strip only the matching outer quote delimiter (handling r/u/b prefixes)
                 raw = _text(src, first).strip()
+                pfx = 0
+                while pfx < len(raw) and raw[pfx] in "rRuUbB":
+                    pfx += 1
+                body_txt = raw[pfx:]
                 for q in ('"""', "'''", '"', "'"):
-                    if raw.startswith(q) and raw.endswith(q) and len(raw) >= 2 * len(q):
-                        raw = raw[len(q):-len(q)]
+                    if body_txt.startswith(q) and body_txt.endswith(q) and len(body_txt) >= 2 * len(q):
+                        body_txt = body_txt[len(q):-len(q)]
                         break
-                return raw.strip()[:600]
+                return body_txt.strip()[:600]
         return ""
-    # otherwise: comment lines immediately above the definition
+    # otherwise: comment lines immediately above the definition, skipping attributes/annotations
     out, prev = [], node.prev_sibling
-    while prev is not None and prev.type in ("comment", "line_comment", "block_comment", "doc_comment"):
-        out.append(_text(src, prev))
+    while prev is not None and prev.type in _ATTR_OR_COMMENT_TYPES:
+        if prev.type in _COMMENT_TYPES:
+            out.append(_text(src, prev))
         prev = prev.prev_sibling
     return "\n".join(reversed(out)).strip()[:600]
 

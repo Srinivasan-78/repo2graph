@@ -130,7 +130,7 @@ class Index:
                 break
             seen_nodes_set.add(nid)
             seen_nodes_list.append(nid)
-            picked.append({"score": round(s, 3), "why": "lexical", **c})
+            picked.append({**c, "score": round(s, 3), "why": "lexical"})
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
                 break
@@ -143,9 +143,9 @@ class Index:
                 chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break
-                picked.append({"score": 0.0,
-                               "why": f"{etype} {direction} of {self.nodes.get(src, {}).get('name', src)}",
-                               **c})
+                src_name = self.nodes.get(src, {}).get("name") or src
+                picked.append({**c, "score": 0.0,
+                               "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
                     break
@@ -155,5 +155,9 @@ class Index:
 def format_pack(results) -> str:
     out = []
     for r in results:
-        out.append(f"--- {r['path']}::{r['qualname']} [{r['why']}]\n{r['text']}")
+        path = r.get("path") or ""
+        qual = r.get("qualname") or r.get("name") or ""
+        why = r.get("why") or ""
+        text = r.get("text") or ""
+        out.append(f"--- {path}::{qual} [{why}]\n{text}")
     return "\n\n".join(out)

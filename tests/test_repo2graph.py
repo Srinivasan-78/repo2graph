@@ -1552,3 +1552,107 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
     node_lines = artifact_path(out, "nodes.jsonl").read_text(encoding="utf8").splitlines()
     assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
 
+
+def test_docstring_raw_and_unicode_prefixes():
+    """Verify raw/unicode Python docstrings have their quotes and prefixes cleanly stripped."""
+    src = b'def f():\n    r"""raw doc with \\backslash"""\n    pass\ndef g():\n    u"""unicode doc"""\n    pass\n'
+    pf = parse_source(src, "python")
+    assert pf.symbols[0].docstring == "raw doc with \\backslash"
+    assert pf.symbols[1].docstring == "unicode doc"
+
+
+def test_docstring_rust_outer_attributes():
+    """Verify Rust doc comments above attributes (#[inline], #[derive(...)]) are captured."""
+    src = b'/// Important documentation\n#[inline]\nfn calculate() {}\n'
+    pf = parse_source(src, "rust")
+    assert pf.symbols[0].docstring == "/// Important documentation"
+
+
+def test_callee_name_macro_and_fn_pointers():
+    """Verify callee extraction handles C function pointer calls and Rust macros."""
+    src_c = b'void run() { (*fn_ptr)(1); (callback)(2); }\n'
+    pf_c = parse_source(src_c, "c")
+    assert "fn_ptr" in pf_c.symbols[0].calls
+    assert "callback" in pf_c.symbols[0].calls
+
+    src_rs = b'fn test() { my_macro!(42); }\n'
+    pf_rs = parse_source(src_rs, "rust")
+    assert "my_macro" in pf_rs.symbols[0].calls
+
+
+def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
+    """Verify atomic_write automatically creates missing parent directories."""
+    from repo2graph.layout import atomic_write
+    nested = tmp_path / "a" / "b" / "c" / "test.txt"
+    with atomic_write(nested, "w", encoding="utf8") as fh:
+        fh.write("hello")
+    assert nested.read_text(encoding="utf8") == "hello"
+
+    # Verify temp file is cleaned up on exception
+    failing = tmp_path / "fail.txt"
+    with pytest.raises(RuntimeError):
+        with atomic_write(failing, "w", encoding="utf8") as fh:
+            fh.write("partial")
+            raise RuntimeError("boom")
+    assert not failing.exists()
+    assert not list(tmp_path.glob(".fail.txt.*"))
+
+
+def test_clone_target_is_file_error(tmp_path):
+    """Verify clone cleanly raises RuntimeError if destination exists as a file."""
+    from repo2graph.fetch import clone
+    file_dest = tmp_path / "repo"
+    file_dest.write_text("not a dir")
+    with pytest.raises(RuntimeError, match="exists and is not a directory"):
+        clone("octocat/repo", tmp_path)
+
+
+def test_redact_url_encoded_token():
+    """Verify _redact strips both raw and URL-encoded forms of the token."""
+    from repo2graph.fetch import _redact
+    token = "secret+token/special"
+    msg = f"git clone https://x-access-token:{token}@github.com/a/b failed: {token}"
+    redacted = _redact(msg, token)
+    assert token not in redacted
+    assert "***" in redacted
+
+
+def test_head_sha_oserror_handling(tmp_path, monkeypatch):
+    """Verify head_sha returns 'unknown' when subprocess raises OSError."""
+    from repo2graph.fetch import head_sha
+
+    def raise_oserror(*a, **kw):
+        raise OSError("git not found")
+
+    monkeypatch.setattr(subprocess, "run", raise_oserror)
+    assert head_sha(tmp_path) == "unknown"
+
+
+def test_parse_all_jobs_zero(sample_repo):
+    """Verify parse_all(jobs=0) normalizes to worker count without ZeroDivisionError."""
+    files = list(discover(sample_repo))
+    res = parse_all(files, jobs=0)
+    assert len(res) == len(files)
+
+
+def test_cli_build_nonexistent_repo(tmp_path):
+    """Verify repo2graph build exits cleanly with an error message on non-existent repo."""
+    with pytest.raises(SystemExit, match="does not exist or is not a directory"):
+        main(["build", str(tmp_path / "does_not_exist")])
+
+
+def test_loaded_graph_corrupted_index_json(tmp_path, sample_repo):
+    """Verify LoadedGraph handles corrupted index.json gracefully."""
+    from repo2graph.viz import LoadedGraph
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    (out / "agent" / "index.json").write_text("invalid json{{{", encoding="utf8")
+    lg = LoadedGraph(out)
+    assert lg.name == out.name
+
+
+def test_negated_glob_does_not_cross_directories():
+    """Verify negated character class [!... ] does not match path separator '/'."""
+    assert not matches_any("foo/bar/baz.py", ["foo/[!x]/baz.py"])
+
+

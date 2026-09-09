@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from functools import lru_cache
 from pathlib import Path
 
@@ -36,7 +37,10 @@ def _rmtree(path: Path) -> None:
 
     # onerror was renamed onexc in 3.12; the callback signature is compatible.
     key = "onexc" if sys.version_info >= (3, 12) else "onerror"
-    shutil.rmtree(path, **{key: _on_error})
+    try:
+        shutil.rmtree(path, **{key: _on_error})
+    except OSError:
+        pass
 
 GITHUB_SPEC = re.compile(
     r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
@@ -74,11 +78,15 @@ def parse_spec(spec: str) -> tuple[str, str]:
 
 
 def _redact(msg: str, token: str | None) -> str:
-    """Strip the token and its base64 'basic' form from user-facing text (SH-3)."""
+    """Strip the token, its base64 'basic' form, and URL-encoded form from user-facing text (SH-3)."""
     if not token:
         return msg
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    return msg.replace(token, "***").replace(basic, "***")
+    msg = msg.replace(token, "***").replace(basic, "***")
+    quoted = urllib.parse.quote(token)
+    if quoted != token:
+        msg = msg.replace(quoted, "***")
+    return msg
 
 
 def _auth_env(token: str | None) -> dict:
@@ -127,6 +135,8 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
                                       timeout=GIT_TIMEOUT, env=_auth_env(token))
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git checkout timed out") from None
+            except (OSError, subprocess.SubprocessError) as e:
+                raise RuntimeError(f"git checkout failed: {e}") from None
             # A cached clone can be shallow or simply not carry `ref`; a silently
             # ignored failure here indexes whatever was already checked out (the
             # wrong commit) with no error, so surface it like the clone path does.
@@ -135,8 +145,10 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
                     f"git checkout {ref!r} in existing clone failed: "
                     f"{_redact((proc.stderr or '').strip(), token)}")
         return target
-    if target.exists() and any(target.iterdir()):
+    if target.is_dir() and any(target.iterdir()):
         raise RuntimeError(f"destination directory '{target}' exists and is not an empty directory")
+    if target.exists() and not target.is_dir():
+        raise RuntimeError(f"destination path '{target}' exists and is not a directory")
 
     cmd = ["git", "clone", "--quiet"]
     if depth:
@@ -150,6 +162,8 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
                               env=_auth_env(token))
     except subprocess.TimeoutExpired:
         raise RuntimeError("git clone timed out") from None
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RuntimeError(f"git clone failed: {e}") from None
     if proc.returncode != 0:
         # SH-3: redact both the raw token and the base64 basic credential
         raise RuntimeError(f"git clone failed: {_redact((proc.stderr or '').strip(), token)}")
@@ -161,7 +175,7 @@ def head_sha(path: Path) -> str:
         out = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
                              capture_output=True, encoding="utf8",
                              errors="replace", timeout=GIT_TIMEOUT)
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
         return "unknown"
     return out.stdout.strip()[:12] if out.returncode == 0 else "unknown"
 
