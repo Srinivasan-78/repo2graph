@@ -1215,3 +1215,34 @@ def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
     # Confirm no \x0c character remains in XML
     assert "\x0c" not in out.read_text(encoding="utf-8")
 
+
+def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
+    """Issue 24 (ISS-33): repo name containing __R2G_DATA__ is not replaced by JSON blob in title."""
+    from repo2graph.graph import Graph
+    from repo2graph.viz import write_html
+
+    g = Graph(tmp_path, "attacker/__R2G_DATA__/repo")
+    g.add_node("n1", type="file", path="a.py", name="a.py")
+    out = tmp_path / "map.html"
+    write_html(g, out)
+
+    content = out.read_text(encoding="utf-8")
+    assert "<title>attacker/__R2G_DATA__/repo · repo2graph</title>" in content
+    assert "<h1>attacker/__R2G_DATA__/repo</h1>" in content
+
+
+def test_iss24_select_zero_or_negative_means_no_cap():
+    """Issue 24 (ISS-34): max_nodes <= 0 means no cap (returns all nodes)."""
+    from repo2graph.viz import select
+
+    nodes = {f"n{i}": {"id": f"n{i}"} for i in range(10)}
+    edges = [{"src": "n0", "dst": f"n{i}", "type": "CALLS"} for i in range(1, 10)]
+
+    kept_nodes, kept_edges = select(nodes, edges, max_nodes=0)
+    assert len(kept_nodes) == 10
+    assert len(kept_edges) == 9
+
+    kept_nodes_neg, kept_edges_neg = select(nodes, edges, max_nodes=-5)
+    assert len(kept_nodes_neg) == 10
+    assert len(kept_edges_neg) == 9
+

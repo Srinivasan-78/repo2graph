@@ -6,6 +6,7 @@
 """Interactive knowledge-graph map: one self-contained HTML file, no CDN, no build step."""
 import html
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -55,7 +56,8 @@ def select(nodes: dict, edges: list, max_nodes: int = MAX_NODES):
         w = EDGE_WEIGHT.get(e["type"], 1.0)
         score[e["src"]] += w
         score[e["dst"]] += w
-    if max_nodes and len(nodes) > max_nodes:
+    # ISS-34: max_nodes <= 0 means no cap (keep all nodes)
+    if max_nodes and max_nodes > 0 and len(nodes) > max_nodes:
         ranked = sorted(nodes.values(), key=lambda n: (-score[n["id"]], n["id"]))
         keep = {n["id"] for n in ranked[:max_nodes]}
     else:
@@ -105,9 +107,13 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     blob = (json.dumps(data, ensure_ascii=False)
             .replace("</", "<\\/")            # never close the <script> early
             .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
-    page = (TEMPLATE
-            .replace("__R2G_TITLE__", html.escape(str(g.name)))
-            .replace("__R2G_DATA__", blob))
+    # ISS-33: Single-pass replace prevents __R2G_DATA__ in repo title from expanding
+    replacements = {
+        "__R2G_DATA__": blob,
+        "__R2G_TITLE__": html.escape(str(g.name)),
+    }
+    pattern = re.compile("|".join(re.escape(k) for k in replacements))
+    page = pattern.sub(lambda m: replacements[m.group(0)], TEMPLATE)
     Path(path).write_text(page, encoding="utf8")
     return data
 
@@ -438,7 +444,10 @@ function relayout() {
   alpha = 1;
   // Settle the whole layout off-screen, so the first paint is the final one and
   // nothing drifts out of the frame after fit() has measured it.
-  while (alpha > 0.02) step();
+  // ISS-35: Cap settle iterations to prevent freezing on large node counts
+  let iters = 0;
+  const maxIters = Math.min(300, Math.max(50, Math.floor(15000 / Math.max(1, nodes.length))));
+  while (alpha > 0.02 && iters++ < maxIters) step();
   fit();
 }
 
@@ -602,8 +611,13 @@ svg.addEventListener("pointerup", ev => {
   if (pan && !pan.moved && selected) clearSelection();
   drag = null; pan = null;
   svg.classList.remove("panning");
+  try { svg.releasePointerCapture(ev.pointerId); } catch (_) {}
 });
-svg.addEventListener("pointercancel", () => { drag = null; pan = null; });
+svg.addEventListener("pointercancel", ev => {
+  drag = null; pan = null;
+  svg.classList.remove("panning");
+  try { svg.releasePointerCapture(ev.pointerId); } catch (_) {}
+});
 svg.addEventListener("wheel", ev => {
   ev.preventDefault();
   const box = svg.getBoundingClientRect();
