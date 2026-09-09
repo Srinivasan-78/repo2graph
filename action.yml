@@ -78,7 +78,7 @@ outputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-python@v7
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
       with:
         python-version: "3.12"
 
@@ -110,6 +110,7 @@ runs:
         R2G_HISTORY: ${{ inputs.git-history }}
         R2G_INCLUDE: ${{ inputs.include }}
         R2G_EXCLUDE: ${{ inputs.exclude }}
+        SUMMARY_FILE: ${{ runner.temp }}/summary.json
       run: |
         set -euo pipefail
         args=()
@@ -130,10 +131,10 @@ runs:
           args+=(--exclude "${exc[@]}")
         fi
         mkdir -p "$R2G_OUT"
-        repo2graph "${args[@]}" > "$R2G_OUT/summary.json"
+        repo2graph "${args[@]}" > "$SUMMARY_FILE"
         python - <<'PY' >> "$GITHUB_OUTPUT"
         import json, os
-        d = json.load(open(os.path.join(os.environ["R2G_OUT"], "summary.json")))
+        d = json.load(open(os.environ["SUMMARY_FILE"]))
         s = d.get("stats", d)
         print(f"nodes={s.get('nodes', 0)}")
         print(f"edges={s.get('edges', 0)}")
@@ -147,14 +148,14 @@ runs:
             sed -n '1,40p' "$R2G_OUT/human/overview.md"
           else
             echo '```json'
-            cat "$R2G_OUT/summary.json"
+            cat "$SUMMARY_FILE"
             echo '```'
           fi
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload artifact
       if: ${{ inputs.artifact-name != '' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.out }}

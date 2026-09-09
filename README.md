@@ -427,6 +427,7 @@ on:
     branches: [main]
   schedule:
     - cron: "0 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: write
