@@ -221,7 +221,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
-    files = list(discover(root, include, exclude))
+    files = list(discover(root, include, exclude, stats=g.stats))
     if max_files:
         files = files[:max_files]
     file_index = {rel for rel, _ in files}

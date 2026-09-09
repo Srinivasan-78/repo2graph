@@ -1127,3 +1127,24 @@ def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
     ample_hits = idx.retrieve("double a value helper", k=2, hops=2, budget_chars=100000)
     assert len(ample_hits) <= 4
 
+
+def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
+    """Issue 27 (ISS-15, SH-5): DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
+    .eggs, .cache, .gradle, .direnv, .yarn) and discovery method is recorded in stats."""
+    from repo2graph.walker import DEFAULT_SKIP_DIRS, discover
+    for d in (".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn"):
+        assert d in DEFAULT_SKIP_DIRS
+
+    cache_file = tmp_path / ".ruff_cache" / "cached.py"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_text("x = 1\n", encoding="utf-8")
+
+    good_file = tmp_path / "valid.py"
+    good_file.write_text("y = 2\n", encoding="utf-8")
+
+    stats = {}
+    found = {rel for rel, _ in discover(tmp_path, stats=stats)}
+    assert "valid.py" in found
+    assert not any(rel.startswith(".ruff_cache") for rel in found)
+    assert stats.get("discovery") in ("git", "walk")
+

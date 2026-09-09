@@ -15,6 +15,7 @@ DEFAULT_SKIP_DIRS = {
     ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "env", "__pycache__",
     "dist", "build", "target", ".next", ".nuxt", "vendor", ".idea", ".vscode",
     "site-packages", ".mypy_cache", ".pytest_cache", ".tox", "coverage", ".terraform",
+    ".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn",
 }
 MAX_BYTES = 1_500_000
 
@@ -100,12 +101,17 @@ def is_binary(path: Path) -> bool:
         return True
 
 
-def discover(root: Path, include_globs=None, exclude_globs=None):
+def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
     """Yield (relative_path, absolute_path) for candidate source files."""
     root = root.resolve()
     files = _git_files(root)
-    if files is None:
+    if files is not None:
+        if stats is not None:
+            stats["discovery"] = "git"
+    else:
         files = _walk_files(root)
+        if stats is not None:
+            stats["discovery"] = "walk"
     for abspath in files:
         try:
             rel = abspath.relative_to(root)
