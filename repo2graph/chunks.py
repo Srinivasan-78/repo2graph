@@ -9,6 +9,14 @@ from collections import defaultdict
 MAX_CHARS = 4000
 OVERLAP_LINES = 8
 
+# ISS-26: Context caps for headers
+MAX_CALLERS = 12
+MAX_CALLEES = 12
+MAX_EXT_CALLS = 12
+MAX_BASES = 6
+MAX_IMPORTS = 20
+MAX_DEFINES = 40
+
 
 def _lines(src: str) -> list[str]:
     """Split source the way tree-sitter counts rows: on "\\n" only.
@@ -78,12 +86,12 @@ def build_chunks(g, include_files: bool = True):
         lines = _lines(src)
         body = "\n".join(lines[n["start_line"] - 1: n["end_line"]])
         covered[n["path"]].append((n["start_line"], n["end_line"]))
-        call_out = [e for e in out_edges[nid] if e["type"] == "CALLS"][:12]
-        call_in = [e for e in in_edges[nid] if e["type"] == "CALLS"][:12]
+        call_out = [e for e in out_edges[nid] if e["type"] == "CALLS"][:MAX_CALLEES]
+        call_in = [e for e in in_edges[nid] if e["type"] == "CALLS"][:MAX_CALLERS]
         callees = [label(e["dst"]) for e in call_out]
         callers = [label(e["src"]) for e in call_in]
-        ext = [g.nodes[e["dst"]]["name"] for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:12]
-        bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:6]
+        ext = [g.nodes[e["dst"]]["name"] for e in out_edges[nid] if e["type"] == "CALLS_EXTERNAL"][:MAX_EXT_CALLS]
+        bases = [label(e["dst"]) for e in out_edges[nid] if e["type"] == "INHERITS"][:MAX_BASES]
         # a call to an overloaded name fans out to every candidate at 1/n
         # confidence; say so in the header, or a reader follows the wrong edge
         # believing it is the only one.
@@ -129,19 +137,27 @@ def build_chunks(g, include_files: bool = True):
         lines = _lines(src)
         if spans:
             keep, cur = [], 1
+            line_indices = []
             for s, e in spans:
                 if s > cur:
                     keep += lines[cur - 1: s - 1]
+                    line_indices.extend(range(cur, s))
                 cur = max(cur, e + 1)
-            keep += lines[cur - 1:]
+            if cur <= len(lines):
+                keep += lines[cur - 1:]
+                line_indices.extend(range(cur, len(lines) + 1))
             body = "\n".join(keep).strip()
             if len(body) < 40:
                 continue
             label_kind = "file_residual"
+            # ISS-23: emit real span for residual chunks
+            span_start = line_indices[0] if line_indices else None
+            span_end = line_indices[-1] if line_indices else None
         else:
             body, label_kind = src, "file"
-        imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][:20]
-        defines = [g.nodes[e["dst"]]["qualname"] for e in out_edges[nid] if e["type"] == "DEFINES"][:40]
+            span_start, span_end = 1, n.get("lines", 0)
+        imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][:MAX_IMPORTS]
+        defines = [g.nodes[e["dst"]]["qualname"] for e in out_edges[nid] if e["type"] == "DEFINES"][:MAX_DEFINES]
         header = [f"# file: {n['path']} ({n.get('lang')}, {n.get('lines')} lines)"]
         if imports:
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
@@ -152,7 +168,7 @@ def build_chunks(g, include_files: bool = True):
                 "id": f"{nid}#{i}", "node_id": nid, "type": label_kind,
                 "kind": n.get("file_type", "other"), "path": n["path"],
                 "lang": n.get("lang"), "name": n["name"], "qualname": n["path"],
-                "start_line": 1, "end_line": n.get("lines", 0),
+                "start_line": span_start, "end_line": span_end,
                 "entrypoint": False,
                 "callers": [], "callees": [], "callees_external": [],
                 "text": "\n".join(header) + "\n" + part,
