@@ -21,7 +21,7 @@ def parser_for(lang: str):
         return None
     try:
         return _get_parser(lang)
-    except Exception:
+    except (LookupError, ValueError, ImportError, AttributeError):
         return None
 
 
@@ -91,7 +91,8 @@ def _callee_name(src: bytes, node) -> str | None:
     for sep in ("::", ".", "->"):
         if sep in txt:
             txt = txt.split(sep)[-1]
-    txt = txt.strip("!&* \n\t")
+    # ISS-05: Strip only leading pointer/deref and trailing macro !
+    txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
 
 
@@ -104,7 +105,13 @@ def _docstring(src: bytes, node, lang: str) -> str:
             if first.type == "expression_statement" and first.named_child_count:
                 first = first.named_children[0]
             if first.type == "string":
-                return _text(src, first).strip("\"'\n ")[:600]
+                # ISS-03: Strip only the matching outer quote delimiter
+                raw = _text(src, first).strip()
+                for q in ('"""', "'''", '"', "'"):
+                    if raw.startswith(q) and raw.endswith(q) and len(raw) >= 2 * len(q):
+                        raw = raw[len(q):-len(q)]
+                        break
+                return raw.strip()[:600]
         return ""
     # otherwise: comment lines immediately above the definition
     out, prev = [], node.prev_sibling
