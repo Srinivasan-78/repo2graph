@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: MIT
 # Fingerprint: AMK1.lO2FyMkAqsP9O4GXtxy2uy
 """Fetch a GitHub repository and index it end to end."""
+import base64
 import json
 import os
 import re
@@ -11,6 +12,9 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+CLONE_TIMEOUT = 900
+GIT_TIMEOUT = 120
 
 GITHUB_SPEC = re.compile(
     r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
@@ -23,7 +27,33 @@ def parse_spec(spec: str) -> tuple[str, str]:
     m = GITHUB_SPEC.match(spec.strip())
     if not m:
         raise ValueError(f"not a GitHub repo spec: {spec!r}")
-    return m.group("owner"), m.group("repo")
+    owner, repo = m.group("owner"), m.group("repo")
+    # Reject path-traversal and option-like components: "owner/.." would make
+    # the clone target dest/".." (the parent of the temp dir), and "-x/-y"
+    # smuggles flags into the git argv.
+    for part in (owner, repo):
+        if not part or part in (".", "..") or part.startswith("-"):
+            raise ValueError(f"not a GitHub repo spec: {spec!r}")
+    return owner, repo
+
+
+def _auth_env(token: str | None) -> dict | None:
+    """Environment carrying the clone credential out of band.
+
+    The token must never be an argv element (ISS-16): it would be visible in
+    `ps`/`/proc` to every other user. git reads http.extraheader from
+    GIT_CONFIG_* for this one invocation only, so nothing lands on disk either.
+    """
+    if not token:
+        return None
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}",
+    }
 
 
 def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
@@ -31,8 +61,7 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     """Clone a GitHub repo into dest/<repo>. depth=0 means full history."""
     owner, repo = parse_spec(spec)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    auth = f"x-access-token:{token}@" if token else ""
-    url = f"https://{auth}github.com/{owner}/{repo}.git"
+    url = f"https://github.com/{owner}/{repo}.git"
     target = Path(dest) / repo
     cmd = ["git", "clone", "--quiet"]
     if depth:
@@ -40,23 +69,27 @@ def clone(spec: str, dest: Path, ref: str | None = None, depth: int = 0,
     if ref:
         cmd += ["--branch", ref]
     cmd += [url, str(target)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, encoding="utf8",
+                              errors="replace", timeout=CLONE_TIMEOUT,
+                              env=_auth_env(token))
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("git clone timed out") from None
     if proc.returncode != 0:
-        msg = proc.stderr.strip().replace(token or "\0", "***")
+        msg = (proc.stderr or "").strip()
+        if token:
+            msg = msg.replace(token, "***")
         raise RuntimeError(f"git clone failed: {msg}")
-    if token:
-        # git records the clone URL, credential and all, in .git/config; with
-        # --keep-clone that would leave the token sitting on disk.
-        subprocess.run(
-            ["git", "-C", str(target), "remote", "set-url", "origin",
-             f"https://github.com/{owner}/{repo}.git"],
-            capture_output=True, text=True)
     return target
 
 
 def head_sha(path: Path) -> str:
-    out = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
-                         capture_output=True, text=True)
+    try:
+        out = subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"],
+                             capture_output=True, encoding="utf8",
+                             errors="replace", timeout=GIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "unknown"
     return out.stdout.strip()[:12] if out.returncode == 0 else "unknown"
 
 

@@ -38,7 +38,11 @@ def _git_files(root: Path):
 def _walk_files(root: Path):
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in DEFAULT_SKIP_DIRS and not d.startswith(".")]
+        # Prune only DEFAULT_SKIP_DIRS, not every dot-directory: the git path
+        # keeps ".github/**" and other dot-dir sources, and discovery must not
+        # differ by whether ".git" exists (ISS-13). The single DEFAULT_SKIP_DIRS
+        # filter in discover() applies to both sources.
+        dirnames[:] = [d for d in dirnames if d not in DEFAULT_SKIP_DIRS]
         for fn in filenames:
             files.append(Path(dirpath) / fn)
     return files

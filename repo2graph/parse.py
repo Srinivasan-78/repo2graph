@@ -32,8 +32,6 @@ class Symbol:
     kind: str
     start_line: int
     end_line: int
-    start_byte: int
-    end_byte: int
     parent: str | None = None
     signature: str = ""
     docstring: str = ""
@@ -46,7 +44,6 @@ class ParsedFile:
     lang: str
     symbols: list[Symbol]
     imports: list[str]
-    file_calls: list[str]
     parse_errors: int = 0
 
 
@@ -183,12 +180,11 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
-        return ParsedFile(lang=lang, symbols=[], imports=[], file_calls=[])
+        return ParsedFile(lang=lang, symbols=[], imports=[])
     tree = parser.parse(source)
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
     imports: list[str] = []
-    file_calls: list[str] = []
     errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
@@ -205,8 +201,10 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
                 imports.append(raw[:300])
         if ntype in call_types:
             callee = _callee_name(source, node)
-            if callee:
-                (owner.calls if owner is not None else file_calls).append(callee)
+            # file-scope calls (owner is None) produce no edge in graph.build,
+            # so drop them here rather than accumulating dead data (ISS-02).
+            if callee and owner is not None:
+                owner.calls.append(callee)
         kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner
         if kind is not None:
@@ -222,7 +220,6 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
                 sym = Symbol(
                     name=name, qualname=".".join(scope + (name,)), kind=kind,
                     start_line=node.start_point[0] + 1, end_line=node.end_point[0] + 1,
-                    start_byte=node.start_byte, end_byte=node.end_byte,
                     parent=".".join(scope) or None,
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),
@@ -236,4 +233,4 @@ def parse_source(source: bytes, lang: str) -> ParsedFile:
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
     return ParsedFile(lang=lang, symbols=symbols, imports=imports,
-                      file_calls=file_calls, parse_errors=errors)
+                      parse_errors=errors)
