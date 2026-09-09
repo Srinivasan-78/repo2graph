@@ -786,8 +786,8 @@ def test_iss16_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
 
 
 def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch):
-    """AC-8 (ISS-18): every subprocess.run in fetch.py must carry a timeout. At
-    HEAD none of clone()/head_sha() pass one."""
+    """AC-8 (ISS-18, SH-6): every subprocess.run in fetch.py must carry a timeout
+    and specify encoding='utf8' and errors='replace'."""
     from repo2graph import fetch
     rec = _RunRecorder()
     monkeypatch.setattr(fetch.subprocess, "run", rec)
@@ -796,10 +796,12 @@ def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch)
     assert rec.calls, "subprocess.run was never called"
     for cmd, _a, kwargs in rec.calls:
         assert "timeout" in kwargs, cmd
+        assert kwargs.get("encoding") == "utf8", cmd
+        assert kwargs.get("errors") == "replace", cmd
 
 
 def test_iss13_discover_matches_between_git_and_walk(tmp_path):
-    """AC-9 (ISS-13): discover() must return the same relative paths whether or
+    """AC-9 (ISS-13, NC-2): discover() must return the same relative paths whether or
     not the tree is a git checkout. At HEAD the os.walk fallback drops every
     dot-directory while the git path keeps it, so `.github/**` appears only in a
     git checkout."""
@@ -818,12 +820,14 @@ def test_iss13_discover_matches_between_git_and_walk(tmp_path):
                    capture_output=True)
     git_set = {rel for rel, _ in discover(tmp_path)}
     assert walk_set == git_set
+    assert ".github/workflows/ci.py" in git_set
+    assert "pkg/mod.py" in git_set
+    assert len(git_set) >= 3
 
 
 def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
-    """AC-10 (ISS-07): a BrokenProcessPool must fall back to the serial path and
-    return the jobs=1 result. At HEAD the except clause only catches
-    (OSError, ValueError) so BrokenProcessPool aborts the whole build."""
+    """AC-10 (ISS-07, NC-1): a BrokenProcessPool must fall back to the serial path and
+    return the jobs=1 result for all files without raising."""
     import concurrent.futures
     from concurrent.futures.process import BrokenProcessPool
 
@@ -847,6 +851,9 @@ def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BoomPool)
     got = parse_all(files, jobs=4)
+
+    assert len(got) == 70
+    assert all(item[2] is not None for item in got)
 
     def digest(res):
         return [
@@ -970,4 +977,127 @@ def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
     monkeypatch.setattr(fetch.subprocess, "run", _fail)
     res = fetch.clone("owner/repo", tmp_path)
     assert res == target
+
+
+# ---------- Issue #28: Test coverage round 2 (ISS-52, ISS-53, NC-3) ----------
+
+@pytest.mark.parametrize(
+    "spec,expected",
+    [
+        ("owner/repo", ("owner", "repo")),
+        ("org-name/repo-name", ("org-name", "repo-name")),
+        ("a_b/c_d", ("a_b", "c_d")),
+        ("https://github.com/owner/repo", ("owner", "repo")),
+        ("https://github.com/owner/repo.git", ("owner", "repo")),
+        ("http://github.com/owner/repo", ("owner", "repo")),
+        ("http://github.com/owner/repo.git", ("owner", "repo")),
+        ("https://www.github.com/owner/repo", ("owner", "repo")),
+        ("git@github.com:owner/repo.git", ("owner", "repo")),
+        ("git@github.com:owner/repo", ("owner", "repo")),
+        ("github.com/owner/repo", ("owner", "repo")),
+        ("owner/repo/", ("owner", "repo")),
+    ],
+)
+def test_iss52_parse_spec_valid_table(spec, expected):
+    """ISS-52: table-test parse_spec across all supported URL/SSH/slug formats."""
+    from repo2graph.fetch import parse_spec
+
+    assert parse_spec(spec) == expected
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "",
+        "   ",
+        "singleword",
+        "owner/",
+        "/repo",
+        "owner/..",
+        "../repo",
+        "owner/.",
+        "./repo",
+        "-option/repo",
+        "owner/-option",
+        "--repo/bar",
+        "owner/repo/extra",
+        "https://gitlab.com/owner/repo",
+    ],
+)
+def test_iss52_parse_spec_invalid_table(spec):
+    """ISS-52: table-test parse_spec rejection of traversal, options, and invalid URLs."""
+    from repo2graph.fetch import parse_spec
+
+    with pytest.raises(ValueError):
+        parse_spec(spec)
+
+
+def test_iss52_clone_argv_construction(tmp_path, monkeypatch):
+    """ISS-52: clone argv construction under different options."""
+    from repo2graph import fetch
+
+    rec = _RunRecorder()
+    monkeypatch.setattr(fetch.subprocess, "run", rec)
+
+    # Default clone
+    target1 = fetch.clone("owner/repo", tmp_path)
+    assert target1 == tmp_path / "repo"
+    assert rec.calls[-1][0] == [
+        "git", "clone", "--quiet",
+        "https://github.com/owner/repo.git",
+        str(tmp_path / "repo"),
+    ]
+
+    # With depth and ref
+    target2 = fetch.clone("owner/repo", tmp_path, ref="feat", depth=2)
+    assert target2 == tmp_path / "repo"
+    assert rec.calls[-1][0] == [
+        "git", "clone", "--quiet",
+        "--depth", "2",
+        "--branch", "feat",
+        "https://github.com/owner/repo.git",
+        str(tmp_path / "repo"),
+    ]
+
+
+def test_iss53_parallel_parse_matches_serial(tmp_path):
+    """ISS-53: parallel parse path (>= 64 files) produces identical node ids and
+    edge triples to serial."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(70):
+        prev = (i - 1) % 70
+        (repo / f"mod_{i:02d}.py").write_text(
+            f"from mod_{prev:02d} import f_{prev:02d}\n\n"
+            f"def f_{i:02d}():\n"
+            f"    return f_{prev:02d}()\n",
+            encoding="utf-8",
+        )
+    g_serial = build(repo, jobs=1)
+    g_parallel = build(repo, jobs=2)
+
+    assert len(g_serial.nodes) >= 70
+    assert sorted(g_serial.nodes.keys()) == sorted(g_parallel.nodes.keys())
+    triples_serial = sorted((e["src"], e["dst"], e["type"]) for e in g_serial.edges)
+    triples_parallel = sorted((e["src"], e["dst"], e["type"]) for e in g_parallel.edges)
+    assert triples_serial == triples_parallel
+
+
+def test_nc3_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_repo):
+    """NC-3: GraphML output contains the expected node labels and definitions verbatim."""
+    import xml.etree.ElementTree as ET
+
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "graphml"])
+    gml = artifact_path(out, "graph.graphml")
+    tree = ET.parse(gml)
+    root = tree.getroot()
+    nodes = [e for e in root.iter() if e.tag.endswith("node")]
+    node_ids = {n.attrib.get("id") for n in nodes}
+    assert "file:pkg/main.py" in node_ids
+    assert "sym:pkg/main.py::Runner" in node_ids
+    assert "sym:pkg/util.py::helper" in node_ids
+    text = gml.read_text(encoding="utf-8")
+    assert "Runner.run" in text
+    assert "helper" in text
 
