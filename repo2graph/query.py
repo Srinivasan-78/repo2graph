@@ -14,6 +14,11 @@ from .layout import path as artifact_path
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 
+# BM25 scoring constants: term frequency saturation (K1), length normalization (B), average doc length (AVG_LEN)
+BM25_K1 = 1.5
+BM25_B = 0.75
+BM25_AVG_LEN = 400.0
+
 
 def read_jsonl(path: Path) -> list:
     """Load a JSONL file written by export.write_jsonl.
@@ -73,7 +78,7 @@ class Index:
             idf = math.log(1 + self.N / (1 + self.df[term]))
             for i, cnt in posting:
                 length = self.lengths[i]
-                acc[i] += qn * idf * (cnt / (cnt + 1.5 * (0.25 + 0.75 * length / 400)))
+                acc[i] += qn * idf * (cnt / (cnt + BM25_K1 * ((1.0 - BM25_B) + BM25_B * length / BM25_AVG_LEN)))
         scored = [(s, i) for i, s in acc.items() if s]
         scored.sort(reverse=True)
         return scored
@@ -102,24 +107,37 @@ class Index:
 
     def retrieve(self, query: str, k: int = 8, hops: int = 1, budget_chars: int = 24000):
         scored = self.score(query)[: k * 3]
-        picked, seen_nodes, used = [], [], 0
+        picked, seen_nodes_list, seen_nodes_set, used = [], [], set(), 0
         for s, i in scored:
             c = self.chunks[i]
-            if c["node_id"] in seen_nodes:
+            nid = c["node_id"]
+            if nid in seen_nodes_set:
                 continue
-            seen_nodes.append(c["node_id"])
-            picked.append({"score": round(s, 3), "why": "lexical", **c})
-            used += len(c["text"])
-            if len(picked) >= k or used > budget_chars:
+            chunk_len = len(c["text"])
+            # ISS-37: test budget before appending so we do not overshoot by a whole chunk
+            if picked and used + chunk_len > budget_chars:
                 break
-        for nid, etype, direction, src in self.expand(seen_nodes, hops=hops):
-            if used > budget_chars:
+            seen_nodes_set.add(nid)
+            seen_nodes_list.append(nid)
+            picked.append({"score": round(s, 3), "why": "lexical", **c})
+            used += chunk_len
+            if len(picked) >= k or used >= budget_chars:
+                break
+        # ISS-37: Bound the expansion pass by both count and budget
+        max_total = k * 2
+        for nid, etype, direction, src in self.expand(seen_nodes_list, hops=hops):
+            if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
+                chunk_len = len(c["text"])
+                if used + chunk_len > budget_chars:
+                    break
                 picked.append({"score": 0.0,
                                "why": f"{etype} {direction} of {self.nodes.get(src, {}).get('name', src)}",
                                **c})
-                used += len(c["text"])
+                used += chunk_len
+                if len(picked) >= max_total or used >= budget_chars:
+                    break
         return picked
 
 

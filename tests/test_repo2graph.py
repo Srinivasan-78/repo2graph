@@ -1101,3 +1101,29 @@ def test_nc3_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_
     assert "Runner.run" in text
     assert "helper" in text
 
+
+def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
+    """Issue 25 (ISS-37, ISS-38, ISS-39): BM25 constants are named, char budget
+    is checked before appending to prevent overshooting, and expansion is bounded."""
+    from repo2graph.query import BM25_K1, BM25_B, BM25_AVG_LEN, Index
+    assert BM25_K1 == 1.5
+    assert BM25_B == 0.75
+    assert BM25_AVG_LEN == 400.0
+
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    idx = Index(out)
+
+    # Test budget check before append: small budget should stop adding chunks
+    small_budget = 250
+    hits = idx.retrieve("double a value helper", k=8, hops=2, budget_chars=small_budget)
+    assert len(hits) >= 1
+    # If more than 1 chunk was added, the total should not exceed the budget
+    if len(hits) > 1:
+        total_chars = sum(len(h["text"]) for h in hits)
+        assert total_chars <= small_budget
+
+    # Test expansion bound: k=2 means max 2*k=4 hits even with ample budget
+    ample_hits = idx.retrieve("double a value helper", k=2, hops=2, budget_chars=100000)
+    assert len(ample_hits) <= 4
+
