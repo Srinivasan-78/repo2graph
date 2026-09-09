@@ -1246,3 +1246,28 @@ def test_iss24_select_zero_or_negative_means_no_cap():
     assert len(kept_nodes_neg) == 10
     assert len(kept_edges_neg) == 9
 
+
+def test_iss22_chunk_caps_and_residual_span(tmp_path):
+    """Issue 22 (ISS-23, ISS-26): named constants for chunk caps, and real line spans for residuals."""
+    from repo2graph.chunks import (
+        MAX_CALLERS, MAX_CALLEES, MAX_EXT_CALLS, MAX_BASES, MAX_IMPORTS, MAX_DEFINES
+    )
+    for cap in (MAX_CALLERS, MAX_CALLEES, MAX_EXT_CALLS, MAX_BASES, MAX_IMPORTS, MAX_DEFINES):
+        assert isinstance(cap, int) and cap > 0
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # File with comments at top (lines 1-3), function on lines 4-6, comments at bottom (lines 7-9)
+    (repo / "m.py").write_text(
+        "# Header comment line 1\n# Header comment line 2\n# Header comment line 3\n"
+        "def f():\n    return 42\n\n"
+        "# Footer comment line 7\n# Footer comment line 8\n# Footer comment line 9\n",
+        encoding="utf-8"
+    )
+    g = build(repo)
+    chunks = build_chunks(g)
+    residual = next((c for c in chunks if c["type"] == "file_residual"), None)
+    assert residual is not None
+    assert residual["start_line"] == 1
+    assert residual["end_line"] == 10
+
