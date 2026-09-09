@@ -213,6 +213,7 @@ def parse_all(files, jobs: int):
     the difference between one core and all of them. Order is preserved, which
     keeps node ids and edge order identical to a serial run.
     """
+    jobs = resolve_jobs(jobs)
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()))
              for rel, abspath in files]
     if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
@@ -370,7 +371,7 @@ def mark_entrypoints(g: Graph):
              and nid not in called and nid not in nested]
     for nid in roots:
         g.nodes[nid]["entrypoint"] = True
-    roots.sort(key=lambda nid: -len(out.get(nid, ())))
+    roots.sort(key=lambda nid: (-len(out.get(nid, ())), nid))
     for nid in roots[:SCORED_ENTRYPOINTS]:
         g.nodes[nid]["reach"] = _reach(nid, out)
     g.stats["entrypoints"] = len(roots)
@@ -412,7 +413,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index (same bug class as ISS-22).
     for line in out.stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
-        line = line.strip()
+        line = line.rstrip("\r")
         if not line:
             if 1 < len(current) <= 25:
                 for a, b in itertools.combinations(sorted(set(current)), 2):

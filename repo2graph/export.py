@@ -32,7 +32,7 @@ def write_jsonl(path: Path, rows) -> int:
     n = 0
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
             n += 1
     return n
 
@@ -227,7 +227,7 @@ def _separate(pos, sizes, iterations):
 def _xml_safe(text: str) -> str:
     """Drop characters that are not legal in XML 1.0.
 
-    A C0 control char (\\x0b, \\x0c, \\x00) sitting in a docstring or signature
+    A C0 control char (\x0b, \x0c, \x00) sitting in a docstring or signature
     is written verbatim by ElementTree and then makes the file unparseable by
     any conforming reader (ISS-27). Legal set: tab, LF, CR, >=0x20 minus the
     surrogate block, up to 0x10FFFF, excluding 0xFFFE/0xFFFF.
@@ -237,7 +237,7 @@ def _xml_safe(text: str) -> str:
         if c in "\t\n\r"
         or 0x20 <= ord(c) <= 0xD7FF
         or 0xE000 <= ord(c) <= 0xFFFD
-        or ord(c) >= 0x10000
+        or (0x10000 <= ord(c) <= 0x10FFFF and (ord(c) & 0xFFFE) != 0xFFFE)
     )
 
 
@@ -335,6 +335,7 @@ def write_graphml(g, path: Path):
     ET.indent(root, space="  ")
     with atomic_write(path, "wb") as fh:
         ET.ElementTree(root).write(fh, encoding="utf-8", xml_declaration=True)
+        fh.write(b"\n")
 
 
 def _cy(v):
@@ -471,12 +472,15 @@ def write_manifest(g, path: Path, written: list[str]):
         ],
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps(manifest, indent=2))
+        fh.write(json.dumps(manifest, indent=2) + "\n")
 
 
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
     build_chunks generator) or None. Returns (written_paths, chunk_count)."""
+    outdir = Path(outdir)
+    if outdir.exists() and not outdir.is_dir():
+        raise ValueError(f"output path exists and is not a directory: {outdir}")
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
     n_chunks = 0
@@ -505,6 +509,6 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
     if "html" in formats:
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps(dict(g.stats), indent=2))
+        fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
     write_manifest(g, out("manifest.json")[0], list(written))
     return written, n_chunks
