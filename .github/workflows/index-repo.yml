@@ -44,8 +44,10 @@ jobs:
 
       - name: Compute slug
         id: slug
+        env:
+          R2G_REPO: ${{ inputs.repo }}
         run: |
-          slug="$(printf '%s' "${{ inputs.repo }}" | sed -E 's#.*github\.com[:/]##; s#\.git/?$##; s#/#__#g')"
+          slug="$(printf '%s' "$R2G_REPO" | sed -E 's#.*github\.com[:/]##; s#\.git/?$##; s#/#__#g')"
           echo "slug=$slug" >> "$GITHUB_OUTPUT"
 
       - name: Build graph

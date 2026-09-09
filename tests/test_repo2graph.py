@@ -2,22 +2,26 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.Iu5Wv6r4KuCkIqePU2-PO4
+# Fingerprint: AMK1.pdfhGbDrl5PDge0OEgTSnS
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 import re
 import json
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from repo2graph.chunks import _split, build_chunks
 from repo2graph.cli import main, parse_formats
-from repo2graph.graph import build, import_targets, path_index, resolve_import
+from repo2graph.graph import build, import_targets, parse_all, path_index, resolve_import
 from repo2graph.layout import path as artifact_path
 from repo2graph.parse import parse_source
 from repo2graph.query import Index, tokenize
 from repo2graph.viz import LoadedGraph, node_label, payload, select
 from repo2graph.walker import discover, matches_any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PKG_INIT = ""
 PKG_UTIL = '''
@@ -327,6 +331,14 @@ def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
     idx = Index(out)
     assert any(c["path"] == "pkg/sep.py" for c in idx.chunks)
     assert idx.retrieve("uses_sep", k=3)
+    # ISS-50: the chunk must carry the *body* of uses_sep, not a mis-sliced
+    # fragment. splitlines() breaks on U+2028/U+2029/U+0085 but tree-sitter's
+    # row numbers do not, so at HEAD the chunk text is sliced from the wrong
+    # lines and never contains "return MSG".
+    sep_chunk = next(c for c in idx.chunks
+                     if c["node_id"] == "sym:pkg/sep.py::uses_sep")
+    assert "return MSG" in sep_chunk["text"]
+    assert 'MSG = "a' not in sep_chunk["text"]
 
 
 def test_query_without_an_index_exits_cleanly(tmp_path):
@@ -543,3 +555,363 @@ def test_html_escapes_a_script_tag_in_the_source(tmp_path):
 def test_node_label_truncates(sample_graph):
     long = {"id": "sym:a.py::x", "qualname": "SomeVeryLongClassName.method"}
     assert node_label(long).endswith("…") and len(node_label(long)) == 15
+
+
+# ======================================================================
+# Refactor loop: characterization + one regression test per in-scope bug.
+# ISS ids and acceptance-criteria numbers are named in each test.
+# ======================================================================
+
+# ---------- Level 1: characterization (AC-13) ----------
+# Literals generated from the HEAD build (baseline 81519d6a) of the sample_repo
+# fixture. The `repo:<root.name>` id is normalised to `repo:<ROOT>` because the
+# fixture root is a per-run tmp_path (Risk 1). This test must PASS at HEAD and
+# keep passing through the refactor (dataclass field removal, walker
+# unification, the add_cochange decode change).
+
+CHAR_NODES = [
+    "dir:pkg",
+    "external:getpid",
+    "file:README.md",
+    "file:conf.yaml",
+    "file:pkg/__init__.py",
+    "file:pkg/main.py",
+    "file:pkg/util.py",
+    "module:os",
+    "repo:<ROOT>",
+    "sym:pkg/main.py::Runner",
+    "sym:pkg/main.py::Runner.run",
+    "sym:pkg/main.py::entry",
+    "sym:pkg/util.py::helper",
+]
+
+CHAR_TRIPLES = [
+    ("dir:pkg", "file:pkg/__init__.py", "CONTAINS"),
+    ("dir:pkg", "file:pkg/main.py", "CONTAINS"),
+    ("dir:pkg", "file:pkg/util.py", "CONTAINS"),
+    ("file:pkg/main.py", "file:pkg/util.py", "IMPORTS"),
+    ("file:pkg/main.py", "module:os", "IMPORTS"),
+    ("file:pkg/main.py", "sym:pkg/main.py::Runner", "DEFINES"),
+    ("file:pkg/main.py", "sym:pkg/main.py::entry", "DEFINES"),
+    ("file:pkg/util.py", "sym:pkg/util.py::helper", "DEFINES"),
+    ("repo:<ROOT>", "dir:pkg", "CONTAINS"),
+    ("repo:<ROOT>", "file:README.md", "CONTAINS"),
+    ("repo:<ROOT>", "file:conf.yaml", "CONTAINS"),
+    ("sym:pkg/main.py::Runner", "sym:pkg/main.py::Runner.run", "DEFINES"),
+    ("sym:pkg/main.py::Runner.run", "external:getpid", "CALLS_EXTERNAL"),
+    ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper", "CALLS"),
+    ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner", "CALLS"),
+]
+
+CHAR_CHUNK_IDS = [
+    "file:README.md#0",
+    "file:conf.yaml#0",
+    "sym:pkg/main.py::Runner",
+    "sym:pkg/main.py::Runner.run",
+    "sym:pkg/main.py::entry",
+    "sym:pkg/util.py::helper",
+]
+
+
+def test_refactor_preserves_graph_shape(sample_repo):
+    """AC-13: node ids, (src, dst, type) triples and chunk ids are byte-identical
+    before and after the refactor for the sample repo."""
+    g = build(sample_repo)
+    token = f"repo:{sample_repo.name}"
+
+    def norm(s: str) -> str:
+        return s.replace(token, "repo:<ROOT>")
+
+    nodes = sorted(norm(n) for n in g.nodes)
+    triples = sorted((norm(e["src"]), norm(e["dst"]), e["type"]) for e in g.edges)
+    chunk_ids = sorted(norm(c["id"]) for c in build_chunks(g))
+
+    assert nodes == CHAR_NODES
+    assert triples == CHAR_TRIPLES
+    assert chunk_ids == CHAR_CHUNK_IDS
+
+
+# ---------- Level 2: one regression test per in-scope bug ----------
+
+def test_iss22_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
+    """AC-1 (ISS-22): a file whose first line holds U+2028 must still slice each
+    later symbol's chunk from the right source lines. At HEAD `splitlines()`
+    splits on U+2028 while tree-sitter row numbers do not, so the body comes out
+    as "\\ndef uses_sep():" and never contains "return MSG"."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sep.py").write_text(
+        'MSG = "a\u2028b"\n\ndef uses_sep():\n    return MSG\n', encoding="utf-8")
+    g = build(repo)
+    chunk = next(c for c in build_chunks(g)
+                 if c["node_id"] == "sym:sep.py::uses_sep")
+    assert "return MSG" in chunk["text"]
+    assert 'MSG = "a' not in chunk["text"]
+
+
+def test_iss22_file_residual_excludes_symbol_body(tmp_path):
+    """AC-2 (ISS-22): the residual chunk holds only lines no symbol claimed. At
+    HEAD the same mis-slice pulls `return MSG` (the body of uses_sep) into the
+    residual and drops part of the real residual span."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sep.py").write_text(
+        'MSG = "a\u2028b"\n'
+        'EXTRA = "padding padding padding padding padding padding"\n'
+        '\n'
+        'def uses_sep():\n'
+        '    return MSG\n',
+        encoding="utf-8")
+    g = build(repo)
+    residual = [c for c in build_chunks(g)
+                if c["type"] == "file_residual" and c["path"] == "sep.py"]
+    assert residual, "expected a file_residual chunk for sep.py"
+    text = residual[0]["text"]
+    assert "MSG = " in text
+    assert "return MSG" not in text
+
+
+def test_iss06_cochange_survives_non_ascii_filenames(tmp_path):
+    """AC-3/AC-4 (ISS-06): two non-ASCII paths committed together three times
+    must yield a CO_CHANGE edge. At HEAD `git log` runs with text=True and
+    core.quotepath=true, so the paths come back quoted/locale-decoded, never
+    match file_index, and the edge silently vanishes (or raises
+    UnicodeDecodeError on a non-UTF-8 locale)."""
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    run = lambda *a: subprocess.run(["git", "-C", str(tmp_path), *a], check=True,
+                                    capture_output=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    a, b = "café.py", "naïve.py"
+    for i in range(3):
+        (tmp_path / a).write_text(f"a = {i}\n", encoding="utf-8")
+        (tmp_path / b).write_text(f"b = {i}\n", encoding="utf-8")
+        run("add", "-A")
+        run("commit", "-qm", f"c{i}")
+    g = build(tmp_path, git_history=10)
+    assert (f"file:{a}", f"file:{b}") in edges_of(g, "CO_CHANGE")
+
+
+def test_sh1_add_cochange_splits_git_log_on_newline_only(monkeypatch):
+    """REVIEW SH-1 (ISS-22 bug class, graph.py:380): add_cochange must split
+    `git log` output on "\\n" only. With core.quotepath=false git emits a path
+    containing a raw U+2028; str.splitlines() would cut that path in two so
+    neither fragment matches file_index and the CO_CHANGE edge vanishes."""
+    from repo2graph.graph import Graph, add_cochange
+
+    sep = "\u2028"  # U+2028 LINE SEPARATOR, as a source escape not a raw code point
+    a, b = f"pkg/a{sep}x.py", "pkg/b.py"
+    log = "".join(f"{h}\n{a}\n{b}\n\n" for h in ("H1", "H2", "H3"))
+    fake = subprocess.CompletedProcess([], 0, stdout=log.encode("utf8"), stderr=b"")
+    monkeypatch.setattr("repo2graph.graph.subprocess.run", lambda *a, **k: fake)
+
+    g = Graph(Path("."), "root")
+    add_cochange(g, Path("."), 10, {a, b}, min_pairs=3)
+    assert (f"file:{a}", f"file:{b}") in edges_of(g, "CO_CHANGE")
+
+
+def test_iss27_graphml_roundtrips_with_a_control_char(tmp_path):
+    """AC-5 (ISS-27): a C0 control char inside a docstring must not make the
+    GraphML unparseable. stdlib only, never skipped. At HEAD ElementTree writes
+    the raw \\x0c and ET.parse raises ParseError."""
+    import xml.etree.ElementTree as ET
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "mod.py").write_text(
+        'def f():\n    "doc with \x0c formfeed"\n    return 1\n', encoding="utf-8")
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "graphml"])
+    gml = artifact_path(out, "graph.graphml")
+    ET.parse(gml)  # must not raise
+    text = gml.read_text(encoding="utf-8")
+    illegal = [hex(ord(c)) for c in text
+               if not (c in "\t\n\r"
+                       or 0x20 <= ord(c) <= 0xD7FF
+                       or 0xE000 <= ord(c) <= 0xFFFD
+                       or ord(c) >= 0x10000)]
+    assert not illegal, illegal
+
+
+@pytest.mark.parametrize("spec", ["owner/..", "../evil", "-x/-y", "owner/"])
+def test_iss19_parse_spec_rejects_traversal_and_option_specs(spec):
+    """AC-6 (ISS-19): traversal / option-like specs must raise. At HEAD
+    parse_spec("owner/..") returns ("owner", "..") instead of raising."""
+    from repo2graph.fetch import parse_spec
+    with pytest.raises(ValueError):
+        parse_spec(spec)
+
+
+@pytest.mark.parametrize("spec", [
+    "owner/repo",
+    "https://github.com/owner/repo",
+    "git@github.com:owner/repo.git",
+])
+def test_iss19_parse_spec_still_accepts_valid_specs(spec):
+    """AC-6 (ISS-19): the hardening must not reject legitimate specs."""
+    from repo2graph.fetch import parse_spec
+    assert parse_spec(spec) == ("owner", "repo")
+
+
+class _RunRecorder:
+    """Stand-in for subprocess.run that records every call and reports success."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, cmd, *args, **kwargs):
+        self.calls.append((list(cmd), args, kwargs))
+
+        class _Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Result()
+
+
+def test_iss16_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
+    """AC-7 (ISS-16): no argv element handed to subprocess.run may contain the
+    token. At HEAD the token is interpolated into the clone URL argv element."""
+    from repo2graph import fetch
+    rec = _RunRecorder()
+    monkeypatch.setattr(fetch.subprocess, "run", rec)
+    token = "s3cr3t-CLONE-token-value"
+    fetch.clone("owner/repo", tmp_path, token=token)
+    assert rec.calls, "subprocess.run was never called"
+    for cmd, _a, _k in rec.calls:
+        for part in cmd:
+            assert token not in str(part), cmd
+
+
+def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch):
+    """AC-8 (ISS-18): every subprocess.run in fetch.py must carry a timeout. At
+    HEAD none of clone()/head_sha() pass one."""
+    from repo2graph import fetch
+    rec = _RunRecorder()
+    monkeypatch.setattr(fetch.subprocess, "run", rec)
+    fetch.clone("owner/repo", tmp_path, token="tok")
+    fetch.head_sha(tmp_path)
+    assert rec.calls, "subprocess.run was never called"
+    for cmd, _a, kwargs in rec.calls:
+        assert "timeout" in kwargs, cmd
+
+
+def test_iss13_discover_matches_between_git_and_walk(tmp_path):
+    """AC-9 (ISS-13): discover() must return the same relative paths whether or
+    not the tree is a git checkout. At HEAD the os.walk fallback drops every
+    dot-directory while the git path keeps it, so `.github/**` appears only in a
+    git checkout."""
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "mod.py").write_text("x = 1\n")
+    (tmp_path / "README.md").write_text("# hi\n")
+    gh = tmp_path / ".github" / "workflows"
+    gh.mkdir(parents=True)
+    (gh / "ci.py").write_text("y = 2\n")
+
+    walk_set = {rel for rel, _ in discover(tmp_path)}
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
+                   capture_output=True)
+    git_set = {rel for rel, _ in discover(tmp_path)}
+    assert walk_set == git_set
+
+
+def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
+    """AC-10 (ISS-07): a BrokenProcessPool must fall back to the serial path and
+    return the jobs=1 result. At HEAD the except clause only catches
+    (OSError, ValueError) so BrokenProcessPool aborts the whole build."""
+    import concurrent.futures
+    from concurrent.futures.process import BrokenProcessPool
+
+    files = []
+    for i in range(70):
+        p = tmp_path / f"m{i}.py"
+        p.write_text(f"def f{i}():\n    return {i}\n")
+        files.append((f"m{i}.py", p))
+
+    serial = parse_all(files, jobs=1)
+
+    class _BoomPool:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            raise BrokenProcessPool("boom")
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BoomPool)
+    got = parse_all(files, jobs=4)
+
+    def digest(res):
+        return [
+            (rel, lang, None if read is None else (
+                read[0], read[1],
+                None if read[2] is None
+                else [(s.qualname, s.kind) for s in read[2].symbols]))
+            for rel, lang, read in res
+        ]
+
+    assert digest(got) == digest(serial)
+
+
+def test_iss01_iss02_dead_dataclass_fields_are_gone():
+    """AC-11 (ISS-01/ISS-02): Symbol has no start_byte/end_byte and ParsedFile
+    has no file_calls. At HEAD all three fields are present."""
+    import dataclasses
+
+    from repo2graph.parse import ParsedFile, Symbol
+
+    sym_fields = {f.name for f in dataclasses.fields(Symbol)}
+    assert "start_byte" not in sym_fields
+    assert "end_byte" not in sym_fields
+    assert "file_calls" not in {f.name for f in dataclasses.fields(ParsedFile)}
+
+
+# ---------- Level 3: workflow-YAML text assertions ----------
+
+def _run_blocks(yaml_text: str):
+    """Yield the body of every `run: |` / `run: >` block-scalar in a workflow."""
+    lines = yaml_text.splitlines()
+    blocks, i = [], 0
+    while i < len(lines):
+        m = re.match(r"^(\s*)(?:-\s+)?run:\s*[|>][-+]?\s*$", lines[i])
+        if not m:
+            i += 1
+            continue
+        indent = len(m.group(1))
+        body, i = [], i + 1
+        while i < len(lines) and (
+                not lines[i].strip()
+                or len(lines[i]) - len(lines[i].lstrip()) > indent):
+            body.append(lines[i])
+            i += 1
+        blocks.append("\n".join(body))
+    return blocks
+
+
+def test_iss44_index_repo_workflow_has_no_run_interpolation():
+    """AC-14 (ISS-44): no `${{ inputs. }}` or `${{ github.event. }}` inside any
+    run: block of index-repo.yml; the slug is computed from "$R2G_REPO". At HEAD
+    the "Compute slug" step interpolates ${{ inputs.repo }} straight into bash."""
+    text = (REPO_ROOT / ".github" / "workflows" / "index-repo.yml").read_text(
+        encoding="utf-8")
+    for block in _run_blocks(text):
+        assert "${{ inputs." not in block, block
+        assert "${{ github.event." not in block, block
+    assert '"$R2G_REPO"' in text
+
+
+def test_iss45_ci_workflow_tests_job_covers_windows():
+    """AC-15 (ISS-45): the ci.yml `tests` job runs on ubuntu and windows across
+    both Python versions. At HEAD the matrix is ubuntu-latest only."""
+    text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    tests_job = text.split("\n  tests:", 1)[1].split("\n  action:", 1)[0]
+    assert "windows-latest" in tests_job
+    assert "ubuntu-latest" in tests_job
+    assert '"3.10"' in tests_job and '"3.12"' in tests_job

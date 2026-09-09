@@ -37,7 +37,7 @@ def cmd_build(args):
     written = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     print(json.dumps({"out": str(outdir), "written": written,
                       "stats": dict(g.stats),
-                      "chunks": len(chunks) if chunks else 0}, indent=2))
+                      "chunks": len(chunks) if chunks is not None else 0}, indent=2))
 
 
 def cmd_github(args):

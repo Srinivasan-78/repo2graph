@@ -10,6 +10,17 @@ MAX_CHARS = 4000
 OVERLAP_LINES = 8
 
 
+def _lines(src: str) -> list[str]:
+    """Split source the way tree-sitter counts rows: on "\\n" only.
+
+    str.splitlines() also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c, which
+    tree-sitter's row numbers do not; using it here slices every later symbol's
+    chunk from the wrong lines (ISS-22). Drop a trailing "\\r" per line so
+    CRLF files still index cleanly.
+    """
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in src.split("\n")]
+
+
 def _split(text: str, max_chars: int = MAX_CHARS):
     if len(text) <= max_chars:
         return [text]
@@ -64,7 +75,7 @@ def build_chunks(g, include_files: bool = True):
         if n["type"] != "symbol":
             continue
         src = source_of(n["path"])
-        lines = src.splitlines()
+        lines = _lines(src)
         body = "\n".join(lines[n["start_line"] - 1: n["end_line"]])
         covered[n["path"]].append((n["start_line"], n["end_line"]))
         call_out = [e for e in out_edges[nid] if e["type"] == "CALLS"][:12]
@@ -115,7 +126,7 @@ def build_chunks(g, include_files: bool = True):
         if not src.strip():
             continue
         spans = sorted(covered.get(n["path"], []))
-        lines = src.splitlines()
+        lines = _lines(src)
         if spans:
             keep, cur = [], 1
             for s, e in spans:

@@ -214,6 +214,23 @@ def _separate(pos, sizes, iterations):
     return pos
 
 
+def _xml_safe(text: str) -> str:
+    """Drop characters that are not legal in XML 1.0.
+
+    A C0 control char (\\x0b, \\x0c, \\x00) sitting in a docstring or signature
+    is written verbatim by ElementTree and then makes the file unparseable by
+    any conforming reader (ISS-27). Legal set: tab, LF, CR, >=0x20 minus the
+    surrogate block, up to 0x10FFFF, excluding 0xFFFE/0xFFFF.
+    """
+    return "".join(
+        c for c in text
+        if c in "\t\n\r"
+        or 0x20 <= ord(c) <= 0xD7FF
+        or 0xE000 <= ord(c) <= 0xFFFD
+        or ord(c) >= 0x10000
+    )
+
+
 def _graphml_label(n: dict) -> str:
     text = n.get("qualname") or n.get("name") or n.get("path") or n["id"]
     text = " ".join(str(text).split())
@@ -257,7 +274,8 @@ def write_graphml(g, path: Path):
         for name, value in attrs.items():
             data = ET.SubElement(parent, f"{{{GRAPHML_NS}}}data",
                                  {"key": key_for(scope, name, value)})
-            data.text = "true" if value is True else "false" if value is False else str(value)
+            data.text = ("true" if value is True else "false" if value is False
+                         else _xml_safe(str(value)))
 
     for nid, n in g.nodes.items():
         attrs = _flat(n)
@@ -280,7 +298,7 @@ def write_graphml(g, path: Path):
         text = ET.SubElement(shape, f"{{{Y_NS}}}NodeLabel", {
             "alignment": "center", "fontSize": "11", "textColor": "#1c2330",
             "visible": "true"})
-        text.text = label
+        text.text = _xml_safe(label)
         ET.SubElement(shape, f"{{{Y_NS}}}Shape", {
             "type": "ellipse" if attrs.get("type") == "symbol" else "roundrectangle"})
 
@@ -330,7 +348,7 @@ def write_cypher(g, path: Path):
         lines.append(
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
             f"MERGE (a)-[:{e['type']}{pstr}]->(b);")
-    path.write_text("\n".join(lines), encoding="utf8")
+    path.write_text("\n".join(lines) + "\n", encoding="utf8")
 
 
 def write_overview(g, path: Path, top: int = 25):

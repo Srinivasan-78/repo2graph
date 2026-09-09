@@ -130,7 +130,7 @@ def resolve_import(target: str, from_path: str, lang: str, file_index: set[str],
         else:
             cands = [f"src/{target}.ts", f"src/{target}.js"]
     elif lang == "go":
-        module = (ctx or {}).get("go_module")
+        module = ctx.get("go_module")
         if module and (target == module or target.startswith(module + "/")):
             pkg_dir = target[len(module):].strip("/")
             cands = [p for p in by_dir.get(pkg_dir, [])
@@ -200,12 +200,16 @@ def parse_all(files, jobs: int):
              for rel, abspath in files]
     if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
         return [_read_and_parse(i) for i in items]
-    from concurrent.futures import ProcessPoolExecutor
+    import concurrent.futures
     try:
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
             return list(pool.map(_read_and_parse, items,
                                  chunksize=max(1, len(items) // (jobs * 8))))
-    except (OSError, ValueError):  # no fork, or no POSIX semaphores to build on
+    except Exception:
+        # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
+        # worker ImportError, or a pickling failure on the call or its result:
+        # the comment above promises a serial fallback, so honour it for all of
+        # them rather than aborting the whole build.
         return [_read_and_parse(i) for i in items]
 
 
@@ -338,7 +342,7 @@ def mark_entrypoints(g: Graph):
              and nid not in called and nid not in nested]
     for nid in roots:
         g.nodes[nid]["entrypoint"] = True
-    roots.sort(key=lambda nid: -len(out[nid]))
+    roots.sort(key=lambda nid: -len(out.get(nid, ())))
     for nid in roots[:SCORED_ENTRYPOINTS]:
         g.nodes[nid]["reach"] = _reach(nid, out)
     g.stats["entrypoints"] = len(roots)
@@ -348,7 +352,7 @@ def _reach(start: str, out: dict) -> int:
     """How many distinct symbols `start` reaches through CALLS edges."""
     seen, stack = {start}, [start]
     while stack:
-        for dst in out[stack.pop()]:
+        for dst in out.get(stack.pop(), ()):
             if dst not in seen:
                 seen.add(dst)
                 stack.append(dst)
@@ -358,17 +362,25 @@ def _reach(start: str, out: dict) -> int:
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
     """CO_CHANGE edges from files edited together in the last N commits."""
     try:
+        # -c core.quotepath=false: without it git backslash-escapes any
+        # non-ASCII path ("caf\303\251.py"), which never matches file_index and
+        # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
+        # as UTF-8 ourselves, exactly as walker._git_files does, so a non-ASCII
+        # path cannot raise UnicodeDecodeError under a cp1252 locale.
         out = subprocess.run(
-            ["git", "-C", str(root), "log", f"-n{commits}", "--name-only",
-             "--pretty=format:%H", "--no-merges"],
-            capture_output=True, text=True, timeout=120)
+            ["git", "-c", "core.quotepath=false", "-C", str(root), "log",
+             f"-n{commits}", "--name-only", "--pretty=format:%H", "--no-merges"],
+            capture_output=True, timeout=120)
         if out.returncode != 0:
             return
     except (OSError, subprocess.SubprocessError):
         return
     pairs: Counter = Counter()
     current: list[str] = []
-    for line in out.stdout.splitlines() + [""]:
+    # split("\n"), not splitlines(): with core.quotepath=false git emits paths
+    # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
+    # in two so it never matches file_index (same bug class as ISS-22).
+    for line in out.stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
         line = line.strip()
         if not line:
             if 1 < len(current) <= 25:
