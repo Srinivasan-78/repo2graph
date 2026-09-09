@@ -193,11 +193,50 @@ The output is split in two, because people and programs want different things.
 `graph.graphml` also works in the Python libraries NetworkX and igraph. It lives under `human/`
 because the layout it carries is there for a person looking at a picture.
 
-Useful extras for `build`: `--include '**/*.py'` and `--exclude '**/test/**'` to pick files,
-`--max-files N` to stop early, `--formats jsonl,cypher` to skip outputs you do not want,
-`--viz-nodes N` to change how many dots the picture draws, `--no-chunks` to skip the code pieces,
-and `--jobs N` to say how many files to read at once (default: one per processor core, up to 8).
-More cores means a faster build, and the result is exactly the same either way.
+Useful extras for `build`:
+- `--include '**/*.py'` and `--exclude '**/test/**'` to filter files.
+- `--max-files N` to stop early on large projects.
+- `--formats jsonl,cypher,graphml,overview,html` to choose exact outputs.
+- `--viz-nodes N` to customize the node cap in `graph.html` (`0` for no cap).
+- `--no-chunks` to skip generating code retrieval chunks.
+- `--git-history N` to discover co-change patterns from git history (capped at 5000 commits).
+- `--jobs N` to set parallel workers (default: one per processor core, up to 8).
+
+All numeric flags validate non-negative values, and all output files are written atomically via sibling temporary files (`os.replace`) so crashes or disk errors never leave corrupted index files.
+
+## Python API
+
+You can also use `repo2graph` directly inside Python:
+
+```python
+from pathlib import Path
+from repo2graph import build, iter_chunks, write_html
+from repo2graph.export import dump_all
+from repo2graph.fetch import index_github
+from repo2graph.viz import LoadedGraph
+
+# 1. Build the repository graph in memory
+g = build(Path("."), git_history=200, jobs=0)
+print(f"Graph ready: {len(g.nodes)} nodes, {len(g.edges)} edges")
+
+# 2. Stream retrieval chunks to disk and dump artifacts
+# Chunks are yielded one at a time via a generator, keeping memory bounded
+written, count = dump_all(
+    g,
+    chunks=iter_chunks(g),
+    outdir=Path(".r2g"),
+    formats={"jsonl", "graphml", "cypher", "overview", "html"},
+    viz_nodes=300,
+)
+print(f"Wrote {len(written)} artifacts ({count} chunks) to .r2g")
+
+# 3. Or clone and index a remote GitHub repository in one call
+meta = index_github("psf/requests", outdir=Path("out/requests"), git_history=200)
+print(f"Indexed {meta['repo']} @ {meta['commit']}: {meta['nodes']} nodes, {meta['chunks']} chunks")
+
+# 4. Redraw the interactive HTML map from an existing index with a custom node cap
+write_html(LoadedGraph(Path(".r2g")), Path(".r2g/human/graph.html"), viz_nodes=80)
+```
 
 ## Where the code starts
 
@@ -218,18 +257,28 @@ the header, which is what makes the answers good.
 If you use a vector database, keep each piece's `node_id`. That is the handle that lets you jump
 back onto the map after a search.
 
-The pattern that works well: search for a few pieces, then follow the arrows one step to pull in
-the code around them, and put `overview.md` at the top as background.
+### Built-in graph-aware retrieval
+
+`repo2graph.query.Index` combines BM25 lexical search with graph traversal out of the box:
 
 ```python
-import json
-from repo2graph.query import Index
+from repo2graph.query import Index, format_pack, read_jsonl
 
-chunks = [json.loads(l) for l in open(".r2g/agent/chunks.jsonl")]
-# store each chunk's "text" in your search system, and keep "node_id" and "path" alongside it
+# Read chunks safely across operating systems (lossless newline & encoding handling)
+chunks = read_jsonl(".r2g/agent/chunks.jsonl")
 
-idx = Index(".r2g")                       # the map plus the pieces, no AI account needed
-hits = ["sym:app/auth.py::login"]         # node_ids your search returned
+# Retrieve the best matching chunks + their 1-hop graph neighbours (functions they call/inherit/import)
+idx = Index(".r2g")
+results = idx.retrieve("how does authentication verify tokens", k=8, hops=1, budget_chars=24000)
+
+for r in results:
+    print(f"[{r['why']}] {r['path']}::{r['qualname']} (score: {r['score']})")
+
+# Format retrieved chunks into a clean prompt context for an LLM
+prompt_context = format_pack(results)
+
+# Or expand existing vector search hits across the code graph:
+hits = ["sym:app/auth.py::login"]
 for node_id, edge_type, direction, src in idx.expand(hits, hops=1):
     for extra in idx.by_node.get(node_id, [])[:1]:
         print(edge_type, direction, extra["path"], extra["qualname"])
