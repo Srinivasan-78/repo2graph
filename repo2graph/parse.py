@@ -77,8 +77,12 @@ def _name_of(src: bytes, node, lang: str) -> str | None:
 
 
 def _callee_name(src: bytes, node) -> str | None:
-    fn = node.child_by_field_name("function") or node.child_by_field_name("name") \
-        or node.child_by_field_name("constructor") or node.child_by_field_name("type")
+    # "method": Ruby's `call` node keeps the receiver and the method in separate
+    # fields, so named_children[0] is the receiver — `logger.info(x)` would be
+    # recorded as a call to `logger`. Read the method field directly instead.
+    fn = (node.child_by_field_name("function") or node.child_by_field_name("name")
+          or node.child_by_field_name("method") or node.child_by_field_name("constructor")
+          or node.child_by_field_name("type"))
     if fn is None:
         if node.named_child_count:
             fn = node.named_children[0]

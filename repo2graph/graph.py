@@ -18,6 +18,10 @@ from .walker import discover
 MAX_CALL_CANDIDATES = 5
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
+# `git log --name-only` output is captured whole; a request for millions of
+# commits would buffer gigabytes. Co-change signal saturates long before this,
+# so cap the window and record when we did.
+MAX_COCHANGE_COMMITS = 5000
 
 
 class Graph:
@@ -54,6 +58,10 @@ _IMPORT_RE = {
     "rust": re.compile(r"use\s+([\w:]+)"),
     "java": re.compile(r"import\s+(?:static\s+)?([\w\.\*]+)"),
     "c": re.compile(r"""[<"]([^>"]+)[>"]"""),
+    # C# `using System.Text;` / `using static System.Math;` / `using J = A.B.C;`
+    "csharp": re.compile(r"using\s+(?:static\s+)?(?:[\w.]+\s*=\s*)?([\w.]+)"),
+    # PHP `use App\Models\User;` / `use function App\f;` / `use App\U as U;`
+    "php": re.compile(r"use\s+(?:function\s+|const\s+)?([\w\\]+)"),
 }
 
 
@@ -65,8 +73,10 @@ def import_targets(raw: str, lang: str) -> list[str]:
         if m.group(1):
             return [m.group(1)]
         return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
-    key = {"javascript": "js", "typescript": "js", "tsx": "js", "php": "js", "kotlin": "rust",
-           "swift": "java", "scala": "java", "csharp": "java", "cpp": "c"}.get(lang, lang)
+    # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
+    # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
+    key = {"javascript": "js", "typescript": "js", "tsx": "js",
+           "kotlin": "java", "swift": "java", "scala": "java", "cpp": "c"}.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
         return []
@@ -179,8 +189,14 @@ def _read_and_parse(item):
         raw = abspath.read_bytes()
     except OSError:
         return rel, lang, None
-    return rel, lang, (len(raw), raw.count(b"\n") + 1,
-                       parse_source(raw, lang) if lang else None)
+    try:
+        pf = parse_source(raw, lang) if lang else None
+    except Exception:
+        # A grammar that raises on one pathological file must not abort the
+        # whole build (nor trigger a pointless serial retry that raises again):
+        # count the file, drop its symbols, same as an unavailable parser.
+        pf = None
+    return rel, lang, (len(raw), raw.count(b"\n") + 1, pf)
 
 
 def resolve_jobs(jobs: int) -> int:
@@ -224,7 +240,7 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
     files = list(discover(root, include, exclude, stats=g.stats))
-    if max_files:
+    if max_files > 0:  # a negative limit must not become files[:-n] and drop the tail
         files = files[:max_files]
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
@@ -312,6 +328,16 @@ def build(root: Path, include=None, exclude=None, git_history: int = 0,
 
     if git_history:
         add_cochange(g, root, git_history, file_index)
+
+    # Every edge endpoint must be a node. A file can be in file_index (so an
+    # IMPORTS target resolves to it, and git log pairs it) yet have no file:
+    # node because the main loop skipped it as unreadable — that would leave a
+    # dangling edge that turns into a phantom node in the GraphML export.
+    before = len(g.edges)
+    g.edges = [e for e in g.edges if e["src"] in g.nodes and e["dst"] in g.nodes]
+    if len(g.edges) != before:
+        g.stats["edges_pruned_dangling"] += before - len(g.edges)
+
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
@@ -363,6 +389,9 @@ def _reach(start: str, out: dict) -> int:
 
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
     """CO_CHANGE edges from files edited together in the last N commits."""
+    if commits > MAX_COCHANGE_COMMITS:
+        g.stats["cochange_history_capped"] = commits
+        commits = MAX_COCHANGE_COMMITS
     try:
         # -c core.quotepath=false: without it git backslash-escapes any
         # non-ASCII path ("caf\303\251.py"), which never matches file_index and

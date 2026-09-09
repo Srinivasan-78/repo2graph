@@ -76,12 +76,16 @@ def _glob_re(pattern: str) -> re.Pattern:
             i += 1
         elif pat[i] == "[":
             j = pat.find("]", i + 1)
-            if j == -1:
+            cls = pat[i + 1:j].replace("\\", "\\\\") if j != -1 else ""
+            body = "^" + cls[1:] if cls.startswith("!") else cls
+            if j == -1 or body in ("", "^"):
+                # no closing "]", or "[]" / "[!]" — an empty class is not valid
+                # regex; treat the "[" as a literal so a stray bracket in a
+                # --include/--exclude pattern cannot crash discovery.
                 out.append(re.escape(pat[i]))
                 i += 1
             else:
-                cls = pat[i + 1:j].replace("\\", "\\\\")
-                out.append("[" + ("^" + cls[1:] if cls.startswith("!") else cls) + "]")
+                out.append("[" + body + "]")
                 i = j + 1
         else:
             out.append(re.escape(pat[i]))

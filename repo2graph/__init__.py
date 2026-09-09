@@ -4,12 +4,12 @@
 # SPDX-License-Identifier: MIT
 # Fingerprint: AMK1.yUPvWrVTkBHabrF3e5RmAj
 from .graph import build, Graph
-from .chunks import build_chunks
+from .chunks import build_chunks, iter_chunks
 from .viz import write_html
 
 import importlib.metadata
 
-__all__ = ["build", "Graph", "build_chunks", "write_html"]
+__all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
 try:
     __version__ = importlib.metadata.version("repo2graph")
 except Exception:

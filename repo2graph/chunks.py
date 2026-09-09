@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: MIT
 # Fingerprint: AMK1.wvlZwrV2X3pVpxyUeDkhz3
 """Turn graph nodes into retrieval chunks: code text + graph context header."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 MAX_CHARS = 4000
 OVERLAP_LINES = 8
@@ -29,10 +29,25 @@ def _lines(src: str) -> list[str]:
     return [ln[:-1] if ln.endswith("\r") else ln for ln in src.split("\n")]
 
 
+def _keepends_lf(text: str) -> list[str]:
+    """Split on "\\n" only, keeping the newline, so "".join(result) == text.
+
+    str.splitlines(keepends=True) also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c,
+    which tree-sitter does not treat as row breaks; splitting a chunk there makes
+    its pieces depend on whichever stray separators the source happens to hold
+    (the ISS-22 bug class). Same "\\n"-only rule as _lines, but lossless.
+    """
+    parts = text.split("\n")
+    lines = [p + "\n" for p in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
 def _split(text: str, max_chars: int = MAX_CHARS):
     if len(text) <= max_chars:
         return [text]
-    lines, out, buf, size = text.splitlines(keepends=True), [], [], 0
+    lines, out, buf, size = _keepends_lf(text), [], [], 0
     i = 0
     while i < len(lines):
         buf, size = [], 0
@@ -51,8 +66,19 @@ def _conf(text: str, edge: dict) -> str:
     return text if c >= 1.0 else f"{text} (confidence {c})"
 
 
-def build_chunks(g, include_files: bool = True):
-    """Yield chunk dicts ready for embedding."""
+def build_chunks(g, include_files: bool = True) -> list[dict]:
+    """All retrieval chunks as a list (stable public API)."""
+    return list(iter_chunks(g, include_files))
+
+
+def iter_chunks(g, include_files: bool = True):
+    """Yield chunk dicts ready for embedding, one at a time.
+
+    A generator, not a list: on a large repo the chunk text is the single
+    biggest allocation, so write_jsonl streams it straight to disk instead of
+    holding every chunk in memory at once. Source text is dropped from the cache
+    as soon as the last symbol on a file has been emitted.
+    """
     out_edges, in_edges = defaultdict(list), defaultdict(list)
     for e in g.edges:
         out_edges[e["src"]].append(e)
@@ -77,7 +103,9 @@ def build_chunks(g, include_files: bool = True):
         return n.get("path") or n.get("name") or nid
 
     covered: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    chunks = []
+    # remaining symbol chunks per file, so its source can leave the cache once
+    # done (order-independent — does not rely on nodes being grouped by file)
+    pending = Counter(n["path"] for n in g.nodes.values() if n["type"] == "symbol")
 
     for nid, n in g.nodes.items():
         if n["type"] != "symbol":
@@ -95,8 +123,10 @@ def build_chunks(g, include_files: bool = True):
         # a call to an overloaded name fans out to every candidate at 1/n
         # confidence; say so in the header, or a reader follows the wrong edge
         # believing it is the only one.
-        out_conf = [_conf(t, e) for t, e in zip(callees, call_out)]
-        in_conf = [_conf(t, e) for t, e in zip(callers, call_in)]
+        # strict=True: callees/callers are built 1:1 from call_out/call_in just
+        # above, so a length mismatch is a bug, not something to silently truncate.
+        out_conf = [_conf(t, e) for t, e in zip(callees, call_out, strict=True)]
+        in_conf = [_conf(t, e) for t, e in zip(callers, call_in, strict=True)]
         header = [
             f"# file: {n['path']}",
             f"# {n['kind']}: {n['qualname']}  (lines {n['start_line']}-{n['end_line']}, {n['lang']})",
@@ -114,7 +144,7 @@ def build_chunks(g, include_files: bool = True):
         if n.get("docstring"):
             header.append("# doc: " + n["docstring"].replace("\n", " ")[:300])
         for i, part in enumerate(_split(body)):
-            chunks.append({
+            yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid, "type": "symbol", "kind": n["kind"], "path": n["path"],
                 "lang": n["lang"], "name": n["name"], "qualname": n["qualname"],
@@ -122,15 +152,19 @@ def build_chunks(g, include_files: bool = True):
                 "entrypoint": bool(n.get("entrypoint")),
                 "callers": callers, "callees": callees, "callees_external": ext,
                 "text": "\n".join(header) + "\n" + part,
-            })
+            }
+        pending[n["path"]] -= 1
+        if pending[n["path"]] <= 0:
+            src_cache.pop(n["path"], None)   # file pass re-reads only if it needs to
 
     if not include_files:
-        return chunks
+        return
 
     for nid, n in g.nodes.items():
         if n["type"] != "file":
             continue
         src = source_of(n["path"])
+        src_cache.pop(n["path"], None)       # nothing else reads this file's text
         if not src.strip():
             continue
         spans = sorted(covered.get(n["path"], []))
@@ -164,7 +198,7 @@ def build_chunks(g, include_files: bool = True):
         if defines:
             header.append(f"# defines: {', '.join(defines)}")
         for i, part in enumerate(_split(body)):
-            chunks.append({
+            yield {
                 "id": f"{nid}#{i}", "node_id": nid, "type": label_kind,
                 "kind": n.get("file_type", "other"), "path": n["path"],
                 "lang": n.get("lang"), "name": n["name"], "qualname": n["path"],
@@ -172,5 +206,4 @@ def build_chunks(g, include_files: bool = True):
                 "entrypoint": False,
                 "callers": [], "callees": [], "callees_external": [],
                 "text": "\n".join(header) + "\n" + part,
-            })
-    return chunks
+            }

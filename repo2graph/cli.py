@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-from .chunks import build_chunks
+from .chunks import iter_chunks
 from .export import dump_all
 from .graph import build
 from .layout import make_path
@@ -32,12 +32,11 @@ def cmd_build(args):
     formats = parse_formats(args.formats)
     g = build(Path(args.repo), include=args.include, exclude=args.exclude,
               git_history=args.git_history, max_files=args.max_files, jobs=args.jobs)
-    chunks = None if args.no_chunks else build_chunks(g)
+    chunks = None if args.no_chunks else iter_chunks(g)   # a generator, streamed to disk
     outdir = Path(args.out)
-    written = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     print(json.dumps({"out": str(outdir), "written": written,
-                      "stats": dict(g.stats),
-                      "chunks": len(chunks) if chunks is not None else 0}, indent=2))
+                      "stats": dict(g.stats), "chunks": n_chunks}, indent=2))
 
 
 def cmd_github(args):
@@ -65,6 +64,12 @@ def _require_index(out: Path, name: str) -> Path:
                 f"`repo2graph build <repo> -o {out} --formats jsonl`"
             )
         raise SystemExit(f"no index at {out}: run `repo2graph build <repo> -o {out}` first")
+    # manifest.json is written last by dump_all; its absence next to real
+    # artifacts means the build was interrupted before it finished.
+    if name != "manifest.json" and not artifact_path(out, "manifest.json").exists():
+        raise SystemExit(
+            f"index at {out} has no manifest.json — the last build was interrupted "
+            f"and the index may be incomplete; rebuild it")
     return path
 
 
@@ -103,6 +108,18 @@ def cmd_stats(args):
     print(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
 
+def _nonneg(value: str) -> int:
+    """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
+    numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected an integer, got {value!r}") from None
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {n}")
+    return n
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -111,14 +128,14 @@ def main(argv=None):
     common.add_argument("-o", "--out", default=".r2g")
     common.add_argument("--formats", default="jsonl,graphml,cypher,overview,html",
                         help="comma list: jsonl,graphml,cypher,overview,html")
-    common.add_argument("--viz-nodes", type=int, default=MAX_NODES,
-                        help="best-connected nodes to draw in graph.html")
+    common.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
+                        help="best-connected nodes to draw in graph.html (0 = no cap)")
     common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
-    common.add_argument("--git-history", type=int, default=0,
+    common.add_argument("--git-history", type=_nonneg, default=0,
                         help="add CO_CHANGE edges from the last N commits")
-    common.add_argument("--max-files", type=int, default=0)
-    common.add_argument("--jobs", type=int, default=0,
+    common.add_argument("--max-files", type=_nonneg, default=0)
+    common.add_argument("--jobs", type=_nonneg, default=0,
                         help="parser processes; 0 = one per core (capped at 8), 1 = serial")
 
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
@@ -130,7 +147,7 @@ def main(argv=None):
                         help="clone a GitHub repo (owner/repo or URL) and index it")
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
     gh.add_argument("--ref", default=None, help="branch or tag (default: default branch)")
-    gh.add_argument("--depth", type=int, default=0,
+    gh.add_argument("--depth", type=_nonneg, default=0,
                     help="shallow clone depth; 0 = full history (needed for --git-history)")
     gh.add_argument("--keep-clone", default=None, help="clone here instead of a temp dir")
     gh.add_argument("--token", default=None,
@@ -140,16 +157,16 @@ def main(argv=None):
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
     q.add_argument("query")
     q.add_argument("-o", "--out", default=".r2g")
-    q.add_argument("-k", type=int, default=8)
-    q.add_argument("--hops", type=int, default=1)
-    q.add_argument("--budget", type=int, default=24000)
+    q.add_argument("-k", type=_nonneg, default=8)
+    q.add_argument("--hops", type=_nonneg, default=1)
+    q.add_argument("--budget", type=_nonneg, default=24000)
     q.add_argument("--json", action="store_true")
     q.set_defaults(func=cmd_query)
 
     m = sub.add_parser("map", help="redraw the HTML graph map from a built index")
     m.add_argument("-o", "--out", default=".r2g")
-    m.add_argument("--viz-nodes", type=int, default=MAX_NODES,
-                   help="how many of the best-connected nodes to draw")
+    m.add_argument("--viz-nodes", type=_nonneg, default=MAX_NODES,
+                   help="how many of the best-connected nodes to draw (0 = no cap)")
     m.set_defaults(func=cmd_map)
 
     s = sub.add_parser("stats", help="print index stats")
