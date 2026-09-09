@@ -9,7 +9,6 @@ first batch. Full detail lives in `BUILD_STATE.md` (`## Plan` MASTER ISSUE TABLE
 | Issue | Scope | Covers | Priority |
 |-------|-------|--------|----------|
 | [#26](https://github.com/Srinivasan-78/repo2graph/issues/26) | fetch.py hardening round 2 | ISS-21, SH-2, SH-3, NC-4, NC-5 | P1 |
-| [#30](https://github.com/Srinivasan-78/repo2graph/issues/30) | Canonical authormark re-stamp of batch-1 files | AC-16, SH-7 | P1 |
 | [#21](https://github.com/Srinivasan-78/repo2graph/issues/21) | parse.py & cross-module string/correctness one-liners | ISS-03/04/05/09/11/12/41/42, NC-6 | P2 |
 | [#23](https://github.com/Srinivasan-78/repo2graph/issues/23) | export.py correctness & GraphML hardening round 2 | ISS-28/29/30/31, SH-4 | P2 |
 | [#24](https://github.com/Srinivasan-78/repo2graph/issues/24) | viz.py UX + safety | ISS-33/34/35/36 | P2 |
@@ -17,6 +16,7 @@ first batch. Full detail lives in `BUILD_STATE.md` (`## Plan` MASTER ISSUE TABLE
 | [#27](https://github.com/Srinivasan-78/repo2graph/issues/27) | walker.py discovery hygiene | ISS-14/15, SH-5 | P2 |
 | [#28](https://github.com/Srinivasan-78/repo2graph/issues/28) | Test coverage round 2 | ISS-52/53, SH-6, NC-1/2/3 | P2 |
 | [#29](https://github.com/Srinivasan-78/repo2graph/issues/29) | CI, supply-chain & workflow/doc hygiene | ISS-43/46/47/48/49 | P2 |
+| [#30](https://github.com/Srinivasan-78/repo2graph/issues/30) | authormark: refresh stale Fingerprint lines on batch-1 files (not merge-blocking — CI checks presence only) | AC-16, SH-7 | P2 |
 | [#22](https://github.com/Srinivasan-78/repo2graph/issues/22) | chunks.py line-span accuracy, id scheme & tidy | ISS-23/24/25/26 | P3 |
 
 All child issues carry the `backlog` label. To work one, run a `/build-app`
