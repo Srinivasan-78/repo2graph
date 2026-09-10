@@ -3,11 +3,262 @@
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
 # Fingerprint: AMK1.z2O8iyTNYiHXSdIMgEs9sr
-"""tree-sitter based extraction of symbols, calls and imports."""
+"""Discovery, language configs, and tree-sitter based symbol/call extraction."""
+import os
+import re
+import stat as statmod
+import subprocess
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
-from .langs import LANG_CFG
+EXT_LANG = {
+    ".py": "python", ".pyi": "python",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".ts": "typescript", ".tsx": "tsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".rb": "ruby",
+    ".c": "c", ".h": "c",
+    ".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp", ".hh": "cpp",
+    ".cs": "csharp",
+    ".php": "php",
+    ".kt": "kotlin",
+    ".scala": "scala",
+    ".swift": "swift",
+    ".sh": "bash", ".bash": "bash",
+}
+
+DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
+CONFIG_EXT = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
+
+LANG_CFG = {
+    "python": {
+        "kind_map": {"function_definition": "function", "class_definition": "class"},
+        "call_types": {"call"},
+        "import_types": {"import_statement", "import_from_statement"},
+        "doc": "python",
+    },
+    "javascript": {
+        "kind_map": {
+            "function_declaration": "function",
+            "generator_function_declaration": "function",
+            "method_definition": "method",
+            "class_declaration": "class",
+            "variable_declarator": "maybe_function",
+        },
+        "call_types": {"call_expression", "new_expression"},
+        "import_types": {"import_statement", "export_statement"},
+        "doc": "jsdoc",
+    },
+    "go": {
+        "kind_map": {
+            "function_declaration": "function",
+            "method_declaration": "method",
+            "type_spec": "type",
+        },
+        "call_types": {"call_expression"},
+        "import_types": {"import_spec"},
+        "doc": "line",
+    },
+    "rust": {
+        "kind_map": {
+            "function_item": "function", "struct_item": "struct", "enum_item": "enum",
+            "trait_item": "trait", "impl_item": "impl", "mod_item": "module",
+        },
+        "call_types": {"call_expression", "macro_invocation"},
+        "import_types": {"use_declaration"},
+        "doc": "line",
+    },
+    "java": {
+        "kind_map": {
+            "method_declaration": "method", "constructor_declaration": "method",
+            "class_declaration": "class", "interface_declaration": "interface",
+            "enum_declaration": "enum",
+        },
+        "call_types": {"method_invocation", "object_creation_expression"},
+        "import_types": {"import_declaration"},
+        "doc": "jsdoc",
+    },
+    "ruby": {
+        "kind_map": {"method": "method", "singleton_method": "method",
+                     "class": "class", "module": "module"},
+        "call_types": {"call"},
+        "import_types": set(),
+        "doc": "line",
+    },
+    "c": {
+        "kind_map": {"function_definition": "function", "struct_specifier": "struct",
+                     "enum_specifier": "enum"},
+        "call_types": {"call_expression"},
+        "import_types": {"preproc_include"},
+        "doc": "line",
+    },
+    "csharp": {
+        "kind_map": {"method_declaration": "method", "class_declaration": "class",
+                     "interface_declaration": "interface", "struct_declaration": "struct"},
+        "call_types": {"invocation_expression", "object_creation_expression"},
+        "import_types": {"using_directive"},
+        "doc": "line",
+    },
+    "php": {
+        "kind_map": {"function_definition": "function", "method_declaration": "method",
+                     "class_declaration": "class", "interface_declaration": "interface"},
+        "call_types": {"function_call_expression", "member_call_expression", "object_creation_expression"},
+        "import_types": {"namespace_use_declaration"},
+        "doc": "jsdoc",
+    },
+    "kotlin": {
+        "kind_map": {"function_declaration": "function", "class_declaration": "class",
+                     "object_declaration": "object"},
+        "call_types": {"call_expression"},
+        "import_types": {"import_header"},
+        "doc": "jsdoc",
+    },
+    "swift": {
+        "kind_map": {"function_declaration": "function", "class_declaration": "class",
+                     "protocol_declaration": "protocol"},
+        "call_types": {"call_expression"},
+        "import_types": {"import_declaration"},
+        "doc": "line",
+    },
+    "scala": {
+        "kind_map": {"function_definition": "function", "class_definition": "class",
+                     "object_definition": "object", "trait_definition": "trait"},
+        "call_types": {"call_expression"},
+        "import_types": {"import_declaration"},
+        "doc": "line",
+    },
+    "bash": {
+        "kind_map": {"function_definition": "function"},
+        "call_types": {"command"},
+        "import_types": set(),
+        "doc": "line",
+    },
+}
+LANG_CFG["typescript"] = dict(LANG_CFG["javascript"])
+LANG_CFG["typescript"]["kind_map"] = dict(
+    LANG_CFG["javascript"]["kind_map"],
+    interface_declaration="interface", type_alias_declaration="type",
+    enum_declaration="enum", abstract_class_declaration="class",
+)
+LANG_CFG["tsx"] = LANG_CFG["typescript"]
+LANG_CFG["cpp"] = dict(LANG_CFG["c"])
+LANG_CFG["cpp"]["kind_map"] = dict(LANG_CFG["c"]["kind_map"],
+                                   class_specifier="class", namespace_definition="namespace")
+
+DEFAULT_SKIP_DIRS = {
+    ".git", ".hg", ".svn", "node_modules", "venv", ".venv", "env", "__pycache__",
+    "dist", "build", "target", ".next", ".nuxt", "vendor", ".idea", ".vscode",
+    "site-packages", ".mypy_cache", ".pytest_cache", ".tox", "coverage", ".terraform",
+    ".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn",
+}
+MAX_BYTES = 1_500_000
+
+
+def _git_files(root: Path):
+    try:
+        out = subprocess.run(
+            ["git", "-c", "core.quotepath=false", "-C", str(root),
+             "ls-files", "-z", "-co", "--exclude-standard"],
+            capture_output=True, timeout=60,
+        )
+        if out.returncode != 0:
+            return None
+        names = out.stdout.decode("utf8", "surrogateescape").split("\0")
+        return [root / p for p in names if p]
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _walk_files(root: Path):
+    files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in DEFAULT_SKIP_DIRS]
+        for fn in filenames:
+            files.append(Path(dirpath) / fn)
+    return files
+
+
+@lru_cache(maxsize=512)
+def _glob_re(pattern: str) -> re.Pattern:
+    pat = pattern.strip("/")
+    out = [] if "/" in pat else ["(?:[^/]+/)*"]
+    i = 0
+    while i < len(pat):
+        if pat.startswith("**/", i):
+            out.append("(?:[^/]+/)*")
+            i += 3
+        elif pat.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pat[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pat[i] == "?":
+            out.append("[^/]")
+            i += 1
+        elif pat[i] == "[":
+            j = pat.find("]", i + 1)
+            cls = pat[i + 1:j].replace("\\", "\\\\") if j != -1 else ""
+            body = ("^/" + cls[1:]) if cls.startswith("!") else cls
+            if j == -1 or body in ("", "^", "^/"):
+                out.append(re.escape(pat[i]))
+                i += 1
+            else:
+                out.append("[" + body + "]")
+                i = j + 1
+        else:
+            out.append(re.escape(pat[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def matches_any(rel: str, patterns) -> bool:
+    return any(_glob_re(p).match(rel) for p in patterns)
+
+
+def is_binary(path: Path) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return b"\0" in fh.read(4096)
+    except OSError:
+        return True
+
+
+def discover(root: Path, include_globs=None, exclude_globs=None, stats=None):
+    """Yield (relative_path, absolute_path) for candidate source files."""
+    root = root.resolve()
+    files = _git_files(root)
+    if files is not None:
+        if stats is not None:
+            stats["discovery"] = "git"
+    else:
+        files = _walk_files(root)
+        if stats is not None:
+            stats["discovery"] = "walk"
+    for abspath in files:
+        try:
+            rel = abspath.relative_to(root)
+        except ValueError:
+            continue
+        if any(part in DEFAULT_SKIP_DIRS for part in rel.parts):
+            continue
+        try:
+            st = abspath.lstat()
+        except OSError:
+            continue
+        if not statmod.S_ISREG(st.st_mode) or st.st_size > MAX_BYTES:
+            continue
+        rp = rel.as_posix()
+        if include_globs and not matches_any(rp, include_globs):
+            continue
+        if exclude_globs and matches_any(rp, exclude_globs):
+            continue
+        if is_binary(abspath):
+            continue
+        yield rp, abspath
 
 try:
     from tree_sitter_language_pack import get_parser as _get_parser
