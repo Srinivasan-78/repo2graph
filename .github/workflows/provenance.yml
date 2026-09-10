@@ -1,0 +1,33 @@
+name: provenance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  reuse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.2.2
+      - name: REUSE / SPDX compliance
+        run: pipx run reuse lint
+
+  verify-authorship:
+    # Full fingerprint / signature verification. Runs only on push to a
+    # protected branch -- never on pull_request, where an edited file's
+    # fingerprint is legitimately stale until it is re-stamped. Without
+    # AUTHORMARK_KEY this degrades to a presence check (ed25519 repos still
+    # verify signatures from the public key in .authormark.json).
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.2.2
+      - uses: Srinivasan-78/authormark-watch@a1a36d03831303e059ffe1da1b8594f82a1f4812  # main
+        with:
+          mode: check-presence
+          path: .
+          key: ${{ secrets.AUTHORMARK_KEY }}
