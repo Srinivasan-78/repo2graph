@@ -188,9 +188,8 @@ def index_github(spec: str, outdir: Path, ref: str | None = None, depth: int = 0
                  viz_nodes: int = 300, jobs: int = 0) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
-    from .export import dump_all
+    from .export import atomic_write, dump_all, make_path
     from .graph import build
-    from .layout import atomic_write, make_path
 
     owner, repo = parse_spec(spec)
     workdir = Path(keep_clone) if keep_clone else Path(tempfile.mkdtemp(prefix="r2g-"))

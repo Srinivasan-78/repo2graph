@@ -10,10 +10,8 @@ import sys
 from pathlib import Path
 
 from .chunks import iter_chunks
-from .export import dump_all
+from .export import dump_all, make_path, path as artifact_path
 from .graph import build
-from .layout import make_path
-from .layout import path as artifact_path
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")

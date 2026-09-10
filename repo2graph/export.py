@@ -6,13 +6,89 @@
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 import json
 import math
+import os
 import random
+import threading
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 
-from .layout import AGENT_DIR, HUMAN_DIR, atomic_write, make_paths, rels
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
+
+HUMAN_DIR = "human"
+AGENT_DIR = "agent"
+
+
+@contextmanager
+def atomic_write(path: Path, mode: str = "w", **open_kw):
+    """Write via a sibling temp file renamed onto `path` only on a clean exit.
+
+    A crash, exception or Ctrl-C mid-write then leaves the previous artifact (or
+    none) intact rather than a truncated file that `query`/`map` would choke on.
+    The temp file is in the target's own directory, so os.replace is atomic.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, mode, **open_kw) as fh:
+            yield fh
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+SECTIONS: dict[str, tuple[str, ...]] = {
+    "overview.md": (HUMAN_DIR, AGENT_DIR),
+    "graph.html": (HUMAN_DIR,),
+    "graph.graphml": (HUMAN_DIR,),
+    "nodes.jsonl": (AGENT_DIR,),
+    "edges.jsonl": (AGENT_DIR,),
+    "chunks.jsonl": (AGENT_DIR,),
+    "graph.cypher": (AGENT_DIR,),
+    "stats.json": (AGENT_DIR,),
+    "index.json": (AGENT_DIR,),
+    "manifest.json": (AGENT_DIR,),
+}
+
+
+def rels(name: str) -> list[str]:
+    """Every path an artifact is written to, relative to the output directory."""
+    return [f"{section}/{name}" for section in SECTIONS[name]]
+
+
+def rel(name: str) -> str:
+    """'nodes.jsonl' -> 'agent/nodes.jsonl'. The path readers should use."""
+    return rels(name)[0]
+
+
+def path(outdir, name) -> Path:
+    """The path an artifact is read back from."""
+    return Path(outdir) / rel(name)
+
+
+def paths(outdir, name) -> list[Path]:
+    return [Path(outdir) / r for r in rels(name)]
+
+
+def make_path(outdir, name) -> Path:
+    """Like path(), but creates the section directory first."""
+    p = path(outdir, name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def make_paths(outdir, name) -> list[Path]:
+    out = paths(outdir, name)
+    for p in out:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    return out
+
 
 SCALAR = (str, int, float, bool)
 
@@ -241,14 +317,9 @@ def _xml_safe(text: str) -> str:
     )
 
 
-def _graphml_label(n: dict) -> str:
-    # ISS-29: reuse shared node_label logic from viz
-    return node_label(n)
-
-
 def write_graphml(g, path: Path):
     degree = Counter(e["src"] for e in g.edges) + Counter(e["dst"] for e in g.edges)
-    labels = {nid: _graphml_label(n) for nid, n in g.nodes.items()}
+    labels = {nid: node_label(n) for nid, n in g.nodes.items()}
     sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in g.nodes}
     pos = _layout(g, sizes)
 
@@ -510,5 +581,5 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
         write_html(g, out("graph.html")[0], viz_nodes)
     with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(dict(g.stats), indent=2) + "\n")
-    write_manifest(g, out("manifest.json")[0], list(written))
+    write_manifest(g, out("manifest.json")[0], written)
     return written, n_chunks
