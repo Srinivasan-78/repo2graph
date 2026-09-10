@@ -1,0 +1,9 @@
+version = 1
+
+# Managed by authormark-watch Master Bot. A per-file SPDX header, where one
+# exists, takes precedence over this aggregate annotation.
+[[annotations]]
+path = "**"
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>"
+SPDX-License-Identifier = "MIT"
