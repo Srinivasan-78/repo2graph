@@ -128,9 +128,27 @@ Want a simpler picture? Redraw it with fewer dots:
 repo2graph map -o .r2g --viz-nodes 80
 ```
 
-### Step 3: ask it questions
+### Step 3: ask it questions (GraphRAG)
 
-A search tool is built in. No AI account, no password, no extra setup:
+A search tool and GraphRAG context packer are built in.
+
+#### Pack cited context for an LLM:
+
+```bash
+repo2graph rag "how does session auth work?" -o .r2g
+```
+
+It bounds the whole output under a character budget (`--budget 24000`), prepends the repository overview and top entry points, and formats chunks with exact citation headers (`### [cite: path:start-end]`).
+
+Want the AI answer directly? Stream from Gemini, OpenAI, Anthropic or local Ollama:
+
+```bash
+repo2graph rag "how does session auth work?" -o .r2g --answer --provider openai
+```
+
+#### Fast local query:
+
+No AI account, no password, no extra setup:
 
 ```bash
 repo2graph query "how does routing match a path" -o .r2g -k 8 --hops 1
@@ -259,7 +277,7 @@ back onto the map after a search.
 
 ### Built-in graph-aware retrieval
 
-`repo2graph.query.Index` combines BM25 lexical search with graph traversal out of the box:
+`repo2graph.query.Index` combines BM25 lexical search with graph traversal and budget-bounded packing out of the box:
 
 ```python
 from repo2graph.query import Index, format_pack, read_jsonl
@@ -267,8 +285,12 @@ from repo2graph.query import Index, format_pack, read_jsonl
 # Read chunks safely across operating systems (lossless newline & encoding handling)
 chunks = read_jsonl(".r2g/agent/chunks.jsonl")
 
-# Retrieve the best matching chunks + their 1-hop graph neighbours (functions they call/inherit/import)
+# 1. GraphRAG pack: bounded total markdown, citations, and repo map prepend
 idx = Index(".r2g")
+pack = idx.pack_context("how does session auth work?", k=8, hops=1, budget_chars=24000)
+print(pack["markdown"])
+
+# 2. Retrieve best matching chunks + their 1-hop graph neighbours (functions they call/inherit/import)
 results = idx.retrieve("how does authentication verify tokens", k=8, hops=1, budget_chars=24000)
 
 for r in results:
@@ -277,7 +299,7 @@ for r in results:
 # Format retrieved chunks into a clean prompt context for an LLM
 prompt_context = format_pack(results)
 
-# Or expand existing vector search hits across the code graph:
+# 3. Or expand existing vector search hits across the code graph:
 hits = ["sym:app/auth.py::login"]
 for node_id, edge_type, direction, src in idx.expand(hits, hops=1):
     for extra in idx.by_node.get(node_id, [])[:1]:

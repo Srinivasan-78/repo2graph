@@ -30,7 +30,7 @@ def write_jsonl(path: Path, rows) -> int:
     may be a generator (build_chunks) that is never fully materialised.
     """
     n = 0
-    with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
+    with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
             n += 1
@@ -435,6 +435,8 @@ HOW_TO_READ = [
     "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
     "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
     "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off).",
 ]
 
 
