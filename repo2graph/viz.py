@@ -10,7 +10,6 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from .layout import atomic_write
 
 # The Neo4j browser palette, so the map reads the way their graph view does.
 NODE_COLORS = {
@@ -126,6 +125,7 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
     # newline="\n": keep graph.html byte-identical across a Linux CI run and a
     # local Windows rebuild, so the commit-branch push carries no CRLF churn.
     # atomic_write: a crash mid-write never leaves a half-rendered page.
+    from .export import atomic_write
     with atomic_write(Path(path), "w", encoding="utf8", newline="\n") as fh:
         fh.write(page)
     return data
@@ -135,7 +135,7 @@ class LoadedGraph:
     """The parts of Graph the map needs, read back from nodes/edges.jsonl."""
 
     def __init__(self, outdir: Path):
-        from .layout import path as artifact_path
+        from .export import path as artifact_path
         from .query import read_jsonl
         outdir = Path(outdir)
         self.name = outdir.name

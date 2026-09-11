@@ -11,9 +11,7 @@ import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from .langs import CONFIG_EXT, DOC_EXT, EXT_LANG
-from .parse import parse_source
-from .walker import discover
+from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, discover, parse_source
 
 MAX_CALL_CANDIDATES = 5
 # Under this many files a process pool costs more to start than it saves.

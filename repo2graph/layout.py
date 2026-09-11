@@ -3,87 +3,29 @@
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
 # Fingerprint: AMK1.Ys7vixE7rqEUQP1KKMrDG6
-"""Where each artifact lands inside the output directory.
+"""Compatibility shim — layout is merged into export.py."""
+from .export import (
+    AGENT_DIR,
+    HUMAN_DIR,
+    SECTIONS,
+    atomic_write,
+    make_path,
+    make_paths,
+    path,
+    paths,
+    rel,
+    rels,
+)
 
-The output is split in two: `human/` holds what a person opens — the prose map,
-the drawn graph — and `agent/` holds what a program reads: the JSONL graph, the
-retrieval chunks, the Cypher load script, the manifest that describes them.
-`overview.md` is written to both, because the repo-level map is the cheapest
-orientation either audience can get.
-"""
-import os
-import threading
-from contextlib import contextmanager
-from pathlib import Path
-
-HUMAN_DIR = "human"
-AGENT_DIR = "agent"
-
-
-@contextmanager
-def atomic_write(path: Path, mode: str = "w", **open_kw):
-    """Write via a sibling temp file renamed onto `path` only on a clean exit.
-
-    A crash, exception or Ctrl-C mid-write then leaves the previous artifact (or
-    none) intact rather than a truncated file that `query`/`map` would choke on.
-    The temp file is in the target's own directory, so os.replace is atomic.
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    try:
-        with open(tmp, mode, **open_kw) as fh:
-            yield fh
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        raise
-
-SECTIONS: dict[str, tuple[str, ...]] = {
-    "overview.md": (HUMAN_DIR, AGENT_DIR),
-    "graph.html": (HUMAN_DIR,),
-    "graph.graphml": (HUMAN_DIR,),
-    "nodes.jsonl": (AGENT_DIR,),
-    "edges.jsonl": (AGENT_DIR,),
-    "chunks.jsonl": (AGENT_DIR,),
-    "graph.cypher": (AGENT_DIR,),
-    "stats.json": (AGENT_DIR,),
-    "index.json": (AGENT_DIR,),
-    "manifest.json": (AGENT_DIR,),
-}
-
-
-def rels(name: str) -> list[str]:
-    """Every path an artifact is written to, relative to the output directory."""
-    return [f"{section}/{name}" for section in SECTIONS[name]]
-
-
-def rel(name: str) -> str:
-    """'nodes.jsonl' -> 'agent/nodes.jsonl'. The path readers should use."""
-    return rels(name)[0]
-
-
-def path(outdir, name) -> Path:
-    """The path an artifact is read back from."""
-    return Path(outdir) / rel(name)
-
-
-def paths(outdir, name) -> list[Path]:
-    return [Path(outdir) / r for r in rels(name)]
-
-
-def make_path(outdir, name) -> Path:
-    """Like path(), but creates the section directory first."""
-    p = path(outdir, name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
-
-
-def make_paths(outdir, name) -> list[Path]:
-    out = paths(outdir, name)
-    for p in out:
-        p.parent.mkdir(parents=True, exist_ok=True)
-    return out
+__all__ = [
+    "AGENT_DIR",
+    "HUMAN_DIR",
+    "SECTIONS",
+    "atomic_write",
+    "make_path",
+    "make_paths",
+    "path",
+    "paths",
+    "rel",
+    "rels",
+]
