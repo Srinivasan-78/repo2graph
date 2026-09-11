@@ -7,7 +7,8 @@
 -->
 # repo2graph
 
-repo2graph reads a folder full of code and draws you a map of it.
+repo2graph reads a folder full of code and draws you a map of it — then uses that map to answer
+questions about the code, with citations.
 
 ![The whole map of a project: 300 dots and the arrows between them](docs/images/graph-overview.png)
 
@@ -130,38 +131,161 @@ repo2graph map -o .r2g --viz-nodes 80
 
 ### Step 3: ask it questions (GraphRAG)
 
-A search tool and GraphRAG context packer are built in.
+A search tool and a GraphRAG context packer are built in. Neither needs an AI account.
 
-#### Pack cited context for an LLM:
-
-```bash
-repo2graph rag "how does session auth work?" -o .r2g
-```
-
-It bounds the whole output under a character budget (`--budget 24000`), prepends the repository overview and top entry points, and formats chunks with exact citation headers (`### [cite: path:start-end]`).
-
-Want the AI answer directly? Stream from Gemini, OpenAI, Anthropic or local Ollama:
+#### `rag` — pack cited context for an LLM
 
 ```bash
-repo2graph rag "how does session auth work?" -o .r2g --answer --provider openai
+repo2graph rag "how does the context pack stay inside its budget" -o .r2g
 ```
 
-#### Fast local query:
+It picks the best matching pieces, follows the arrows out to their neighbours, puts the repository
+map on top, and stamps every block with an exact citation header so an AI (or you) can check the
+answer against the real lines:
 
-No AI account, no password, no extra setup:
+```
+# Repo map: repo2graph
+
+files: 41  nodes: 644  edges: 2160
+languages: python=15, yml=11, md=7, json=2, toml=2, txt=1
+
+## Most depended-on files
+- repo2graph/export.py (in=6)
+- repo2graph/parse.py (in=6)
+...
+
+---
+
+### [cite: repo2graph/cli.py:22-28] `parse_formats` (CALLS out of cmd_build)
+# file: repo2graph/cli.py
+# function: parse_formats  (lines 22-28, python)
+# called by: repo2graph/cli.py::cmd_build, repo2graph/cli.py::cmd_github
+# calls (outside the repo): strip, split, sorted, set, SystemExit, join
+def parse_formats(spec: str) -> set[str]:
+...
+```
+
+The `(CALLS out of cmd_build)` part is the *reason* the block is in the pack: either `seed` (the
+search found it) or the arrow that dragged it in.
+
+The first argument is optional. Give it an index folder, a source folder to index on the spot, or a
+GitHub project, and it works out which you meant:
+
+```bash
+repo2graph rag . "where does the CLI parse arguments"            # index this folder first
+repo2graph rag psf/requests "how are redirects followed"         # download, index, ask
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-o`, `--out` | `.r2g` | Index folder to read, or to write when a target has to be indexed first. |
+| `-k` | `8` | How many pieces the text search starts with. |
+| `--hops` | `1` | How many steps along the arrows to walk out from those pieces. |
+| `--budget` | `24000` | Character budget for the **whole** pack. |
+| `--min-conf` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
+| `--no-expand` | off | Text search only: no arrow walking. |
+| `--format` | `markdown` | `markdown` for the pack itself, `json` for the pack plus its parts. |
+| `--answer` | off | Send the pack to an LLM and stream the answer. See the warning below. |
+| `--model` | provider default | Model name, only used with `--answer`. |
+| `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only used with `--answer`. |
+
+`--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`, `truncated`,
+`budget_chars`, `used_chars` and `query`, so a program can see what got left out:
+
+```bash
+repo2graph rag "how does export write the manifest" -o .r2g --format json \
+  | jq '{used: .used_chars, budget: .budget_chars, cut: .truncated}'
+```
+
+#### `query` — fast local search
 
 ```bash
 repo2graph query "how does routing match a path" -o .r2g -k 8 --hops 1
 ```
 
 It finds the best matching pieces of code, then follows the arrows one step out, so the functions
-around each answer come along too.
+around each answer come along too. `--min-conf` works the same as in `rag`, except it is off by
+default here.
 
 Want the answer as data instead of text?
 
 ```bash
-repo2graph query "auth middleware" -o .r2g --json | jq '.[].path'
+repo2graph query "auth middleware" -o .r2g --format json | jq '.[].path'
 ```
+
+`--json` still works and means the same as `--format json`.
+
+#### The two `--budget` flags count different things
+
+This surprises people, so it is worth saying plainly. Both commands take `--budget`, and each one
+means what its own job needs:
+
+- **`query --budget`** bounds the code itself: the sum of the `text` of the pieces it hands back.
+  Headers and formatting are not charged.
+- **`rag --budget`** bounds the finished markdown: the map on top, the `---` separator, every
+  `### [cite: ...]` header and the blank lines between blocks all come out of the same budget.
+
+So the same number gives you less code from `rag` than from `query`. That is on purpose:
+`query`'s accounting is what it has always done and programs depend on it, while `rag` has to
+promise an LLM that the thing it is handed fits. `rag --budget 0` means no budget at all.
+
+#### How retrieval works
+
+1. **Text search first.** BM25, the standard word-matching score, with one twist: if a word in your
+   question is exactly the name of a function or class, that piece's score is multiplied. Asking
+   about `parse_formats` finds `parse_formats`, not the prose that happens to mention it.
+2. **Optional fusion.** If you bring your own vectors, `Index.score_rrf()` blends the two rankings
+   with reciprocal rank fusion. No extra library, and with no vectors it is exactly plain BM25.
+3. **Then the arrows, by direction.** Expansion is not "everything one step away". It follows
+   `CALLS` both ways (what this calls, and what calls it), `DEFINES` inwards (the file or function
+   that holds this one), `INHERITS` outwards (the base classes) and `IMPORTS` outwards (the modules
+   it borrows from).
+4. **Then the budget.** Blocks are added best-first until the budget is used up.
+
+#### ⚠️ `--answer` sends your code to someone else's computer
+
+`repo2graph rag --answer` is the one command in this project that touches the network with your
+source in it. Read this before you use it.
+
+```bash
+repo2graph rag "how does session auth work?" -o .r2g --answer --provider openai
+```
+
+It POSTs the assembled pack — **real file content from your repository** — to an LLM provider over
+HTTPS, and streams the grounded answer back to stdout.
+
+- **It is opt-in and nothing else does it.** The provider code is only imported when `--answer` is
+  present. A plain `rag`, a `query` or a `build` makes no DNS lookup and opens no socket.
+- **It tells you before it sends.** Before the first byte leaves, it prints the provider name, the
+  hostname and how many characters are going, to stderr:
+
+  ```
+  repo2graph: sending 18423 chars of repository context to provider openai at api.openai.com (selected by OPENAI_API_KEY)
+  ```
+
+- **Secret-ish files are dropped from the pack when `--answer` is on.** Dotfiles, `.env`, `.pem`,
+  `.key`, keystores and friends are excluded. This is a guard, not a guarantee: a secret pasted
+  into an ordinary `.py` file is still ordinary source and still goes.
+- **Pick the provider deliberately.** With no `--provider`, the first of `GEMINI_API_KEY`,
+  `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST` that is set wins. If several are set you may
+  not be sending where you think. `--provider ollama` with `OLLAMA_HOST` pointed at your own
+  machine keeps everything local.
+- **Zero SDKs.** All four providers are spoken to with the standard library's `urllib`. Nothing
+  extra to install, and nothing extra with an opinion about your credentials.
+
+Default models are `gemini-2.0-flash`, `gpt-4o-mini`, `claude-3-5-haiku-latest` and `llama3.1`;
+override with `--model`.
+
+### Small things that make it nicer to use
+
+```bash
+repo2graph --version        # or -v, or: repo2graph version
+repo2graph                  # no arguments: prints help, exits 0
+```
+
+Ctrl-C stops with exit code 130 instead of a traceback, closing a pipe early (`| head`) is not an
+error, and an index that is missing, half-written or corrupt gets a sentence telling you which
+rebuild command fixes it.
 
 ### Step 4: map a project you do not have on your computer
 
@@ -287,10 +411,18 @@ chunks = read_jsonl(".r2g/agent/chunks.jsonl")
 
 # 1. GraphRAG pack: bounded total markdown, citations, and repo map prepend
 idx = Index(".r2g")
-pack = idx.pack_context("how does session auth work?", k=8, hops=1, budget_chars=24000)
-print(pack["markdown"])
+pack = idx.pack_context(
+    "how does session auth work?",
+    k=8, hops=1,
+    budget_chars=24000,      # bounds the WHOLE markdown; 0 means unbounded
+    min_confidence=1.0,      # drop ambiguous CALLS edges (CALLS only)
+    expand_graph=True,       # False = lexical seeds only
+    exclude_secrets=False,   # True drops dotfiles/.env/.pem/... from the pack
+)
+print(pack["markdown"], pack["used_chars"], pack["truncated"])
 
 # 2. Retrieve best matching chunks + their 1-hop graph neighbours (functions they call/inherit/import)
+#    budget_chars here bounds the chunk text only -- see "The two --budget flags" above
 results = idx.retrieve("how does authentication verify tokens", k=8, hops=1, budget_chars=24000)
 
 for r in results:
@@ -460,6 +592,13 @@ hand.
 | `git-history` | `0` | Commits to read for CO_CHANGE arrows. `0` skips it. Needs `fetch-depth: 0`. |
 | `include` | `""` | Space-separated globs to keep, e.g. `"src/**"`. |
 | `exclude` | `""` | Space-separated globs to skip, e.g. `"**/test/** vendor/**"`. |
+| `query` | `""` | Also pack a cited GraphRAG context for this question. Blank skips it. |
+| `query-k` | `8` | Pieces the text search starts with. |
+| `query-hops` | `1` | Steps to walk along the arrows. |
+| `query-budget` | `24000` | Character budget for the whole pack, map and cite headers included. |
+| `query-min-conf` | `1.0` | Drop `CALLS` arrows below this confidence. |
+| `query-format` | `markdown` | `markdown` or `json`. |
+| `query-out` | `""` | File to write the pack to. Blank means `<out>/agent/pack.md` (or `pack.json`). |
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
@@ -473,6 +612,11 @@ hand.
 | `nodes` | How many dots the map has. |
 | `edges` | How many arrows. |
 | `chunks` | How many code pieces were cut. |
+| `pack-file` | Path to the GraphRAG pack written for `query`. Empty when `query` is blank. |
+| `pack-chars` | How long that pack is, in characters. `0` when `query` is blank. |
+
+The action never calls an LLM: `--answer` is deliberately not exposed. It packs the context and
+leaves the answering to whatever reads the pack afterwards.
 
 The action also writes the first 40 lines of `overview.md` into the job summary page, so the map
 shows up in the run without downloading anything.

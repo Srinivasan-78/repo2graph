@@ -1314,6 +1314,31 @@ def test_ac34_no_splitlines_in_new_code(rel):
     assert offenders == [], f"{rel} calls splitlines() at lines {offenders}"
 
 
+@pytest.mark.parametrize("errors", ["strict", "surrogateescape", "replace", "backslashreplace"])
+def test_emit_survives_every_stdout_error_handler(errors, monkeypatch):
+    """_emit() must not raise whatever error handler stdout carries.
+
+    Git Bash on Windows hands a piped stdout errors='surrogateescape', which
+    still raises on a character the codec lacks -- so treating any non-strict
+    handler as safe to print through crashed `repo2graph query ... > out.txt`
+    on any repo holding, say, U+2192. cp1252 is pinned here because it is the
+    encoding that actually ships the bug; U+2192 has no cp1252 mapping while
+    U+2014 does, so the arrow is the character that proves it.
+    """
+    from repo2graph.cli import _emit
+
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252", errors=errors, newline="\n")
+    monkeypatch.setattr(sys, "stdout", stream)
+    _emit("arrow → here")
+    stream.flush()
+
+    written = raw.getvalue()
+    assert written.endswith(b"\n"), written
+    assert written.startswith(b"arrow "), written
+    assert b"here" in written
+
+
 def test_cli_version_and_bare(capsys):
     """CLI QoL: --version and bare invocation behaviour."""
     with pytest.raises(SystemExit) as exc:
