@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌​‌‌​‌​‌‌​​​‌‌​‌​‌‌​​​​‌​​‌‌‌​​​‌‌​‌‌‌​‌‌​​​​‌​‌‌‌‌​‌​​‌‌‌​‌​​​‌​‌​‌​‌​‌​‌‌​​‌​​‌‌​‌‌‌​​‌‌‌​​‌​‌​​‌​‌‌​‌​‌​​‌‌​‌‌​​​​‌​‌‌​​​​‌​‌‌‌‌​‌​​‌‌​‌‌​‌​‌​‌​​‌‌​‌‌‌​‌​‌​‌‌​‌‌​​​‌‌‌‌​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.9dZTVVmTVd7w95HGye3vt5
+# Fingerprint: AMK1.-cXN7aztUY79KSaazmSuly
 """Graph-aware retrieval over a built index: lexical seeds + k-hop expansion."""
 import json
 import math
