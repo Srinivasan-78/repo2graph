@@ -7,8 +7,11 @@ dist/
 .venv/
 venv/
 .pytest_cache/
+.ruff_cache/
+.cache/
 .r2g/
 .env
 .env.*
 .DS_Store
+Thumbs.db
 out/
