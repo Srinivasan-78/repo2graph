@@ -23,8 +23,15 @@ repo2graph = "repo2graph.cli:main"
 requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["repo2graph*"]
+
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.5"]
+# Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
+# boost with zero extra dependencies when these are not installed.
+rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

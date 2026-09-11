@@ -9,6 +9,8 @@
     ".github",
     "docs",
     "dist",
-    "*.svg"
+    "*.svg",
+    "REUSE.toml",
+    "BUILD_STATE.md"
   ]
 }

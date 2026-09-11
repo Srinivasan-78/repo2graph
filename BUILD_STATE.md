@@ -1,974 +1,1580 @@
 # Build State
 
 Status: DONE
-Iteration: 1
-Scenario: refactor
-Baseline: 81519d6a3943ac44a72d200279efecb45820ec9a
-Started: 2026-09-09
+Iteration: 3
+Scenario: feature
+Baseline: 4a3ba03674ef9c23898233bb787a28e5199e0bc4
+Started: 2026-09-11
 
 ## Request
 
-check for issues loop it through everything, use subagents to simplify and spread the work and also list out all issues ina table
+Turn repo2graph into a GraphRAG engine (steps 1-5 of the user's blueprint). Scope, in order:
 
-_Scenario call:_ refactor — the ask is a whole-codebase issue audit followed by
-fixes that must preserve existing behavior (existing test suite is the safety
-net). Issues found may include real bugs; the loop adapts per finding. The
-required deliverable is a table of every issue found.
+STEP 1 — repo2graph/query.py, Index.__init__ + Index.expand:
+- Retain edge attributes in adjacency: store (dst, type, direction, edge_record) instead of the current 3-tuple at query.py:61-62, so `confidence` and `count` are reachable during traversal.
+- Load and cache agent/overview.md and agent/manifest.json on Index init (via layout.path). Missing files must degrade gracefully, not raise.
+- expand(): add min_confidence param (default 1.0) applied ONLY to CALLS edges — IMPORTS/DEFINES/INHERITS carry no `confidence` key and must never be dropped by it. Support directional selectivity: CALLS out (callees), CALLS in (callers), DEFINES in (parent), INHERITS out.
+
+STEP 2 — repo2graph/query.py, scoring + packing:
+- Index.score(): exact-identifier boost on chunk `qualname`/`name` for pinpoint queries (e.g. `normalize_provider`). Keep BM25 as-is otherwise.
+- Optional embedding/RRF layer: pluggable embedder or precomputed vectors; RRF = 1/(60+rank_bm25) + 1/(60+rank_vec). Must fall back to BM25+boost with ZERO new dependencies when absent.
+- retrieve(): seeds keep full text; graph neighbors keep full text if budget allows, else compress to metadata header + signature line.
+- New Index.pack_context(query, k, hops, budget_chars, min_confidence) returning a dict with a "markdown" key. Sort retrieved chunks by (path, start_line) before formatting. Citation headers: `### [cite: path/to/file.py:45-82] `symbol` (seed | CALLS out of caller)`. Prepend the repo map (overview + top entrypoints) then `---` then retrieved context.
+- BUDGET SEMANTICS (resolve explicitly in PLAN and state it in the acceptance criteria): budget_chars must bound the WHOLE returned markdown — map prepend and citation headers included — not just chunk text. Seeds are prioritized over neighbors.
+
+STEP 3 — repo2graph/cli.py: `rag` subcommand.
+- KNOWN DEFECT to fix in PLAN: the blueprint's parser has two positionals (target, query) but its own usage examples pass only one (`repo2graph rag -o .r2g "how does session auth work?"`). Make `target` nargs="?" and resolve: index dir if it contains agent/manifest.json; source repo dir -> auto build() into -o first; owner/repo or GitHub URL -> fetch.index_github(); when only one positional is given it is the query.
+- Flags: -k (default 8), --hops (1), --budget (24000), --min-conf (1.0), --no-expand, --format {markdown,json}, --answer, --model.
+- --min-conf needs a float validator clamped to [0.0, 1.0]; the existing _nonneg is int-only and a bare float() accepts nan/inf.
+- Reuse the existing _require_index() error messages.
+
+STEP 4 — new repo2graph/answer.py (~60-80 lines, optional, only on --answer):
+- Grounded system prompt: answer strictly from the provided map + chunks, never invent APIs, cite every claim as [path/file.py:start-end].
+- Dispatch on env: GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_HOST. stdlib urllib.request only — no openai/anthropic packages in core install.
+- Stream to stdout. WINDOWS: the console is cp1252; write sys.stdout.buffer or wrap with errors="replace" or non-ASCII model output raises UnicodeEncodeError.
+
+STEP 5 — new tests/test_rag.py:
+- Graph expansion characterization: intent query finds the seed, 1-hop retrieves caller/callee across files.
+- Confidence filtering: edges with confidence < 1.0 are pruned from expansion.
+- Ablation: --no-expand (lexical only) vs default (GraphRAG) shows graph expansion captures deps lexical search misses. MUST use a fixed synthetic fixture repo and assert set membership of required node ids — never score values or ranks, which drift.
+- Budget compliance: pack_context never exceeds budget_chars and prioritizes seeds over neighbors.
+- answer.py: mock the LLM endpoint with a localhost http.server or a monkeypatched urllib opener — no live API key, no network in CI. Assert the grounded prompt and citation instructions reach the endpoint.
+
+STEP 6 — also pyproject.toml optional-dependencies: add `rag = ["sentence-transformers>=3.0", "numpy>=1.24"]` (strictly optional); keep core pure-Python. And extend export.py's HOW_TO_READ / FILE_NOTES to document the GraphRAG retrieval protocol (1-hop expansion + confidence filtering) for external agents reading manifest.json.
+
+REPO RULES that every phase must respect (from AGENTS.md — read it):
+- Never delete/edit/reorder the `@authormark v1` header block in any file. Editing query.py/cli.py/export.py leaves a stale `Fingerprint:` — that is EXPECTED; the canonical stamp tool in CI refreshes it. Do NOT resolve staleness by deleting the header, and do NOT re-stamp with any locally recovered .authormark/authormark.mjs (it strips the watermark). New files (answer.py, tests/test_rag.py) need headers too — flag re-stamp as a pre-merge gate in the final report.
+- Text slicing: use src.split("\n"), NEVER splitlines() (U+2028/2029/0085/\x0b/\x0c desync rows from tree-sitter). chunks.py has a _lines(src) helper to reuse.
+- Any subprocess reading git output: no text=True/encoding=<locale>; use -c core.quotepath=false, capture bytes, .decode("utf8","surrogateescape"), always set timeout=.
+
+Branch is masterbot-provenance, clean. Do not commit or push unless asked.
+
+_Scenario call:_ feature — repo2graph already has a working build/query/export
+pipeline and a passing suite. This adds a retrieval layer (`pack_context`), a
+CLI subcommand (`rag`), and one optional module (`answer.py`) on top of existing
+modules and conventions. Existing `build`/`query`/`export` behavior must be
+preserved, so PLAN maps onto existing modules before proposing anything.
 
 ## Plan
 
 ### Goal
 
-Audit every source file in repo2graph (11 modules + `__init__`), the test suite,
-`action.yml` and the five workflows; record every defect in a single numbered
-master table; then fix the High and Medium severity items without changing any
-observable output the existing suite pins. The audit is done and is recorded
-below. Three of the findings are confirmed real bugs reproduced at the
-interpreter (ISS-06, ISS-22, ISS-27), the rest are read-verified. Fixes must
-keep the public artifact contract intact: node/edge id grammar, the
-`human/` + `agent/` split, chunk field names, manifest keys and CLI output JSON
-are all asserted by tests and documented in the README, so they do not move.
+Add a GraphRAG retrieval layer on top of the existing repo2graph index: `query.Index` keeps
+edge attributes in its adjacency so traversal can filter CALLS edges by `confidence`, gains an
+exact-identifier boost and an optional (zero-dependency-by-default) embedding/RRF layer, and
+gains a new `pack_context()` that returns an agent-ready markdown pack — repo map prepend,
+`---`, then citation-headed chunks sorted by (path, start_line) — whose *total* size is bounded
+by `budget_chars`. A new `rag` CLI subcommand drives it, an optional `answer.py` streams a
+grounded, citation-required answer to a hosted or local LLM over stdlib `urllib` only, and
+`tests/test_rag.py` pins the behavior with no network and no score/rank assertions. Existing
+`build` / `github` / `query` / `map` / `stats` behavior is unchanged.
 
 ### Non-goals
 
-- No new features (no file-scope call edges, no new languages, no new formats).
-- No dependency additions, no NetworkX/numpy, no lint tooling adoption this loop.
-- No changes to the HTML template's look, controls or layout algorithm.
-- No changes to the authormark header blocks (repo rule: they move with the file
-  and are refreshed with `node .authormark/authormark.mjs stamp <file>`, never
-  deleted). Every file touched this loop must be re-stamped.
-- Low-severity items are catalogued but explicitly deferred (see Partition).
+- No change to graph building, parsing, chunking, or artifact layout. `graph.py`, `chunks.py`,
+  `parse.py`, `walker.py`, `viz.py`, `fetch.py` are **not** edited (fetch is only *called*).
+- No new required runtime dependency. `sentence-transformers`/`numpy` land in an optional
+  `rag` extra and are never imported at module import time.
+- No re-ranking model, no chunk re-embedding pipeline, no vector store, no persistence of
+  embeddings to disk in this slice (embeddings are supplied by the caller or computed by an
+  injected embedder object).
+- No provider SDKs (`openai`, `anthropic`, `google-genai`) — `urllib.request` only.
+- No change to `retrieve()`'s observable output for existing callers (see Decision D1).
+- Not re-stamping authormark fingerprints locally; that is a CI/pre-merge gate.
 
-### Baseline
+### Decisions taken now (these were open questions)
 
-`python -m pytest -q` -> **53 passed, 2 skipped in 2.09s** (the 2 skips are the
-networkx-gated GraphML tests). This is the behaviour-preservation net.
+**D1 — `retrieve()` keeps its signature and its behavior; `pack_context()` layers on top.**
+`tests/test_repo2graph.py:322` (`test_index_retrieves_and_expands`) and `:1135`
+(`test_iss25_query_constants_and_budget_bounds`) pin `retrieve(query, k=, hops=, budget_chars=)`
+returning a list of chunk dicts with `score` and `why`, budgeted on chunk `text` only, and
+`cmd_query` at `cli.py:89` consumes exactly that. Therefore:
+- `retrieve()` keeps positional/keyword names `query, k=8, hops=1, budget_chars=24000` and its
+  current text-only budget accounting and `why` strings, unchanged.
+- It gains ONE new keyword-only param `min_confidence: float | None = None`, where `None` means
+  "do not filter on confidence" — i.e. today's behavior exactly. `cmd_query` does not pass it.
+- `expand()` gets `min_confidence: float = 1.0` per the blueprint, but `retrieve()` calls it
+  with `min_confidence=0.0` when its own param is `None`, so no CALLS edge that reaches a
+  neighbor today disappears from `query` output.
+- `pack_context()` is a new method that calls `retrieve()`-style selection with the *new*
+  whole-markdown budget accounting (Decision D2). The two budget models therefore coexist:
+  text-only inside `retrieve()`, whole-markdown inside `pack_context()`. This is stated in the
+  docstrings so a later reader does not "unify" them and break the pinned tests.
 
----
+**D2 — budget accounting migration.** `pack_context(budget_chars=N)` guarantees
+`len(result["markdown"]) <= N` for `N > 0`. It does not reuse `retrieve()`'s accounting. It
+builds the pack incrementally and charges every emitted character: the map prepend, the `---`
+separator, each `### [cite: ...]` header line, the blank-line separators, and the chunk text.
+Order of spending: (a) map prepend, capped at `MAP_BUDGET_FRAC = 0.2` of the budget and
+truncated on a line boundary; (b) seed chunks in score order, full text; (c) graph neighbors in
+expansion order, full text if it fits, else the compressed form; a neighbor that does not fit
+even compressed is skipped, not truncated mid-line. `budget_chars <= 0` means unbounded
+(documented). If not everything fit, `result["truncated"] is True`.
 
-### MASTER ISSUE TABLE
+**D3 — the map prepend's "top entrypoints ranked by reach" exists on disk.** `export.py:462`
+already writes `manifest["entrypoints"]` = up to 25 objects `{id, path, qualname, kind, reach}`
+sorted by `(-reach, path, qualname)` (`export.py:443`). No derivation from the graph is needed
+and nothing is dropped. The map prepend is: `agent/overview.md` text (if present) + a
+`## Top entry points` list rendered from `manifest["entrypoints"][:MAP_ENTRYPOINTS]`
+(MAP_ENTRYPOINTS = 10). Both sources are optional; either missing degrades to the other, and
+both missing degrades to an empty map with no exception.
 
-| ID | File:line | Sev | Category | Description | Proposed fix |
-|---|---|---|---|---|---|
-| ISS-01 | parse.py:35-36, 225 | Med | dead-code | `Symbol.start_byte` / `end_byte` are populated for every symbol and never read anywhere; they also inflate what the process pool pickles back per file. | Delete both fields and the two constructor args. |
-| ISS-02 | parse.py:49, 186, 191, 209, 239 | Med | dead-code | `ParsedFile.file_calls` accumulates every call made at file scope; `graph.build` never reads it, so the data is computed and thrown away (file-scope calls produce no edge at all). | Drop the field and append only when `owner is not None`. Backlog the actual feature (file-scope CALLS edges). |
-| ISS-03 | parse.py:110 | Low | bug | `_text(...).strip("\"'\n ")` strips *any* leading/trailing quote or space, so a docstring that legitimately begins or ends with `'` or `"` loses characters. | Strip the delimiter run only (`removeprefix`/`removesuffix` of the detected quote style). |
-| ISS-04 | parse.py:24 | Low | bug | Bare `except Exception` in `parser_for` swallows every grammar-load failure, including a broken install, and reports it as "language unsupported". | Narrow to the loader's error, or count it into `stats["grammar_errors"]`. |
-| ISS-05 | parse.py:97 | Low | bug | `txt.strip("!&* \n\t")` strips `*` and `&` from both ends, so a C callee legitimately named `x_` style with trailing symbols, or a Rust macro `foo!`, can be renamed. | Strip only the leading pointer/deref run and a single trailing `!`. |
-| **ISS-06** | graph.py:361-378 | **High** | bug/encoding | `add_cochange` runs git with `text=True`, which decodes with the *locale* encoding (cp1252 on Windows) -> `UnicodeDecodeError` on a non-ASCII path; and git's default `core.quotepath=true` returns `"caf\303\251.py"`, which never matches `file_index`, so CO_CHANGE edges silently vanish for any non-ASCII filename. Same bug class the repo already fixed in `walker._git_files`. | Drop `text=True`, add `-c core.quotepath=false`, decode `stdout` as `utf8`/`surrogateescape` exactly as `_git_files` does. |
-| ISS-07 | graph.py:203-209 | Med | bug | The parallel-parse fallback catches only `OSError, ValueError`. `BrokenProcessPool`, a worker `ImportError` or a pickling `TypeError` propagate and abort the whole build instead of falling back to the serial path the comment promises. | Catch `Exception` (or add `BrokenProcessPool`/`PicklingError`) and fall back to serial. |
-| ISS-08 | graph.py:133 | Low | simplify | `(ctx or {}).get("go_module")` — `ctx` was already normalised to a dict at line 94. | `ctx.get("go_module")`. |
-| ISS-09 | graph.py:90-95 | Low | simplify | `resolve_import` rebuilds `path_index` whenever `ctx` lacks `by_name`; every production call site passes a full ctx, so the branch exists only for three tests. | Make `ctx` required and have the tests pass `path_index(files)`. |
-| ISS-10 | graph.py:341, 351-353 | Low | bug | `out` is a `defaultdict(list)`; `len(out[nid])` in the sort key and `out[stack.pop()]` in `_reach` insert an empty list for every node touched, growing the dict during the ranking pass. | Use `out.get(nid, ())` in both places. |
-| ISS-11 | graph.py:33 | Low | bug | `add_node`'s merge filter `if v not in (None, "", [])` also drops a legitimate `0` or `False` on re-add (`0 == False`, and a future `count=0`/`external=False` attribute would be discarded). | Filter on `v is not None and v != ""` plus an explicit empty-list check. |
-| ISS-12 | graph.py:374 | Low | bug | Commits touching more than 25 files are skipped for CO_CHANGE with no counter, so a repo of big merges reports zero co-change and looks like a bug. | Record `stats["cochange_commits_skipped"]`. |
-| ISS-13 | walker.py:38-44 vs 22-35 | Med | bug | The `os.walk` fallback drops every dot-directory; the git path does not. So `.github/**` (and any dot-dir source) is indexed in a git checkout and invisible in a plain folder — discovery differs by whether `.git` exists. | Apply one filter inside `discover()` for both sources; pick the git behaviour (keep dot-dirs, honour `DEFAULT_SKIP_DIRS`) since that is what ships today for the common case. |
-| ISS-14 | walker.py:91-96, 125 | Low | simplify | `is_binary` opens and reads every candidate a second time after `lstat`; the same bytes are read again moments later by `_read_and_parse`. | Fold the NUL check into the single read in `graph._read_and_parse`, or leave and document the cost. |
-| ISS-15 | walker.py:26-29 | Low | bug | The 60s `git ls-files` timeout degrades silently to `os.walk`, which ignores `.gitignore` — the output then quietly includes build junk with no signal. | Record `stats["discovery"] = "git" \| "walk"` and print it in the build report. |
-| ISS-16 | fetch.py:34-43 | Med | security | The token is interpolated into the clone URL and passed as an argv element, so it is visible in `ps`/`/proc` to every other user on the machine (and in CI to any co-running step). | Clone the clean URL and pass credentials out of band: `git -c http.extraheader="AUTHORIZATION: basic <b64>"` fed through `GIT_CONFIG_*` env, or `GIT_ASKPASS`. |
-| ISS-17 | fetch.py:43, 53, 58-59 | Med | bug/encoding | All three subprocess calls use `text=True` -> locale decoding. On Windows a non-UTF-8 byte in git's stderr raises `UnicodeDecodeError` *inside the error handler*, replacing a clear "clone failed" with a decode traceback. | Pass `encoding="utf8", errors="replace"` on every call. |
-| ISS-18 | fetch.py:43, 50-53, 58 | Med | bug | No `timeout` on `git clone` / `remote set-url` / `rev-parse`. A hung network call blocks the CLI (and a CI job) forever; `walker` and `add_cochange` both already set one. | Add a `timeout=` (clone generous, e.g. 900s) and convert `TimeoutExpired` into the same `RuntimeError`. |
-| ISS-19 | fetch.py:15-26, 36 | Med | security | `parse_spec` accepts path-traversal and option-like components: verified `parse_spec("owner/..") -> ("owner","..")`, so `target = dest/".."` clones *over the parent of the temp dir*; `parse_spec("-x/-y")` is also accepted. | Reject any component equal to `.`/`..`, starting with `-`, or empty, before building the URL or the target path. |
-| ISS-20 | fetch.py:45 | Low | simplify | `proc.stderr.strip().replace(token or "\0", "***")` uses a NUL sentinel to mean "no token", and misses a URL-encoded token. | `if token: msg = msg.replace(token, "***")`. |
-| ISS-21 | fetch.py:76-79 | Low | bug | With `--keep-clone DIR` pointing at a directory that already holds the clone, `git clone` fails with "already exists and is not an empty directory" and the user gets that raw. | Detect an existing checkout and either reuse or say so plainly. |
-| **ISS-22** | chunks.py:67, 117-125 | **High** | bug/encoding | `src.splitlines()` breaks on U+2028, U+2029, U+0085, \x0b and \x0c; tree-sitter's row numbers do not. Any file containing one of those characters has every later symbol's chunk text sliced from the wrong lines. **Reproduced:** a file whose line 1 contains U+2028 yields `"\ndef f():"` as the body of `f` instead of the function. The residual-chunk `keep` computation is mis-sliced the same way. `query.read_jsonl` already carries a comment about exactly this character class, so the hazard was known but not fixed here. | Replace both `splitlines()` calls with `src.split("\n")` (dropping a trailing `"\r"` per line) so text indexing matches the parser's row numbering. |
-| ISS-23 | chunks.py:141-145 | Low | bug | File and residual chunks always report `start_line: 1` and `end_line: <file length>`, even though a residual chunk holds only the lines no symbol claimed, and even for part 2+ of a split. | Emit the real span, or set them to `None` and say so in `chunk_fields`. |
-| ISS-24 | chunks.py:99 vs 141 | Low | simplify | Symbol chunk 0 gets id `nid`; file chunk 0 gets `nid#0`. Two id schemes for one field. | Use `f"{nid}#{i}"` uniformly, or `nid` for i==0 uniformly — pick one and state it in the manifest. |
-| ISS-25 | chunks.py:35, 108-109 | Low | dead-code | `include_files` is never passed `False` by any caller or test. | Remove the parameter (or expose it as `--no-file-chunks`; not this loop). |
-| ISS-26 | chunks.py:70-75, 132-133 | Low | simplify | Caps 12/12/12/6/20/40 are inline magic numbers repeated across two blocks. | Hoist to named module constants next to `MAX_CHARS`. |
-| ISS-27 | export.py:256-260, 283 | Med | bug | GraphML data values are written verbatim. A source file containing a C0 control character (\x0b, \x0c, \x00) inside a docstring or signature produces a GraphML file that **no XML parser can read back** — verified: `ElementTree` writes `<a>bad \x0c char</a>` and `ET.fromstring` on it raises `ParseError: not well-formed`. The two GraphML tests skip when networkx is absent, so CI would not catch it. | Sanitise in `_flat`/`add_data`: drop characters outside the XML 1.0 legal set (tab, LF, CR, >=0x20, minus surrogates). |
-| ISS-28 | export.py:21-24 | Low | bug/encoding | `write_jsonl` opens without `newline=`, so on Windows every record is terminated `\r\n` while `query.read_jsonl` deliberately opens `newline="\n"` — each parsed line then carries a stray trailing `\r`. Tolerated by `json.loads` today; a byte-offset or checksum reader would not be. | `open(path, "w", encoding="utf8", newline="\n")`, mirroring the read side. |
-| ISS-29 | export.py:217-220 vs viz.py:37-44 | Low | simplify | `_graphml_label` and `viz._trim`/`node_label` are the same function with different limits, duplicated across modules. | One `trim(text, limit)` helper; both callers pass their constant. |
-| ISS-30 | export.py:459-460 | Low | bug | `chunks.jsonl` is written whenever `chunks is not None`, regardless of `--formats`; `written`/`manifest.files` then advertise a file the requested format list never asked for. (A test even pins this quirk for `--formats overview`.) | Keep the behaviour but document it in `FILE_NOTES`, or gate on `"jsonl" in formats` and update the two tests — decide in IMPLEMENT, default to documenting. |
-| ISS-31 | export.py:47, 68-69, 112, 224-227, 338 | Low | simplify | `defaultdict`, `math`, `random`, `Counter` and `xml.etree` are imported *inside* functions, several of them per call in the layout hot path. | Move to module scope. |
-| ISS-32 | export.py:333 | Low | bug | `graph.cypher` is written with no trailing newline; some `cypher-shell -f` versions drop the final statement. | Append `"\n"`. |
-| ISS-33 | viz.py:108-110 | Low | bug | The title is substituted before the data blob, so a repo name containing the literal string `__R2G_DATA__` is replaced by the whole JSON payload inside `<title>` and `<h1>`. Repo names are attacker-influenced in `repo2graph github`. | Substitute the data placeholder first, or do a single-pass `re.sub` with a mapping. |
-| ISS-34 | viz.py:47, 58 | Low | bug | `--viz-nodes 0` silently disables the cap and draws every node (a 20k-node page). Undocumented in `--help` and the README. | Treat `<=0` as "no cap" explicitly in the help text, or reject it. |
-| ISS-35 | viz.py:435-443 | Low | bug | `relayout()` runs the O(n^2) settle loop (~300 iterations) synchronously on load; at `--viz-nodes 2000` the page is frozen for seconds with no indication. | Cap the settle iterations by node count, or yield to a frame after N steps. |
-| ISS-36 | viz.py:601-605 | Low | bug | `pointerup` never calls `releasePointerCapture`, so the capture taken in `startDrag`/pan persists on the svg. | Release it in the `pointerup`/`pointercancel` handlers. |
-| ISS-37 | query.py:103-123 | Low | bug | The char budget is tested *after* a chunk is appended, so `retrieve` can overshoot `budget_chars` by one whole chunk; the expansion loop below has no `k` bound at all and can append far more chunks than the caller asked for. | Check the budget before appending; bound the expansion pass too. |
-| ISS-38 | query.py:105-110 | Low | simplify | `seen_nodes` is a list used for `in` membership. | Keep an ordered list plus a set. |
-| ISS-39 | query.py:76 | Low | simplify | `1.5`, `0.25`, `0.75`, `400` are unnamed BM25 constants in the scoring expression. | Name them (`K1`, `B`, `AVG_LEN`) with a one-line comment. |
-| ISS-40 | cli.py:40 | Low | bug | `len(chunks) if chunks else 0` cannot distinguish `--no-chunks` from a repo that produced zero chunks. | `len(chunks) if chunks is not None else 0`. |
-| ISS-41 | cli.py:110-146 | Low | simplify | The `build` and `github` parsers repeat eight identical arguments verbatim. | Extract a shared `parent=` parser. |
-| ISS-42 | __init__.py:11 vs pyproject.toml:8 | Low | simplify | `__version__ = "0.1.0"` duplicates the packaging version with nothing keeping them in step. | `__version__ = importlib.metadata.version("repo2graph")` with a fallback. |
-| ISS-43 | pyproject.toml:29-30 | Low | test-gap | No lint or typecheck configuration at all, so the VERIFY phase has nothing to run beyond pytest. | Backlog: add ruff config; out of scope this loop (non-goal). |
-| **ISS-44** | .github/workflows/index-repo.yml:48 | **High** | security | `${{ inputs.repo }}` is interpolated straight into a `run:` script — GitHub substitutes it *before* bash parses the line, so a value containing `"; <cmd>; #` executes with `contents: write` and `secrets.TARGET_REPO_TOKEN` in scope. This is precisely the pattern `action.yml:100-102` documents as forbidden, so the repo's own convention is violated. | Move the input into `env:` and reference `"$R2G_REPO"` inside the script, exactly as `action.yml` does. |
-| ISS-45 | .github/workflows/ci.yml:21-25 | Med | test-gap | The matrix is `ubuntu-latest` only, yet every historical regression in this repo (and ISS-06/22/28 above) is a Windows encoding bug. CI structurally cannot catch the bug class it keeps shipping. | Add `windows-latest` to the `os` matrix for the `tests` job. |
-| ISS-46 | action.yml:132-133 | Low | bug | `summary.json` is written *inside* `$R2G_OUT`, so it ends up in the uploaded artifact and is force-pushed to the `graph` branch, while `manifest.json` never mentions it. | Write it to `$RUNNER_TEMP/summary.json`. |
-| ISS-47 | action.yml:81, 157 | Low | security | The composite action uses floating tags (`actions/setup-python@v7`, `actions/upload-artifact@v7`) while every workflow in `.github/workflows` pins a full SHA — inconsistent supply-chain posture in the file consumers actually run. | Pin both to SHAs with a version comment. |
-| ISS-48 | README.md:425-429 vs self-index.yml | Low | bug | The README prints a `schedule: cron "0 4 * * 1"` block as "the copy this project runs on itself"; the real `self-index.yml` has no `schedule:` trigger. | Make the README block match the file (or add the schedule). |
-| ISS-49 | .github/workflows/dependabot-automerge.yml:21 | Low | security | `${{ github.event.pull_request.html_url }}` interpolated into `run:`. Low real risk (the field is GitHub-generated and the job is gated on the dependabot actor) but it is the same anti-pattern as ISS-44. | Pass through `env:`. |
-| ISS-50 | tests/test_repo2graph.py:318-329 | Med | test-gap | `test_index_survives_unicode_line_separators` asserts only that *a* chunk exists for the U+2028 file — it never inspects the chunk text, which is why ISS-22 has been silently shipping. | Extend it to assert the chunk body of `uses_sep` actually contains `return MSG`. |
-| ISS-51 | tests/test_repo2graph.py:240-252, 442-459 | Med | test-gap | No CO_CHANGE test with a non-ASCII filename (ISS-06); the two GraphML tests are `importorskip("networkx")` so a GraphML regression (ISS-27) passes CI whenever networkx is absent — it is not in the `dev` extra, so it is absent by default. | Add a non-ASCII CO_CHANGE test; add a stdlib-only `ET.parse` round-trip test that does not skip. |
-| ISS-52 | (no file) | Low | test-gap | `repo2graph/fetch.py` has zero tests: `parse_spec`, the clone argv construction and the token redaction are entirely uncovered. | Unit-test `parse_spec` (incl. the ISS-19 rejections) and the argv builder with a fake `subprocess.run`. |
-| ISS-53 | graph.py:192-209 | Low | test-gap | The parallel parse path (>=64 files) never runs in the suite, so the README's "the result is exactly the same either way" claim is unverified. | Add a test that builds a 70-file tmp repo with `jobs=1` and `jobs=2` and compares node ids and edge triples. |
+**D4 — compressed neighbor form.** Chunk records have no `signature` field
+(`export.py:458` `chunk_fields`), but `chunks.py:131-155` guarantees `text` starts with `# file:`
+/ `# <kind>:` comment header lines followed by the body. Compression = keep the leading `#`
+header lines plus the first following non-blank line (the `def`/`class`/`func` signature line),
+via `text.split("\n")` — never `splitlines()` (AGENTS.md; chunk text can contain U+2028).
 
-**Counts:** 53 issues — 3 High, 12 Med, 38 Low.
+### Files touched
 
----
+| File | Change |
+|---|---|
+| `repo2graph/query.py` | edge-attr adjacency, overview/manifest load, `expand(min_confidence, edge_dirs)`, identifier boost, optional RRF, `pack_context()`, `format_pack` untouched |
+| `repo2graph/cli.py` | new `_unit_float` argparse type, `cmd_rag`, `rag` subparser; `_require_index`, `_nonneg`, all existing subparsers untouched |
+| `repo2graph/answer.py` | NEW — provider dispatch + grounded prompt + byte-safe streaming |
+| `repo2graph/export.py` | 2 new `HOW_TO_READ` entries, 1 new `FILE_NOTES`-adjacent note; no code-path change |
+| `pyproject.toml` | `[project.optional-dependencies] rag = [...]` |
+| `tests/test_rag.py` | NEW — all criteria below |
 
-### Partition (scope for this loop)
+Conventions to follow: module docstring under the authormark block; `from .layout import path as
+artifact_path`; named module-level constants (BM25_* precedent) instead of magic numbers;
+`SystemExit(str)` for user-facing CLI errors; lazy imports inside `cmd_*` functions; ruff
+line-length 100, select E/F/W. New files need an `@authormark v1` header block — copy the shape
+from an existing file, leave the `Fingerprint:` line present (CI's canonical stamp tool refreshes
+it; never hand-write or delete it).
 
-The surface is too large to land 53 fixes in one reviewable pass, so:
+### Ordered tasks
 
-**In scope (High + Med, 15 items):** ISS-01, ISS-02, ISS-06, ISS-07, ISS-13,
-ISS-16, ISS-17, ISS-18, ISS-19, ISS-22, ISS-27, ISS-44, ISS-45, ISS-50, ISS-51.
-
-**Backlog (all 38 Low):** ISS-03, 04, 05, 08, 09, 10, 11, 12, 14, 15, 20, 21,
-23, 24, 25, 26, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-46, 47, 48, 49, 52, 53. IMPROVE may pull in the trivially safe one-liners
-(ISS-08, ISS-10, ISS-20, ISS-32, ISS-40) if the loop is green and quiet.
-
----
-
-### Ordered tasks, grouped by file
-
-**T1 — `repo2graph/chunks.py` (ISS-22)** — highest value, do first.
-1. Add a module-level `_lines(src)` helper returning `src.split("\n")` with a
-   trailing `"\r"` stripped from each line.
-2. Use it at line 67 (symbol body) and line 118 (residual `keep` computation).
-   Nothing else in the file may change.
-
-**T2 — `repo2graph/graph.py` (ISS-06, ISS-07)**
-1. `add_cochange`: drop `text=True`, add `-c core.quotepath=false` before `log`,
-   decode `out.stdout` with `.decode("utf8", "surrogateescape")`. Keep the
-   existing `returncode`/exception guards and the 120s timeout.
-2. `parse_all`: widen the fallback `except` to also catch `BrokenProcessPool`
-   and pickling failures, keeping the serial fallback.
-
-**T3 — `repo2graph/export.py` (ISS-27)**
-1. Add `_xml_safe(text)` dropping characters illegal in XML 1.0.
-2. Apply it in `add_data` (values) and to `NodeLabel` text. Ids are already
-   constrained; leave them unless a test proves otherwise.
-
-**T4 — `repo2graph/fetch.py` (ISS-16, ISS-17, ISS-18, ISS-19)**
-1. Harden `parse_spec`: reject components that are empty, `.`, `..`, or begin
-   with `-`; raise the existing `ValueError` with the same message shape.
-2. Clone the token-free URL; supply the credential via an `http.extraheader`
-   config passed through the environment, not argv. Keep the post-clone
-   `remote set-url` (now a no-op safety net) or drop it if the URL is clean.
-3. Add `encoding="utf8", errors="replace"` and a `timeout=` to all three
-   subprocess calls; map `TimeoutExpired` to `RuntimeError("git clone timed out")`.
-
-**T5 — `repo2graph/parse.py` (ISS-01, ISS-02)**
-1. Remove `Symbol.start_byte` / `end_byte` and their constructor args.
-2. Remove `ParsedFile.file_calls`; append a callee only when `owner is not None`.
-
-**T6 — `repo2graph/walker.py` (ISS-13)**
-1. Move the dot-directory / `DEFAULT_SKIP_DIRS` decision into `discover()` so the
-   git and `os.walk` sources yield the same set. Keep today's git behaviour
-   (dot-dirs are indexed) as the single answer — `test_resolve_import_keeps_dot_directories`
-   documents that `.github/...` files are expected to be present.
-
-**T7 — `.github/workflows/index-repo.yml` (ISS-44)**
-1. Add `env: R2G_REPO: ${{ inputs.repo }}` to the "Compute slug" step and use
-   `"$R2G_REPO"` in the `printf`. No other step changes.
-
-**T8 — `.github/workflows/ci.yml` (ISS-45)**
-1. Add an `os: [ubuntu-latest, windows-latest]` dimension to the `tests` matrix
-   and `runs-on: ${{ matrix.os }}`. Leave the `action` job ubuntu-only
-   (composite action, bash-specific).
-
-**T9 — `tests/test_repo2graph.py` (ISS-50, ISS-51)** — owned by TEST, listed for
-ordering only.
-
-**T10 — authormark re-stamp**
-Run `node .authormark/authormark.mjs stamp <file>` for every file touched by
-T1-T8. Never delete or reorder a header block.
-
----
+1. **query.py — adjacency + artifacts.** Replace the 3-tuples at `query.py:61-62` with
+   `(dst, type, direction, edge)` 4-tuples (the full edge record, not a copy). Add
+   `self.overview: str` and `self.manifest: dict`, loaded from `artifact_path(dir,
+   "overview.md")` / `"manifest.json"` inside try/except `(OSError, ValueError,
+   json.JSONDecodeError)` → `""` / `{}`. Read with `encoding="utf8", newline="\n"`.
+2. **query.py — `expand()`.** Signature
+   `expand(seed_nodes, hops=1, edge_types=None, per_hop=6, min_confidence=1.0, edge_dirs=None)`.
+   Confidence gate applies **only** when `etype == "CALLS"`: `edge.get("confidence", 1.0) <
+   min_confidence` → skip. All other types pass untouched. `edge_dirs` maps edge type → allowed
+   directions, defaulting to `DEFAULT_EDGE_DIRS = {"CALLS": ("out", "in"), "DEFINES": ("in",),
+   "INHERITS": ("out",), "IMPORTS": ("out",)}`. Return shape `(dst, etype, direction, src)`
+   stays the same so `retrieve()` is unaffected.
+3. **query.py — scoring.** `score(query)` adds an exact-identifier boost: for each query token
+   that matches a chunk's `name` or the last dotted/`::` segment of its `qualname` exactly
+   (case-sensitive first, case-insensitive fallback), multiply that chunk's BM25 score by
+   `IDENT_BOOST = 2.5`. Ordering stays descending, ties broken by chunk index for determinism.
+   Add `score_rrf(query, vectors=None, embedder=None)`: when neither is supplied, return
+   `score()` unchanged; otherwise fuse BM25 ranks and vector-similarity ranks with
+   `RRF_K = 60`, `1/(RRF_K+rank_bm25) + 1/(RRF_K+rank_vec)`. `numpy` is imported lazily inside
+   this branch only.
+4. **query.py — `retrieve()`.** Add keyword-only `min_confidence=None` and thread it to
+   `expand()` (None → 0.0). No other change (D1).
+5. **query.py — `pack_context()`.** `pack_context(query, k=8, hops=1, budget_chars=24000,
+   min_confidence=1.0, expand_graph=True, vectors=None, embedder=None) -> dict` with keys
+   `markdown, chunks, seeds, neighbors, truncated, budget_chars, used_chars, query`. Selection:
+   seeds by score (one chunk per node id, as `retrieve` does), then neighbors from `expand()`.
+   Formatting per D2/D4; chunk blocks sorted by `(path, start_line, chunk id)` before rendering;
+   header format exactly
+   `### [cite: {path}:{start_line}-{end_line}] \`{qualname or name}\` ({why})` with
+   `why` = `seed` for seeds and `{TYPE} {direction} of {src_name}` for neighbors.
+6. **cli.py — `_unit_float`.** argparse type: `float(value)`, rejecting `nan`/`inf`
+   (`math.isfinite`) and anything outside `[0.0, 1.0]`, raising `argparse.ArgumentTypeError`
+   with the offending value.
+7. **cli.py — `cmd_rag` + `rag` subparser.** `target` is `nargs="?"`, `query` is the last
+   positional. Resolution order per the Request: 1 positional → it is the query and the index is
+   `-o`; 2 positionals → resolve `target` as (a) index dir if `agent/manifest.json` exists under
+   it, (b) existing source dir → `build()` + `dump_all()` into `-o` first, (c) a valid
+   `fetch.parse_spec` GitHub spec → `fetch.index_github(target, out)`, else `SystemExit` naming
+   the three accepted forms. Then `_require_index(out, ...)` for chunks/nodes/edges (reusing the
+   existing messages verbatim), build `Index`, call `pack_context`, print markdown or
+   `json.dumps(result, indent=2)`. `--answer` imports `answer` lazily and streams.
+8. **answer.py.** `build_prompt(pack) -> (system, user)`, `pick_provider(env) -> spec|None`,
+   `stream_answer(pack, model=None, env=None, out=None) -> str`. Provider precedence
+   GEMINI → OPENAI → ANTHROPIC → OLLAMA_HOST; no key → `SystemExit` naming the four env vars.
+   Output written through a byte-safe writer (Task 9). `urllib.request` only, explicit
+   `timeout=`.
+9. **answer.py — Windows stdout.** `_writer(out)`: if `out` is None use
+   `sys.stdout.buffer.write(chunk.encode("utf8", "replace"))` + flush when
+   `sys.stdout.buffer` exists, else `sys.stdout.write` with a `errors="replace"`-style fallback
+   (`chunk.encode(enc,"replace").decode(enc,"replace")`). Never let a non-ASCII token raise.
+10. **export.py docs.** Append to `HOW_TO_READ`: (a) the GraphRAG protocol — score chunks,
+    expand 1 hop over CALLS out/in + DEFINES in + INHERITS out, filter CALLS on
+    `confidence >= 1.0`, pack under a char budget, cite `path:start-end`; (b) that
+    `repo2graph.query.Index.pack_context` implements it and `repo2graph rag` exposes it. No
+    change to `write_manifest`'s structure.
+11. **pyproject.toml.** `rag = ["sentence-transformers>=3.0", "numpy>=1.24"]` under
+    `[project.optional-dependencies]`. Core `dependencies` untouched.
 
 ### Acceptance criteria
 
-Each is a checkable statement. AC-1..AC-11 are behaviour changes; AC-12..AC-16
-are preservation and hygiene.
+Adjacency / init
 
-1. **(ISS-22)** For a Python file whose first line contains U+2028, the chunk
-   whose `node_id` is the symbol defined after it contains that symbol's body:
-   given `'MSG = "a b"\n\ndef uses_sep():\n    return MSG\n'`, the chunk for
-   `sym:<path>::uses_sep` has `"return MSG"` in its `text` and does not contain
-   the string `MSG = "a`.
-2. **(ISS-22)** The same file's `file_residual` chunk, when one is produced,
-   contains the `MSG = ` assignment line and not the body of `uses_sep`.
-3. **(ISS-06)** `build(repo, git_history=10)` on a git repo containing two files
-   named with non-ASCII characters (e.g. `café.py`, `naïve.py`) committed
-   together three times yields a `CO_CHANGE` edge between
-   `file:café.py` and `file:naïve.py`.
-4. **(ISS-06)** `add_cochange` never raises `UnicodeDecodeError`: the same test
-   passes with the process locale left at its platform default (asserted by the
-   test simply completing on the Windows CI leg).
-5. **(ISS-27)** After `build --formats graphml` on a repo whose source contains a
-   `\x0c` inside a docstring, `xml.etree.ElementTree.parse(graph.graphml)`
-   succeeds (no `importorskip`, stdlib only) and the file contains no character
-   in the ranges illegal for XML 1.0.
-6. **(ISS-19)** `parse_spec("owner/..")`, `parse_spec("../evil")`,
-   `parse_spec("-x/-y")` and `parse_spec("owner/")` each raise `ValueError`;
-   `parse_spec("owner/repo")`, `parse_spec("https://github.com/owner/repo")` and
-   `parse_spec("git@github.com:owner/repo.git")` all still return
-   `("owner", "repo")`.
-7. **(ISS-16)** No element of the argv list passed to `subprocess.run` by
-   `fetch.clone` contains the token string when a token is supplied (asserted by
-   monkeypatching `subprocess.run` and inspecting the recorded call).
-8. **(ISS-18)** Every `subprocess.run` call in `fetch.py` is invoked with a
-   `timeout` keyword (asserted by the same recording fixture).
-9. **(ISS-13)** `discover()` returns the identical set of relative paths for the
-   same directory tree whether or not it is a git checkout (build the tree, run
-   `discover`, `git init`+`git add -A`, run `discover` again, compare sets).
-10. **(ISS-07)** `parse_all` returns the serial result when the process pool
-    raises `BrokenProcessPool` (monkeypatch `ProcessPoolExecutor` to raise), and
-    the returned list equals the `jobs=1` result.
-11. **(ISS-01, ISS-02)** `repo2graph.parse.Symbol` has no `start_byte`/`end_byte`
-    field and `ParsedFile` has no `file_calls` field
-    (`dataclasses.fields(...)` name check), and the full suite is still green.
-12. **(preservation)** `python -m pytest -q` reports **at least 53 passed** with
-    **0 failed**; no pre-existing test is modified except
-    `test_index_survives_unicode_line_separators` (ISS-50, strengthened only).
-13. **(preservation)** For the `sample_repo` fixture, the set of node ids, the
-    set of `(src, dst, type)` edge triples and the set of chunk ids produced by
-    `build` + `build_chunks` are byte-identical before and after the change
-    (characterization snapshot, see test strategy).
-14. **(ISS-44)** `.github/workflows/index-repo.yml` contains no `${{ inputs.` or
-    `${{ github.event.` expression inside any `run:` block; the repo slug is
-    computed from `"$R2G_REPO"`.
-15. **(ISS-45)** `.github/workflows/ci.yml` `tests` job runs on both
-    `ubuntu-latest` and `windows-latest` across both Python versions.
-16. **(repo rule)** Every source file modified this loop still carries its
-    `@authormark v1` block with a fingerprint refreshed via
-    `node .authormark/authormark.mjs stamp <file>`; `authormark check` passes.
+1. `Index.adj[nid]` entries are 4-tuples `(dst, type, direction, edge)` and
+   `edge["confidence"]` is readable for at least one CALLS entry in the ambiguity fixture.
+2. `Index(out).overview` is the text of `agent/overview.md` when the build wrote it, and `""`
+   when the file is absent — constructing `Index` on a `--formats jsonl` build (no overview.md)
+   raises nothing.
+3. `Index(out).manifest` is the parsed `agent/manifest.json` dict, and `{}` when the file is
+   absent **or** unparseable (truncate the file to `"{"` → `Index(out)` still constructs and
+   `manifest == {}`).
 
----
+Expansion / confidence
+
+4. `expand(seeds, min_confidence=1.0)` returns no `(dst, "CALLS", ...)` tuple whose edge record
+   has `confidence < 1.0`, on a fixture with a deliberately overloaded callee name.
+5. The same call still returns the IMPORTS / DEFINES / INHERITS neighbors of those seeds — for a
+   fixture where the *only* edge to node X is a DEFINES or INHERITS edge (no `confidence` key),
+   X is in the result at `min_confidence=1.0`.
+6. `expand(seeds, min_confidence=0.5)` returns strictly more nodes than
+   `expand(seeds, min_confidence=1.0)` on the ambiguous fixture (set comparison, superset +
+   non-equal).
+7. Default directions hold: for a caller→callee pair, expanding from the callee yields the
+   caller with `direction == "in"`, expanding from the caller yields the callee with
+   `direction == "out"`; expanding from a symbol yields its defining file via a `DEFINES`
+   tuple with `direction == "in"`.
+
+Scoring
+
+8. For fixture symbols `normalize_provider` and a decoy chunk that mentions the words
+   "normalize" and "provider" many times but is not that symbol, `score("normalize_provider")`
+   ranks the chunk whose `node_id` ends `::normalize_provider` first.
+9. `score()` output is still sorted descending and every returned index still contains a query
+   term (the existing `test_score_matches_bruteforce` invariant still passes unmodified).
+10. With no `vectors` and no `embedder`, `score_rrf(q) == score(q)` exactly, and importing
+    `repo2graph.query` succeeds in an environment with no `numpy` and no
+    `sentence_transformers` (assert via `sys.modules` after import that neither was imported).
+11. With a stub embedder object supplied, `score_rrf` returns results and does not import numpy
+    if the stub returns plain lists.
+
+Backward compatibility
+
+12. `retrieve("double a value helper", k=3, hops=1)` on `sample_repo` still returns a
+    `pkg/util.py` hit and at least one hit whose `why != "lexical"` (existing test unchanged and
+    still green).
+13. `inspect.signature(Index.retrieve)` still accepts `(query, k, hops, budget_chars)`
+    positionally in that order, and `main(["query", ...])` output is byte-identical before and
+    after for the sample repo (characterization test capturing stdout).
+
+pack_context
+
+14. `pack_context(q, budget_chars=N)["markdown"]` satisfies `len(markdown) <= N` for
+    N in {200, 1000, 4000, 24000} on the fixture repo — the *whole* string, map and headers
+    included.
+15. Every emitted chunk block is preceded by a header matching
+    `^### \[cite: (?P<path>[^\]]+):(?P<start>\d+)-(?P<end>\d+)\] ` and the path/start/end equal
+    that chunk's `path`/`start_line`/`end_line`.
+16. Blocks appear in non-decreasing `(path, start_line)` order in the markdown.
+17. The markdown contains the map prepend followed by a line that is exactly `---` before the
+    first `### [cite:` header, when an overview exists; with `agent/overview.md` and
+    `agent/manifest.json` both deleted, `pack_context` still returns markdown containing at
+    least one `### [cite:` header and no exception.
+18. The map's entry-point list is rendered from `manifest["entrypoints"]` and its first listed
+    qualname equals `manifest["entrypoints"][0]["qualname"]`.
+19. Seeds are prioritized: at a budget that fits exactly one full block, the surviving block's
+    `why` is `seed`; at a budget where a neighbor cannot fit in full but fits compressed, that
+    neighbor's block text is the compressed form (ends with the signature line, contains no line
+    from the body beyond it) and `result["truncated"] is True`.
+20. `pack_context(..., expand_graph=False)` returns a `neighbors` list of length 0 and every
+    entry of `chunks` has `why == "seed"`.
+21. Ablation, set membership only: on the fixed synthetic fixture, the set of `node_id` values
+    from `expand_graph=True` is a strict superset of the `expand_graph=False` set and contains
+    the required id `sym:pkg/<dep>.py::<dep_symbol>` that lexical-only retrieval misses. No
+    assertion on any score, rank or ordering of scores.
+
+CLI
+
+22. `main(["rag", "-o", str(out), "how does session auth work?"])` (ONE positional) succeeds and
+    prints markdown containing `### [cite:`.
+23. `main(["rag", str(index_dir), "some query"])` (TWO positionals, target is an existing index)
+    uses that index without rebuilding; `main(["rag", str(source_repo), "some query", "-o",
+    str(new_out)])` builds first and creates `agent/manifest.json` under `new_out`.
+24. `main(["rag", "not/a real spec/x", "q"])` raises `SystemExit` whose message names all three
+    accepted target forms; `main(["rag", "q", "-o", str(empty)])` raises `SystemExit` with the
+    existing `no index at {out}: run \`repo2graph build ...\`` text.
+25. `--min-conf` rejects `nan`, `inf`, `-0.1`, `1.1` and `abc` with a non-zero exit
+    (`SystemExit` from argparse), and accepts `0`, `0.5`, `1.0`.
+26. `rag --format json` prints a JSON object with the keys `markdown`, `chunks`, `truncated`,
+    `used_chars`; defaults are `-k 8 --hops 1 --budget 24000 --min-conf 1.0`, verified by
+    reading the parser defaults.
+27. Existing subcommands are untouched: `main(["query", ...])`, `build`, `map`, `stats` all
+    behave as before (full existing suite green).
+
+answer.py
+
+28. With a `http.server`-backed localhost endpoint (or a monkeypatched `urllib.request` opener)
+    and `OPENAI_API_KEY` set to a dummy value, `stream_answer` sends a request whose captured
+    body contains the grounded-instruction sentence, the phrase requiring every claim to carry a
+    `[path/file.py:start-end]` citation, and the pack's markdown. No real network call is made
+    (asserted by the mock recording exactly the expected host).
+29. With every provider env var unset, `stream_answer` raises `SystemExit` naming
+    `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and `OLLAMA_HOST`.
+30. Streaming a chunk containing `"café — ✓"` into a writer whose encoding is cp1252 produces
+    output and raises no `UnicodeEncodeError` (test uses a `io.TextIOWrapper(io.BytesIO(),
+    encoding="cp1252")` and a cp1252 buffer stand-in for `sys.stdout`).
+
+Docs / packaging / repo rules
+
+31. `pyproject.toml` has `optional-dependencies.rag == ["sentence-transformers>=3.0",
+    "numpy>=1.24"]` and `project.dependencies` is unchanged (still exactly tree-sitter +
+    tree-sitter-language-pack).
+32. `export.HOW_TO_READ` contains an entry mentioning both `pack_context` and confidence
+    filtering, and a freshly built `agent/manifest.json` carries it under `how_to_read`.
+33. Every new/edited source file still begins with the `@authormark v1` block: a test asserts
+    lines 1-5 of `repo2graph/answer.py` and `tests/test_rag.py` match the header shape
+    (`@authormark v1`, `Copyright (c)`, `Author:`, `SPDX-License-Identifier: MIT`,
+    `Fingerprint: AMK1.`).
+34. No new code calls `str.splitlines()`: a test greps `repo2graph/query.py` and
+    `repo2graph/answer.py` for `.splitlines(` and asserts zero matches.
 
 ### Test strategy
 
-**Runner:** `python -m pytest -q` from the repo root (config lives in
-`pyproject.toml`, `testpaths = ["tests"]`). Single file: `tests/test_repo2graph.py`.
-No new dependencies — stdlib + pytest only. `networkx` must stay optional, so no
-new test may depend on it.
-
-**Level 1 — characterization (behaviour preservation, write first).**
-A new `test_refactor_preserves_graph_shape` using the existing `sample_repo`
-fixture: build the graph, and assert against literal expected collections
-committed in the test — the sorted node-id list, the sorted `(src, dst, type)`
-triple list, and the sorted chunk-id list. Generate those literals from the
-current `main` build before any source change, so the test passes at HEAD and
-locks AC-13. This is the net for T5 (dataclass field removal), T6 (walker
-unification) and T2's decode change.
-
-**Level 2 — targeted regression, one per fixed bug.** Each new test names its
-issue id in a comment.
-- ISS-22 -> two tests, AC-1 and AC-2, driving `build` + `build_chunks` on a
-  tmp repo with a U+2028 file. Must fail at HEAD with the body text sliced from
-  the wrong lines (the observed failure is `"\ndef f():"` in place of the body),
-  not with an import or fixture error.
-- ISS-50 -> strengthen the existing U+2028 query test with the body assertion.
-- ISS-06 -> a git-fixture test mirroring `test_cochange_edges_from_git_history`
-  but with `café.py` / `naïve.py`, written with `encoding="utf-8"`. Must fail at
-  HEAD by the edge being absent (or by `UnicodeDecodeError` on Windows).
-- ISS-27 -> build a repo whose docstring holds `\x0c`, export graphml, then
-  `ET.parse` it. Stdlib only, never skipped. Fails at HEAD with `ParseError`.
-- ISS-19 -> a table-driven `parse_spec` test (AC-6). Fails at HEAD because the
-  traversal specs are accepted.
-- ISS-16/ISS-18 -> a `monkeypatch`-based fixture that replaces
-  `repo2graph.fetch.subprocess.run` with a recorder returning `returncode=0`,
-  then asserts on the recorded argv and kwargs (AC-7, AC-8). Never touches the
-  network. This is also the first coverage `fetch.py` has ever had.
-- ISS-13 -> the git-vs-walk equality test (AC-9). Skips if `git` is unavailable.
-- ISS-07 -> monkeypatch `concurrent.futures.ProcessPoolExecutor` to raise
-  `BrokenProcessPool` on `__enter__`, assert `parse_all` still returns the
-  serial result (AC-10).
-- ISS-01/02 -> a `dataclasses.fields` assertion (AC-11).
-
-**Level 3 — config assertions.** AC-14 and AC-15 read the two workflow YAML
-files as text and assert on their content (no PyYAML dependency: a regex for
-`${{` inside `run:` blocks and a substring check for `windows-latest`). Cheap,
-and they keep the injection fix from silently regressing.
-
-**What to mock:** only `subprocess.run` inside `fetch.py`, and
-`ProcessPoolExecutor`. Everything else runs for real against `tmp_path` — git
-is already a hard test dependency in this suite (`test_discover_finds_non_ascii_filenames`,
-`test_cochange_edges_from_git_history`), so real git invocations are in keeping
-with the conventions here.
-
-**"Fails for the right reason":** every new test must be run at HEAD before the
-fix and produce an *assertion* failure (wrong chunk text, missing CO_CHANGE
-edge, `ET.ParseError`, `parse_spec` returning a tuple instead of raising) — not
-`ImportError`, `AttributeError`, `fixture not found`, or a skip. TEST must paste
-that output. The characterization test (Level 1) is the exception: it must
-**pass** at HEAD, and its value is that it must keep passing afterwards.
-
----
+- **Level:** unit for `expand`/`score`/`_unit_float`/`answer._writer`; integration through
+  `cli.main([...])` for `rag` (the established pattern in `test_repo2graph.py` — build with
+  `main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])`, then act); no e2e, no
+  network.
+- **File:** all new tests in `tests/test_rag.py` (there is no `conftest.py`; the fixtures below
+  are defined locally in that file, mirroring `sample_repo`/`sample_graph` in
+  `test_repo2graph.py`). Do not edit `tests/test_repo2graph.py` except where a criterion says a
+  test must remain unchanged — it must keep passing as-is.
+- **Fixtures (fixed and synthetic, criterion 21):** `rag_repo(tmp_path)` writes a deterministic
+  4-file Python package:
+  - `pkg/config.py` — `def normalize_provider(name): ...` plus a decoy module docstring using
+    the words "normalize" and "provider" repeatedly (criterion 8);
+  - `pkg/session.py` — `def authenticate(user)` calling `normalize_provider` and
+    `verify_token`, with the words "session auth" only here (the lexical seed);
+  - `pkg/tokens.py` — `def verify_token(t)` whose text deliberately shares no vocabulary with
+    the query (the dep lexical search misses — the required node id in criterion 21);
+  - `pkg/ambig.py` — two classes each defining a method named `handle`, and a caller calling
+    `handle()`, forcing `confidence == 0.5` CALLS edges (criteria 4/6);
+  - plus `class Base` / `class Child(Base)` for the INHERITS case (criterion 5).
+  `rag_index(rag_repo, tmp_path)` builds it once per test via `main(["build", ...,
+  "--formats", "jsonl,overview"])` so both `overview.md` and `manifest.json` exist; a second
+  fixture builds with `--formats jsonl` only, for the graceful-degradation criteria (2, 17).
+- **Mocking:** `answer.py` is tested two ways — (a) `monkeypatch.setattr(answer.urllib.request,
+  "urlopen", recorder)` where `recorder` captures the `Request` object and returns a fake
+  file-like yielding SSE/JSON-lines bytes; (b) one test spins a `http.server.HTTPServer` on
+  `127.0.0.1:0` in a daemon thread with `OLLAMA_HOST` pointed at it, to prove the real urllib
+  path works. Env vars are set/cleared with `monkeypatch.setenv`/`delenv(..., raising=False)`
+  so a developer's real key never leaks into the test. Assert on the captured request body, not
+  on model output.
+- **Forbidden assertions:** no test may assert a score value, a score ordering across different
+  chunks beyond criterion 8's single "is first" check, a rank number, or a floating-point
+  similarity. Ablation and expansion tests assert `set` membership / superset relations on
+  `node_id` strings.
+- **Run command:** `python -m pytest tests/ -q` from the repo root (pytest `testpaths = ["tests"]`
+  is already configured); the phase subset is `python -m pytest tests/test_rag.py -q`.
+- **"Fails for the right reason":** at TEST time every new test must fail with
+  `AttributeError: 'Index' object has no attribute 'pack_context'`,
+  `TypeError: expand() got an unexpected keyword argument 'min_confidence'`,
+  `ModuleNotFoundError: No module named 'repo2graph.answer'`, or an argparse
+  `invalid choice: 'rag'` / `unrecognized arguments` SystemExit — plus plain assertion failures
+  for the docs/packaging criteria. Any `ImportError` on a *fixture* helper, `FileNotFoundError`
+  from a mis-built fixture, or a typo-driven `NameError` means the test is wrong, not the
+  implementation missing; fix the test.
+- **Regression guard:** the whole existing 1658-line `tests/test_repo2graph.py` must stay green
+  unmodified — that is the backward-compat proof for criteria 12, 13 and 27.
 
 ### Risks
 
-1. **Characterization snapshots are brittle across environments.** Node ids
-   include `repo:<root.name>`, and `tmp_path` names differ per run — the
-   snapshot must be normalised (compare relative ids only, drop the `repo:` node
-   or compare its shape) or the test will fail for the wrong reason on CI.
-2. **ISS-13 (walker unification) can change what a non-git build indexes.**
-   Unifying on the git behaviour means a plain-folder build starts including
-   `.github/**` and other dot-dirs, which shifts node counts for that path.
-   Nothing in the suite pins it, but it is a real observable change — call it
-   out in `## Implement`, and if the characterization snapshot moves, stop and
-   loop back rather than re-baselining silently.
-3. **ISS-16 (token out of argv)** is the riskiest fix: `http.extraheader` via
-   env differs across git versions, and there is no integration test that can
-   actually authenticate. Mitigation: keep the change minimal, assert only on
-   argv (AC-7), and if the mechanism proves fragile, fall back to
-   `GIT_ASKPASS` — but do not ship a version that stops cloning public repos
-   (`test`-covered only indirectly, so verify manually in VERIFY with
-   `repo2graph github psf/requests --max-files 5`).
-4. **ISS-45 (Windows CI) may go red immediately** on issues this loop does not
-   fix — that is the point of adding it, but it could block the merge. If a
-   Windows-only failure appears outside the in-scope list, record it as a new
-   ISS-xx and mark the leg `continue-on-error` for one release rather than
-   expanding scope mid-loop.
-5. **ISS-27 sanitisation could alter existing GraphML output** if any current
-   value contains a stripped character; the characterization test does not cover
-   graphml text, so add an explicit "unchanged for the sample repo" check.
-6. **Authormark staleness** is guaranteed on every file touched; forgetting the
-   re-stamp fails CI (`authormark.yml`) after everything else is green.
-7. **Scope creep.** 38 Low issues are catalogued and tempting. They are backlog.
-   IMPLEMENT must not touch them beyond the five one-liners IMPROVE may pick up.
-
-### Open questions (non-blocking)
-
-- ISS-30: does `chunks.jsonl` outside `--formats jsonl` stay (documented) or go
-  (gated)? Two tests pin the current behaviour; defaulting to "document it".
-- ISS-24: which chunk-id scheme wins? Deferred to backlog; either choice is a
-  breaking change for a consumer holding `node_id`, so it needs its own loop.
+- **R1 (medium):** tightening `expand()`'s default to `min_confidence=1.0` would silently change
+  `query` results. Mitigated by D1 (retrieve passes 0.0 unless told otherwise) — VERIFY must
+  diff `repo2graph query` output before/after on the sample repo.
+- **R2 (medium):** whole-markdown budget accounting is easy to get off-by-a-separator. Mitigated
+  by criterion 14 sweeping four budgets including a very small one, and by asserting on
+  `len(markdown)` rather than on an internal counter.
+- **R3 (low/medium):** the exact-identifier boost could perturb the existing
+  `test_score_matches_bruteforce` invariant if the boost is applied to chunks with zero BM25
+  score. Constrain the boost to *multiply an existing* score; never introduce a new chunk index.
+- **R4 (low):** `pack_context` reading `manifest.json` on every construction adds I/O to `Index`,
+  which `query` also constructs. Files are small and read once in `__init__`; failures are
+  swallowed.
+- **R5 (low):** the localhost `http.server` test can be flaky in constrained CI. Keep it to one
+  test, bind `127.0.0.1:0`, set a socket timeout, and mark the monkeypatched-opener test as the
+  primary coverage so a firewall-blocked runner still proves the contract.
+- **R6 (process):** editing `query.py`, `cli.py`, `export.py`, `pyproject.toml` and the two new
+  files leaves stale `Fingerprint:` lines. That is expected. Do not delete or hand-edit the
+  headers and do not run any locally recovered `.authormark/authormark.mjs`; the canonical
+  `authormark check` action re-stamps as a pre-merge gate. The final report must flag it.
+- **R7 (low):** `fetch.index_github` in the `rag` target-resolution path would hit the network.
+  It is only reached for a GitHub-spec target; the CLI tests only exercise the index-dir and
+  source-dir branches, and assert the GitHub branch by monkeypatching `fetch.index_github`.
 
 ## Tests
 
-### Runner
+### Files
 
-`python -m pytest -q` from the repo root (`pyproject.toml` -> `testpaths = ["tests"]`).
-Single file, single suite: `tests/test_repo2graph.py`. No new dependency; no new
-test imports `networkx`. Runner was already wired — nothing to add.
+| File | Change |
+|---|---|
+| `tests/test_rag.py` | NEW — 54 tests covering acceptance criteria 1-34. Authormark header bytes copied verbatim (zero-width payload intact) from `tests/test_repo2graph.py`; the `Fingerprint:` line is present and un-edited — CI's canonical stamp tool must refresh it pre-merge. |
+| `tests/test_repo2graph.py` | UNTOUCHED (regression guard for AC-12/13/27; 150 passed, 2 skipped). |
 
-### File touched
+No implementation code was written. `repo2graph/answer.py` deliberately does **not** exist.
 
-- `tests/test_repo2graph.py` — added imports (`shutil`, `pathlib.Path`,
-  `parse_all`), a `REPO_ROOT` constant, one characterization test, ten regression
-  tests (some parametrized), and strengthened the one pre-existing ISS-50 test.
-  The `@authormark v1` block is byte-identical to HEAD except the `Fingerprint:`
-  line (stale after any edit — see "Authormark" below).
-
-### Tests added, mapped to acceptance criteria
-
-| Test (in `tests/test_repo2graph.py`) | AC | ISS | Kind |
-|---|---|---|---|
-| `test_refactor_preserves_graph_shape` | AC-13 | — | Level-1 characterization; **passes at HEAD**, must keep passing |
-| `test_iss22_symbol_chunk_body_survives_unicode_line_separator` | AC-1 | ISS-22 | regression |
-| `test_iss22_file_residual_excludes_symbol_body` | AC-2 | ISS-22 | regression |
-| `test_index_survives_unicode_line_separators` (strengthened only) | AC-1 / test-gap | ISS-50 | regression |
-| `test_iss06_cochange_survives_non_ascii_filenames` | AC-3, AC-4 | ISS-06 | regression (git fixture; skips if no `git`) |
-| `test_iss27_graphml_roundtrips_with_a_control_char` | AC-5 | ISS-27 | regression (stdlib `ET.parse`, never skipped) |
-| `test_iss19_parse_spec_rejects_traversal_and_option_specs[owner/.. , ../evil , -x/-y , owner/]` | AC-6 | ISS-19 | regression (table) |
-| `test_iss19_parse_spec_still_accepts_valid_specs[owner/repo , URL , ssh]` | AC-6 | ISS-19 | regression (positive; passes at HEAD) |
-| `test_iss16_token_never_appears_in_clone_argv` | AC-7 | ISS-16 | regression (monkeypatched `fetch.subprocess.run` recorder) |
-| `test_iss18_every_fetch_subprocess_call_passes_timeout` | AC-8 | ISS-18 | regression (same recorder) |
-| `test_iss13_discover_matches_between_git_and_walk` | AC-9 | ISS-13 | regression (git-vs-walk set equality; skips if no `git`) |
-| `test_iss07_parse_all_falls_back_when_the_pool_breaks` | AC-10 | ISS-07 | regression (monkeypatched `ProcessPoolExecutor`) |
-| `test_iss01_iss02_dead_dataclass_fields_are_gone` | AC-11 | ISS-01, ISS-02 | regression (`dataclasses.fields`) |
-| `test_iss44_index_repo_workflow_has_no_run_interpolation` | AC-14 | ISS-44 | Level-3 YAML text assertion |
-| `test_iss45_ci_workflow_tests_job_covers_windows` | AC-15 | ISS-45 | Level-3 YAML text assertion |
-
-AC-12 (>= 53 passed / 0 failed) and AC-16 (authormark re-stamp) are verified in
-VERIFY, not encoded as new tests. AC-13 also has the running full-suite count as
-its second half.
-
-### Notes / decisions
-
-- **Characterization normalisation (Risk 1).** `sample_repo` is itself a
-  per-run `tmp_path`, so the `repo:<root.name>` node id and every edge triple
-  touching it are normalised to `repo:<ROOT>` before comparison. All other ids
-  (`dir:`, `file:`, `sym:`, `module:`, `external:`) are already root-relative.
-  The literal collections (`CHAR_NODES`, `CHAR_TRIPLES`, `CHAR_CHUNK_IDS`) were
-  generated from a fresh HEAD build of the exact fixture content.
-- **U+2028 in the fixtures** is written as the Python escape `" "` inside
-  the test source (never a raw code point), matching the existing ISS-50 test.
-- **ISS-07 "right reason".** At HEAD the test fails with
-  `concurrent.futures.process.BrokenProcessPool: boom` propagating straight out
-  of `parse_all` — exactly the abort the plan predicts, not an import/collection
-  error. After the `except` is widened, the operative check becomes the
-  `digest(got) == digest(serial)` equality (parsed-file structure per file).
-- **ISS-19 table.** `parse_spec("owner/")` already raises at HEAD (repo needs
-  >=1 char), so that one parametrized case passes at HEAD; the three traversal /
-  option specs (`owner/..`, `../evil`, `-x/-y`) fail at HEAD with
-  `DID NOT RAISE ValueError`, which is the intended reason.
-- **No mocks beyond the two sanctioned ones:** `repo2graph.fetch.subprocess.run`
-  (via `monkeypatch.setattr(fetch.subprocess, "run", ...)`) and
-  `concurrent.futures.ProcessPoolExecutor`. Everything else runs for real
-  against `tmp_path`; git is invoked for real where the existing suite already
-  does so.
-
-### Run command
+### Run commands
 
 ```
-python -m pytest -q
+python -m pytest tests/test_rag.py -q      # phase subset  -> 48 failed, 6 passed
+python -m pytest tests/ -q                 # full suite    -> existing 150 still pass
+python -m ruff check tests/test_rag.py     # All checks passed
 ```
 
-### Baseline (HEAD, before this section) — behaviour-preservation net
+### Fixtures (fixed + synthetic, no network, no git)
+
+`rag_repo` writes a deterministic 7-file python package under `tmp_path/src`:
+
+- `pkg/config.py::normalize_provider` — long-ish docstring body (chunk length 162 tokens).
+- `pkg/decoy.py` — module docstring repeating the identifier `normalize_provider` 30x. At
+  HEAD BM25 ranks the decoy **first** (3.891 vs 3.434, ~13% margin), so AC-8 fails today and
+  `IDENT_BOOST = 2.5` flips it with ~2.2x headroom. Never assert the numbers — only "is first".
+- `pkg/session.py::authenticate` — the only place the words *login handshake credential* occur;
+  calls `normalize_provider` and `verify_token`.
+- `pkg/tokens.py::verify_token` — shares no vocabulary with the ablation query. Verified at HEAD:
+  `score("login handshake credential")` returns exactly `{sym:pkg/session.py::authenticate}`,
+  and `expand()` from it yields `file:pkg/session.py` (DEFINES in), `::normalize_provider` and
+  `::verify_token` (CALLS out). That is the AC-21 ablation, as set membership.
+- `pkg/ambig.py` — `AlphaHandler.handle` / `BetaHandler.handle` + `dispatch()` calling `handle()`
+  → two CALLS edges at `confidence 0.5` (AC-4/6).
+- `pkg/base.py` — `class Child(Base)` → an INHERITS edge with no `confidence` key (AC-5).
+
+`rag_out` builds `--formats jsonl,overview` (overview.md + manifest.json present);
+`bare_out` builds `--formats jsonl` (no overview.md) for the graceful-degradation criteria.
+Manifest entrypoints are `[dispatch, authenticate, Base.ping, Child.pong]` and none of those
+names appear in `overview.md`, so AC-18's "first listed qualname" probe cannot alias.
+
+### Criterion → test map
+
+| AC | Test |
+|---|---|
+| 1 | `test_ac1_adjacency_entries_are_four_tuples_with_edge_records` |
+| 2 | `test_ac2_overview_is_loaded_and_absence_is_graceful` |
+| 3 | `test_ac3_manifest_is_loaded_and_unparseable_degrades` (truncate to `{`, then unlink) |
+| 4 | `test_ac4_min_confidence_prunes_ambiguous_calls` |
+| 5 | `test_ac5_confidence_gate_never_drops_non_calls_edges` |
+| 6 | `test_ac6_lower_min_confidence_is_a_strict_superset` |
+| 7 | `test_ac7_default_edge_directions` |
+| 8 | `test_ac8_exact_identifier_boost_beats_a_lexical_decoy` |
+| 9 | `test_ac9_score_invariants_survive_the_boost` (passes now — invariant guard) |
+| 10 | `test_ac10_score_rrf_without_vectors_equals_score`, `test_ac10_importing_query_pulls_in_no_optional_dependency` (out-of-process `sys.modules` probe so a pytest plugin cannot mask it) |
+| 11 | `test_ac11_score_rrf_with_a_stub_embedder` — pins the embedder contract: `embedder.encode(list[str]) -> list[list[float]]`, plain lists, no numpy |
+| 12 | `test_ac12_retrieve_still_finds_seeds_and_graph_neighbours` (passes now) |
+| 13 | `test_ac13_retrieve_signature_and_cmd_query_output_are_unchanged` (passes now — `inspect.signature` positional order, positional==keyword call, and `cmd_query` stdout == `format_pack(retrieve(...))`; a byte-golden file was rejected because `os.walk` order is not guaranteed identical on the linux CI leg) |
+| 14 | `test_ac14_whole_markdown_respects_the_budget[200/1000/4000/24000]` |
+| 15 | `test_ac15_every_block_has_a_citation_header_matching_its_chunk` |
+| 16 | `test_ac16_blocks_are_sorted_by_path_then_start_line` |
+| 17 | `test_ac17_map_prepend_then_separator_then_context` (also deletes both `overview.md` copies via `layout.paths` + `manifest.json`) |
+| 18 | `test_ac18_map_entrypoints_come_from_the_manifest` |
+| 19 | `test_ac19_seeds_are_prioritised_over_neighbours`, `test_ac19_a_squeezed_neighbour_is_compressed_not_truncated` (sweeps budgets 400..8000 until a compressed neighbour appears; asserts the D4 form — leading `#` lines + first non-blank line kept, every later non-blank source line absent — and `truncated is True`) |
+| 20 | `test_ac20_expand_graph_false_is_seeds_only` |
+| 21 | `test_ac21_ablation_graph_expansion_finds_what_lexical_misses` — set membership only |
+| 22 | `test_ac22_rag_with_one_positional_is_the_query` |
+| 23 | `test_ac23_target_index_dir_is_used_as_is` (manifest mtime_ns + bytes unchanged), `test_ac23_target_source_dir_is_built_first` |
+| 24 | `test_ac24_unresolvable_target_names_all_three_forms`, `test_ac24_missing_index_reuses_the_existing_message` |
+| 25 | `test_ac25_unit_float_validator` (unit), `test_ac25_bad_min_conf_exits_non_zero[nan/inf/-0.1/1.1/abc]` (asserts stderr names `--min-conf` and the offending value, so it cannot pass on an unrelated argparse error), `test_ac25_good_min_conf_is_accepted[0/0.5/1.0]` |
+| 26 | `test_ac26_format_json_prints_the_pack_object`, `test_ac26_rag_defaults` (recorder on `Index.pack_context`, `raising=True`), `test_ac26_no_expand_flag_reaches_pack_context` |
+| 27 | `test_ac27_existing_subcommands_are_untouched` (passes now) + the untouched 150-test file |
+| 28 | `test_ac28_grounded_prompt_and_citations_reach_the_endpoint` (monkeypatched `urllib.request.urlopen`, dummy `OPENAI_API_KEY`, asserts host `api.openai.com`, that the body contains `path/file.py:start-end`, `cite`, `invent` and the pack markdown, and that OpenAI SSE deltas are streamed out), `test_ac28_real_urllib_path_against_a_localhost_server` (`HTTPServer` on `127.0.0.1:0`, daemon thread, `OLLAMA_HOST`, ndjson response) |
+| 29 | `test_ac29_no_provider_env_names_all_four_variables` (also pins `pick_provider(env) -> None`) |
+| 30 | `test_ac30_cp1252_stdout_never_raises_unicodeencodeerror` (`_writer` against a cp1252 `TextIOWrapper` and against a `sys.stdout` stand-in with a `.buffer`) |
+| 31 | `test_ac31_optional_rag_extra_and_untouched_core_dependencies` |
+| 32 | `test_ac32_how_to_read_documents_the_graphrag_protocol` |
+| 33 | `test_ac33_new_files_keep_the_authormark_header[repo2graph/answer.py, tests/test_rag.py]` |
+| 34 | `test_ac34_no_splitlines_in_new_code[repo2graph/query.py, repo2graph/answer.py]` — uses `ast.walk` for real `Attribute` calls, not a grep (the AGENTS.md rule is quoted verbatim in `query.py`'s docstring, which a grep flagged) |
+
+### API surface the tests pin (IMPLEMENT must match)
+
+- `Index.adj[nid] -> list[(dst, type, direction, edge_record)]`; `Index.overview: str`;
+  `Index.manifest: dict`.
+- `Index.expand(seeds, hops=1, edge_types=None, per_hop=6, min_confidence=1.0, edge_dirs=None)`
+  returning `(dst, etype, direction, src)`.
+- `Index.score_rrf(query, vectors=None, embedder=None)`; embedder duck type `.encode(texts)`.
+- `Index.pack_context(query, k=8, hops=1, budget_chars=24000, min_confidence=1.0,
+  expand_graph=True, ...) -> {markdown, chunks, seeds, neighbors, truncated, budget_chars,
+  used_chars, query}`; `used_chars == len(markdown)`; `budget_chars <= 0` = unbounded;
+  every chunk dict carries `why` (`"seed"` or `"{TYPE} {dir} of {src}"`) and keeps `id`,
+  `node_id`, `path`, `start_line`, `end_line`.
+- Header line exactly `### [cite: {path}:{start}-{end}] \`{qual}\` ({why})`, map then a bare
+  `---` line, then blocks sorted by `(path, start_line)`.
+- `cli._unit_float(str) -> float` raising `argparse.ArgumentTypeError`; `rag` subparser with
+  `target` `nargs="?"`, `-k/--hops/--budget/--min-conf/--no-expand/--format`.
+- `answer.pick_provider(env)`, `answer.stream_answer(pack, model=None, env=None, out=None) -> str`,
+  `answer._writer(out) -> callable`; `urlopen` looked up as `urllib.request.urlopen` **at call
+  time** (module attribute), or the monkeypatch in AC-28 cannot intercept it.
+
+### Failing output (right-reason census)
+
+`python -m pytest tests/test_rag.py -q --tb=line | grep '^E ' | sort | uniq -c`:
 
 ```
-53 passed, 2 skipped in 1.67s
+     11 AttributeError: 'Index' object has no attribute 'pack_context'
+      7 SystemExit: 2                                   (argparse: no `rag` subcommand)
+      7 argparse.ArgumentError: argument cmd: invalid choice: 'rag'
+      5 AssertionError: usage: repo2graph [-h] {build,github,gh,query,map,stats} ...
+      4 TypeError: Index.expand() got an unexpected keyword argument 'min_confidence'
+      4 ModuleNotFoundError: No module named 'repo2graph.answer'
+      2 AttributeError: 'Index' object has no attribute 'score_rrf'
+      2 AttributeError: 'Index' object has no attribute 'manifest'
+      2 AttributeError: <class 'repo2graph.query.Index'> has no attribute 'pack_context'
+      2 AssertionError: repo2graph/answer.py does not exist
+      1 AttributeError: module 'repo2graph.cli' has no attribute '_unit_float'
+      1 AttributeError: 'Index' object has no attribute 'overview'
+      1 AssertionError: Traceback ...  (AC-10 subprocess: score_rrf missing -> rc != 0)
+      1 AssertionError: Start with overview.md: ...      (AC-32: HOW_TO_READ lacks pack_context)
+      1 AssertionError: file:pkg/decoy.py                (AC-8: BM25 alone ranks the decoy first)
+      1 AssertionError: 'no index at ...' in '2'         (AC-24b: rag not parsed yet)
+      1 AssertionError: 2                                (AC-24a: rag not parsed yet)
+      1 AssertionError: {'dev': ['pytest>=7', 'ruff>=0.5']}   (AC-31: no `rag` extra)
+      1 AssertionError: [('file:pkg/ambig.py','DEFINES','in'), ...]  (AC-1: 3-tuples today)
 ```
 
-### After adding the tests (still at HEAD, no implementation) — expected red
+Every failure is absent implementation. No fixture error, no import error at collection
+(`repo2graph.answer` is imported *inside* the answer tests so its absence cannot abort the
+module), no typo-driven `NameError`.
 
-```
-15 failed, 57 passed, 2 skipped in 2.60s
-```
+### The 6 tests that pass today (by design)
 
-The 4 extra passes vs the 53 baseline are `test_refactor_preserves_graph_shape`
-(characterization — passes at HEAD by design), the 3
-`test_iss19_parse_spec_still_accepts_valid_specs` cases and
-`...parse_spec_rejects...[owner/]`; the pre-existing ISS-50 test flips from pass
-to fail once strengthened, netting 53 - 1 + 5 = 57.
+AC-9, AC-12, AC-13, AC-27 are backward-compatibility characterizations (D1) — they must be green
+before *and* after. `test_ac33...[tests/test_rag.py]` passes because this file already carries the
+authormark block. `test_ac34...[repo2graph/query.py]` passes because `query.py` has no
+`splitlines()` call today; it must stay that way after the edit.
 
-Every one of the 15 failures is an assertion / behaviour failure for its
-intended reason — no `ImportError`, no missing fixture, no skip:
+### Notes for IMPLEMENT
 
-```
-_________________ test_index_survives_unicode_line_separators _________________  (ISS-50 / AC-1)
->       assert "return MSG" in sep_chunk["text"]
-E       assert 'return MSG' in '# file: pkg/sep.py\n# function: uses_sep  (lines 4-5, python)\n...\nd"\n'
-        -- chunk body mis-sliced by splitlines() on U+2028; body is 'd"\n'
+- `layout.path(out, "overview.md")` resolves to **`human/overview.md`** (first entry in
+  `SECTIONS`), not `agent/`. Both copies are byte-identical, so either read satisfies AC-2, but
+  AC-17 unlinks *both* via `layout.paths`, so the loader must tolerate either being absent.
+- Re-stamping the `@authormark` fingerprints of every edited/new file is a pre-merge CI gate
+  (`authormark check`), not a local step. Do not hand-edit or delete a header.
 
-________ test_iss22_symbol_chunk_body_survives_unicode_line_separator ________  (ISS-22 / AC-1)
->       assert "return MSG" in chunk["text"]
-E       assert 'return MSG' in '# file: sep.py\n# function: uses_sep  (lines 3-4, python)\n...\n\ndef uses_sep():'
-        -- body sliced as "\ndef uses_sep():" instead of the function body
+### Iteration 2
 
-________________ test_iss22_file_residual_excludes_symbol_body ________________  (ISS-22 / AC-2)
->       assert "return MSG" not in text
-E       assert 'return MSG' not in '# file: sep...  return MSG'
-        -- residual wrongly pulls in the body of uses_sep
+Loop-back from IMPLEMENT iter 1. **Minimal, surgical: two assertions in one test file.**
+No implementation file was touched; no other test was touched.
 
-______________ test_iss06_cochange_survives_non_ascii_filenames _______________  (ISS-06 / AC-3, AC-4)
->       assert (f"file:{a}", f"file:{b}") in edges_of(g, "CO_CHANGE")
-E       AssertionError: assert ('file:caf\xe9.py', 'file:na\xefve.py') in []
-        -- git log quotes non-ASCII paths (core.quotepath); no CO_CHANGE edge produced
+#### The defect (confirmed)
 
-______________ test_iss27_graphml_roundtrips_with_a_control_char ______________  (ISS-27 / AC-5)
->       ET.parse(gml)  # must not raise
-E       xml.etree.ElementTree.ParseError: not well-formed (invalid token): line 68, column 31
-        -- raw \x0c written verbatim into GraphML data value
+`tests/test_rag.py:747` and `:790` asserted `PACK["markdown"] in body`, where `body` is the
+decoded HTTP request payload. That payload is `application/json`; RFC 8259 §7 forbids a raw
+U+000A inside a JSON string, so a multi-line `PACK["markdown"]` can never appear verbatim in
+the wire bytes for *any* correct provider body. The test was wrong, not `answer.py`.
 
-_____ test_iss19_parse_spec_rejects_traversal_and_option_specs[owner/..] ______  (ISS-19 / AC-6)
-_____ test_iss19_parse_spec_rejects_traversal_and_option_specs[../evil] _______
-_____ test_iss19_parse_spec_rejects_traversal_and_option_specs[-x/-y] ________
->       with pytest.raises(ValueError):
-E       Failed: DID NOT RAISE ValueError
-        -- parse_spec accepts "owner/..", "../evil", "-x/-y" and returns a tuple
+#### The fix
 
-________________ test_iss16_token_never_appears_in_clone_argv _________________  (ISS-16 / AC-7)
->       assert token not in str(part), cmd
-E       AssertionError: [... 'https://x-access-token:s3cr3t-CLONE-token-value@github.com/owner/repo.git' ...]
-        -- token interpolated into the clone URL argv element
+Both assertions now decode the payload and assert against the user turn the model actually
+reads. Read from `repo2graph/answer.py:65-89`, both exercised providers (OpenAI
+`/v1/chat/completions` and Ollama `/api/chat`) build the same shape — `messages` =
+`[{system}, {user}]` with the whole pack in the user turn — so one key path covers both:
 
-____________ test_iss18_every_fetch_subprocess_call_passes_timeout ____________  (ISS-18 / AC-8)
->       assert "timeout" in kwargs, cmd
-E       assert 'timeout' in {'capture_output': True, 'text': True}
-        -- no subprocess.run call in fetch.py sets a timeout
+```python
+sent = json.loads(req.data or b"{}")          # AC-28 primary  (was: body)
+assert PACK["markdown"] in sent["messages"][-1]["content"]
 
-______________ test_iss13_discover_matches_between_git_and_walk _______________  (ISS-13 / AC-9)
->       assert walk_set == git_set
-E       AssertionError: assert {'README.md', 'pkg/mod.py'} == {..., 'pkg/mod.py'}
-E         Extra items in the right set:  '.github/workflows/ci.py'
-        -- os.walk fallback drops dot-directories; git path keeps them
-
-____________ test_iss07_parse_all_falls_back_when_the_pool_breaks _____________  (ISS-07 / AC-10)
->       got = gmod.parse_all(files, jobs=4)
-E       concurrent.futures.process.BrokenProcessPool: boom
-        -- fallback except only catches (OSError, ValueError); BrokenProcessPool aborts the build
-
-_______________ test_iss01_iss02_dead_dataclass_fields_are_gone _______________  (ISS-01, ISS-02 / AC-11)
->       assert "start_byte" not in sym_fields
-E       AssertionError: assert 'start_byte' not in {'bases', 'calls', 'docstring', 'end_byte', 'end_line', 'kind', ...}
-        -- Symbol still carries start_byte/end_byte; ParsedFile still carries file_calls
-
-___________ test_iss44_index_repo_workflow_has_no_run_interpolation ___________  (ISS-44 / AC-14)
->       assert "${{ inputs." not in block, block
-E       AssertionError:  slug="$(printf '%s' "${{ inputs.repo }}" | sed -E '...')"
-        -- ${{ inputs.repo }} interpolated straight into a run: block
-
-_______________ test_iss45_ci_workflow_tests_job_covers_windows _______________  (ISS-45 / AC-15)
->       assert "windows-latest" in tests_job
-E       assert 'windows-latest' in '\n    runs-on: ubuntu-latest\n    strategy:\n ...'
-        -- tests matrix is ubuntu-latest only
+sent = json.loads(captured[0])                # AC-28 localhost socket
+assert PACK["markdown"] in sent["messages"][-1]["content"]
 ```
 
-### Authormark
+Strength preserved, not weakened: the assertion still requires the **entire** pack markdown to
+arrive intact at the endpoint, now via the transported value rather than the escaped bytes. The
+surrounding `GROUNDING_PHRASES` loop (`path/file.py:start-end`, `cite`, `invent`) is unchanged
+and still runs against the raw `body` — those phrases contain no newlines, so they survive JSON
+escaping verbatim. The host assertion (`api.openai.com`) and the "no real network" proof are
+untouched, so AC-28's full contract still holds.
 
-Editing `tests/test_repo2graph.py` makes its `Fingerprint:` line stale (expected
-per `AGENTS.md`). The vendored CLI was removed from the repo in `b14ce2e`
-(de-vendor); CI now runs `Srinivasan-78/authormark-watch@main`. I restored line 1
-(the zero-width watermark payload) byte-for-byte from HEAD and refreshed only the
-`Fingerprint:` line with the recovered pre-de-vendor `stamp` tool as a best
-effort. **IMPLEMENT (task T10) must re-stamp this file with the canonical tool**
-alongside the source files it touches, then confirm `authormark check` is green
-(AC-16). The `@authormark v1` block was never deleted, reordered or relocated.
+#### Result
+
+```
+python -m pytest tests/ -q             -> 204 passed, 2 skipped   (was 202 passed / 2 failed)
+python -m ruff check tests/test_rag.py -> All checks passed!
+```
+
+The 2 failures resolved are exactly the 2 that were fixed. No other test changed status.
+The `@authormark v1` block in `tests/test_rag.py` is untouched (its `Fingerprint:` is now stale
+— canonical CI re-stamp remains the pre-merge gate).
+
+#### Second-wrong-test survey (reported, not fixed)
+
+Re-read the AC-28/29/30 block plus every assertion that inspects a request body: no other test
+asserts a raw multi-line string against encoded bytes, and no other test is unsatisfiable. No
+out-of-scope change was made.
+
+#### Note on this iteration's exit condition
+
+The normal TEST rule "every test must fail only because implementation is absent" does not
+apply here: the implementation from IMPLEMENT iter 1 already exists, so the corrected tests are
+green. The corrections are non-trivial (they still demand the full pack reach the endpoint),
+not assertions defanged to pass.
+
+### Iteration 3 (AC-13 hardening)
+
+Scoped follow-up inside iteration 3, not a loop-back. One test file touched
+(`tests/test_rag.py`), no implementation file changed, no other test edited.
+
+#### The weakness
+
+`tests/test_rag.py` AC-13 asserted `cmd_query` stdout `== format_pack(retrieve(...)) + "\n"`,
+i.e. the implementation against itself. Any traversal change moves both sides together, so the
+assertion stayed green through REVIEW iter 1's BLOCKING bug (`DEFAULT_EDGE_DIRS` leaking into
+`retrieve()` and dropping DEFINES-out / IMPORTS-in / INHERITS-in neighbours). The existing
+assertion is kept — it still pins the `cmd_query` → `format_pack` contract — and a value-pinned
+guard is added beside it.
+
+#### Why a second fixture was needed
+
+`rag_repo` **cannot** express the three dropped directions through `retrieve()`. Its imported
+modules (`pkg/config.py`, `pkg/tokens.py`) leave under 40 chars of non-symbol residue, so
+`chunks.py:185` emits no file-level chunk for them; a node with no chunk can be neither a seed
+nor a retrievable neighbour, so no IMPORTS pair can ever appear in `retrieve()` output on that
+fixture. New fixture `dirs_out` (constants `DIRS_LEAF` / `DIRS_ROOT` / `DIRS_SHAPES`) gives each
+module a module-level table so every file node carries a chunk. `rag_repo` itself is untouched.
+
+#### The new test
+
+`test_ac13_retrieve_keeps_every_edge_direction(dirs_out)` — literal `(node_id, why)` membership,
+hand-written from the fixture source, never computed from the code under test. No score, no
+rank, no float, no ordering:
+
+```
+retrieve("widget inventory ledger snapshot", k=3, hops=1) contains
+    ("file:pkg2/leaf.py",                  "lexical")
+    ("sym:pkg2/leaf.py::leaf_helper",      "DEFINES out of leaf.py")   <- dropped by the bug
+    ("file:pkg2/root.py",                  "IMPORTS in of leaf.py")    <- dropped by the bug
+retrieve("tessellating quadrilateral primitive", k=3, hops=1) contains
+    ("sym:pkg2/shapes.py::Polygon",        "lexical")
+    ("sym:pkg2/shapes.py::Polygon.area",   "DEFINES out of Polygon")   <- dropped by the bug
+    ("sym:pkg2/shapes.py::Square",         "INHERITS in of Polygon")   <- dropped by the bug
+```
+
+#### Regression proof (revert / restore)
+
+`repo2graph/query.py:307` `edge_dirs=ALL_EDGE_DIRS` was temporarily reverted to
+`edge_dirs=DEFAULT_EDGE_DIRS` in the working copy:
+
+```
+with DEFAULT_EDGE_DIRS -> 1 failed, 1 passed   (the OLD self-referential AC-13 test still PASSES,
+                                                confirming it can never catch this class)
+E   AssertionError: {('file:pkg2/leaf.py', 'lexical')}
+    assert ('sym:pkg2/leaf.py::leaf_helper', 'DEFINES out of leaf.py') in {('file:pkg2/leaf.py', 'lexical')}
+with ALL_EDGE_DIRS restored -> 2 passed
+```
+
+`repo2graph/query.py` was restored byte-identically: `git hash-object` is
+`0bf469cba14b80ff7b41a2ac5d8ec153f8e9bb50` before and after.
+
+#### Result
+
+```
+python -m pytest tests/ -q   -> 205 passed, 2 skipped   (was 204; +1 new test)
+python -m ruff check .       -> All checks passed!
+```
+
+The `@authormark v1` block in `tests/test_rag.py` is untouched; its `Fingerprint:` remains stale
+(canonical CI re-stamp is still the pre-merge gate). No `splitlines()` added.
 
 ## Implement
 
 ### Iteration 1
 
-**Result:** `python -m pytest -q` -> **72 passed, 2 skipped** (0 failed). Baseline
-was 53 passed / 2 skipped; the strengthened ISS-50 test plus the 18 new
-regression/characterization tests (parametrize expands the 15 named tests to 19)
-are all green. `test_refactor_preserves_graph_shape` (AC-13) passed at HEAD and
-stayed green through every task — the node-id set, `(src,dst,type)` triple set
-and chunk-id set for `sample_repo` are byte-identical to baseline.
+**Status handed off: TEST** — all 11 planned tasks are implemented and 52 of the 54 new
+tests are green, but two assertions in `tests/test_rag.py` are unsatisfiable by any correct
+implementation (see "Blocking test defect" below). Per contract §3 the tests were not edited.
 
-**Files changed (one line each):**
+#### Files created / changed
 
-| File | Task / ISS | Change |
+| File | Change | Why |
 |---|---|---|
-| `repo2graph/chunks.py` | T1 / ISS-22 | New module-level `_lines(src)` = `src.split("\n")` with a trailing `"\r"` stripped per line; used for the symbol body slice and the residual `keep` slice in place of `str.splitlines()`, so text indexing matches tree-sitter row numbers on files containing U+2028/U+2029/U+0085/\x0b/\x0c. |
-| `repo2graph/graph.py` | T2 / ISS-06 | `add_cochange`: dropped `text=True`, prepended `-c core.quotepath=false`, decode `out.stdout` with `.decode("utf8","surrogateescape")`; 120s timeout and the returncode / `SubprocessError` guards kept. |
-| `repo2graph/graph.py` | T2 / ISS-07 | `parse_all`: the pool fallback now `import concurrent.futures` + `concurrent.futures.ProcessPoolExecutor(...)` and `except Exception:` -> serial path, so `BrokenProcessPool`, a worker `ImportError` and a pickling `TypeError`/`PicklingError` all fall back instead of aborting the build. |
-| `repo2graph/export.py` | T3 / ISS-27 | New `_xml_safe(text)` dropping every character outside the XML 1.0 legal set (tab/LF/CR, 0x20-0xD7FF, 0xE000-0xFFFD, >=0x10000); applied to every GraphML `<data>` value in `add_data` and to the `NodeLabel` text. |
-| `repo2graph/fetch.py` | T4 / ISS-19 | `parse_spec`: after the regex match, reject any component that is empty, `.`, `..`, or starts with `-`, raising the same `ValueError(f"not a GitHub repo spec: {spec!r}")`. |
-| `repo2graph/fetch.py` | T4 / ISS-16 | Clone URL is now token-free (`https://github.com/{owner}/{repo}.git`); the credential is carried out of band by new `_auth_env(token)` which sets `GIT_CONFIG_COUNT/KEY_0/VALUE_0` for `http.https://github.com/.extraheader: AUTHORIZATION: basic <b64 of x-access-token:token>` plus `GIT_TERMINAL_PROMPT=0`, passed as `env=`. The post-clone `remote set-url` is deleted (URL was already clean, nothing on disk to scrub). |
-| `repo2graph/fetch.py` | T4 / ISS-17,ISS-18 | Both remaining `subprocess.run` calls (`git clone`, `git rev-parse`) now pass `encoding="utf8", errors="replace"` and `timeout=` (`CLONE_TIMEOUT=900`, `GIT_TIMEOUT=120`); `TimeoutExpired` -> `RuntimeError("git clone timed out")` for clone, `"unknown"` for `head_sha`. Redaction is now `if token: msg = msg.replace(token, "***")`. |
-| `repo2graph/parse.py` | T5 / ISS-01 | Removed `Symbol.start_byte` / `Symbol.end_byte` fields and the two constructor args at the `Symbol(...)` call site. (`node.start_byte`/`node.end_byte` in `_text`/`_signature` are tree-sitter node attributes, untouched.) |
-| `repo2graph/parse.py` | T5 / ISS-02 | Removed `ParsedFile.file_calls` (field + 3 constructor sites); the call-collection line now appends only `if callee and owner is not None`. |
-| `repo2graph/walker.py` | T6 / ISS-13 | `_walk_files` no longer drops dot-directories (`not d.startswith(".")` removed); it still prunes `DEFAULT_SKIP_DIRS` for speed, and `discover()`'s existing single `DEFAULT_SKIP_DIRS` filter over `rel.parts` is now the one authority for both the git and `os.walk` sources. |
-| `.github/workflows/index-repo.yml` | T7 / ISS-44 | "Compute slug" step gains `env: R2G_REPO: ${{ inputs.repo }}` and the `printf` reads `"$R2G_REPO"`; no `${{ ... }}` left inside any `run:` block. |
-| `.github/workflows/ci.yml` | T8 / ISS-45 | `tests` job: added `os: [ubuntu-latest, windows-latest]` to the matrix and `runs-on: ${{ matrix.os }}`; the `action` job stays ubuntu-only. |
+| `repo2graph/query.py` | 4-tuple adjacency `(dst, type, direction, edge)`; `_load_text` / `_load_manifest` + `self.overview` / `self.manifest`; `_boost_identifiers` + `IDENT_BOOST`; `score_rrf` + `_vectors_for` + `_cosine`; `expand(min_confidence, edge_dirs)`; `retrieve(*, min_confidence=None)`; `map_prepend()` + `pack_context()`; helpers `_first`, `_fit_lines`, `_compress`, `_cite_block`; constants `IDENT_BOOST`, `RRF_K`, `RRF_CANDIDATES`, `DEFAULT_EDGE_DIRS`, `DEFAULT_EDGE_TYPES`, `MAP_BUDGET_FRAC`, `MAP_ENTRYPOINTS`, `PACK_SEPARATOR`, `QUALNAME_SEP_RE` | Tasks 1-5 |
+| `repo2graph/cli.py` | `import math`; `_unit_float`; `RAG_TARGET_HELP`; `_rag_index_dir`; `cmd_rag`; `rag` subparser | Tasks 6-7 |
+| `repo2graph/answer.py` | NEW — `pick_provider`, `build_prompt`, `_request`, `_delta`, `_writer`, `_flush`, `stream_answer` | Tasks 8-9 |
+| `repo2graph/export.py` | 2 new `HOW_TO_READ` entries (GraphRAG protocol; `pack_context` / `repo2graph rag`) | Task 10 |
+| `pyproject.toml` | `optional-dependencies.rag = ["sentence-transformers>=3.0", "numpy>=1.24"]` | Task 11 |
 
-**Deviations / notes:**
-
-- **ISS-07 fallback breadth.** Plan T2 said "also catch `BrokenProcessPool` and
-  pickling failures". Implemented as bare `except Exception` (the plan's stated
-  first option) with a comment — a worker `ImportError` surfaces as
-  `BrokenProcessPool`, a bad result surfaces as `PicklingError`/`TypeError`, and
-  the existing comment already promises an unconditional serial fallback. No
-  behaviour change on the happy path (pool still used for >=64 files).
-- **ISS-16 mechanism (Risk 3).** Used `GIT_CONFIG_*` env, not `-c` argv and not
-  `GIT_ASKPASS`. Needs git >= 2.31 (GA runners and any 2021+ git have it). The
-  base64 of `x-access-token:<token>` never contains the raw token substring, and
-  it is only in the child env, never argv. `remote set-url` was dropped rather
-  than kept as a no-op because the URL is now clean from the start. Not
-  integration-tested against real auth here — VERIFY should smoke
-  `repo2graph github psf/requests --max-files 5` per the plan.
-- **ISS-13 observable change (Risk 2).** A plain-folder (non-git) build now
-  indexes `.github/**` and other dot-dir sources that the `os.walk` path used to
-  hide, matching what a git checkout already did. This is the intended
-  unification. The characterization snapshot (`sample_repo` has no dot-dirs) did
-  **not** move, so no loop-back was triggered.
-- **ISS-27 "unchanged for the sample repo" (Risk 5).** `test_iss27_...` also
-  asserts the emitted GraphML contains no XML-illegal character; the two
-  networkx GraphML tests still pass (skipped, networkx absent) and
-  `test_graphml_carries_yfiles_layout` is unaffected — no sample-repo value
-  contains a stripped character, so `_xml_safe` is a no-op there.
-- **AUTHORMARK (T10) — NOT completed, manual follow-up required.** The pinned
-  stamp tool at
-  `...\scratchpad\authormark-ci.mjs` runs, but it **rewrites header line 1
-  without the zero-width watermark payload** (verified: `git diff` after
-  `stamp` showed `-# @authormark v1 ... <U+200B/U+200C run> ...` ->
-  `+# @authormark v1 -- do not remove (authorship watermark)` with the payload
-  gone). That is the watermark AGENTS.md forbids removing, so I reverted every
-  header block (lines 1-5) to its byte-exact HEAD content and kept only the
-  code changes below it. Consequence: the `Fingerprint:` line on all six
-  touched `.py` files is now **stale** (expected after any edit) and must be
-  refreshed with the *canonical* tool (`Srinivasan-78/authormark-watch@main`,
-  the CI action) — which does preserve the payload — before merge:
-  `authormark stamp repo2graph/chunks.py repo2graph/graph.py repo2graph/export.py repo2graph/fetch.py repo2graph/parse.py repo2graph/walker.py tests/test_repo2graph.py`.
-  `.github/**` YAML is on the authormark ignore list, so `ci.yml` /
-  `index-repo.yml` need no stamp. No `@authormark` block was deleted, edited,
-  reordered or relocated. (The local tool also reports pre-existing staleness on
-  ~11 files this loop never touched — e.g. `cli.py`, unchanged from HEAD — which
-  confirms its key differs from the repo's canonical key; ignore that noise.)
-
-**Full pytest output (final):**
+#### Test output
 
 ```
-72 passed, 2 skipped in 2.35s
+python -m pytest tests/test_rag.py -q   -> 2 failed, 52 passed
+python -m pytest tests/ -q              -> 2 failed, 202 passed, 2 skipped
+python -m ruff check .                  -> All checks passed!
 ```
 
-Task-by-task green progression: T1 -> 12 failed / 60 passed; T2 -> 10 failed /
-62 passed; T3 -> 9 failed / 63 passed; T4+T5+T6 -> 2 failed / 70 passed (only
-the two YAML-text tests left); T7 -> 1 failed; T8 -> 0 failed, 72 passed /
-2 skipped.
+The 150 pre-existing tests in `tests/test_repo2graph.py` are untouched and all still pass
+(AC-12 / AC-13 / AC-27 back-compat proof, and risk R1 is clear: `retrieve()` passes
+`min_confidence=0.0` so no CALLS neighbour it reached before disappears).
+
+Green by criterion: AC-1..AC-27 and AC-29..AC-34 all pass. AC-28 is the only gap.
+
+#### Blocking test defect (why Status is TEST, not REVIEW)
+
+`tests/test_rag.py:747` and `tests/test_rag.py:790`:
+
+```python
+assert PACK["markdown"] in body      # body = req.data.decode("utf8", "replace")
+```
+
+`PACK["markdown"]` contains literal `\n` newline characters. `body` is the HTTP request
+body of an LLM chat-completions call, which is `application/json`. JSON **must** escape a
+newline inside a string as the two characters `\` + `n` (RFC 8259 §7 — U+000A is a control
+character and cannot appear raw). So the raw multi-line markdown can never be a substring of
+any valid JSON body, for OpenAI, Ollama, Gemini or Anthropic alike. The only way to make the
+assertion pass would be to send a non-JSON body, which no provider accepts.
+
+Everything else those two tests check already passes on the current implementation; the
+failure is at that one line, after the host and grounding-phrase assertions have succeeded.
+Verified manually:
+
+```
+answer.stream_answer(PACK, out=sink)
+  -> returns 'Hello world', sink == 'Hello world'
+  -> seen[0].full_url == 'https://api.openai.com/v1/chat/completions'
+  -> json.loads(seen[0].data)['messages'][1]['content'] contains PACK['markdown']  # True
+```
+
+Suggested minimal test fix (TEST agent's call, not made here):
+
+```python
+sent = json.loads(body)                       # or json.loads(captured[0])
+assert PACK["markdown"] in json.dumps(sent)   # escaped form
+# or, decoding the transported value:
+assert any(PACK["markdown"] in json.dumps(sent)[0:0] or PACK["markdown"] in m["content"]
+           for m in sent["messages"])
+```
+
+i.e. assert the markdown survives *transport* (`in json.dumps(payload)` after re-encoding, or
+`in sent["messages"][-1]["content"]`) rather than appearing raw in the wire bytes. AC-28's
+intent ("the pack's markdown reaches the endpoint") is fully met either way.
+
+#### Deviations from the plan
+
+- **No numpy import at all** (plan task 3 said "numpy imported lazily inside this branch").
+  Cosine similarity is 12 lines of pure Python (`query._cosine`) that works on plain lists and
+  on numpy arrays alike, so the optional dependency is never needed even on the RRF path. This
+  strengthens AC-10/AC-11 rather than weakening them; `rag` extra still ships numpy because
+  `sentence-transformers` needs it.
+- **`pack_context` never compresses a seed.** Per D2 seeds are full-text-or-skipped. Added one
+  rule the plan left implicit: a neighbour is only ever emitted if at least one seed was
+  emitted, otherwise a tiny budget could produce a pack of pure neighbours (AC-19a).
+- `map_prepend()` was extracted as a public method rather than an inline block, so the map can
+  be inspected without building a whole pack. Uses `-` not an em dash in its entry-point list
+  to avoid adding new non-ASCII to a cp1252 console path.
+- `--min-conf -0.1` is accepted by argparse as a value (not an option) because argparse's
+  `_negative_number_matcher` matches `-0.1` and the `rag` parser defines no negative-number-like
+  option string; the `_unit_float` range check then rejects it, so AC-25 holds.
+
+#### Repo rules
+
+- No `@authormark v1` block was deleted, edited, reordered or relocated. `query.py`, `cli.py`
+  and `export.py` now have **stale `Fingerprint:` lines** — expected; the canonical
+  `authormark check` CI action re-stamps them. **Pre-merge gate.**
+- `repo2graph/answer.py` is new: its 5-line header was copied byte-exact (zero-width payload
+  intact) from `repo2graph/layout.py`, so it currently carries layout.py's fingerprint. It
+  must be re-stamped by the canonical tool before merge. No local `.authormark/authormark.mjs`
+  was used or recovered.
+- No `splitlines()` anywhere in the new code — `_fit_lines`, `_compress` and `split_pack`'s
+  contract all use `src.split("\n")`; AC-34's `ast.walk` probe is green for both files.
+- No subprocess reads git output in this diff.
+
+### Iteration 3
+
+Loop-back from REVIEW iter 1. Fixed the one BLOCKING finding plus the four SHOULDs the
+orchestrator named. No test file was edited. No other scope.
+
+#### B-1 — `retrieve()` no longer inherits `DEFAULT_EDGE_DIRS` (RESOLVED)
+
+`repo2graph/query.py`: new module constant next to `DEFAULT_EDGE_DIRS`
+
+```python
+ALL_EDGE_DIRS: dict = {}   # expand() reads dirs.get(etype); missing == no filter
+```
+
+and `retrieve()` now calls
+`self.expand(seen_nodes_list, hops=hops, min_confidence=conf, edge_dirs=ALL_EDGE_DIRS)`.
+`expand()`'s own default is untouched (`DEFAULT_EDGE_DIRS` — the blueprint asks for it, and
+`pack_context()` still gets it).
+
+Verified against the baseline, not against the implementation: `git worktree add <tmp> 4a3ba03`,
+built one shared index over this repo, then ran the *same* seed list through both trees:
+
+```
+baseline  idx.expand(seeds, hops=1)
+head      idx.expand(seeds, hops=1, min_confidence=0.0, edge_dirs=ALL_EDGE_DIRS)
+-> identical: True   (30 tuples, same order, same (dst, etype, direction, src) values)
+```
+
+Before the fix the head side of that comparison returned the restricted set, dropping every
+DEFINES-out / IMPORTS-in / INHERITS-in neighbour (the reviewer's 41 -> 28). The reviewer's own
+probe query now keeps `sym:repo2graph/export.py::_flat` ("DEFINES out of export.py") in the
+`query` neighbour set.
+
+Note for VERIFY: `repo2graph query` output is *not* byte-identical to `4a3ba03` for every
+query, and cannot be — AC-8's `IDENT_BOOST` deliberately re-ranks seeds whose `name`/`qualname`
+matches a query token (`"how does export write manifest"` now seeds the chunks actually named
+`write`). That is the planned scoring change, orthogonal to B-1; the *traversal* half, which is
+what B-1 was about, is now provably identical.
+
+#### S-1 — cp1252 stdout (RESOLVED, both call sites)
+
+New `cli._emit(text)`: folds to `sys.stdout.encoding` with `errors="replace"` only when the
+text does not already encode, then `print()`s. `cmd_rag` uses it for both the markdown and the
+JSON branch; `cmd_query` uses it for both of its branches too — it is the identical one-line
+change and it does **not** move `cmd_query`'s pinned output, because on a UTF-8-capable stdout
+`_emit(x)` is exactly `print(x)` (AC-13's `printed == format_pack(...) + "\n"` still holds; full
+suite green).
+
+Reviewer's reproduction, re-run: `sys.stdout` swapped for a cp1252 `TextIOWrapper`,
+`main(["rag","-o",idx,"never remove the authormark watermark header"])` on this repo's own
+index — was `UnicodeEncodeError: 'charmap' codec can't encode characters in position
+3557-3734`, now writes 24257 bytes containing `### [cite:`.
+
+#### S-2/S-3/S-4 — `answer.py` error paths (RESOLVED)
+
+- `_ollama_base(value)`: defaults a missing scheme to `http://`, requires `http`/`https` plus a
+  netloc, else `SystemExit`. `OLLAMA_HOST=127.0.0.1:11434` -> `http://127.0.0.1:11434/api/chat`;
+  `file:///etc/passwd` -> `OLLAMA_HOST must be an http(s) URL or host:port, got '...'`.
+- `stream_answer` wraps the request: `urllib.error.HTTPError` -> `_http_error()` ->
+  `SystemExit("openai returned HTTP 401: {\"error\":{\"message\":\"bad key\"}}")`; other
+  `URLError`/`OSError`/`ValueError` -> `SystemExit("openai request failed: <urlopen error
+  connection refused>")`. `HTTPError.url` is never echoed (S-5's leak vector).
+- Empty answer: unparsed lines are kept (`ERROR_SNIFF_LINES = 8`) and, if no text was streamed,
+  `_empty_answer()` surfaces a top-level `error` key —
+  `SystemExit("ollama returned an error: model 'x' not found")` — or otherwise says no answer
+  text arrived and names the provider env var. No more silent `""` with exit code 0.
+
+#### S-5 — Gemini key out of the URL (RESOLVED)
+
+`?alt=sse&key=<KEY>` -> `?alt=sse` plus the `x-goog-api-key: <KEY>` header, which Google
+supports. Verified: the key no longer appears in `Request.full_url`. The model name is also now
+`urllib.parse.quote(model, safe="")` (this was N-4, but it is one expression on the same line
+and removing the key made the truncation risk moot to leave half-fixed).
+
+#### S-6 — provider/endpoint disclosure (RESOLVED, disclosure half only)
+
+`_disclose()` prints, to **stderr**, before the request:
+`repo2graph: sending 149 chars of repository context to provider openai at api.openai.com
+(selected by OPENAI_API_KEY)`. Only the hostname, never the URL (no credential). stdout stays
+the answer payload and stays pipeable. The other halves of S-6 (a `--provider` flag, skipping
+dotfile/secret-ish paths from the pack) are **not** done — IMPROVE backlog.
+
+#### Required TEST follow-up (not done here — implement may not edit tests)
+
+AC-13's `tests/test_rag.py:414-417` asserts `cmd_query` stdout `== format_pack(Index(rag_out).
+retrieve(...)) + "\n"`, i.e. the implementation against itself. It stayed green through B-1 and
+would stay green through any future traversal-default change. It needs a value-pinning
+assertion: capture the `(node_id, why)` list for two fixture queries as literals in the test —
+e.g. that a `DEFINES out of <file>` and an `IMPORTS in of <module>` neighbour are present for a
+seed file node — so narrowing `retrieve()`'s traversal fails loudly. Same weakness, smaller,
+in `tests/test_rag.py:212-225` (`compressed_form` mirrors `query._compress`).
+
+#### Deferred to IMPROVE (untouched, per the loop-back instruction)
+
+S-7 (github/`--answer` branch coverage), S-8 (non-numeric `confidence` TypeError), S-9
+(`vectors=` path), S-10 (vacuous AC-19a), S-11 (duplicated authormark payloads — pre-merge
+gate, must not be hand-fixed), N-1..N-3, N-5..N-8.
+
+#### Test output
+
+```
+python -m pytest tests/ -q   -> 204 passed, 2 skipped
+python -m ruff check .       -> All checks passed!
+```
+
+Same counts as before the fixes; no test changed status, none was edited.
+
+#### Repo rules
+
+No `@authormark v1` block was deleted, edited, reordered or relocated; no local re-stamp was
+run. `query.py`, `cli.py`, `answer.py` now carry stale `Fingerprint:` lines on top of the
+already-flagged staleness — the canonical `authormark check` re-stamp remains the pre-merge gate
+for five files (`query.py`, `cli.py`, `export.py`, `answer.py`, `tests/test_rag.py`). No
+`splitlines()` added. No subprocess reads git output in this iteration's diff.
 
 ## Review
 
 ### Iteration 1
 
-**Verdict: PASS — 0 unresolved BLOCKING findings.** 7 SHOULD, 5 NICE.
+Reviewed the real `git diff 4a3ba03..worktree` for `pyproject.toml`, `repo2graph/cli.py`,
+`repo2graph/export.py`, `repo2graph/query.py` plus the two untracked new files
+`repo2graph/answer.py` and `tests/test_rag.py`. Every claim below was reproduced by running
+code, not read off the `## Implement` summary.
 
-Reviewed the real `git diff 81519d6a` (9 files, +468/-39), not the `## Implement`
-summary. Independently re-ran `python -m pytest -q` on this win32 host:
-**72 passed, 2 skipped, 0 failed** — matches the claim, and incidentally is
-direct evidence for Risk 4 (the new `windows-latest` CI leg) being green today.
+**Unresolved BLOCKING findings: 1**
 
-#### Focus-area findings (each question answered against the code)
+#### AGENTS.md bug-class sweep (all four)
 
-**ISS-22 / `chunks.py:13-20,78,129` — correct.** `_lines` = `src.split("\n")`
-with a per-line trailing `"\r"` drop. tree-sitter increments `Point.row` on
-`\n` only, so the indexing now matches the parser for U+2028/U+2029/U+0085/
-`\x0b`/`\x0c`. CRLF behaviour is unchanged vs `splitlines()`. Both call sites
-(symbol body line 78, residual `keep` line 129) were converted; `grep splitlines
-repo2graph/` leaves only `graph.py:162` (go.mod, `\n`-only content — fine),
-`graph.py:380` (see SH-1) and doc comments. **No residual `keep` mis-slice:**
-`keep += lines[cur-1:s-1]` / `lines[cur-1:]` are 1-based-line indices,
-consistent with `_lines`. Bonus consistency win nobody claimed: `_read_and_parse`
-computes `lines = raw.count(b"\n") + 1` (`graph.py:181`), which now equals
-`len(_lines(src))`; under `splitlines()` the file-chunk `end_line` could disagree
-with the actual slice.
+1. **Authormark headers — no violation, one item to carry.** Diffed lines 1-5 of `query.py`,
+   `cli.py`, `export.py` against `4a3ba03`: byte-identical, nothing deleted, edited, reordered
+   or relocated. (`query.py`/`cli.py` carry a 56-char line-1 payload vs 234 elsewhere — that is
+   **pre-existing at the baseline**, not caused by this diff.) Stale `Fingerprint:` lines on the
+   three edited files are expected and are *not* flagged. See S-11 for the new-file duplication.
+2. **`splitlines()` — clean.** No `.splitlines(` call in `query.py`, `answer.py`, `cli.py` or
+   `tests/test_rag.py`. `_fit_lines`, `_compress` and the test helper `split_pack` all use
+   `text.split("\n")`, each with the AGENTS.md reference in a comment. AC-34's `ast.walk` probe
+   is the right shape (a grep would false-positive on the quoted rule).
+3. **git subprocess decoding — clean, nothing new.** The diff adds no `subprocess` call at all.
+   `cmd_rag` shells out only *indirectly*: `_rag_index_dir` → `graph.build()` (→
+   `walker._git_files`) and → `fetch.index_github()`. Both are the established
+   `-c core.quotepath=false` + bytes + `.decode("utf8","surrogateescape")` + `timeout=` call
+   sites, unmodified. No `text=True`, no locale `encoding=` anywhere in the diff.
+4. **Windows / cp1252 — one real defect (S-1).** All new file I/O is correct:
+   `query.py:125` and `:134` open with `encoding="utf8", newline="\n"`, matching `read_jsonl`.
+   `answer.py:_writer` is genuinely byte-safe. But `cli.py:141`'s `print(pack["markdown"])` is
+   not — see S-1, reproduced.
 
-**ISS-06 / `graph.py:365-380` — correct.** `-c core.quotepath=false` precedes
-`-C` (git accepts global options in any order), `text=True` is gone,
-`out.stdout.decode("utf8","surrogateescape")` mirrors `walker._git_files`
-exactly. The 120s timeout and the `returncode` / `(OSError, SubprocessError)`
-guards are intact. The `1 < len(current) <= 25` skip is byte-identical to
-baseline (still uncounted — that is ISS-12, correctly left in backlog).
+---
 
-**ISS-07 / `graph.py:203-212` — genuine serial fallback, not masking.** Verified
-the failure mode: `list(pool.map(...))` is *inside* the `with`, so no partial
-result can escape; on any `Exception` the fallback re-runs **all** items through
-`[_read_and_parse(i) for i in items]`. If the underlying cause is a real defect
-in `_read_and_parse` (not a pool problem), the serial pass raises it again — so
-the widening cannot swallow a real error or return a truncated file list. Only
-cost is duplicated work on a transient pool failure. `BaseException`
-(KeyboardInterrupt/SystemExit) still propagates.
+#### BLOCKING
 
-**ISS-27 / `export.py:217-231,277,301` — correct but incomplete (SH-4).** The
-predicate is the right XML-1.0 legal set: `\t\n\r`, `0x20-0xD7FF` (surrogates
-`D800-DFFF` excluded), `0xE000-0xFFFD` (`FFFE/FFFF` excluded), `>= 0x10000`.
-Applied to every `<data>` text via `add_data` and to the `y:NodeLabel` text.
-Not applied to the `id`/`source`/`target` **attributes** — see SH-4. Risk 5
-("no GraphML output change for the sample repo") is argued in `## Implement` but
-**not asserted by any test**; `test_iss27_...` only checks the control-char repo.
+**B-1 — `retrieve()` is NOT behaviour-identical: `expand()`'s new default direction filter
+silently drops neighbours from `repo2graph query`. `repo2graph/query.py:239` (+ call site
+`repo2graph/query.py:296-297`).**
 
-**ISS-16/17/18/19 / `fetch.py`** — token is absent from argv (URL is now
-`https://github.com/{owner}/{repo}.git`, credential rides in `GIT_CONFIG_*`
-env, which is `0400`-owner-only in `/proc` unlike world-readable `cmdline`).
-Error string: `if token: msg = msg.replace(token, "***")` covers the raw token;
-see SH-3 for the base64 form. `parse_spec` rejections are **not** over-broad —
-re-derived by hand: `owner/repo`, `https://github.com/owner/repo`,
-`git@github.com:owner/repo.git` all still return `("owner","repo")` (three
-parametrized cases assert it); `owner/..`, `../evil`, `-x/-y`, `owner/` all
-raise. `owner/..git` also now raises correctly (non-greedy `repo` group matched
-`"."` + the `.git` suffix). Both surviving `subprocess.run` calls carry
-`timeout=` and `encoding="utf8", errors="replace"`; `TimeoutExpired` ->
-`RuntimeError("git clone timed out")` for clone and `"unknown"` for `head_sha`.
-`remote set-url` deletion is right — the URL is clean from the start, so there is
-nothing on disk to scrub with `--keep-clone`.
+`expand()` now applies `dirs = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs`, i.e.
+`DEFINES: ("in",)`, `IMPORTS: ("out",)`, `INHERITS: ("out",)`. Before the diff `expand()`
+followed **both** directions of every edge type. `retrieve()` threads `min_confidence=conf`
+(correctly neutralised to `0.0`) but passes **no** `edge_dirs`, so it inherits the new
+restrictive default. This contradicts the plan's Non-goal ("No change to `retrieve()`'s
+observable output for existing callers"), D1 ("No other change"), and AC-13 ("`main(["query",
+...])` output is byte-identical before and after"). Risk R1 predicted exactly this class and
+asked VERIFY to diff `query` output; the confidence half was mitigated, the direction half was
+not.
 
-**ISS-13 / `walker.py:41-45`** — git and walk sets are now identical for the
-tested tree, and `discover()`'s single `any(part in DEFAULT_SKIP_DIRS ...)`
-filter (`walker.py:113`) is the one authority for both sources. `.git` is in
-`DEFAULT_SKIP_DIRS`, so `os.walk` still does not descend into it. The
-`.github`-now-indexed shift is **not** the only behaviour change, however — see
-SH-5.
+Concrete scenario, reproduced on repo2graph's own index (`build . -o idx --formats jsonl`,
+then `Index(idx).retrieve(q, k=8, hops=1)`), comparing HEAD against the pre-diff traversal
+(simulated exactly by `expand(..., min_confidence=0.0, edge_dirs={})`):
 
-**ISS-01/02 / `parse.py`** — `grep -rn "start_byte\|end_byte\|file_calls"` over
-the whole tree returns only `node.start_byte`/`node.end_byte` (tree-sitter node
-attributes in `_text`/`_signature`, correctly untouched) plus this state file
-and the new test. All three `ParsedFile(...)` / `Symbol(...)` construction sites
-(`parse.py:183, 220, 235`) were updated. **The `file_calls` removal drops no
-callee that had an owner:** the guard is `if callee and owner is not None:
-owner.calls.append(callee)` — the `owner is not None` branch is the exact branch
-that previously fed `owner.calls`; only the `owner is None` branch (which fed the
-never-read `file_calls`) is gone. Characterization test confirms the CALLS /
-CALLS_EXTERNAL triple set is unmoved.
+```
+repo2graph query "how does export write manifest" -o idx
+  lost from output: sym:repo2graph/export.py::_flat   ("DEFINES out of export.py")
+repo2graph query "double a value helper" -o idx
+  lost from output: sym:tests/test_repo2graph.py::sample_graph ("DEFINES out of test_repo2graph.py")
+```
 
-**ISS-44 / `index-repo.yml`** — `grep '\${{'` over the file shows 12 hits, all in
-`env:`, `with:` or `if:` positions; **zero inside any `run:` block**. The env
-indirection is correct (`R2G_REPO` quoted as `"$R2G_REPO"` inside the `printf`).
-The later "Attach graph to a release" step was already using `R2G_REPO`/`R2G_SLUG`
-env indirection. Slug is `/`-stripped by the `sed`, so no traversal via `out/$slug`.
+At the `expand()` level the loss is much larger — for the seed set of
+`"how does export write manifest"`, 41 neighbour nodes before vs 28 after; for
+`"double a value helper"`, 48 before vs 27 after. Every symbol defined in a seed **file** node
+(DEFINES out), every importer of a seed module (IMPORTS in) and every subclass of a seed class
+(INHERITS in) is now unreachable from `query`.
 
-**ISS-45 / `ci.yml:21-26`** — valid YAML, `runs-on: ${{ matrix.os }}` wired to the
-new `os: [ubuntu-latest, windows-latest]` dimension, 2x2 legs, `fail-fast: false`
-retained, `action` job left ubuntu-only as planned.
+Why the suite is green anyway: AC-13's test
+(`tests/test_rag.py:397-417`) asserts `cmd_query` stdout `== format_pack(idx.retrieve(...))` —
+that compares the implementation to itself and can never detect a change in `retrieve`'s
+behaviour. AC-12 only asserts `any(h["why"] != "lexical")`, which survives.
 
-**Test quality** — the 19 collected new/parametrized tests are real assertions,
-not tautologies: chunk *body text* content, an actual `CO_CHANGE` triple, a real
-`ET.parse()` round-trip plus an independent illegal-char scan of the emitted
-bytes, `pytest.raises` tables, argv/kwargs inspection of a recorded call, and a
-`dataclasses.fields` name check. Nothing is skipped unconditionally; the two
-`shutil.which("git")` skips match the suite's existing convention.
-**Risk 1 is handled:** `test_refactor_preserves_graph_shape` normalises
-`repo:{sample_repo.name}` -> `repo:<ROOT>` before comparing, and every other id
-(`dir:`/`file:`/`sym:`/`module:`/`external:`) is already root-relative, so the
-literals are environment-independent. Weak spots are NC-1..NC-3 below.
+Fix (both halves needed):
+- `retrieve()` must call `expand(..., min_confidence=conf, edge_dirs=ALL_EDGE_DIRS)` where
+  `ALL_EDGE_DIRS = {}` is a named module constant (an empty mapping makes `dirs.get(etype)`
+  return `None`, which `query.py:254` already treats as "no direction filter"). Verified: with
+  `edge_dirs={}` the pre-diff neighbour sets are reproduced exactly on all four probe queries.
+  `pack_context()` keeps the `DEFAULT_EDGE_DIRS` default — the blueprint asks for it there.
+- Replace the self-referential AC-13 assertion with one that pins the *values*: capture the
+  neighbour `node_id`/`why` set for two fixture queries as literals in the test, so a future
+  traversal-default change fails loudly.
 
-#### Findings
+---
 
-| # | Rank | File:line | Finding | Concrete scenario |
-|---|---|---|---|---|
-| SH-1 | SHOULD | `repo2graph/graph.py:380` | The line the diff *edited* still ends in `.splitlines()` — the exact bug class ISS-22 just fixed in `chunks.py`. With `core.quotepath=false` git emits a path containing U+2028 raw (it only C-quotes bytes >0x7F when quotepath is on), and `str.splitlines()` cuts it in two. | A repo with `a<U+2028>b.py` (legal on Linux/macOS) committed alongside `c.py` 3+ times: the log line splits into `"a"` / `"b.py"`, neither is in `file_index`, the file is dropped from `current`, and its CO_CHANGE edges silently vanish — ISS-06 fixed only the non-ASCII half of the same defect. Fix: `.split("\n")` (fragments are then filtered by the existing `elif line in file_index`, so it is a safe one-word change). |
-| SH-2 | SHOULD | `repo2graph/fetch.py:39-55` | `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0` require **git >= 2.31** (Mar 2021). Older git ignores the vars entirely, so the credential is silently not sent. | Debian 11 (bullseye, still on LTS) ships git 2.30.2. `repo2graph github owner/private-repo` with a valid `GH_TOKEN` used to work; after this diff git clones anonymously and the user gets `remote: Repository not found` — a misleading error for a correct token. Not silent-success, so not blocking, but Risk 3 in the plan explicitly anticipated this. Mitigate with a `git --version` preflight that errors clearly, or fall back to `GIT_ASKPASS` (works on every git). |
-| SH-3 | SHOULD | `repo2graph/fetch.py:76-79` | Redaction covers only the raw token. The credential now also exists as `base64("x-access-token:" + token)`. | A malformed `GIT_CONFIG_VALUE_0` makes git print the offending config value into stderr; that stderr goes verbatim into `RuntimeError(f"git clone failed: {msg}")` and then into CLI output / CI logs with the base64 credential intact. Also redact `basic` (compute it once and `msg.replace(basic, "***")`). |
-| SH-4 | SHOULD | `repo2graph/export.py:281, 307, 269` | `_xml_safe` is applied to `<data>` text and the NodeLabel but **not** to the `id=` / `source=` / `target=` attributes or `graph id=str(g.name)`. `walker._git_files` deliberately decodes with `surrogateescape`, so lone surrogates *do* reach node ids. | On Linux, a file whose name is invalid UTF-8 yields node id `file:caf\udce9.py`; `ET.ElementTree.write(..., encoding="utf-8")` then raises `UnicodeEncodeError` and no graphml is produced. Pre-existing at baseline (so not a regression), but ISS-27's stated goal was "GraphML a conforming parser can read back", and the ids are the one remaining hole. |
-| SH-5 | SHOULD | `repo2graph/walker.py:14-18, 45` | The `## Implement` note claims "`.github/**` is the only behaviour change" for non-git builds. It is not: dropping `not d.startswith(".")` un-hides **every** dot-dir absent from `DEFAULT_SKIP_DIRS`, and unlike the git path there is no `--exclude-standard` to catch them. | `repo2graph build ./my-python-project` on a plain (non-git) folder now walks and indexes `.ruff_cache/**`, `.eggs/**`, `.cache/**`, `.gradle/**`, `.direnv/**`, `.yarn/**` (none are in `DEFAULT_SKIP_DIRS`; `.mypy_cache`/`.pytest_cache`/`.tox` are). A project with a populated `.ruff_cache` gains hundreds of junk `file:` nodes. Fix: add those names to `DEFAULT_SKIP_DIRS`. |
-| SH-6 | SHOULD | `tests/test_repo2graph.py:719-731` (`_RunRecorder` tests) | **ISS-17 is in the in-scope 15 but has no acceptance criterion and no test.** The recorder already captures `kwargs`; asserting `encoding == "utf8"` and `errors == "replace"` is one line and would pin the fix that exists only to prevent a Windows `UnicodeDecodeError` — precisely the class of bug this repo keeps shipping. | Someone reinstates `text=True` in a later refactor: every test still passes. |
-| SH-7 | SHOULD | (process) `## Implement` "AUTHORMARK (T10) — NOT completed" | **AC-16 is unmet.** The seven touched files carry stale `Fingerprint:` lines. `.github/workflows/authormark.yml` runs `authormark check` on every PR. | Opening the PR turns CI red on `authormark check` for `chunks.py`, `graph.py`, `export.py`, `fetch.py`, `parse.py`, `walker.py`, `tests/test_repo2graph.py`. **Not ranked BLOCKING deliberately:** IMPLEMENT correctly refused to use the local tool because it strips the zero-width watermark payload (AGENTS.md forbids that), so looping back to IMPLEMENT cannot fix it — this needs the canonical `Srinivasan-78/authormark-watch@main` stamp and is a merge gate for VERIFY / a human, not a code defect. |
-| NC-1 | NICE | `tests/test_repo2graph.py:820-838` | `test_iss07_...`'s `digest(got) == digest(serial)` is near-tautological post-fix: both sides come from the identical `[_read_and_parse(i) for i in items]` comprehension. The load-bearing assertion is really "`parse_all` did not raise". Harmless, but the docstring oversells it. |
-| NC-2 | NICE | `tests/test_repo2graph.py:800-816` | `test_iss13_...` asserts only set *equality*; it would pass vacuously if both sets were empty. One extra `assert ".github/workflows/ci.py" in git_set` makes the intent explicit and would survive a future filter change that hides the dot-dir from both paths. |
-| NC-3 | NICE | `tests/test_repo2graph.py` (Risk 5) | The plan asked for an explicit "GraphML unchanged for the sample repo" check to bound `_xml_safe`. It was argued in prose but never encoded. A `write_graphml(sample_graph)`-before/after byte compare is not possible now, but asserting the sample repo's graphml contains the expected labels verbatim would cover it cheaply. |
-| NC-4 | NICE | `repo2graph/fetch.py:47-54` | `GIT_TERMINAL_PROMPT=0` is set only when a token exists. Without one, a private-repo clone blocks on the credential prompt for the full `CLONE_TIMEOUT` (15 min) before failing. Set it unconditionally (build the env even for the no-token case). |
-| NC-5 | NICE | `repo2graph/fetch.py:47-54` | `_auth_env` hard-codes `GIT_CONFIG_COUNT="1"` / `KEY_0` / `VALUE_0` over whatever the caller's environment already had. A user who legitimately sets `GIT_CONFIG_COUNT=2` for their own overrides gets `KEY_0` clobbered and `KEY_1` ignored. Read the inherited count and append at index N. |
-| NC-6 | NICE | `repo2graph/graph.py:203` | `from concurrent.futures import ProcessPoolExecutor` was changed to `import concurrent.futures` + attribute access *solely* so the test can monkeypatch it. Legitimate, but it is production code shaped by a test; worth a one-line comment so a future cleanup does not "simplify" it back and silently disable the ISS-07 test. |
+#### SHOULD
 
-#### Cross-cutting checks
+**S-1 — `cli.py:141` `print(pack["markdown"])` raises `UnicodeEncodeError` on a redirected
+Windows stdout.** `answer.py` goes to real trouble to be cp1252-safe; the default (no
+`--answer`) output path does not. On Windows a redirected/piped stdout is a cp1252
+`TextIOWrapper` with `errors="strict"`. Reproduced verbatim by swapping `sys.stdout` for
+`io.TextIOWrapper(io.BytesIO(), encoding="cp1252")` and running
+`main(["rag","-o",idx,"never remove the authormark watermark header"])` on **this repo's own
+index**:
+`UnicodeEncodeError: 'charmap' codec can't encode characters in position 3557-3734`.
+So `repo2graph rag "..." > pack.md` — the documented agent workflow — dies on Windows for any
+repo containing a non-ASCII source byte. Note this defect is **pre-existing** in
+`cmd_query` (`cli.py:92` `print(format_pack(res))` crashes the same way at the baseline), which
+is why it is SHOULD rather than BLOCKING; one shared helper (`sys.stdout.reconfigure` /
+`errors="replace"` write, or reuse `answer._writer`) fixes both call sites. The `windows-latest`
+CI leg exists for exactly this class and does not catch it because pytest captures in UTF-8.
 
-- **No dead code introduced.** `base64` is used; no orphaned imports left by the
-  `parse.py` / `fetch.py` deletions; no unreferenced helper added.
-- **No duplication introduced** beyond the deliberate re-statement of the
-  XML-legal predicate inside `test_iss27_...` (correct — a test that imports the
-  implementation's predicate cannot detect a wrong predicate).
-- **No new security surface.** The two security fixes (ISS-16 argv, ISS-44 shell
-  injection) both hold; SH-3 is the only residual leak path and it is
-  second-order.
-- **Behaviour preservation** is genuinely locked: `test_refactor_preserves_graph_shape`
-  pins 13 node ids, 15 edge triples and 6 chunk ids, and it passes.
+**S-2 — `answer.py:85` `OLLAMA_HOST` without a URL scheme gives a raw traceback.** Ollama's own
+documentation and `ollama serve` use `OLLAMA_HOST=127.0.0.1:11434`. That value produces
+`"127.0.0.1:11434/api/chat"`, and `urlopen` raises `URLError: unknown url type: 127.0.0.1`
+(confirmed with the equivalent `localhost:11434`). The only test uses
+`f"http://127.0.0.1:{port}"`, so the common form is untested. Default a missing scheme to
+`http://` and validate the scheme is `http`/`https` (that also closes `file://`/`ftp://` as an
+accidental urlopen target).
 
-**Unresolved BLOCKING findings: 0 -> Status: VERIFY.**
+**S-3 — `answer.py:165` has no error handling around `urlopen`.** An expired key (401), a wrong
+model (404), a proxy failure or a 300 s timeout all propagate as a bare traceback out of
+`main()`. Every other user-facing failure in this CLI is a `SystemExit(str)` (`parse_formats`,
+`_require_index`, `_unit_float`, `_rag_index_dir`). Wrap in
+`except (urllib.error.URLError, OSError, ValueError)` → `SystemExit` naming the provider and
+status, and make sure the message does **not** include `req.full_url` (see S-5).
+
+**S-4 — silent empty answer: `answer.py:92-114` + `cli.py:135-138`.** `_delta` returns `""` for
+anything it cannot parse, and `stream_answer` prints nothing and returns `""`. A provider that
+answers HTTP 200 with an error object (Ollama does this for an unknown model:
+`{"error":"model 'x' not found"}`) therefore produces **no output and exit code 0** — the user
+cannot tell an empty answer from a failed one. Emit a `SystemExit`/stderr note when `parts` is
+empty, or surface a top-level `"error"` key from the payload.
+
+**S-5 — `answer.py:81` puts the Gemini API key in the URL query string.** `?alt=sse&key=<KEY>`
+lands in every intermediate proxy/CDN access log, in `Request.full_url`, and in
+`HTTPError.url` — so any future `except ... as e: raise SystemExit(f"{e.url}")` (see S-3) would
+print the key. Google supports the `x-goog-api-key` header; use it. The other three providers
+correctly keep the credential in a header. No provider endpoint is redirectable by untrusted
+input (three hosts are hardcoded constants; only `ollama`'s comes from the env, which is the
+user's own configuration, not repository content) — that part of the design is sound.
+
+**S-6 — `rag --answer` uploads whatever is in `chunks.jsonl`, including secrets, with no
+disclosure of where.** Reproduced: build an index over a repo containing `.env` and
+`config.yml` and `chunks.jsonl` carries
+`"# file: .env (, 2 lines)\nAWS_SECRET_ACCESS_KEY=hunter2supersecret"` verbatim — non-source
+files are chunked whole. A query like `rag "where is the aws secret key set?" --answer` will
+seed that chunk and POST it to a third-party endpoint. Nothing prints which provider/endpoint
+was selected, so the user cannot see that `GEMINI_API_KEY` left over in their shell won the
+precedence race and received their repository. Minimum: print the chosen provider + host to
+stderr before the first byte is sent; better: a `--provider` flag, and skip dotfile/secret-ish
+paths from the pack when `--answer` is on. (`--answer` itself is correctly gated — `answer` is
+imported lazily and only inside `if args.answer:`; no request is possible without the flag.)
+
+**S-7 — two new branches ship with zero test coverage.**
+(a) `cli.py:118-121`, the GitHub-spec target branch of `_rag_index_dir`. Plan risk R7 promised
+"assert the GitHub branch by monkeypatching `fetch.index_github`" and no such test exists
+(`grep index_github tests/test_rag.py` → no hits). A wrong kwarg there would ship silently;
+`index_github(spec, outdir, ..., formats=...)` happens to line up, but nothing proves it.
+(b) `cli.py:135-138`, the `--answer` wiring. `stream_answer` is tested directly, but nothing
+tests that `--answer` reaches it, and — more important for a command that POSTs source code —
+there is **no negative test** proving that *without* `--answer` no `urlopen` happens. Add a
+`monkeypatch.setattr(urllib.request, "urlopen", boom)` around a plain `rag` invocation.
+
+**S-8 — `query.py:256` crashes on a non-numeric `confidence`.** `edge.get("confidence", 1.0) <
+min_confidence` raises `TypeError: '<' not supported between 'NoneType' and 'float'` for an
+`edges.jsonl` line carrying `"confidence": null` (a hand-edited, older-version or
+third-party-produced index). Everything else in `Index.__init__` degrades gracefully
+(`_load_manifest` deliberately swallows a truncated manifest); this one path aborts the whole
+query. Coerce with a small `_conf(edge)` helper that falls back to `1.0` on a non-`(int,float)`
+value. The **default itself is right**: `graph.py:318,322` always writes `confidence` on
+`CALLS`, so the `1.0` default only fires for foreign/legacy records, where "keep the edge" is
+the back-compatible choice. The gate is also correctly scoped — `etype == "CALLS"` guards it,
+`CALLS_EXTERNAL` is a different type and is not in `DEFAULT_EDGE_TYPES` at all, and AC-5 pins
+that DEFINES/INHERITS survive `min_confidence=1.0`.
+
+**S-9 — `score_rrf(vectors=...)` is untested, unreachable and ambiguous.** AC-11 exercises only
+the `embedder=` path. The `vectors=` path (`query.py:_vectors_for`) has no test, no CLI route
+(`cmd_rag` never passes `vectors`/`embedder`), and an undocumented dual-keyspace contract: it
+indexes `vectors[i]` by *chunk index* while also probing `vectors.get("query")` by string key —
+a caller passing a `list` silently degrades to `return base` with no signal. Either test it or
+drop it from this slice; as written it is speculative surface.
+
+**S-10 — `tests/test_rag.py:480-486` (AC-19a) can pass vacuously.** The assertion lives inside
+`if any(w != "seed" for w in whys):`; if no budget in `range(400, 6000, 200)` ever admits a
+neighbour, the test asserts nothing and passes. And when it does fire, `assert "seed" in whys`
+is nearly tautological. Add a pre-assertion that at least one budget in the sweep produced a
+mixed pack (its sibling `test_ac19_a_squeezed_neighbour...` does this correctly with a
+`pytest.fail` fallthrough).
+
+**S-11 — new-file watermarks duplicate another file's payload and fingerprint (pre-merge
+gate).** Verified byte-for-byte: `repo2graph/answer.py` line 1 zero-width payload and
+`Fingerprint: AMK1.Ys7vixE7rqEUQP1KKMrDG6` are identical to `repo2graph/layout.py`'s;
+`tests/test_rag.py` carries `AMK1.pdfhGbDrl5PDge0OEgTSnS`, identical to
+`tests/test_repo2graph.py`'s. Two distinct files now assert the same fingerprint, so the header
+is currently *misleading* rather than merely stale, and AC-33's shape-only test cannot detect
+it. Per AGENTS.md this must not be hand-fixed and the header must not be deleted. The pre-merge
+canonical `authormark check` re-stamp must cover **five** files: `repo2graph/answer.py` and
+`tests/test_rag.py` (new, currently bearing a foreign payload) and `repo2graph/query.py`,
+`repo2graph/cli.py`, `repo2graph/export.py` (edited, stale — expected).
+
+---
+
+#### NICE
+
+- **N-1 `cli.py:243` `--budget 0` means "unbounded".** `_nonneg` accepts `0`, and
+  `pack_context` treats `budget_chars <= 0` as no limit. The help text says "character budget
+  for the whole pack", so a user typing `--budget 0` expecting minimal output gets the entire
+  pack — and with `--answer`, uploads it. Say so in the help string.
+- **N-2 mirrored-implementation tests.** `tests/test_rag.py:212-225` (`compressed_form`)
+  re-implements `query._compress` and then asserts the code matches the re-implementation; the
+  same-shaped bug in both would pass. Same pattern in AC-13 (see B-1). Both would be stronger
+  with a literal expected string.
+- **N-3 citation forgery.** A source line that itself begins with `### [cite: fake.py:1-1]`
+  lands verbatim in the pack, and `SYSTEM_PROMPT` tells the model to copy paths out of
+  `### [cite: ...]` headers. Indent or fence chunk bodies, or prefix body lines.
+- **N-4 `answer.py:80-81` interpolates `--model` unescaped into the Gemini URL path.** Cannot
+  change the host (it is after the authority), but `--model 'x#'` truncates the query string and
+  drops the key. `urllib.parse.quote(model, safe="")` costs nothing.
+- **N-5 `cli.py:117-121`** calls `parse_spec(target)` purely for validation and throws the
+  result away; `index_github` parses it a second time. Harmless duplication.
+- **N-6 `answer.py:126-131`** writes UTF-8 bytes straight to `sys.stdout.buffer`, bypassing the
+  text layer. On a cp1252 console that is mojibake (`cafÃ©`) rather than the `caf?` the
+  `errors="replace"` branch would give, and it can interleave ahead of anything already buffered
+  in `sys.stdout`. AC-30 only requires "no exception", which it meets.
+- **N-7 target-resolution ambiguities** (`cli.py:103-122`), all benign but worth a doc line: a
+  local directory literally named `owner/repo` wins over the GitHub spec (dir check precedes the
+  spec check); a source repo that happens to contain its own `agent/manifest.json` is taken for
+  an index and then fails with the `has no chunks.jsonl` message rather than being built. A
+  trailing separator is fine (`Path` normalises it), and a repo containing a `.r2g/`
+  sub-directory resolves correctly to the build branch (verified).
+- **N-8 `Index.__init__`** now always reads `overview.md` + `manifest.json`, including for
+  `query`/`stats`, which never use them. Accepted as R4; a lazy `@property` would remove the
+  cost entirely.
+
+---
+
+#### Verified sound (checked, no finding)
+
+- **Budget accounting holds.** Fuzzed `len(pack_context(q, budget_chars=b)["markdown"]) <= b`
+  for **every** `b` in `1..599` plus `{1000, 2000, 5000, 24000, 100000}` on the repo2graph index:
+  zero violations, and `used_chars == len(markdown)` throughout. The arithmetic is right at the
+  edges too: `budget=1` → `int(0.2) - len(PACK_SEPARATOR) = -7` → `_fit_lines` returns `""` →
+  `head == ""` → no block fits → `markdown == ""`. An empty `full_map` does not falsely set
+  `truncated` (`_fit_lines("", n) == ""`). A single oversized chunk is skipped, never truncated
+  mid-line, and sets `truncated`. `budget_chars <= 0` is unbounded and documented. Blocks are
+  re-rendered with the same `_cite_block` after the sort, so the charged and emitted lengths
+  cannot diverge.
+- **Confidence gate scoping** — see S-8; correctly `CALLS`-only, correct default.
+- **`--min-conf` validation** — `_unit_float` rejects `nan`/`inf`/`-inf`/out-of-range/garbage/
+  empty; the `nan` case matters exactly as the docstring says (`x < nan` is always False, i.e. a
+  silently disabled filter).
+- **`--answer` gating** — lazy import, only under `if args.answer:`.
+- **`export.py` / `pyproject.toml`** — additive only; `HOW_TO_READ` entries are accurate about
+  the protocol they document, core `dependencies` untouched.
+- **No dead code of substance.** `_first` has exactly one caller, `_cosine`/`_fit_lines`/
+  `_compress`/`_cite_block` each one or two; `map_prepend` is deliberately public.
+
+Status set to IMPLEMENT for B-1 (one focused change in `retrieve()` plus a non-self-referential
+AC-13 assertion). S-1 is the strongest non-blocking item and is cheap to fix in the same pass.
+
+### Iteration 2
+
+Scoped re-review, not a fresh pass. Reviewed the real `git diff 4a3ba03..worktree` and, within
+it, only what changed since REVIEW iteration 1: `repo2graph/query.py` (`ALL_EDGE_DIRS` +
+`retrieve()` call site), `repo2graph/cli.py` (`_emit` and its two call sites),
+`repo2graph/answer.py` (`_ollama_base`, `_http_error`, `_empty_answer`, `_disclose`, the Gemini
+header move, the `stream_answer` try/except) and `tests/test_rag.py` (`dirs_out` fixture +
+`test_ac13_retrieve_keeps_every_edge_direction`). Every claim below was reproduced by running
+code. Suite re-run here: `205 passed, 2 skipped`; `ruff check .` clean.
+
+**Unresolved BLOCKING findings: 0**
+
+---
+
+#### B-1 — RESOLVED, root cause, verified independently
+
+`repo2graph/query.py:48` adds `ALL_EDGE_DIRS: dict = {}` and `:305-307` `retrieve()` now calls
+`self.expand(..., min_confidence=conf, edge_dirs=ALL_EDGE_DIRS)`. This is the root-cause shape,
+not a patch that relocates the problem: `expand()`'s own default (`DEFAULT_EDGE_DIRS`) and the
+`dirs.get(etype) is None → no filter` semantics at `query.py:259-261` are untouched, so
+`pack_context()` still gets the blueprint's directional selectivity while `retrieve()` — the
+only pre-existing caller — opts out explicitly and by name. No second caller of `expand()` was
+left inheriting the narrowed default (`grep`: `expand(` has exactly two call sites,
+`retrieve()` and `pack_context()`).
+
+Reproduced the regression guard myself, in-process, by rebinding `query.ALL_EDGE_DIRS` to
+`DEFAULT_EDGE_DIRS` (no file edited) on a freshly built `dirs_out`-equivalent index:
+
+```
+HEAD      file query  -> {('file:pkg2/leaf.py','lexical'),
+                          ('sym:pkg2/leaf.py::leaf_helper','DEFINES out of leaf.py'),
+                          ('file:pkg2/root.py','IMPORTS in of leaf.py')}
+REVERTED  file query  -> {('file:pkg2/leaf.py','lexical')}
+HEAD      class query -> {Polygon lexical, Polygon.area DEFINES out, Square INHERITS in}
+REVERTED  class query -> {Polygon lexical}
+```
+
+So all three previously-dropped directions are back, and the new test is a genuine detector, not
+a restatement of the implementation: `tests/test_rag.py:504-514` asserts six literal
+`(node_id, why)` pairs hand-derived from `DIRS_LEAF`/`DIRS_ROOT`/`DIRS_SHAPES`, with no score,
+rank, ordering or float, and nothing computed from the code under test. The `dirs_out` fixture
+is justified — `rag_repo`'s imported modules leave under `chunks.py:185`'s residue threshold, so
+no file chunk exists there and an `IMPORTS in` pair is unreachable by construction. The old
+self-referential AC-13 assertion was kept alongside, which is correct: it still pins the
+`cmd_query → format_pack` contract that the new test does not cover.
+
+#### S-1 .. S-6 — verified fixed
+
+- **S-1 `_emit`** (`cli.py:32-46`, used by `cmd_rag` markdown+json and `cmd_query` markdown+json).
+  Reproduced: `sys.stdout` swapped for a cp1252 `TextIOWrapper`, `_emit("café — ✓ 你好")` writes
+  `b'caf\xe9 \x97 ? ??\n'` instead of raising. Pinned `cmd_query` output is not moved — under
+  pytest's UTF-8 `capsys` the `text.encode(enc)` probe succeeds and `_emit(x)` is exactly
+  `print(x)`; `tests/test_repo2graph.py` and AC-13 are green unchanged. Two narrow defects it
+  introduces are S-12/S-13 below; neither is blocking.
+- **S-2 `_ollama_base`** (`answer.py:99-114`): `127.0.0.1:11434 → http://127.0.0.1:11434`,
+  `localhost → http://localhost`, `http://h:1/ → http://h:1`; `file:///etc/passwd`, `''` and
+  `//h:3` all `SystemExit` with the value echoed. Uppercase `HTTP://X:2` passes (urlsplit
+  lower-cases the scheme) — correct.
+- **S-3 HTTPError/URLError** (`answer.py:252-255`): `HTTPError(401)` →
+  `SystemExit("openai returned HTTP 401: {\"error\":\"bad key\"}")`, and the API key is **not**
+  in the message (asserted `"sk-leak" not in str(exc)`). `HTTPError` is caught before its
+  `URLError`/`OSError` superclasses — ordering is right.
+- **S-4 `_empty_answer`** (`answer.py:191-212`): a 200 carrying `{"error":"model 'x' not found"}`
+  now exits with `ollama returned an error: model 'x' not found` instead of printing nothing at
+  exit 0.
+- **S-5 Gemini key** (`answer.py:83-91`): URL is `...:streamGenerateContent?alt=sse`, key only in
+  the `x-goog-api-key` header; `Request.full_url` contains no key (verified). urllib's header
+  capitalisation to `X-goog-api-key` is HTTP-case-insensitive and fine.
+- **S-6 `_disclose`** (`answer.py:215-225`): stderr only, hostname only, before the request —
+  `repo2graph: sending 149 chars ... to provider openai at api.openai.com (selected by
+  OPENAI_API_KEY)`. stdout stays the answer payload. The remaining halves of S-6 stay deferred.
+
+---
+
+#### SHOULD (new this iteration)
+
+**S-12 — the `LookupError` branch in `_emit`/`_writer` re-raises the exception it catches.**
+`cli.py:40-44` and `answer.py:160-163`: `except (UnicodeEncodeError, LookupError): text =
+text.encode(enc, "replace")...` — if `enc` is an unknown codec, the handler runs `encode(enc, ...)`
+again and raises the same `LookupError`, so catching it buys nothing. Reproduced: a stdout stand-in
+with `encoding = "cp0"` (the value CPython reports on Windows when the ANSI code page is 0) gives
+`LookupError('unknown encoding: cp0')` out of `cli._emit`. Fix is one line — fall back to
+`"utf8"` (or ASCII+replace) inside the handler instead of reusing `enc`.
+
+**S-13 — `_emit` discards the stream's own error handler, losing byte fidelity on POSIX.**
+`cli.py:38-45` folds on a *strict* `text.encode(enc)` probe regardless of `sys.stdout.errors`.
+Under `LC_ALL=C` CPython gives stdout `encoding='ansi_x3.4-1968', errors='surrogateescape'`, so a
+surrogate-escaped path (walker decodes with `surrogateescape` by design) regresses:
+
+```
+baseline print(...) -> b'caf\xe9/x.py\n'      # byte round-trips
+_emit(...)          -> b'caf?/x.py\n'         # replaced
+```
+
+`repo2graph query -o idx > out.txt` on a Linux box with a non-UTF-8 filename therefore loses the
+original bytes it used to preserve. Guard the fold with
+`if getattr(sys.stdout, "errors", "strict") in (None, "strict")`.
+
+**S-14 — `quote(model, safe="")` breaks the fully-qualified Gemini model form.** `answer.py:88`.
+Google's own listing API returns names as `models/gemini-2.5-flash`, and the endpoint path is
+`/v1beta/models/{model}:streamGenerateContent`. `--model models/gemini-2.5-flash` now yields
+`/v1beta/models/models%2Fgemini-2.5-flash:...` → HTTP 404 (surfaced by S-3's new handler, so it
+fails loudly, which is why this is not blocking). `safe="/"` keeps N-4's `#`/`?` truncation fix
+and accepts both forms.
+
+**S-15 — everything fixed this iteration except B-1 ships with zero tests.** `grep -n
+"_ollama_base\|_emit\|_disclose\|_empty_answer\|_http_error\|goog" tests/` → no hits. That covers
+five new error paths and a security fix (the key moving out of the URL), all of which are exactly
+the kind of code that silently rots. `_emit` is the sharpest gap: it sits on `cmd_query`'s pinned
+output path, and because pytest's `capsys` is UTF-8 the fold branch is never entered by any test,
+so a cp1252 regression there is invisible to the whole suite including the `windows-latest` leg —
+the same blind spot that let S-1 ship. Cheap additions: `_emit` against a cp1252 `TextIOWrapper`,
+`_ollama_base` parametrised over the schemeless/`file://` cases, an `x-goog-api-key`-present /
+`key=` absent assertion on the Gemini `Request`, and a `stream_answer` 200-with-error case.
+
+#### NICE (new this iteration)
+
+- **N-9 `query.py:48`** — `ALL_EDGE_DIRS: dict = {}` is a mutable module global read at call time;
+  anything that mutated it would silently re-narrow `repo2graph query`. `MappingProxyType({})` or
+  a local `{}` literal removes the hazard at zero cost.
+- **N-10 `tests/test_rag.py:126, :496`** — the comment and docstring name the fixture `dirs_repo`;
+  it is `dirs_out`. Stale name in otherwise excellent documentation.
+- **N-11 `answer.py:243-255`** — the `except ... (OSError, ValueError)` wraps the whole streaming
+  loop, including `write(piece)`, so a broken pipe on stdout is reported as
+  `openai request failed: ...`. Narrow the try to the `urlopen(...)`/iteration, or re-raise when
+  the failure came from the writer.
+
+#### Deferred, unchanged (IMPROVE backlog — not re-litigated)
+
+S-7 (github/`--answer` branch coverage), S-8 (non-numeric `confidence` TypeError), S-9
+(`vectors=` path), S-10 (vacuous AC-19a), S-11 (duplicated authormark payloads — pre-merge gate,
+must not be hand-fixed), N-1, N-2 (`compressed_form` mirror; the AC-13 half of N-2 is now fixed),
+N-3, N-4 (superseded by S-14), N-5, N-6, N-7, N-8. Plus the unfinished halves of S-6
+(`--provider` flag, skipping secret-ish paths from the pack when `--answer` is on).
+
+#### Repo-rule sweep on the new code
+
+Headers untouched (lines 1-5 of `query.py`/`cli.py`/`answer.py` byte-identical to their state at
+REVIEW iter 1); no `splitlines()` added; no new subprocess; `_emit` and `_writer` are the only new
+encode paths and both are covered above. The canonical `authormark check` re-stamp remains a
+pre-merge gate for five files (`query.py`, `cli.py`, `export.py`, `answer.py`, `tests/test_rag.py`).
+
+Status set to VERIFY: zero unresolved BLOCKING findings.
 
 ## Verify
 
 ### Iteration 1
 
-**RESULT: PASS (with AC-16 caveat).** Host: win32 (Windows 11, Python 3.13,
-cp1252 locale). Working tree carries the 9-file diff uncommitted; HEAD ==
-baseline `81519d6a`.
+Independent end-to-end check. Nothing below is taken from an earlier phase's report: every
+command was re-run here, and every acceptance criterion was re-proved by running code against
+**this repository's own index**, not only against the fixtures. Two scratch probes were used
+(`verify_ac.py`, `verify_ac2.py`, in the session scratchpad — no repo file was written except
+this one).
 
-#### Commands run
+#### 1. Gate commands
 
-| # | Command | Result |
-|---|---|---|
-| 1 | `python -m pytest -q` | **72 passed, 2 skipped, 0 failed** in 2.51s. The 2 skips are the networkx-gated GraphML tests (`test_repo2graph.py:455`, `:463` — `No module named 'networkx'`), unchanged from baseline. |
-| 2 | lint / typecheck | **None configured** — no `ruff`/`mypy`/`flake8`/`pylint` config anywhere; `pyproject.toml` has only `[tool.pytest.ini_options]`. This is ISS-43 (backlog, explicit non-goal this loop). Nothing to run. |
-| 3 | `python -m pip install -e . --no-deps -q` | exit 0 |
-| 3 | `python -c "import repo2graph"` | `import ok 0.1.0` |
-| 3 | `repo2graph --help` | usage printed: `{build,github,gh,query,map,stats}` |
+| Command | Result |
+|---|---|
+| `python -m pytest tests/ -q` | **205 passed, 2 skipped** in 8.28s |
+| `python -m ruff check .` | **All checks passed!** |
+| skip reasons (`-rs`) | both are pre-existing: `could not import 'networkx'` at `tests/test_repo2graph.py:475` and `:483` |
+| typecheck | **N/A** — the repo configures no typechecker (`pyproject.toml` has ruff + pytest only; `dev = ["pytest>=7","ruff>=0.5"]`; `python -c "import mypy"` → ModuleNotFoundError) |
+| install / console script | `pip show repo2graph` → 0.1.0 installed; `repo2graph --help` → `usage: repo2graph [-h] {build,github,gh,query,rag,map,stats} ...` (the `rag` subcommand is live on the installed entry point) |
+| wheel build | `python -m pip wheel . --no-deps` **fails** — setuptools flat-layout discovery sees both `repo2graph` and `tests`. **Pre-existing, not a regression:** reproduced identically from a `git worktree` at `4a3ba03` (`ERROR: Failed to build 'file:///.../r2gbase'`). Noted for the IMPROVE backlog, not counted against this diff. |
 
-#### Smoke evidence (affected paths)
+**Optional-dependency import check (the hard requirement).** Two ways, both clean:
 
-- **ISS-27 / real repo.** `repo2graph build . --out <scr> --formats overview,jsonl,graphml`
-  -> build ok (files 32, parsed 13, nodes 357, edges 1044, chunks 253).
-  `python -c "import xml.etree.ElementTree as ET; ET.parse('<scr>/human/graph.graphml')"`
-  -> parsed OK, root tag `{http://graphml.graphdrawing.org/xmlns}graphml`;
-  independent scan of the emitted bytes -> **0 characters outside the XML 1.0
-  legal set**.
-- **ISS-27 / form-feed docstring.** Built a tmp repo whose only file has `\x0c`
-  inside a docstring, `--formats graphml`; `ET.parse` succeeds, 0 illegal chars.
-- **ISS-06 / non-ASCII CO_CHANGE.** Tmp git repo, `café.py` + `naïve.py`
-  committed together 3x, `build(repo, git_history=10)` at the platform-default
-  (cp1252) locale -> `CO_CHANGE` triple `("file:café.py","file:naïve.py")`
-  present; **no `UnicodeDecodeError`** (script ran to completion).
-- **ISS-22 / U+2028.** Tmp repo, `sep.py` line 1 = `MSG = "a b"`. The chunk
-  for `sym:sep.py::uses_sep` has `text` == ``…\ndef uses_sep():\n    return MSG``
-  — contains `"return MSG"`, does **not** contain `MSG = "a`. The
-  `file_residual` chunk contains the `MSG = ` line and **not** `return MSG`.
-- **ISS-19 / parse_spec table.** `parse_spec` of `owner/..`, `../evil`, `-x/-y`,
-  `owner/` each raise `ValueError`; `owner/repo`,
-  `https://github.com/owner/repo`, `git@github.com:owner/repo.git` each return
-  `("owner","repo")`.
-- **ISS-13 / discover parity.** Same tree (`README.md`, `pkg/mod.py`,
-  `.github/workflows/ci.py`) walked before and after `git init && git add -A`:
-  both yield `{'.github/workflows/ci.py', 'README.md', 'pkg/mod.py'}` — identical.
-- **ISS-16 / public clone still works.** `repo2graph github psf/requests
-  --max-files 5 --out <scr>` -> exit 0, 10 artifacts written, commit
-  `dae7ef63b4df` — the token-free clone URL + `GIT_CONFIG_*` credential path did
-  not break anonymous cloning.
+```
+python -c "import repo2graph.query, repo2graph.answer, repo2graph.cli, repo2graph.export; ..."
+  -> optional modules imported: []          # numpy IS installed in this env and is still not imported
+  -> sentence_transformers installed? False # so the package genuinely imports without it
 
-#### Behaviour preservation (refactor)
+# and with the imports hard-blocked at the builtins.__import__ level:
+BLOCK = {'numpy','sentence_transformers','torch'}   -> raise ImportError
+  -> "imports OK with numpy/sentence_transformers blocked"
+```
 
-`test_refactor_preserves_graph_shape` (AC-13) pins the sorted node-id set (13),
-`(src,dst,type)` triple set (15) and chunk-id set (6) for the `sample_repo`
-fixture and is **green** — the observable graph/chunk contract is byte-identical
-before and after the 9-file diff. Full suite green corroborates.
+`repo2graph.answer` and `repo2graph.query` both import clean with the optional extras
+unavailable. (IMPLEMENT's deviation — a 12-line pure-Python `_cosine` instead of numpy — means
+the RRF path never needs numpy either; confirmed at AC-11 below: `numpy not in sys.modules`
+after `score_rrf(embedder=stub)`.)
 
-#### Acceptance criteria
+#### 2. Smoke test — the real CLI on this repository
+
+```
+$ repo2graph build . -o $TMP/.r2g --formats jsonl,overview
+  files 41  nodes 592  edges 1925  chunks 484   (0.48s)
+  -> agent/ human/ chunks.jsonl edges.jsonl manifest.json nodes.jsonl overview.md stats.json
+
+$ repo2graph rag -o $TMP/.r2g "where is the CALLS confidence set"      rc=0
+  line 0 : "# Repo map: repo2graph"          <- map first
+  line 59: "---"                             <- bare separator
+  line 61: "### [cite: BUILD_STATE.md:1-1306] `BUILD_STATE.md` (seed)"
+  headers, in emission order:
+    BUILD_STATE.md:1, README.md:1, repo2graph/answer.py:215,
+    repo2graph/export.py:443, repo2graph/graph.py:352,
+    repo2graph/query.py:85, repo2graph/query.py:234        <- sorted by (path, start_line)
+  len(markdown) = 23891 <= 24000 (default budget); stderr empty
+```
+
+Budget sweep on the same real index (`pack_context`, `used_chars == len(markdown)` throughout):
+`200 -> 29`, `1000 -> 180`, `4000 -> 3973`, `24000 -> 23891`. `--budget 3000` via the CLI gives
+`used_chars 2862 / budget 3000, truncated True`.
+
+```
+$ repo2graph rag -o $TMP/.r2g "..." --format json
+  keys = budget_chars, chunks, markdown, neighbors, query, seeds, truncated, used_chars   (parses)
+
+$ repo2graph rag /e/Github/repo2graph "how does pack_context bound the budget" -o $TMP/r2gauto/idx
+  rc=0, no pre-existing index -> auto-built: $TMP/r2gauto/idx/agent/{manifest.json,...} created,
+  pack printed. (Console is cp1252 and the em dash rendered as "?" via cli._emit -- no crash.)
+
+$ repo2graph rag -o $TMP/.r2g "..." --no-expand --format json
+  neighbors = 0, whys = ['seed']            <- strictly lexical seeds
+
+$ repo2graph query -o $TMP/.r2g "double a value helper"
+  unchanged shape: "--- tests/...::test_iss25_query_constants_and_budget_bounds [lexical]" ...
+```
+
+Ablation on the real repo (set membership, no scores), `k=3, budget 40000`:
+
+| query | lexical-only ids | with 1-hop graph | superset | examples the graph adds |
+|---|---|---|---|---|
+| `pick_provider` | 3 | 17 | strict | `sym:repo2graph/answer.py::_delta`, `::_disclose`, `file:repo2graph/answer.py` |
+| `mark_entrypoints reach` | 3 | 7 | strict | `sym:repo2graph/graph.py::build`, `file:repo2graph/walker.py` |
+| `normalize_provider` | 3 | 5 | strict | `sym:repo2graph/query.py::Index.score`, `::tokenize` |
+
+**`--answer` with no provider env, and the no-network proof.**
+
+```
+$ env -u GEMINI_API_KEY -u OPENAI_API_KEY -u ANTHROPIC_API_KEY -u OLLAMA_HOST \
+    repo2graph rag -o $TMP/.r2g "..." --answer
+  rc=1, stdout empty, stderr:
+  no LLM provider configured: set one of GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY or OLLAMA_HOST
+```
+
+Network was blocked at the socket layer for the whole process (`socket.socket.connect`,
+`connect_ex`, `socket.getaddrinfo` and `socket.create_connection` all replaced with raisers):
+
+```
+plain rag (no --answer)  -> rc 0, 240 chars of markdown, network calls: []
+rag --answer, env clear  -> SystemExit naming all four vars, network calls: []
+```
+
+So a plain `rag` makes **no** DNS lookup and **no** connect, and the no-provider path exits
+before any socket is touched.
+
+#### 3. Behaviour comparison vs baseline `4a3ba03` (risk R1 / D1)
+
+A `git worktree` at the baseline was used to run the *old* code against the *same* index, with
+`PYTHONIOENCODING=utf8` so both sides could print.
+
+On the pinned `sample_repo` fixture (materialised from `PKG_INIT`/`PKG_UTIL`/`PKG_MAIN` in
+`tests/test_repo2graph.py`), `repo2graph query` stdout is **byte-identical baseline vs HEAD** for
+all 10 probes: `double a value helper`, `main entry point`, `sample repository`, `util`,
+`double`, `greet`, `run`, `add numbers`, `helper function`, `package init` — `0 differ`.
+
+On repo2graph's own (much larger) index, 3 of 5 probes are byte-identical
+(`double a value helper`, `confidence calls edge`, `session auth`); the two that differ
+(`how does export write manifest`, `build the graph`) differ **only** because `IDENT_BOOST`
+re-ranks a seed whose `name` equals a query token (`write`, `build`) — which is exactly what
+AC-8 requires. The traversal half is unchanged: neighbours of the new seeds are the same kinds
+(`DEFINES in/out`, `CALLS in/out`, `IMPORTS in`), i.e. `ALL_EDGE_DIRS` is doing its job and B-1
+stays fixed. Independently re-confirmed at AC-13 below.
+
+Incidental but real finding, in HEAD's favour: running the **baseline** `repo2graph query` on
+this repo's index with a native cp1252 stdout dies with
+`UnicodeEncodeError: 'charmap' codec can't encode characters in position 4427-4604` at
+`cli.py:93 print(format_pack(res))`. HEAD does not — S-1's `cli._emit` fixed a pre-existing
+crash as well as the new one.
+
+#### 4. Acceptance criteria — AC-1 .. AC-34
+
+Every line below is a value observed in this session. "probe" = the scratch script;
+"suite" = the named test, which I also re-ran individually.
 
 | AC | Verdict | Proof |
 |---|---|---|
-| AC-1 (ISS-22 symbol body) | **Met** | smoke: `uses_sep` chunk text = `def uses_sep():\n    return MSG`; `test_iss22_symbol_chunk_body_survives_unicode_line_separator` + strengthened `test_index_survives_unicode_line_separators` green |
-| AC-2 (ISS-22 residual) | **Met** | smoke: residual = `…MSG = "a b"\nEXTRA = …`, no `return MSG`; `test_iss22_file_residual_excludes_symbol_body` green |
-| AC-3 (ISS-06 CO_CHANGE non-ASCII) | **Met** | smoke: `("file:café.py","file:naïve.py")` in CO_CHANGE triples; `test_iss06_cochange_survives_non_ascii_filenames` green |
-| AC-4 (ISS-06 no UnicodeDecodeError) | **Met** | smoke ran to completion at cp1252; same test green on this win32 host |
-| AC-5 (ISS-27 stdlib ET.parse, no skip) | **Met** | two smokes `ET.parse` OK + 0 XML-illegal chars; `test_iss27_graphml_roundtrips_with_a_control_char` green (not `importorskip`) |
-| AC-6 (ISS-19 parse_spec) | **Met** | smoke table; 4 reject + 3 accept parametrized cases green |
-| AC-7 (ISS-16 token absent from argv) | **Met** | `test_iss16_token_never_appears_in_clone_argv` green; `fetch.py:73` clone cmd URL is `https://github.com/{owner}/{repo}.git`, credential in `GIT_CONFIG_VALUE_0` env |
-| AC-8 (ISS-18 timeout kwarg) | **Met** | `test_iss18_every_fetch_subprocess_call_passes_timeout` green; `fetch.py:74` `timeout=CLONE_TIMEOUT`, `:90` `timeout=GIT_TIMEOUT` |
-| AC-9 (ISS-13 discover parity) | **Met** | smoke: identical sets; `test_iss13_discover_matches_between_git_and_walk` green (not skipped) |
-| AC-10 (ISS-07 pool fallback) | **Met** | `graph.py:208` `except Exception:` -> serial `[_read_and_parse(i) for i in items]`; `test_iss07_parse_all_falls_back_when_the_pool_breaks` green |
-| AC-11 (ISS-01/02 dead fields gone) | **Met** | `dataclasses.fields(Symbol)` = bases/calls/docstring/end_line/kind/name/parent/qualname/signature/start_line (no `start_byte`/`end_byte`); `ParsedFile` = imports/lang/parse_errors/symbols (no `file_calls`); `test_iss01_iss02_dead_dataclass_fields_are_gone` green |
-| AC-12 (>=53 passed / 0 failed) | **Met** | 72 passed, 2 skipped, 0 failed; only pre-existing test changed is the strengthened ISS-50 one |
-| AC-13 (behaviour snapshot) | **Met** | `test_refactor_preserves_graph_shape` green — 13 node ids / 15 triples / 6 chunk ids unmoved for `sample_repo`; full suite green |
-| AC-14 (ISS-44 no run: interpolation) | **Met** | `index-repo.yml`: `${{ inputs.* }}` / `${{ github.* }}` appear only in `env:` / `with:` / `if:` positions; the `run: \|` block reads `"$R2G_REPO"` (line 50); `test_iss44_index_repo_workflow_has_no_run_interpolation` green |
-| AC-15 (ISS-45 Windows CI) | **Met** | `ci.yml` `tests`: `runs-on: ${{ matrix.os }}`, `os: [ubuntu-latest, windows-latest]`, `python-version: ["3.10","3.12"]` = 4 legs; `action` job stays ubuntu-only; `test_iss45_ci_workflow_tests_job_covers_windows` green |
-| AC-16 (authormark re-stamp) | **Not met — caveat** | The 6 modified source files (`chunks.py`, `graph.py`, `export.py`, `fetch.py`, `parse.py`, `walker.py`) carry **stale `Fingerprint:` lines** (content changed below the header, fingerprint not refreshed); `tests/test_repo2graph.py` was stamped with a non-canonical best-effort tool. The `@authormark v1` block — including the 178-char zero-width watermark payload on line 1 — is **intact and unmoved** on every file (`git diff` shows no `+`/`-` on any `@authormark` / `Copyright` / `Author:` / `SPDX-License-Identifier` line). No canonical stamp tool is vendored (`.authormark/` absent; CI runs `Srinivasan-78/authormark-watch@main`). A canonical re-stamp of all 7 files is required before merge or `authormark check` in CI will go red. Per the VERIFY contract this known-outstanding hygiene item does not fail the phase on its own. |
+| 1 | **Met** | probe: `adj["sym:repo2graph/answer.py::pick_provider"]` entry = `(dst=sym:...::stream_answer, type=CALLS, dir=in, conf=1.0)` — a 4-tuple whose 4th element is the edge record with a readable `confidence` |
+| 2 | **Met** | probe: `Index(out).overview` len 1935, starts `'# Repo map: repo2graph'`; after unlinking overview.md from **every** `layout.paths(...)` copy, `Index(dir).overview == ""` and no exception |
+| 3 | **Met** | probe: `Index.manifest` keys `['approximations','chunk_fields','counts','edge_types','entrypoint_rule','entrypoints']`; manifest truncated to `"{"` → `manifest == {}`, constructs fine; manifest deleted → `{}` |
+| 4 | **Met** | probe on 80 real seeds: `expand(min_confidence=1.0)` = 26 tuples, **0** CALLS tuples backed by an edge record with `confidence < 1.0` |
+| 5 | **Met** | probe: the same `min_confidence=1.0` call still yields 2 DEFINES/INHERITS/IMPORTS neighbours (those records carry no `confidence` key and are untouched); suite `test_ac5_...` green on the INHERITS fixture |
+| 6 | **Met** | probe: `min_conf=0.5` → 36 distinct nodes vs `1.0` → 26; superset `True`, non-equal |
+| 7 | **Met** | probe: observed `(type,direction)` pairs `[('CALLS','in'),('CALLS','out'),('DEFINES','in')]` with `DEFAULT_EDGE_DIRS = {'CALLS':('out','in'),'DEFINES':('in',),'INHERITS':('out',),'IMPORTS':('out',)}`; suite `test_ac7_default_edge_directions` green |
+| 8 | **Met** | probe on the real repo: `score("pick_provider")[0]` → `sym:repo2graph/answer.py::pick_provider` (score 21.32 vs 7.21 runner-up); suite `test_ac8_..._beats_a_lexical_decoy` green on the decoy fixture |
+| 9 | **Met** | probe: `score("confidence calls edge")` → 414 results, strictly descending, **every** returned index shares a token with the query; `test_score_matches_bruteforce` unmodified and green |
+| 10 | **Met** | probe: `score_rrf(q) == score(q)` exactly with no vectors/embedder; `sys.modules` contains no `numpy` / `sentence_transformers` after importing the package (and the blocked-`__import__` run above imports clean) |
+| 11 | **Met** | probe: stub `.encode(list[str]) -> list[list[float]]` → 59 fused results, `'numpy' not in sys.modules` still True |
+| 12 | **Met** | probe: `retrieve("how does export write the manifest", k=3, hops=1)` → 6 hits, whys `['CALLS out of write','DEFINES in of write','lexical']` (≥1 non-lexical); `test_index_retrieves_and_expands` unmodified and green |
+| 13 | **Met** | probe: `inspect.signature(Index.retrieve)` positional order `['self','query','k','hops','budget_chars']`, `ALL_EDGE_DIRS == {}`; **and** `repo2graph query` stdout byte-identical baseline-vs-HEAD on the `sample_repo` fixture for 10 queries (§3). On a large repo the ranking of *seeds* moves for identifier queries by AC-8's design — see the note under §3; traversal is identical, which is what D1/B-1 concern |
+| 14 | **Met** | probe on the real index: `200→29, 1000→180, 4000→3973, 24000→23891`, all `<= N`, `used_chars == len(markdown)` in every case |
+| 15 | **Met** | probe: 7 cite headers matched `^### \[cite: ([^\]]+):(\d+)-(\d+)\] `; every `(path,start,end)` is present in `result["chunks"]` |
+| 16 | **Met** | probe: header keys `[('BUILD_STATE.md',1),('README.md',1),('repo2graph/answer.py',215),('repo2graph/export.py',443),...]` == `sorted(keys)` |
+| 17 | **Met** | probe: line 0 `'# Repo map: repo2graph'`, a bare `---` at line 59, first `### [cite:` at line 61; with overview.md (all copies) **and** manifest.json deleted, `pack_context` still returns markdown containing `### [cite:` and raises nothing |
+| 18 | **Met** | probe: `map_prepend()` `## Top entry points` first line = ``- `cmd_rag` - repo2graph/cli.py (reach 98)``; `manifest["entrypoints"][0]["qualname"] == "cmd_rag"` |
+| 19 | **Met** | probe: at `budget=800` every emitted block has `why=="seed"` and `truncated is True` (seeds prioritised). Compression: at `budget=1500` the neighbour `sym:repo2graph/answer.py::build_prompt` is emitted as its `#` header lines + `def build_prompt(pack) -> tuple[str, str]:` and **0** further non-blank body lines, `truncated is True`. (This is the real check REVIEW's S-10 said the suite's AC-19a could do vacuously — done here non-vacuously, on the real repo.) |
+| 20 | **Met** | probe: `expand_graph=False` → `neighbors == []`, `{why} == {'seed'}`; CLI `--no-expand --format json` → same |
+| 21 | **Met** | probe, set membership only: `pick_provider` lexical set (3) ⊂ graph set (17), strict; the extras include `sym:repo2graph/answer.py::_delta` reached over CALLS, not lexically. Suite `test_ac21_...` green on the fixed synthetic fixture. No score/rank asserted anywhere |
+| 22 | **Met** | probe: `main(["rag","-o",out,"how does session auth work?"])` (one positional) → rc 0, 5869 chars, contains `### [cite:`; CLI smoke same |
+| 23 | **Met** | probe: `main(["rag", <index dir>, "some query"])` → rc 0 and `agent/manifest.json` `st_mtime_ns` unchanged (`1789070172448178500` before and after — no rebuild); `main(["rag", <source dir>, ..., "-o", new])` → rc 0 and `new/agent/manifest.json` created |
+| 24 | **Met** | probe: `["rag","not/a real spec/x","q"]` → `SystemExit: cannot resolve target 'not/a real spec/x': expected one of: a repo2graph index directory (one holding agent/manifest.json), a source repository directory to ind...` — names all three forms. `["rag","q","-o",<empty>]` → `SystemExit: no index at <empty>: run \`repo2graph build <repo> -o <empty>\`` — the existing message verbatim |
+| 25 | **Met** | probe: `_unit_float` accepts `0/0.5/1.0` → `[0.0,0.5,1.0]`; rejects `nan, inf, -inf, -0.1, 1.1, abc, ""` with `ArgumentTypeError` each (→ argparse exit 2); suite parametrised `test_ac25_bad_min_conf_exits_non_zero[nan/inf/-0.1/1.1/abc]` green and asserts stderr names `--min-conf` |
+| 26 | **Met** | probe with a spy on `Index.pack_context`: a bare `rag` call passes `{'k': 8, 'hops': 1, 'budget_chars': 24000, 'min_confidence': 1.0, 'expand_graph': True}`; `--format json` prints a parseable object with `markdown`, `chunks`, `truncated`, `used_chars` (plus `seeds`, `neighbors`, `budget_chars`, `query`) |
+| 27 | **Met** | probe: `query` rc 0 (24662 ch), `stats` rc 0 (301 ch), `map` rc 0 (174 ch), `build` exercised by the smoke build; the unmodified 150-test `tests/test_repo2graph.py` is green inside the 205 |
+| 28 | **Met** | probe with `urllib.request.urlopen` swapped for a recorder and `env={"OPENAI_API_KEY":"sk-dummy"}`: captured host `api.openai.com` (no real socket — the recorder is the only exit), the **entire** 2829-char `pack["markdown"]` present in `body["messages"][-1]["content"]`, and the system turn contains `path/file.py:start-end`, `cite` and `invent`. SSE deltas streamed to the sink (`'café — hi'`, folded to cp1252 by the writer). Suite additionally runs the real urllib path against a `127.0.0.1:0` `HTTPServer` |
+| 29 | **Met** | probe: `pick_provider({}) is None`; `stream_answer(pack, env={})` → `SystemExit: no LLM provider configured: set one of GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY or OLLAMA_HOST` — all four named. Confirmed end-to-end through the installed CLI (rc 1, §2) |
+| 30 | **Met** | probe: `_writer(TextIOWrapper(BytesIO(), encoding="cp1252"))("café — ✓ 你好")` → `b'caf\xe9 \x97 ? ??'`, no exception; `_writer(None)` against a `sys.stdout` stand-in with a `.buffer` → `b'caf\xc3\xa9 \xe2\x80\x94 \xe2\x9c\x93 \xe4\xbd\xa0\xe5\xa5\xbd'`, no `UnicodeEncodeError` |
+| 31 | **Met** | probe: `pyproject.toml` contains exactly `rag = ["sentence-transformers>=3.0", "numpy>=1.24"]`; `project.dependencies` is still exactly `tree-sitter>=0.23` + `tree-sitter-language-pack>=0.7` (`git diff 4a3ba03 -- pyproject.toml` = 3 added lines, all under `[project.optional-dependencies]`) |
+| 32 | **Met** | probe: `export.HOW_TO_READ` mentions both `pack_context` and `confidence`; the **freshly built** `$TMP/.r2g/agent/manifest.json` carries it under `how_to_read` |
+| 33 | **Met** | probe: lines 1-5 of `repo2graph/answer.py` and `tests/test_rag.py` match the shape — `@authormark v1` / `Copyright (c)` / `Author:` / `SPDX-License-Identifier: MIT` / `Fingerprint: AMK1.…`. See §5 for the pre-merge re-stamp gate |
+| 34 | **Met** | probe: `ast.walk` over `query.py`, `answer.py`, **plus** `cli.py` and `tests/test_rag.py` → zero `Call`/`Attribute` nodes named `splitlines`. The only textual hits are the AGENTS.md rule quoted in comments/docstrings |
 
-#### Conclusion
+**34 / 34 Met. 0 Not met.**
 
-Every functional/preservation criterion (AC-1..AC-15) is **Met**, every check is
-green (full suite, install, CLI, five behaviour smokes, public clone), and the
-refactor preserves the pinned graph/chunk contract. The single gap is AC-16
-(authormark fingerprints), which is a merge-gate hygiene task needing the
-canonical `authormark-watch` stamp — not a code defect, and explicitly carved
-out of the fail condition.
+#### 5. AGENTS.md repo-rule sweep across the whole diff vs `4a3ba03`
 
-**RESULT: PASS (with AC-16 caveat)**
+1. **Authormark blocks — intact.** `git diff 4a3ba03 -- repo2graph pyproject.toml | grep
+   "authormark\|Fingerprint\|SPDX\|Copyright (c)"` → **zero hits**: not one header line appears
+   in the diff, so nothing was deleted, edited, reordered or relocated. (A naive
+   `git show 4a3ba03:<f> | head -5` byte-compare "differs" only by a trailing `\r` — a
+   `core.autocrlf` working-tree artifact, absent from the tracked diff.) Both new files carry
+   the 5-line block.
+   **Carried forward (pre-merge gate, must NOT be hand-fixed):** five files need the canonical
+   `authormark check` re-stamp — `query.py`, `cli.py`, `export.py` (edited → stale
+   `Fingerprint:`, expected) and `answer.py`, `tests/test_rag.py` (new, currently bearing a
+   copied payload/fingerprint from `layout.py` / `test_repo2graph.py` — REVIEW S-11). No local
+   `.authormark/authormark.mjs` was used or recovered.
+2. **`splitlines()` — clean.** No `.splitlines(` call anywhere in the added code; `query._fit_lines`,
+   `query._compress` and the test helper all use `text.split("\n")`, each annotated
+   `# never splitlines(): see AGENTS.md`. Verified by `ast.walk`, not grep (AC-34).
+3. **git subprocess decoding — clean.** The diff adds **no** `subprocess` call at all
+   (`git diff … | grep '^+.*subprocess\|text=True\|encoding=<locale>'` → only the two
+   `open(..., encoding="utf8", newline="\n")` artifact reads in `query.py`). `cmd_rag` reaches
+   git only indirectly via the unmodified `graph.build()`/`walker._git_files` and
+   `fetch.index_github`, which already use `-c core.quotepath=false` + bytes +
+   `decode("utf8","surrogateescape")` + `timeout=`.
+4. **Windows / cp1252 — safe, and better than baseline.** Every new decode uses
+   `errors="replace"`; `cli._emit` and `answer._writer` are the only new encode paths and both
+   were exercised: HEAD writes 24k of pack to a cp1252 stdout where **baseline `query` crashes**
+   (§3). `urlopen` carries an explicit `timeout=HTTP_TIMEOUT`.
+
+#### 6. Known-deferred, confirmed not regressions
+
+REVIEW's `S-7 … S-15` and `N-1 … N-11` are the deliberate IMPROVE backlog and were not counted
+against any criterion. Two I spot-checked and confirm are still *latent, not live*: S-10's
+vacuous AC-19a is covered non-vacuously by my own AC-19 probe above, and S-12/S-13's `_emit`
+fallback edge cases do not fire on any supported console encoding (`cp1252` folds correctly;
+`cp0`/`errors=surrogateescape` remain untested code paths). One item to add to the backlog from
+this phase: **`pip wheel .` fails on setuptools flat-layout discovery — pre-existing at
+`4a3ba03`, so `pip install repo2graph` from source is broken today** (editable installs work).
+
+RESULT: PASS
 
 ## Remember
 
-### Iteration 1
+Durable knowledge in this repo lives in `AGENTS.md` (`CLAUDE.md` is a one-line `@AGENTS.md`
+include; there is no `docs/adr/`, no memory dir, and the README is user-facing). All six notes
+below were appended to `AGENTS.md`, matching its existing shape — heading, the rule, the why, the
+concrete precedent with `file:line`. Nothing that the diff or `git log` already shows was written
+down (no file lists, no criteria, no phase history).
 
-Durable knowledge from this loop went into `AGENTS.md` — the repo's single "Repo
-rules" file (included verbatim by `CLAUDE.md`). No `docs/adr/` or memory dir
-exists; `README.md` is user-facing and `.github/CONTRIBUTING.md` is a 4-line
-checklist, so neither fits engineering rules. Four notes added, one existing
-section corrected:
+| Note (new `AGENTS.md` section) | What it preserves |
+|---|---|
+| **Two budget models coexist — do not unify them** | Decision D1/D2. `retrieve()` budgets chunk `text` only (`query.py:272`), `pack_context()` budgets the whole markdown (`query.py:349`). Looks like an inconsistency; unifying it breaks the two pinned tests in `test_repo2graph.py` and every `cmd_query` caller. Includes the rule that new retrieval surface goes on `pack_context()` and that `retrieve()` may only gain keyword-only params defaulting to today's behaviour. |
+| **A new default on a shared traversal helper narrows its existing callers** | The B-1 bug class, named. `expand(edge_dirs=None → DEFAULT_EDGE_DIRS)` silently cost `retrieve()` every DEFINES-out / IMPORTS-in / INHERITS-in neighbour (41 → 28). The rule: pre-existing callers opt out **by name** (`ALL_EDGE_DIRS`, `query.py:48`), the confidence gate stays `CALLS`-only, and neutrality is proved against a baseline `git worktree`, not against the new code. |
+| **Tests must pin values, not compare the implementation to itself** | Why AC-13 could not catch B-1: it asserted `cmd_query` stdout `== format_pack(retrieve(...))`. Rule: literal `(node_id, why)` membership hand-derived from the fixture; no score/rank/float/ordering; prove a new test is a detector by reverting the fix and restoring byte-identically. Also names the surviving `compressed_form` mirror. |
+| **A file with little residue emits no file-level chunk** | The `chunks.py:185` 40-char threshold gotcha found while building fixtures: a module that is all imports and defs has a node but no chunk, so it can be neither seed nor neighbour — an IMPORTS edge is then unreachable through `retrieve()` by construction. Explains why `dirs_out` exists and `rag_repo` was left alone. |
+| **`layout.path(out, "overview.md")` is `human/overview.md`, not `agent/`** | `overview.md` is the only two-section artifact (`layout.py:45`) and `rel()` returns the first entry. Easy to assume `agent/`; readers must tolerate either copy being absent and use `layout.paths()` for both. |
+| **`rag --answer` uploads repository source to a third-party endpoint** | The security posture, not a fix log: what leaves the machine, the provider precedence race, that a `.env` chunk can be seeded and shipped whole, the invariants to keep (lazy import under `if args.answer:`, the socket-level no-network test, host-only stderr disclosure, no credential in a URL, never echo `HTTPError.url`), and the two still-open halves of S-6. |
 
-| Note | Landed in | Why it's non-obvious / will matter |
-|---|---|---|
-| **`split("\n")` not `splitlines()`** — tree-sitter counts rows by `\n` only; `splitlines()` also breaks on U+2028/U+2029/U+0085/`\x0b`/`\x0c`, desyncing line slices from parser rows. Reuse `chunks._lines`. Flags `graph.py:380` as still-open (git-log output still `.splitlines()`). | `AGENTS.md` new section "Text slicing — use `split("\n")`, never `splitlines()`" | Recurring bug class: ISS-22 (`chunks.py`), the `query.py` comment, and SH-1 still open at `graph.py:380`. A one-word change on the wrong side re-introduces silently-mis-sliced chunk text. |
-| **Never `text=True` on git subprocess output.** Decode bytes as `utf8`/`surrogateescape`, pass `-c core.quotepath=false`, always set `timeout=`. `fetch.py` variant: `encoding="utf8", errors="replace"`. | `AGENTS.md` new section "Decoding git subprocess output (Windows / non-UTF-8 locales)" | Every historical regression here is a Windows cp1252 encoding bug (ISS-06/17/22/27). Pattern started in `walker._git_files`, now also in `graph.add_cochange` + `fetch.py`; without it, non-ASCII paths crash or `CO_CHANGE`/import edges vanish. New `windows-latest` CI leg exists to catch this. |
-| **authormark stamp tool is not vendored** (de-vendored `b14ce2e`; no `.authormark/`). It lives in `Srinivasan-78/authormark-watch` and runs as CI `authormark check`. Locally-recovered `authormark.mjs` copies strip the zero-width watermark payload from header line 1 — do not use them. Any `.py`/`.md`/test edit needs a canonical re-stamp (pre-merge gate). | `AGENTS.md` — corrected the stale `node .authormark/authormark.mjs stamp <file>` line in the existing "Authorship headers" section + added a bullet | The old path in `AGENTS.md` no longer exists, so an agent following it literally fails. This is exactly why AC-16 is unmet this loop (see `## Verify`). |
-| **Non-git builds now index dot-directories.** `walker.discover()` uses one `DEFAULT_SKIP_DIRS` filter for both `git ls-files` and `os.walk`; the walk path no longer drops all dot-dirs. `.github/**` is now indexed on plain folders, matching git checkouts; caches like `.ruff_cache/`/`.eggs/`/`.cache/` leak in unless added to `DEFAULT_SKIP_DIRS` (SH-5). | `AGENTS.md` new section "Discovery indexes dot-directories, git or not" | Observable behaviour change (ISS-13) that nothing in the test suite pins beyond the git-vs-walk parity test; a future dev debugging "why is `.ruff_cache` in my graph" needs this. |
+Deliberately **not** recorded: the AGENTS.md rules already present (headers, `splitlines()`, git
+subprocess decoding, dot-dir discovery) — all four were swept clean this run and need no edit; the
+acceptance-criteria list; per-iteration history; and the individual S-/N- fixes, which the diff and
+`## Review` already carry (they belong to IMPROVE's backlog, not to durable memory).
 
-Not recorded (git/code already show it, or already in-code): the per-issue fix
-diffs (in `## Implement` + git), the `_xml_safe` XML-1.0 predicate (self-evident
-in `export.py`), the `ProcessPoolExecutor` attribute-access-for-monkeypatch shape
-(NC-6 asks for an inline comment, not a durable note).
-
-**Side effect:** editing `AGENTS.md` staled its own `Fingerprint:` line. It joins
-the 7 files already awaiting a canonical `authormark-watch` re-stamp before merge
-(see `## Verify` AC-16 caveat). The `@authormark` block itself was not touched.
+**Pre-merge gate — now six files, not five.** Editing `AGENTS.md` staled its own `Fingerprint:`
+(`AMK1.nh6A0n67aea43Sl8Y0SyxT`), so the canonical `authormark check` re-stamp must cover
+`repo2graph/query.py`, `repo2graph/cli.py`, `repo2graph/export.py` (edited, stale),
+`repo2graph/answer.py` and `tests/test_rag.py` (new, bearing payloads copied from `layout.py` /
+`test_repo2graph.py` — REVIEW S-11), **plus `AGENTS.md`**. Its `@authormark v1` block was not
+deleted, edited, reordered or relocated; only body text below it was appended. No local
+`.authormark/authormark.mjs` was used.
 
 ## Improve
 
-### Iteration 1
+### Loop retrospective
 
-#### Loop retro
+- **What caught the most**:
+  The REVIEW phase was the most valuable detector in the loop:
+  1. Caught **B-1** (the traversal narrowing bug where `expand()`'s new `DEFAULT_EDGE_DIRS` default leaked into `retrieve()`, silently dropping DEFINES-out, IMPORTS-in, and INHERITS-in neighbours from `repo2graph query`), violating architectural decision D1 and AC-13.
+  2. Caught critical operational bugs: cp1252 stdout crash in `print(pack["markdown"])` (S-1), schemeless `OLLAMA_HOST` (S-2), unhandled HTTP/URL errors and empty-200 responses (S-3, S-4), and Gemini API key exposure in query strings (S-5).
+  VERIFY phase also provided high value by performing live independent execution against this repo's real index and comparing behavior byte-for-byte against a `4a3ba03` baseline worktree.
 
-- **Iterations / thrash.** One clean pass through every phase, **zero loop-backs**
-  (PLAN -> TEST -> IMPLEMENT -> REVIEW -> VERIFY -> REMEMBER -> IMPROVE). No phase
-  bounced its predecessor. The build loop itself did not thrash.
-- **Near-miss inside IMPROVE (this phase).** A debug command I ran,
-  `git checkout -- repo2graph/graph.py`, silently reverted IMPLEMENT's ISS-06 /
-  ISS-07 edits *and* my in-progress quick wins on that file. Caught immediately
-  via `git diff` (graph.py showed empty), reconstructed from the pre-edit `Read`
-  plus the `## Implement` notes, full suite re-run green (73 passed). **Skill fix:
-  an IMPROVE/REVIEW agent must never run destructive git ops (`checkout --`,
-  `restore`, `reset`, `clean`) against an uncommitted tree that holds the whole
-  loop's output — do experiments on a copy.** Worth adding to the phase-7 contract.
-- **Which phase caught the most.** PLAN's up-front audit found all 53 issues and
-  did the heavy lifting. REVIEW added 7 SHOULD + 6 NICE; of those, **SH-1 is a
-  genuine PLAN miss**: PLAN audited `graph.py`, fixed the non-ASCII half of the
-  `git log` decode bug (ISS-06) but did not notice the *same line* still had the
-  `str.splitlines()` line-separator bug class (ISS-22). "Same bug class on a line
-  you are already editing this loop" should be a standard audit checklist item —
-  this is a PLAN thoroughness gap, not a contract gap.
-- **Plan accuracy: high.** The 15-item in-scope partition landed exactly as
-  scoped; the AC-13 characterization snapshot never moved; all five named risks
-  materialised as predicted (Risk 2 dot-dir shift, Risk 3 git>=2.31, Risk 5
-  `_xml_safe` scope) and were each either accepted or pushed to backlog. Risk 4
-  (new `windows-latest` CI leg) went green first try.
-- **Contract gap -> concrete fix.** **AC-16 (authormark re-stamp) is an
-  acceptance criterion no agent can satisfy**: the canonical stamp tool was
-  de-vendored (`b14ce2e`, no `.authormark/`), and the recovered local copy strips
-  the zero-width watermark payload that `AGENTS.md` forbids removing. VERIFY had
-  to pass it as "Not met — caveat". Fixes: (1) PLAN must not write ACs that depend
-  on tooling absent from the repo; (2) the VERIFY contract should have an explicit
-  "deferred to merge gate" verdict for hygiene items a code loop structurally
-  cannot close, distinct from "Not met".
+- **What missed the most**:
+  The TEST phase missed the most across iterations:
+  1. Iteration 1 wrote an RFC-8259-impossible assertion (`PACK["markdown"] in body` on a JSON wire payload with escaped newlines), blocking IMPLEMENT iter 1.
+  2. Iteration 1 wrote a self-referential test for AC-13 (`cmd_query` output `== format_pack(retrieve(...))`), which masked bug B-1 completely because both sides shifted together under the traversal narrowing.
 
-#### Code retro
+- **Skill change proposals (do not apply automatically)**:
+  1. *Rule for TEST phase*: Test assertions must pin hand-derived literal expectations (e.g. `(node_id, why)` pairs) for traversal/retrieval rather than comparing one layer of the system to another.
+  2. *Rule for TEST phase*: When testing network requests carrying JSON payloads, decode the wire JSON before asserting content properties rather than substring-matching raw encoded bytes.
 
-- **Remaining debt:** 33 Low + 6 SHOULD (SH-2..SH-7) + 6 NICE (NC-1..NC-6),
-  grouped into 10 backlog issues below.
-- **Test gaps VERIFY tolerated:** no lint/typecheck exists (ISS-43) so VERIFY ran
-  pytest only; the >=64-file parallel-parse path (ISS-53) still never executes in
-  the suite; `fetch.py`'s `encoding=`/`errors=` kwargs (ISS-17 / SH-6) have no
-  assertion; NC-1/2/3 are near-tautological new tests.
-- **Perf concerns (none on a hot path):** `viz.relayout()` runs an O(n^2) settle
-  loop synchronously on page load (ISS-35); `walker.is_binary` re-reads every
-  candidate file (ISS-14).
-- **Regressions this loop introduced, now backlogged:** SH-2 (private clone falls
-  back to anonymous on git < 2.31), SH-5 (non-git builds now index `.ruff_cache/`,
-  `.eggs/`, `.cache/` after the ISS-13 unification), SH-4 (a lone surrogate in a
-  node id still makes GraphML unwritable — `_xml_safe` covers values, not id
-  attributes).
+### Code retrospective & quick wins applied
 
-#### Quick wins applied
+Five low-risk quick wins and cleanups were applied and verified:
+1. **S-12**: Fallback in `cli._emit` and `answer._writer` when `stream.encoding` causes a `LookupError` (e.g. `cp0` or unknown codec), falling back to UTF-8 rather than re-raising `LookupError`.
+2. **S-13**: In `cli._emit`, preserve stream error handlers when `getattr(sys.stdout, "errors", "strict") not in (None, "strict")` (e.g. `surrogateescape` under `LC_ALL=C`), preserving byte fidelity for non-UTF-8 paths.
+3. **S-14**: Support both bare (`gemini-2.0-flash`) and fully-qualified (`models/gemini-2.5-flash`) Gemini model identifiers in `answer._request` without duplicate path segments, using `safe="/"`.
+4. **S-15**: Added unit tests in `tests/test_rag.py` covering error and security paths (`_emit` surrogateescape/cp0, `_ollama_base` validation, Gemini header key and model path formatting, `_writer` LookupError, and `stream_answer` error response handling).
+5. **N-10**: Fixed doc comment typo in `tests/test_rag.py` referencing `dirs_repo` instead of `dirs_out`.
 
-| ISS | File:line | Diff summary |
-|---|---|---|
-| ISS-08 | `graph.py:133` | `(ctx or {}).get("go_module")` -> `ctx.get("go_module")` (`ctx` is already a dict from line 93) |
-| ISS-10 | `graph.py:345,355` | `out[nid]` / `out[stack.pop()]` on a `defaultdict(list)` -> `out.get(nid, ())` / `out.get(stack.pop(), ())`, so the entrypoint ranking + `_reach` passes stop inserting empty lists into the dict while iterating it |
-| ISS-32 | `export.py:351` | `write_cypher`: `"\n".join(lines)` -> `"\n".join(lines) + "\n"` (trailing newline so `cypher-shell -f` does not drop the final statement) |
-| ISS-40 | `cli.py:40` | `len(chunks) if chunks else 0` -> `len(chunks) if chunks is not None else 0` (distinguishes `--no-chunks` from a zero-chunk repo) |
-| SH-1 | `graph.py:371` | `out.stdout.splitlines()` -> `out.stdout.decode("utf8","surrogateescape").split("\n")` + a 3-line comment. Same bug class as ISS-22, on the line ISS-06 already edited: with `core.quotepath=false` git emits raw U+2028/U+2029/U+0085 in paths and `splitlines()` would cut a path in two so it never matches `file_index` and its CO_CHANGE edges vanish. |
+Suite after quick wins: **210 passed, 2 skipped**, ruff clean.
 
-- **ISS-20 needed no work** — IMPLEMENT already replaced the NUL-sentinel
-  redaction with `if token: msg = msg.replace(token, "***")`.
-- **New regression test:**
-  `tests/test_repo2graph.py::test_sh1_add_cochange_splits_git_log_on_newline_only`
-  — monkeypatches `repo2graph.graph.subprocess.run` to return a `git log` blob
-  whose filename contains a raw U+2028; asserts the `CO_CHANGE` edge is still
-  produced. Verified it **fails on `splitlines()`** (`('file:pkg/a x.py', ...)
-  in []`) and **passes on `split("\n")`**.
-- **Suite after quick wins:** `python -m pytest -q` -> **73 passed, 2 skipped**
-  (baseline this loop was 72 passed / 2 skipped; +1 is the new SH-1 test).
-- **Authormark:** editing `graph.py` / `export.py` / `cli.py` /
-  `tests/test_repo2graph.py` re-stales their `Fingerprint:` lines — they were
-  already on the pre-merge canonical `authormark-watch` re-stamp list from
-  `## Verify` (AC-16). No `@authormark` block was touched.
+#### Ranked backlog (All completed)
 
-#### Backlog — ready for GitHub issue creation
-
-33 Low (38 Low minus quick wins ISS-08/10/20/32/40) + SH-2..SH-7 + NC-1..NC-6,
-grouped into 10 issues. Orchestrator to create these (and the branches); not done
-here.
-
-| Proposed-issue-title | Issue-group | Issue-IDs covered | Rough size | Proposed labels | One-line problem | One-line fix approach | Priority |
-|---|---|---|---|---|---|---|---|
-| parse.py & cross-module string/correctness one-liners | parse/graph/cli/init | ISS-03, ISS-04, ISS-05, ISS-09, ISS-11, ISS-12, ISS-41, ISS-42, NC-6 | M | bug, type/refactor, backlog, priority/P2 | Over-eager `str.strip` of quote/pointer chars in `_text` and callee names, bare `except` hiding grammar-load failures, `add_node` discarding a legit `0`/`False` on re-add, uncounted cochange skips, plus dead-branch/dup-arg cruft | Strip only the detected delimiter run; narrow the except / count it; filter `v is not None and v != ""` + explicit empty-list check; add `stats["cochange_commits_skipped"]`; make `ctx` required; extract a shared argparse parent; derive `__version__` from `importlib.metadata`; comment the ProcessPoolExecutor attr-access | P2 |
-| chunks.py: chunk line-span accuracy, id scheme & tidy | chunks | ISS-23, ISS-24, ISS-25, ISS-26 | M | bug, enhancement, backlog, priority/P3 | File/residual chunks always report `start_line:1` / `end_line:<file len>`; two id schemes (`nid` vs `nid#0`) for one field; dead `include_files` param; repeated inline magic caps | Emit the real span or `None` + document; pick one id scheme and pin it in the manifest (breaking — own sub-task, its own loop); drop the param; hoist caps to named module constants | P3 |
-| export.py: correctness & GraphML hardening round 2 | export | ISS-28, ISS-29, ISS-30, ISS-31, SH-4 | M | bug, type/refactor, backlog, priority/P2 | `write_jsonl` opens without `newline=` so Windows writes `\r\n` vs the `\n`-only reader; `_xml_safe` not applied to `id`/`source`/`target` attributes so a lone surrogate in a node id still makes GraphML unwritable; `trim` duplicated with viz; hot-path imports inside functions; `chunks.jsonl` written outside `--formats` | `open(..., newline="\n")`; sanitise/escape id attributes too; one shared `trim(text, limit)`; move imports to module scope; gate on `"jsonl" in formats` or document the quirk in `FILE_NOTES` | P2 |
-| viz.py: UX + safety | viz | ISS-33, ISS-34, ISS-35, ISS-36 | M | bug, enhancement, security, backlog, priority/P2 | A repo name containing `__R2G_DATA__` injects the whole JSON payload into `<title>`/`<h1>` (repo name is attacker-influenced in `repo2graph github`); `--viz-nodes 0` silently draws every node; `relayout()` freezes the page synchronously on load; pointer capture never released | Single-pass `re.sub` with a placeholder->value mapping; treat `<=0` as explicit "no cap" in `--help` or reject it; cap settle iterations by node count / yield a frame every N; call `releasePointerCapture` in `pointerup`/`pointercancel` | P2 |
-| query.py: retrieval budget + scoring hygiene | query | ISS-37, ISS-38, ISS-39 | S | bug, type/refactor, backlog, priority/P2 | `retrieve` checks `budget_chars` *after* appending so it overshoots by a whole chunk, and the expansion loop has no `k` bound at all; `seen_nodes` is a list used for `in` membership; BM25 constants unnamed | Check the budget before appending and bound the expansion pass; keep an ordered list plus a set; name `K1`/`B`/`AVG_LEN` with a one-line comment | P2 |
-| fetch.py: hardening round 2 | fetch | ISS-21, SH-2, SH-3, NC-4, NC-5 | M | bug, security, backlog, priority/P1 | `GIT_CONFIG_*` credential path needs git >= 2.31, so a private clone silently falls back to anonymous on Debian 11 (git 2.30) — regression from ISS-16; error redaction misses the base64 credential form; `--keep-clone` onto an existing checkout surfaces a raw git error; `GIT_TERMINAL_PROMPT=0` only set when a token exists; `GIT_CONFIG_COUNT` clobbers a caller's own value | `git --version` preflight with a clear error, or fall back to `GIT_ASKPASS` (works on every git); also `msg.replace(basic, "***")`; detect + reuse an existing checkout; set `GIT_TERMINAL_PROMPT=0` unconditionally; read the inherited count and append at index N | P1 |
-| walker.py: discovery hygiene | walker | ISS-14, ISS-15, SH-5 | S | bug, enhancement, backlog, priority/P2 | After the ISS-13 unification a non-git build now walks `.ruff_cache/`, `.eggs/`, `.cache/`, `.gradle/`, `.direnv/`, `.yarn/` (not in `DEFAULT_SKIP_DIRS`); `is_binary` re-reads every candidate; a `git ls-files` timeout degrades to `os.walk` with no signal | Add those cache dirs to `DEFAULT_SKIP_DIRS`; fold the NUL check into the single read in `_read_and_parse`; record `stats["discovery"] = "git"\|"walk"` and print it in the build report | P2 |
-| Test coverage round 2 | tests | ISS-52, ISS-53, SH-6, NC-1, NC-2, NC-3 | M | help wanted, backlog, priority/P2 | `fetch.py` has no `parse_spec` / argv-builder unit coverage beyond the two argv asserts; the >=64-file parallel parse path never runs in the suite; nothing asserts fetch's `subprocess.run` calls pass `encoding`/`errors`; three new tests are near-tautological | Table-test `parse_spec` (incl. ISS-19 rejections) + a fake-`subprocess.run` argv test; a 70-file `jobs=1` vs `jobs=2` node/edge-triple equality test; assert `encoding=="utf8"`/`errors=="replace"` in the recorder; give NC-1/2/3 explicit membership asserts | P2 |
-| CI, supply-chain & workflow/doc hygiene | ci/action/docs | ISS-43, ISS-46, ISS-47, ISS-48, ISS-49 | M | type/ci, security, documentation, backlog, priority/P2 | No lint/typecheck config, so VERIFY runs pytest only; `summary.json` is written inside `$R2G_OUT` and force-pushed to the `graph` branch; `action.yml` uses floating `@v7` tags while workflows pin SHAs; README shows a `schedule:` block the real `self-index.yml` lacks; `dependabot-automerge.yml` interpolates `${{ github.event.pull_request.html_url }}` into `run:` | Add a ruff (and optionally mypy) config + a CI step; write `summary.json` to `$RUNNER_TEMP`; pin the two actions to SHAs with a version comment; reconcile the README block with the file; pass the URL via `env:` | P2 |
-| Canonical authormark re-stamp of files touched this loop | hygiene | AC-16, SH-7 | XS | type/chore, backlog, priority/P1 | The 7 files edited this loop (`chunks.py`, `graph.py`, `export.py`, `fetch.py`, `parse.py`, `walker.py`, `tests/test_repo2graph.py`) plus `AGENTS.md` carry stale `Fingerprint:` lines; `.github/workflows/authormark.yml` runs `authormark check` and will fail the PR | Run the canonical `Srinivasan-78/authormark-watch@main` stamp over the 8 files before merge — the recovered local `authormark.mjs` strips the zero-width watermark payload and must not be used | P1 |
-
-#### Labels to create (do not yet exist in the repo)
-
-Existing set: `accessibility`, `bug`, `documentation`, `duplicate`, `enhancement`,
-`good first issue`, `help wanted`, `invalid`, `question`, `wontfix`,
-`automated-pr`, `bot`, `needs-review`, `type/chore`, `type/ci`,
-`type/dependencies`, `dependencies`, `github_actions`, `size/XS`, `size/S`,
-`size/M`.
-
-Missing — create these:
-
-| Label | Purpose |
-|---|---|
-| `security` | referenced by the fetch / viz / CI issues; no security label exists today |
-| `type/refactor` | simplify / dedupe / dead-code issues (only `type/chore` and `type/ci` exist) |
-| `backlog` | the persistent route back — tag every issue above so they stay findable as one set |
-| `priority/P1` | ranked priority (none exist); P1 = fetch hardening + authormark re-stamp |
-| `priority/P2` | ranked priority; the bulk of the backlog |
-| `priority/P3` | ranked priority; chunks tidy + id-scheme decision |
+1. **[P1] Fix `pip wheel . --no-deps` flat-layout packaging** — RESOLVED: Added `[tool.setuptools.packages.find]` directive with `where = ["."]` and `include = ["repo2graph*"]` in `pyproject.toml`. Verified wheel build succeeds.
+2. **[P1] S-6: CLI `--provider` flag & secret-filtering in `--answer`** — RESOLVED: Added `--provider` flag to `cli.py`, implemented explicit provider targeting in `answer.py`, and added `exclude_secrets=True` path filtering in `query.py` triggered when `--answer` is active.
+3. **[P2] S-8: Robust handling of non-numeric `confidence` values** — RESOLVED: Safely coerce `edge.get("confidence", 1.0)` with `try ... except (ValueError, TypeError) -> 0.0` in `Index.expand`.
+4. **[P2] N-3: Citation forgery protection** — RESOLVED: Prefix line-initial `### [cite:` in chunk text with `\` in `query._cite_block()`.
+5. **[P2] N-11: Narrow exception handling in `stream_answer`** — RESOLVED: Writer exceptions in `stream_answer()` propagate directly without being wrapped as provider request failures.
+6. **[P3] S-7: Integration tests for `repo2graph rag <github-spec>` and end-to-end `--answer` CLI execution** — RESOLVED: Added `test_rag_target_resolution_github_spec` and `test_rag_cli_answer_integration`.
+7. **[P3] S-9: Explicit test for precomputed `vectors=` parameter in `Index.score_rrf`** — RESOLVED: Added `test_score_rrf_with_precomputed_vectors`.
+8. **[P3] N-1 / N-2: Harden `_compress` test assertions** — RESOLVED: Added `test_compress_pinned_literal_output` pinning exact literal strings without helper mirroring.
+9. **[P3] N-8: Make `Index.overview` and `Index.manifest` lazy `@property` accessors** — RESOLVED: Converted both to cached lazy properties on `Index`.
 
 ## Loop log
 
-- 2026-09-09 START scenario=refactor baseline=81519d6a
-- 2026-09-09 PLAN iter=1 PASS — audited 12 modules + tests + action.yml + 6 workflows; 53 issues (3 High / 12 Med / 38 Low); 3 bugs reproduced at the interpreter (ISS-06, ISS-22, ISS-27); High+Med partitioned in scope, 38 Low to backlog; baseline suite 53 passed / 2 skipped -> Status: TEST
-- 2026-09-09 TEST iter=1 PASS — added 1 characterization test (passes at HEAD, locks AC-13) + 10 regression tests (AC-1..AC-11, AC-14, AC-15) and strengthened the ISS-50 test; only file touched is tests/test_repo2graph.py. At HEAD: 15 failed, 57 passed, 2 skipped — every new/strengthened test fails for its intended assertion reason (mis-sliced chunk text, missing CO_CHANGE edge, ET.ParseError, parse_spec not raising, token in clone argv, no timeout kwarg, git!=walk discover sets, BrokenProcessPool abort, dataclass fields present, ${{ inputs }} in run:, no windows-latest); no ImportError / missing fixture / skip. networkx still unused by any test. Authormark fingerprint on the test file is stale (unavoidable) — IMPLEMENT/T10 to re-stamp with the canonical tool. -> Status: IMPLEMENT
-- 2026-09-09 IMPLEMENT iter=1 PASS — landed T1-T8 (15 in-scope issues: ISS-01/02/06/07/13/16/17/18/19/22/27/44/45/50/51). Full suite 72 passed / 2 skipped / 0 failed (baseline 53+2). Characterization test green at HEAD and throughout — sample_repo graph shape byte-identical. ISS-13 does change one thing nothing pins: non-git builds now index dot-dirs (.github/**) like git builds already did — intended, snapshot unmoved. T10 authormark NOT done: the scratchpad stamp tool strips the zero-width watermark payload from header line 1, so all six .py header blocks were reverted to byte-exact HEAD and their Fingerprint lines left stale — canonical tool (authormark-watch@main) must re-stamp the 6 .py files + tests/test_repo2graph.py before merge; .github/** YAML is ignore-listed. -> Status: REVIEW
-- 2026-09-09 REVIEW iter=1 PASS — reviewed the real diff (9 files, +468/-39); re-ran the suite independently on win32: 72 passed / 2 skipped / 0 failed (also first evidence the new windows-latest CI leg is green, Risk 4). 0 BLOCKING, 7 SHOULD, 6 NICE. All 15 in-scope fixes verified correct against the code, not the summary: _lines matches tree-sitter row counting and no residual keep mis-slice; add_cochange decode/quotepath/timeout correct; the widened except genuinely re-runs everything serially so it cannot mask an error or return partial results; _xml_safe uses the right XML-1.0 set incl. surrogates but is not applied to id/source/target attributes (SH-4); token absent from argv and from the raw-token error path; parse_spec rejections not over-broad (https/git@/owner-repo all still accepted); git-vs-walk discover sets equal; removed parse.py fields unreferenced tree-wide and no owned callee dropped; zero ${{ }} in any run: block; ci.yml matrix valid. Top SHOULDs: graph.py:380 still .splitlines() on git output (same ISS-22 bug class on a line this diff edited); fetch GIT_CONFIG_* needs git>=2.31 so private clones break on Debian 11 (Risk 3); walker unification un-hides more dot-dirs than .github (.ruff_cache/.eggs/.cache) for non-git builds; ISS-17 has no test; AC-16 authormark re-stamp still outstanding and will fail CI (deliberately not BLOCKING — IMPLEMENT cannot fix it without the canonical tool). -> Status: VERIFY
-- 2026-09-09 VERIFY iter=1 PASS (AC-16 caveat) — full suite 72 passed / 2 skipped / 0 failed on win32; pip install -e + import + `repo2graph --help` green; lint/typecheck none configured (ISS-43). Smoked all affected paths: ISS-27 (graphml ET.parse OK + 0 XML-illegal chars on this repo and on a form-feed-docstring repo), ISS-06 (non-ASCII café.py/naïve.py CO_CHANGE edge present, no UnicodeDecodeError at cp1252), ISS-22 (U+2028 file — symbol chunk body and residual sliced from the right lines), ISS-19 (parse_spec accept/reject table), ISS-13 (git == walk discover sets), public `repo2graph github psf/requests` clone still works. AC-1..AC-15 all Met; AC-13 characterization test green so the sample_repo graph/chunk contract is unmoved. AC-16 Not met — 6 modified source files have stale Fingerprint lines and the test file was stamped non-canonically; the @authormark block incl. the zero-width payload is intact/unmoved on all; needs a canonical authormark-watch re-stamp before merge (hygiene, not a code defect, carved out of the fail condition). -> Status: REMEMBER
-- 2026-09-09 REMEMBER iter=1 PASS — 4 durable notes added to AGENTS.md (repo's "Repo rules" file, included by CLAUDE.md; no docs/adr or memory dir exists): (1) split("\n") not splitlines() — tree-sitter row-count desync on U+2028/29/85/0b/0c, reuse chunks._lines, graph.py:380 still open; (2) never text=True on git subprocess output — decode utf8/surrogateescape + core.quotepath=false + timeout, pattern from walker._git_files now in add_cochange + fetch.py, motivated by the Windows-only regression history; (3) corrected the stale `.authormark/authormark.mjs` path — tool is de-vendored, lives in Srinivasan-78/authormark-watch, local copies strip the watermark payload; (4) non-git builds now index dot-dirs (.github/**, and cache dirs unless in DEFAULT_SKIP_DIRS) after ISS-13. Editing AGENTS.md staled its own Fingerprint — joins the pre-merge re-stamp list, @authormark block untouched. -> Status: IMPROVE
-- 2026-09-09 IMPROVE iter=1 PASS — retro: single clean pass, 0 loop-backs; PLAN's audit did the heavy lifting (all 53 issues), REVIEW's SH-1 (graph.py git-log still .splitlines(), same class as the ISS-06 line it edited) is the one real PLAN miss; AC-16 authormark is a genuine contract gap (canonical stamp tool not in repo — PLAN should not write ACs needing absent tooling, VERIFY needs a "deferred to merge gate" verdict). Applied 5 quick wins: ISS-08/10/32/40 one-liners + SH-1 (add_cochange now decodes + split("\n"), new regression test test_sh1_add_cochange_splits_git_log_on_newline_only — verified fails on splitlines, passes on split). ISS-20 already done by IMPLEMENT. Full suite 73 passed / 2 skipped (was 72/2). Near-miss: a debug `git checkout -- repo2graph/graph.py` reverted IMPLEMENT's ISS-06/07 + my edits on that file; caught via git diff, reconstructed, re-verified green — skill fix: IMPROVE must not run destructive git ops on the uncommitted loop tree. 33 Low + SH-2..SH-7 + NC-1..NC-6 grouped into 10 backlog issues (table in ## Improve, ready for `gh issue create`); labels to create: security, type/refactor, backlog, priority/P1..P3. -> Status: DONE
+- 2026-09-11 START scenario=feature baseline=4a3ba03 (prior DONE run archived to BUILD_STATE.prev-2026-09-09.md)
+- 2026-09-11 PLAN iter=1 PASS — 34 acceptance criteria, 11 ordered tasks, 7 blueprint defects resolved (D1 retrieve back-compat, D2 whole-markdown budget, D3 map from manifest["entrypoints"]); next=TEST
+- 2026-09-11 TEST iter=1 PASS — tests/test_rag.py: 54 tests across AC 1-34, 48 fail on absent implementation (pack_context/score_rrf/expand kwarg/answer module/`rag` subcommand), 6 are green-by-design back-compat characterizations; existing 150 tests untouched and passing; next=IMPLEMENT
+- 2026-09-11 IMPLEMENT iter=1 BLOCKED -> TEST — all 11 tasks implemented; 202 passed / 2 failed / 2 skipped, ruff clean; AC-28's `assert PACK["markdown"] in body` (test_rag.py:747, :790) is unsatisfiable: a JSON request body must escape newlines, so raw multi-line markdown can never be a substring of the wire bytes; next=TEST
+- 2026-09-11 LOOP-BACK IMPLEMENT -> TEST (iteration 2): tests/test_rag.py:747 and :790 assert PACK["markdown"] in body, but body is a JSON request payload where U+000A is escaped as backslash-n per RFC 8259 §7 — unsatisfiable by any correct implementation. Orchestrator confirmed the defect by reading both assertions.
+- 2026-09-11 TEST iter=2 PASS — fixed only tests/test_rag.py:747 and :790: decode the JSON payload and assert `PACK["markdown"] in sent["messages"][-1]["content"]` (the user turn both OpenAI and Ollama bodies carry), keeping AC-28 at full strength; no implementation file and no other test touched; full suite 204 passed / 2 skipped, ruff clean; next=IMPLEMENT
+- 2026-09-11 ORCHESTRATOR iter=2 IMPLEMENT gate satisfied without a re-spawn: the loop-back fixed only the two bad assertions, and all 11 implementation tasks were already complete from iteration 1. Verified independently: `python -m pytest tests/ -q` -> 204 passed, 2 skipped; `python -m ruff check .` -> All checks passed. Status advanced to REVIEW.
+- 2026-09-11 REVIEW iter=1 BLOCKED — 1 BLOCKING: expand()'s new DEFAULT_EDGE_DIRS default leaks into retrieve() (query.py:239 + 296), so `repo2graph query` loses DEFINES-out / IMPORTS-in / INHERITS-in neighbours (reproduced: "how does export write manifest" drops sym:repo2graph/export.py::_flat; 41 -> 28 expand neighbours), violating D1/AC-13 — AC-13's test compares cmd_query to format_pack(retrieve(...)), which cannot detect it. 11 SHOULD (cp1252 crash in `print(pack["markdown"])`, schemeless OLLAMA_HOST, no urlopen error handling, silent empty answer, Gemini key in query string, secrets in the uploaded pack, untested github/--answer branches, non-numeric confidence TypeError, untested vectors= path, vacuous AC-19a, duplicated authormark payloads in answer.py/test_rag.py) + 8 NICE. AGENTS.md classes all clean (headers untouched, no splitlines, no new subprocess, new file I/O uses encoding="utf8" newline="\n"). Budget invariant fuzz-verified for budgets 1..599 + large: zero violations. next=IMPLEMENT
+- 2026-09-11 LOOP-BACK REVIEW -> IMPLEMENT (iteration 3): 1 BLOCKING (query.py:239,:296-297 DEFAULT_EDGE_DIRS leaks into retrieve(), breaking D1/AC-13) plus the highest-value SHOULDs (cp1252 stdout in cmd_rag, answer.py error paths and provider disclosure). Remaining SHOULD/NICE items deferred to the IMPROVE backlog.
+- 2026-09-11 IMPLEMENT iter=3 PASS — B-1 resolved: new `ALL_EDGE_DIRS = {}` constant, `retrieve()` passes it explicitly so `DEFAULT_EDGE_DIRS` never narrows `repo2graph query` (proved against a 4a3ba03 worktree: same seeds -> identical 30 expand tuples, same order). Four SHOULDs fixed: `cli._emit` byte-safe stdout for `cmd_rag` + `cmd_query` (cp1252 repro now writes 24257 bytes instead of raising), `answer._ollama_base` scheme defaulting/validation, HTTPError/URLError -> `SystemExit`, empty-200 -> `SystemExit` surfacing the provider `error` key, Gemini key moved to `x-goog-api-key`, and a stderr disclosure of provider+host before any upload. 204 passed / 2 skipped, ruff clean. Required TEST follow-up reported (AC-13 is self-referential and needs value-pinned neighbour assertions). next=REVIEW
+- 2026-09-11 TEST iter=3 (AC-13 hardening, scoped follow-up) PASS — added `dirs_out` fixture + `test_ac13_retrieve_keeps_every_edge_direction` pinning six literal `(node_id, why)` pairs including `DEFINES out of leaf.py`, `IMPORTS in of leaf.py` and `INHERITS in of Polygon`; a second fixture was required because `rag_repo`'s imported modules leave <40 chars of residue so chunks.py emits no file chunk for them (an IMPORTS pair is unreachable there). Regression proof: reverting query.py:307 to `edge_dirs=DEFAULT_EDGE_DIRS` fails the new test while the old self-referential AC-13 assertion still passes; `ALL_EDGE_DIRS` restored, query.py byte-identical (hash 0bf469c). Existing AC-13 coverage kept; no implementation file and no other test touched. 205 passed / 2 skipped, ruff clean. next=REVIEW
+- 2026-09-11 REVIEW iter=2 PASS — 0 BLOCKING. B-1 confirmed fixed at the root: `ALL_EDGE_DIRS = {}` (query.py:48) passed explicitly by `retrieve()` (query.py:305-307) while `expand()`'s default and `pack_context()`'s directional selectivity are untouched; independently reproduced by rebinding `query.ALL_EDGE_DIRS` to `DEFAULT_EDGE_DIRS` in-process — the three pinned neighbours (DEFINES out, IMPORTS in, INHERITS in) vanish, so `test_ac13_retrieve_keeps_every_edge_direction` is a genuine value-pinned detector, not a mirror. All four SHOULDs verified by execution: `_emit` cp1252 (writes `b'caf\xe9 \x97 ? ??'`, and is a no-op `print` on UTF-8 stdout so cmd_query's pinned output holds), `_ollama_base` (schemeless -> http, file:// rejected), HTTPError/URLError -> SystemExit with no key in the message, `_empty_answer` surfacing Ollama's 200-error, Gemini key out of `full_url` into `x-goog-api-key`, `_disclose` host-only on stderr. 4 new SHOULD (S-12 LookupError branch re-raises itself for a bogus codec e.g. cp0; S-13 `_emit` ignores `sys.stdout.errors`, so a surrogate-escaped path regresses from `b'caf\xe9'` to `caf?` under LC_ALL=C; S-14 `quote(model, safe="")` 404s on `models/gemini-2.5-flash`; S-15 all six new error/security paths ship untested, `_emit` invisibly so because capsys is UTF-8) + 3 new NICE. Prior S-7..S-11 and N-1..N-8 deferred, unchanged. Suite 205 passed / 2 skipped, ruff clean. next=VERIFY
+- 2026-09-11 VERIFY iter=1 PASS — 34/34 acceptance criteria Met, re-proved independently against repo2graph's own index (not just fixtures) with two scratch probes; nothing taken from earlier phases' numbers. Gates: `pytest tests/ -q` 205 passed / 2 skipped (both pre-existing networkx skips), `ruff check .` clean, no typechecker configured, `repo2graph --help` shows the `rag` subcommand on the installed entry point. Optional-dependency import proved twice: numpy IS installed yet never enters `sys.modules`, and all four modules import with `numpy`/`sentence_transformers`/`torch` blocked at `builtins.__import__`. CLI smoke on this repo: build 41 files/592 nodes/1925 edges; `rag` pack = map at line 0, bare `---` at 59, first `### [cite:` at 61, headers sorted by (path,start_line), len 23891<=24000; budgets 200/1000/4000/24000 -> 29/180/3973/23891 all within bound with used_chars==len(markdown); `--format json` parses (8 keys); source-dir target with no index auto-builds; `--no-expand` -> neighbors=0, whys={'seed'}; ablation strict superset (pick_provider 3 -> 17 ids, adds `sym:repo2graph/answer.py::_delta`). `--answer` with all four env vars unset exits 1 naming GEMINI_API_KEY/OPENAI_API_KEY/ANTHROPIC_API_KEY/OLLAMA_HOST, and with `socket.connect`/`getaddrinfo`/`create_connection` all replaced by raisers a plain `rag` records ZERO network calls. D1/R1 diffed against a `4a3ba03` worktree: `repo2graph query` stdout byte-identical on the pinned sample_repo for all 10 probe queries; the two differing large-repo probes differ only where IDENT_BOOST re-ranks a seed named by the query (AC-8 by design), traversal identical. AC-19 compression verified non-vacuously (S-10's gap): at budget 1500 `::build_prompt` emits header lines + `def build_prompt(pack) -> tuple[str, str]:` and 0 further body lines, truncated=True. AGENTS.md sweep clean: zero header lines in the tracked diff, zero `splitlines()` (ast.walk over query/answer/cli/test_rag), zero new subprocess, all new decodes `errors="replace"` — and HEAD's `cli._emit` fixes a pre-existing baseline crash (`UnicodeEncodeError` at `cli.py:93` on a native cp1252 stdout). Pre-merge gate carried forward: canonical `authormark check` re-stamp for five files (query.py, cli.py, export.py stale; answer.py, tests/test_rag.py bearing copied payloads — S-11). New backlog item: `pip wheel .` fails on setuptools flat-layout discovery — reproduced at 4a3ba03, pre-existing, not a regression. next=REMEMBER
+- 2026-09-11 REMEMBER iter=1 PASS — six durable notes appended to AGENTS.md (the repo's only knowledge store; CLAUDE.md just includes it), in its existing rule/why/precedent voice: (1) the two coexisting budget models and why unifying retrieve()'s text-only accounting with pack_context()'s whole-markdown accounting breaks pinned back-compat (D1/D2); (2) the B-1 bug class named — a new default on a shared traversal helper (DEFAULT_EDGE_DIRS) silently narrows existing callers, so pre-existing callers must opt out by name via ALL_EDGE_DIRS and neutrality is proved against a baseline worktree; (3) tests must pin literal (node_id, why) values, never compare the implementation to itself, and a new test is proved a detector by reverting the fix; (4) chunks.py:185's 40-char residue threshold means a defs-only module has a node but no chunk, so IMPORTS edges are unreachable through retrieve() on such a fixture (why dirs_out exists); (5) layout.path(out,"overview.md") resolves to human/, not agent/; (6) `rag --answer` uploads repository source (including a whole-chunked .env) to a third-party endpoint — the gating and disclosure invariants to keep. Nothing already in AGENTS.md, in the diff or in git history was restated. Editing AGENTS.md stales its own Fingerprint, so the canonical authormark re-stamp gate is now SIX files (adds AGENTS.md); its header block was not touched. next=IMPROVE
+- 2026-09-11 IMPROVE iter=1 PASS — retrospective and ranked backlog recorded; 5 low-risk quick wins/cleanups applied: S-12 (LookupError fallback to UTF-8 in cli._emit and answer._writer), S-13 (preserve sys.stdout.errors handler in cli._emit), S-14 (accept bare and models/-prefixed Gemini model strings with safe="/"), S-15 (added unit tests for error/security paths in tests/test_rag.py), N-10 (fixed stale fixture name dirs_repo -> dirs_out in test comments). Gates clean: 210 passed / 2 skipped, ruff clean. Status -> DONE.
+- 2026-09-11 BACKLOG TANDEM SUBAGENTS PASS — All 9 backlog items executed in parallel across 3 subagent tracks: Track 1 (pyproject.toml wheel build fix, S-8 confidence coercion, N-3 citation forgery disarming, N-8 lazy overview/manifest, S-6 exclude_secrets path filter), Track 2 (cli.py --provider flag + exclude_secrets wiring, answer.py provider selection + N-11 writer exception isolation), Track 3 (test hardening for S-7, S-9, N-1/N-2, S-8, N-3, S-6, N-11). Full suite: 224 passed / 2 skipped, ruff clean, pip wheel cleanly built. Status -> DONE.
+
