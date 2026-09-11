@@ -1,0 +1,7 @@
+# Normalise line endings: the fingerprint canonicaliser and vendor-parity check
+# both assume LF in the repo regardless of the checkout platform.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
