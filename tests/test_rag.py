@@ -307,7 +307,8 @@ def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
 
 def test_ac2_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
     """AC-2: Index.overview mirrors agent/overview.md; missing file -> ""."""
-    on_disk = artifact_path(rag_out, "overview.md").read_text(encoding="utf8", newline="\n")
+    with open(artifact_path(rag_out, "overview.md"), encoding="utf8", newline="\n") as fh:
+        on_disk = fh.read()
     assert Index(rag_out).overview.strip() == on_disk.strip()
     assert not artifact_path(bare_out, "overview.md").exists()
     assert Index(bare_out).overview == ""
@@ -1285,7 +1286,8 @@ def test_ac33_new_files_keep_the_authormark_header(rel):
     """AC-33: lines 1-5 are the authormark block (never delete or hand-edit it)."""
     target = REPO_ROOT / rel
     assert target.exists(), f"{rel} does not exist"
-    head = target.read_text(encoding="utf8", newline="\n").split("\n")[:5]
+    with open(target, encoding="utf8", newline="\n") as fh:
+        head = fh.read().split("\n")[:5]
     assert "@authormark v1" in head[0], head[0]
     assert head[1].lstrip("# ").startswith("Copyright (c)"), head[1]
     assert head[2].lstrip("# ").startswith("Author:"), head[2]
@@ -1298,7 +1300,8 @@ def test_ac34_no_splitlines_in_new_code(rel):
     """AC-34: splitlines() desyncs rows from tree-sitter (AGENTS.md)."""
     target = REPO_ROOT / rel
     assert target.exists(), f"{rel} does not exist"
-    text = target.read_text(encoding="utf8", newline="\n")
+    with open(target, encoding="utf8", newline="\n") as fh:
+        text = fh.read()
     # ast, not a grep: the AGENTS.md rule itself is quoted in docstrings and
     # comments, and only a real attribute call is a violation.
     tree = ast.parse(text, filename=str(target))
