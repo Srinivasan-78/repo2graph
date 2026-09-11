@@ -1,0 +1,45 @@
+# Repo map: repo2graph
+
+files: 43  nodes: 666  edges: 2441
+languages: python=15, yml=12, md=7, json=2, toml=2, txt=1
+
+## Most depended-on files
+- repo2graph/export.py (in=6)
+- repo2graph/parse.py (in=6)
+- repo2graph/chunks.py (in=4)
+- repo2graph/graph.py (in=4)
+- repo2graph/query.py (in=4)
+- repo2graph/viz.py (in=4)
+- repo2graph/__init__.py (in=3)
+- repo2graph/fetch.py (in=3)
+- repo2graph/answer.py (in=2)
+- repo2graph/cli.py (in=2)
+- repo2graph/layout.py (in=2)
+- repo2graph/walker.py (in=1)
+
+## Most called symbols
+- repo2graph/cli.py::main (function, in=52)
+- repo2graph/query.py::Index (class, in=19)
+- repo2graph/graph.py::build (function, in=16)
+- tests/test_rag.py::test_ac30_cp1252_stdout_never_raises_unicodeencodeerror.FakeStdout.write (function, in=14)
+- tests/test_rag.py::test_emit_surrogateescape_and_lookup_error.MockStream.write (function, in=14)
+- tests/test_rag.py::test_writer_lookup_error_fallback.MockStream.write (function, in=14)
+- tests/test_rag.py::test_stream_answer_propagates_writer_broken_pipe.BrokenPipeStream.write (function, in=14)
+- repo2graph/query.py::Index.pack_context (function, in=13)
+- repo2graph/answer.py::_writer.write (function, in=12)
+- tests/test_rag.py::test_ac11_score_rrf_with_a_stub_embedder.StubEmbedder.encode (function, in=11)
+- repo2graph/export.py::atomic_write (function, in=10)
+- repo2graph/parse.py::parse_source (function, in=10)
+- repo2graph/chunks.py::build_chunks (function, in=9)
+- repo2graph/query.py::Index.expand (function, in=9)
+- tests/test_repo2graph.py::_action_text (function, in=9)
+- repo2graph/fetch.py::clone (function, in=8)
+- repo2graph/parse.py::discover (function, in=8)
+- repo2graph/fetch.py::parse_spec (function, in=7)
+- repo2graph/graph.py::Graph (class, in=7)
+- repo2graph/query.py::Index.score (function, in=7)
+- tests/test_rag.py::FakeResponse.read (function, in=7)
+- repo2graph/answer.py::stream_answer (function, in=6)
+- repo2graph/graph.py::resolve_import (function, in=6)
+- repo2graph/query.py::Index.retrieve (function, in=6)
+- tests/test_repo2graph.py::edges_of (function, in=6)

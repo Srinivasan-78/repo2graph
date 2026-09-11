@@ -1,0 +1,17 @@
+{
+  "discovery": "git",
+  "files": 43,
+  "edge:CONTAINS": 49,
+  "parsed": 15,
+  "parse_errors": 0,
+  "edge:IMPORTS": 127,
+  "symbol:class": 19,
+  "edge:DEFINES": 406,
+  "symbol:function": 390,
+  "edge:CALLS_EXTERNAL": 1139,
+  "edge:CALLS": 557,
+  "edge:CO_CHANGE": 163,
+  "entrypoints": 232,
+  "nodes": 666,
+  "edges": 2441
+}
