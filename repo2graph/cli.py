@@ -28,6 +28,11 @@ def parse_formats(spec: str) -> set[str]:
     return wanted
 
 
+# Error handlers that cannot raise: each one maps an unencodable character to
+# a substitute instead. "surrogateescape"/"surrogatepass" are absent on purpose.
+_SAFE_ERRORS = frozenset({"replace", "backslashreplace", "xmlcharrefreplace", "namereplace"})
+
+
 def _emit(text: str) -> None:
     """print() that cannot raise UnicodeEncodeError.
 
@@ -35,13 +40,21 @@ def _emit(text: str) -> None:
     `repo2graph rag "..." > pack.md` over any repository holding a single
     non-ASCII source byte would otherwise die with 'charmap' codec errors.
     Characters the console cannot represent are replaced, never fatal.
+
+    Only the handlers that *substitute* a replacement are safe to print
+    through untouched. "surrogateescape" -- what Git Bash hands a piped stdout
+    on Windows -- raises on any character the codec lacks that is not a lone
+    surrogate, so it is probed with its own handler rather than trusted: that
+    keeps a surrogateescape-decoded path byte-identical on the way out (S-13)
+    while still replacing, say, a U+2192 that cp1252 cannot represent.
     """
-    if getattr(sys.stdout, "errors", "strict") not in (None, "strict"):
+    errors = getattr(sys.stdout, "errors", "strict") or "strict"
+    if errors in _SAFE_ERRORS:
         print(text)
         return
     enc = getattr(sys.stdout, "encoding", None) or "utf8"
     try:
-        text.encode(enc)
+        text.encode(enc, errors)
     except UnicodeEncodeError:
         text = text.encode(enc, "replace").decode(enc, "replace")
     except LookupError:

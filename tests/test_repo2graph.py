@@ -954,6 +954,260 @@ def test_iss45_ci_workflow_tests_job_covers_windows():
     assert '"3.10"' in tests_job and '"3.12"' in tests_job
 
 
+# ---------- Level 3b: action.yml <-> CLI parity ----------
+#
+# The composite action is a second, YAML-shaped caller of the CLI: it builds an
+# argv in bash and then reads keys out of `build`'s summary JSON. Nothing in the
+# package imports it, so a renamed flag or a renamed summary key breaks the
+# action while `pytest -q` stays green. These tests make the action's hardcoded
+# argv, JSON keys and step outputs a pinned contract. Stdlib only on purpose --
+# PyYAML is not a dependency of this project, runtime or dev.
+
+ACTION_YML = REPO_ROOT / "action.yml"
+WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
+
+# `-o`/`-k` are the only short options repo2graph is invoked with; every other
+# short option in those run: blocks belongs to mkdir/sed/head/read/set.
+_OPT_RE = re.compile(r"(?<![\w-])(--[a-z][a-z0-9-]*|-[ok])(?![\w-])")
+
+
+def _action_text():
+    return ACTION_YML.read_text(encoding="utf-8")
+
+
+def _top_block(text, key):
+    """The body of a top-level `key:` mapping, as text."""
+    body, started = [], False
+    for line in text.split("\n"):
+        if not started:
+            started = line.rstrip("\r") == f"{key}:"
+            continue
+        if line.strip() and not line.startswith(" "):
+            break
+        body.append(line.rstrip("\r"))
+    assert started, f"no top-level {key}: in the YAML"
+    return "\n".join(body)
+
+
+def _declared(text, key):
+    """Names declared directly under a top-level mapping (inputs:/outputs:)."""
+    return {m.group(1) for m in
+            re.finditer(r"^  ([A-Za-z][\w-]*):\s*$", _top_block(text, key), re.M)}
+
+
+def _defaults(text):
+    """{input name: default string} for action.yml's inputs: block."""
+    out, cur = {}, None
+    for line in _top_block(text, "inputs").split("\n"):
+        m = re.match(r"^  ([A-Za-z][\w-]*):\s*$", line)
+        if m:
+            cur = m.group(1)
+            continue
+        d = re.match(r'^    default:\s*"(.*)"\s*$', line)
+        if d and cur:
+            out[cur] = d.group(1)
+    return out
+
+
+def _step(text, step_id):
+    """The YAML chunk of the composite step carrying `id: <step_id>`."""
+    for chunk in re.split(r"\n(?=    - (?:name|uses):)", text):
+        if re.search(rf"^\s+id: {re.escape(step_id)}\s*$", chunk, re.M):
+            return chunk
+    raise AssertionError(f"action.yml has no step with id: {step_id}")
+
+
+def _argv(step_chunk):
+    """(subcommands, options) the repo2graph CLI is invoked with in one step."""
+    body = "\n".join(_run_blocks(step_chunk))
+    subs = set(re.findall(r"args=\(([a-z]+)", body))
+    subs |= set(re.findall(r"repo2graph\s+([a-z]+)", body))
+    return subs, set(_OPT_RE.findall(body))
+
+
+def _uses_local_with(text):
+    """Keys passed via `with:` to every `uses: ./` step in a workflow."""
+    lines = text.split("\n")
+    keys = set()
+    for i, line in enumerate(lines):
+        if not re.match(r"^\s*(?:- )?uses:\s*\./\s*(?:#.*)?$", line):
+            continue
+        col = line.index("uses:")
+        for j in range(i + 1, len(lines)):
+            nxt = lines[j]
+            if not nxt.strip():
+                continue
+            indent = len(nxt) - len(nxt.lstrip())
+            if indent < col or (indent == col and not nxt.lstrip().startswith("with:")):
+                break
+            if indent == col:
+                continue
+            m = re.match(r"^\s+([A-Za-z][\w-]*):", nxt)
+            if m:
+                keys.add(m.group(1))
+    return keys
+
+
+def _cli_help(capsys, *cmd):
+    with pytest.raises(SystemExit):
+        main([*cmd, "--help"])
+    return capsys.readouterr().out
+
+
+def test_action_yml_run_blocks_take_inputs_only_through_env():
+    """Every composite `run:` script reads its inputs from env:, never from a
+    ${{ }} expression -- an input holding shell metacharacters would otherwise
+    be substituted into the script before bash ever sees it."""
+    for block in _run_blocks(_action_text()):
+        assert "${{" not in block, block
+
+
+def test_action_yml_cli_subcommands_and_flags_exist(capsys):
+    """Every subcommand and option action.yml hardcodes into its argv is a real
+    repo2graph CLI surface. Rename a CLI flag and this fails."""
+    text = _action_text()
+    for step_id, min_subs, min_opts in (
+        ("build", {"build", "github"}, {"-o", "--formats", "--git-history"}),
+        ("rag", {"rag"}, {"-o", "-k", "--budget", "--format"}),
+    ):
+        subs, opts = _argv(_step(text, step_id))
+        # guard the extractor itself: a regex that stops matching must not pass
+        assert min_subs <= subs, (step_id, subs)
+        assert min_opts <= opts, (step_id, opts)
+        helps = {s: _cli_help(capsys, s) for s in sorted(subs)}
+        for opt in sorted(opts):
+            assert any(opt in h for h in helps.values()), (step_id, opt, sorted(subs))
+
+
+def test_action_yml_summary_keys_are_emitted_by_build(tmp_path, sample_repo, capsys):
+    """The inline python in the build step reads d['stats']['nodes'|'edges'] and
+    d['chunks']. Those exact keys must come out of `repo2graph build`."""
+    body = "\n".join(_run_blocks(_step(_action_text(), "build")))
+    top = set(re.findall(r"""\bd\.get\(['"](\w+)['"]""", body))
+    nested = set(re.findall(r"""\bs\.get\(['"](\w+)['"]""", body))
+    assert top == {"stats", "chunks"}, top
+    assert nested == {"nodes", "edges"}, nested
+
+    out = tmp_path / "out"
+    main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
+    summary = json.loads(capsys.readouterr().out)
+    assert "stats" in summary and "chunks" in summary
+    assert {"nodes", "edges"} <= set(summary["stats"])
+
+
+def test_action_yml_step_outputs_match_what_the_steps_print():
+    """`outputs:` reads steps.<id>.outputs.<name>; the steps write <name>= into
+    $GITHUB_OUTPUT. The two name sets must agree, per step."""
+    text = _action_text()
+    declared = _top_block(text, "outputs")
+    for step_id, expected in (("build", {"nodes", "edges", "chunks"}),
+                              ("rag", {"pack-file", "pack-chars"})):
+        body = "\n".join(_run_blocks(_step(text, step_id)))
+        printed = set(re.findall(r'print\(f"([\w-]+)=', body))
+        read = set(re.findall(
+            rf"steps\.{step_id}\.outputs\.([\w-]+)", declared))
+        assert printed == expected, (step_id, printed)
+        assert read == expected, (step_id, read)
+
+
+def test_action_yml_and_ci_artifact_paths_match_the_layout():
+    """Paths the YAML hardcodes resolve to the section export.py writes them to."""
+    from repo2graph.export import AGENT_DIR, HUMAN_DIR, rels
+
+    ci = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+    index_repo = (WORKFLOW_DIR / "index-repo.yml").read_text(encoding="utf-8")
+    action = _action_text()
+
+    assert f"{HUMAN_DIR}/overview.md" in rels("overview.md")
+    assert f"{AGENT_DIR}/chunks.jsonl" in rels("chunks.jsonl")
+    assert f"{HUMAN_DIR}/graph.html" in rels("graph.html")
+
+    assert '"$R2G_OUT/human/overview.md"' in action
+    assert '"out/$slug/human/overview.md"' in index_repo
+    assert ".r2g/human/graph.html" in ci
+    assert ".r2g/agent/chunks.jsonl" in ci
+    # the pack default in the rag step lives beside the agent artifacts
+    assert f'"$R2G_OUT/{AGENT_DIR}/pack.md"' in action
+    assert f'"$R2G_OUT/{AGENT_DIR}/pack.json"' in action
+
+
+def test_action_and_workflow_format_defaults_are_valid_cli_formats():
+    """`formats` defaults duplicated in YAML must stay inside cli.FORMATS."""
+    from repo2graph.cli import FORMATS
+
+    index_repo = (WORKFLOW_DIR / "index-repo.yml").read_text(encoding="utf-8")
+    spec = _defaults(_action_text())["formats"]
+    assert parse_formats(spec) == set(FORMATS)
+    assert spec in index_repo
+
+
+def test_workflows_only_pass_inputs_and_read_outputs_the_action_declares():
+    """A `with:` key the action does not declare is silently ignored by GitHub,
+    and an undeclared output reads as the empty string. Both fail here instead."""
+    text = _action_text()
+    inputs, outputs = _declared(text, "inputs"), _declared(text, "outputs")
+    assert {"repo", "path", "out", "query"} <= inputs
+    for name in ("ci.yml", "index-repo.yml", "self-index.yml"):
+        wf = (WORKFLOW_DIR / name).read_text(encoding="utf-8")
+        passed = _uses_local_with(wf)
+        assert passed, name
+        assert passed <= inputs, (name, sorted(passed - inputs))
+        read = set(re.findall(r"steps\.r2g\.outputs\.([\w-]+)", wf))
+        assert read <= outputs, (name, sorted(read - outputs))
+
+
+def test_action_yml_query_inputs_match_the_cli_defaults_and_omit_answer():
+    """The GraphRAG inputs mirror `repo2graph rag`'s own defaults, and the action
+    exposes no --answer/--provider/--model surface: that path uploads repository
+    source to a third-party LLM endpoint (AGENTS.md)."""
+    text = _action_text()
+    defaults = _defaults(text)
+    # hand-derived from cli.py's `rag` subparser, not read back out of argparse
+    assert defaults["query"] == ""
+    assert defaults["query-k"] == "8"
+    assert defaults["query-hops"] == "1"
+    assert defaults["query-budget"] == "24000"
+    assert defaults["query-min-conf"] == "1.0"
+    assert defaults["query-format"] == "markdown"
+    assert defaults["query-out"] == ""
+
+    # comments may name the surface (they explain why it is absent); code may not
+    lowered = "\n".join(ln for ln in text.split("\n")
+                        if not ln.strip().startswith("#")).lower()
+    for banned in ("--answer", "--provider", "--model",
+                   "gemini", "openai", "anthropic", "ollama", "api_key"):
+        assert banned not in lowered, banned
+
+
+def test_action_rag_defaults_are_the_cli_rag_defaults(monkeypatch):
+    """Cross-check the action's query-* defaults against what argparse actually
+    defaults to, so a CLI default change and a stale action input cannot both
+    stay green. The YAML strings are the pinned side; argparse is the subject."""
+    from repo2graph import cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_rag", lambda args: seen.update(vars(args)))
+    cli.main(["rag", "a question"])
+
+    defaults = _defaults(_action_text())
+    assert str(seen["k"]) == defaults["query-k"]
+    assert str(seen["hops"]) == defaults["query-hops"]
+    assert str(seen["budget"]) == defaults["query-budget"]
+    assert str(seen["min_conf"]) == defaults["query-min-conf"]
+    assert seen["format"] == defaults["query-format"]
+    assert seen["answer"] is False and seen["provider"] is None
+
+
+def test_ci_action_job_smoke_tests_the_query_input():
+    """The `action` job must exercise the pack path end to end, not only build."""
+    ci = (WORKFLOW_DIR / "ci.yml").read_text(encoding="utf-8")
+    job = ci.split("\n  action:", 1)[1]
+    assert "query:" in job
+    assert "steps.r2g.outputs.pack-file" in job
+    assert "steps.r2g.outputs.pack-chars" in job
+    assert r"grep -q '\[cite:'" in job
+
+
 def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     """Issue 26 (NC-4, NC-5): GIT_TERMINAL_PROMPT is 0 unconditionally, and
     GIT_CONFIG_COUNT preserves inherited count."""

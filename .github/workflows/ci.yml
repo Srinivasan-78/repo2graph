@@ -51,6 +51,8 @@ jobs:
           out: .r2g
           git-history: "50"
           artifact-name: ""   # smoke test only, nothing to upload
+          query: "how does pack_context enforce the budget"
+          query-budget: "8000"
 
       - name: Check the outputs are non-empty
         env:
@@ -65,3 +67,15 @@ jobs:
           test "${CHUNKS:-0}" -gt 0
           test -f .r2g/human/graph.html
           test -f .r2g/agent/chunks.jsonl
+
+      - name: Check the GraphRAG pack was written and carries citations
+        env:
+          PACK_FILE: ${{ steps.r2g.outputs.pack-file }}
+          PACK_CHARS: ${{ steps.r2g.outputs.pack-chars }}
+        run: |
+          set -euo pipefail
+          echo "pack-file=$PACK_FILE pack-chars=$PACK_CHARS"
+          test -n "$PACK_FILE"
+          test -s "$PACK_FILE"
+          test "${PACK_CHARS:-0}" -gt 0
+          grep -q '\[cite:' "$PACK_FILE"

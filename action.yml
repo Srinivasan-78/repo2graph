@@ -44,6 +44,34 @@ inputs:
     description: "Space-separated globs to exclude"
     required: false
     default: ""
+  query:
+    description: "Question to pack a cited GraphRAG context for (blank = skip). No LLM call is ever made."
+    required: false
+    default: ""
+  query-k:
+    description: "Lexical seed chunks for `query`"
+    required: false
+    default: "8"
+  query-hops:
+    description: "Graph expansion hops for `query`"
+    required: false
+    default: "1"
+  query-budget:
+    description: "Character budget for the whole pack (map and cite headers included)"
+    required: false
+    default: "24000"
+  query-min-conf:
+    description: "Drop CALLS edges below this confidence (0.0-1.0)"
+    required: false
+    default: "1.0"
+  query-format:
+    description: "Pack format: markdown or json"
+    required: false
+    default: "markdown"
+  query-out:
+    description: "File to write the pack to (blank = <out>/agent/pack.md or pack.json)"
+    required: false
+    default: ""
   artifact-name:
     description: "Upload the output under this artifact name (blank = no upload)"
     required: false
@@ -74,6 +102,12 @@ outputs:
   chunks:
     description: "Chunk count"
     value: ${{ steps.build.outputs.chunks }}
+  pack-file:
+    description: "Path to the GraphRAG pack written for `query` (empty when `query` is blank)"
+    value: ${{ steps.rag.outputs.pack-file }}
+  pack-chars:
+    description: "Character length of the GraphRAG pack (0 when `query` is blank)"
+    value: ${{ steps.rag.outputs.pack-chars }}
 
 runs:
   using: composite
@@ -151,6 +185,62 @@ runs:
             cat "$SUMMARY_FILE"
             echo '```'
           fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Pack a GraphRAG context
+      id: rag
+      if: ${{ inputs.query != '' }}
+      shell: bash
+      # Same rule as the build step: every input reaches bash through env:,
+      # never through ${{ }} inside the script. There is deliberately no
+      # --answer / --provider / --model input here: `rag --answer` POSTs
+      # repository source to a third-party LLM endpoint, and this action never
+      # makes a network call with your code.
+      env:
+        R2G_OUT: ${{ inputs.out }}
+        R2G_QUERY: ${{ inputs.query }}
+        R2G_K: ${{ inputs.query-k }}
+        R2G_HOPS: ${{ inputs.query-hops }}
+        R2G_BUDGET: ${{ inputs.query-budget }}
+        R2G_MIN_CONF: ${{ inputs.query-min-conf }}
+        R2G_FORMAT: ${{ inputs.query-format }}
+        R2G_QUERY_OUT: ${{ inputs.query-out }}
+      run: |
+        set -euo pipefail
+        pack="$R2G_QUERY_OUT"
+        if [ -z "$pack" ]; then
+          if [ "$R2G_FORMAT" = "json" ]; then
+            pack="$R2G_OUT/agent/pack.json"
+          else
+            pack="$R2G_OUT/agent/pack.md"
+          fi
+        fi
+        mkdir -p "$(dirname "$pack")"
+        # `--` ends the option list so a query starting with '-' is still a query
+        repo2graph rag \
+          -o "$R2G_OUT" \
+          -k "$R2G_K" \
+          --hops "$R2G_HOPS" \
+          --budget "$R2G_BUDGET" \
+          --min-conf "$R2G_MIN_CONF" \
+          --format "$R2G_FORMAT" \
+          -- "$R2G_OUT" "$R2G_QUERY" > "$pack"
+        PACK_FILE="$pack" python - <<'PY' >> "$GITHUB_OUTPUT"
+        import os
+        p = os.environ["PACK_FILE"]
+        text = open(p, encoding="utf8", errors="replace").read()
+        print(f"pack-file={p}")
+        print(f"pack-chars={len(text)}")
+        PY
+        {
+          echo "### repo2graph pack"
+          echo
+          # printf, not echo: a backtick in the query must not be substituted
+          printf 'query: `%s`\n\n' "$R2G_QUERY"
+          echo '```'
+          head -c 8000 "$pack"
+          echo
+          echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload artifact
