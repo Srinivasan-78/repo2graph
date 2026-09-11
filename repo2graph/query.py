@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from .export import path as artifact_path
+from .export import paths as artifact_paths
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
