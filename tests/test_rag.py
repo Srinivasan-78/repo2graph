@@ -1291,7 +1291,9 @@ def test_ac33_new_files_keep_the_authormark_header(rel):
     assert "@authormark v1" in head[0], head[0]
     assert head[1].lstrip("# ").startswith("Copyright (c)"), head[1]
     assert head[2].lstrip("# ").startswith("Author:"), head[2]
+    # REUSE-IgnoreStart -- the literal below is an assertion, not this file's own tag.
     assert head[3].lstrip("# ").startswith("SPDX-License-Identifier: MIT"), head[3]
+    # REUSE-IgnoreEnd
     assert head[4].lstrip("# ").startswith("Fingerprint: AMK1."), head[4]
 
 
