@@ -24,6 +24,7 @@ one `errors='surrogateescape'` -- which still raises on any character cp1252
 lacks. Both are handled here rather than at each call site.
 """
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from typing import Any, TextIO
@@ -80,6 +81,27 @@ def encodable(text: str, stream: Any) -> str:
     return text.encode("ascii", "replace").decode("ascii", "replace")
 
 
+_SENSITIVE_KV_RE = re.compile(
+    r'(?i)\b((?:api|access|secret|private|auth|session|refresh)?_?key|token|password|passwd)\b'
+    r'(\s*[:=]\s*)'
+    r'(".*?"|\'.*?\'|[^,\s}\]]+)'
+)
+_BEARER_RE = re.compile(r'(?i)\b(Bearer\s+)([A-Za-z0-9._\-+/=]+)')
+
+
+def _redact_sensitive_text(text: str) -> str:
+    """Best-effort masking for common secret shapes in log text.
+
+    This function must never raise; on any internal failure it returns `text`.
+    """
+    try:
+        redacted = _SENSITIVE_KV_RE.sub(r"\1\2***REDACTED***", text)
+        redacted = _BEARER_RE.sub(r"\1***REDACTED***", redacted)
+        return redacted
+    except Exception:
+        return text
+
+
 def write_safe(stream: Any, text: str, newline: str = "\n") -> None:
     """Write `text` to `stream`, replacing anything it cannot encode.
 
@@ -93,13 +115,14 @@ def write_safe(stream: Any, text: str, newline: str = "\n") -> None:
     """
     if stream is None:
         return
+    safe_text = _redact_sensitive_text(text)
     try:
-        stream.write(encodable(text, stream) + newline)
+        stream.write(encodable(safe_text, stream) + newline)
     except (UnicodeEncodeError, UnicodeDecodeError):
         # encodable() should have prevented this; if a stream lied about its
         # encoding, fall back to the hardest floor there is.
         try:
-            stream.write(text.encode("ascii", "replace").decode("ascii") + newline)
+            stream.write(safe_text.encode("ascii", "replace").decode("ascii") + newline)
         except Exception:
             return
     except Exception:
