@@ -1,23 +1,36 @@
 <!--
-  @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​​‌​‌‌‌​‌​​​‌‌​​​‌​​‌​​‌​‌​​‌​​​‌​​​‌​‌​‌‌​​‌​​‌‌‌​​​‌‌​​​​​‌‌‌‌​‌​​‌​​​‌​​​‌‌​‌‌‌​​​‌‌​‌‌‌​‌​​​‌‌‌​‌‌​‌​‌​​‌‌​‌​​‌​‌​​‌‌‌‌​‌‌‌​​‌‌​‌‌‌​​​‌​‌‌​​‌‌‌​‌​‌​​​‌​‌​‌‌​​‌​‌​‌‌​‌​⁠
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​​‌​‌‌​​​​‌​​‌‌​​‌​​‌​​​‌‌‌​‌​​​​‌‌​‌​‌​‌​​​‌​​​‌​‌​‌‌​‌​​‌​‌‌‌‌​​​​‌‌‌​​‌‌​‌​​​​​‌​‌‌​‌​​​​​‌‌​‌‌​​‌​​​‌‌​​‌‌​‌​​​​‌‌​​‌​​​​‌‌​‌​​​‌​‌​‌‌​​‌​‌‌​​‌​‌​‌​‌‌‌​‌‌‌​​​​​‌‌‌‌​​‌⁠
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.1tbJDVN0zDn7GjiOsqgQYZ
+  Fingerprint: AMK1.qa2GCTEixsAh6Fhd4VYWpy
 -->
-# Repo2graph  :  [![io.github.Srinivasan-78/repo2graph MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg)](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph)
+<div align="center">
+
+# repo2graph
+
+**Interactive code-graph maps & zero-dependency GraphRAG for AI agents and humans**
+
+<p align="center">
+  <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
+  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue" alt="PyPI version" /></a>
+  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/graph-overview.png" alt="Interactive code graph of a project mapped by repo2graph" width="850" />
+</p>
+
+*A complete project map drawn by `repo2graph`. Each dot is a folder, file, function, or library; each arrow is a real code connection.*
+
+</div>
 
 <!-- mcp-name: io.github.Srinivasan-78/repo2graph -->
 
 repo2graph reads a folder full of code and draws you a map of it — then uses that map to answer
 questions about the code, with citations. Agents can ask it questions directly over MCP.
-
-[![io.github.Srinivasan-78/repo2graph MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/card.svg)](https://glama.ai/mcp/servers/Srinivasan-78/repo2graph)
-
-![The whole map of a project: 300 dots and the arrows between them](docs/images/graph-overview.png)
-
-*One project, drawn by `repo2graph`. Each dot is a folder, file, function or library. Each arrow is
-a real connection found in the code.*
 
 ## The idea
 
@@ -140,13 +153,10 @@ repo2graph stats -o .r2g     # how many dots, arrows and functions there are
 you get the picture: drag to move around, scroll to zoom, drag a dot to pin it in place, click a
 dot to see what that function looks like and everything it is connected to.
 
-Zoom in and every dot is named, so you can read the real call paths:
-
-![Zoomed into the map: named functions, files and libraries joined by arrows](docs/images/graph-zoom.png)
-
-The side panel counts what is on screen and lets you switch each kind of dot and arrow on or off:
-
-![Side panel with search box, node kinds and relationship kinds, each with a count](docs/images/graph-sidebar.png)
+| Interactive Canvas (Zoomed) | Filter & Inspector Controls |
+| :---: | :---: |
+| <img src="docs/images/graph-zoom.png" alt="Zoomed into the map: named functions, files and libraries joined by arrows" /> | <img src="docs/images/graph-sidebar.png" alt="Side panel with search box, node kinds and relationship kinds" /> |
+| *Zoom in to inspect symbol call paths, imports, and definitions* | *Toggle node types, relationships, and filter on screen* |
 
 By default the picture shows the 300 busiest dots, and hides calls that go out to other people's
 code, because those triple the number of arrows and tell you little about your own project. Tick
