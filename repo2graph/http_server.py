@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌​‌​‌​‌‌‌‌‌​‌​​​​‌​​‌​​​‌‌‌​‌‌‌​​​‌​‌​​‌‌‌​​‌​​‌‌​‌​‌‌‌​‌​​​​‌‌‌​​​​‌‌‌​​‌‌​‌​​​​​‌​​‌‌​‌​​​‌​​‌‌‌​​‌​‌​​​‌​‌​​‌‌​​​​‌​‌‌​‌​‌​‌​​‌‌​‌‌​‌‌​‌​‌​‌​​​‌​‌​​​‌​​​‌​​‌​​​​‌‌‌​​‌‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.31DhMxLQLApnrmxXLcZxAN
+# Fingerprint: AMK1.5_BGqNMt8sA4NQL-SmQDHs
 """An HTTP transport for the MCP server, so authentication can be real.
 
 stdio cannot carry credentials -- see `repo2graph.auth` for why -- so bearer and
@@ -286,10 +286,13 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, _rpc_result(rpc_id, {}))
             return
         if method == "tools/list":
-            from .mcp import TOOL_DESCRIPTIONS, TOOL_SCHEMAS
+            from .mcp import TOOL_ANNOTATIONS, TOOL_DESCRIPTIONS, TOOL_SCHEMAS, TOOL_TITLES
             result: dict[str, Any] = {
                 "tools": [{"name": name, "description": description,
-                           "inputSchema": TOOL_SCHEMAS[name]}
+                           "inputSchema": TOOL_SCHEMAS[name],
+                           "annotations": {**TOOL_ANNOTATIONS,
+                                           **({"title": TOOL_TITLES[name]}
+                                              if name in TOOL_TITLES else {})}}
                           for name, description in TOOL_DESCRIPTIONS.items()]}
             # ttlMs/cacheScope ride in _meta, which is where the MCP spec puts
             # response metadata and where a client that does not know the fields

@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌​​‌​​‌‌​​​​​​‌‌​‌‌​​‌​​‌‌‌‌​‌‌‌‌​​​​‌‌‌‌​​​​​‌‌‌​​‌​‌​​‌‌​​​‌​​‌‌​​​‌​​‌‌‌​​‌‌‌‌​‌​​‌​​‌‌​​​‌‌​​​​‌​‌‌‌​‌‌​​‌‌‌​‌​‌​‌​‌‌​​‌​​‌‌‌​​​​‌​​​​‌​​‌‌​‌​​‌​‌‌​​​​‌​​‌‌​​​​​‌‌‌‌​​‌⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.Bo2_EyQQV3WerSZDDKLbxJ
+# Fingerprint: AMK1.i06Oxx9LLNzLavuY8Bia0y
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -73,25 +73,67 @@ MCP_MAX_NEIGHBOURS = 50
 MCP_MAX_HOPS = 4
 MCP_MAX_K = 50
 
-# Loaded into every agent's context every session, so they are charged for on
-# every request whether or not a tool is called: keep them short (AC-31 caps
-# the three combined at 600 characters).
+TOOL_ANNOTATIONS = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
+TOOL_TITLES = {
+    "repo_map": "Repository Map",
+    "repo_search": "Search Codebase",
+    "repo_neighbours": "Traverse Graph Neighbors",
+    "repo_cache_stats": "Cache Statistics",
+    "repo_build_status": "Build Task Status",
+}
+
+# Tool descriptions structured to satisfy Glama TDQS (Tool Definition Quality
+# Standard): explicit purpose with active verbs, sibling differentiation,
+# concrete when-to-use / when-not-to-use guidance, read-only behavioral disclosure,
+# and output shape descriptions while staying strictly bounded in context cost.
 TOOL_DESCRIPTIONS = {
     "repo_map": (
-        "Repo map: languages, hub files and top entry points. No arguments, "
-        "stable across calls. Read this first."),
+        "Retrieve a high-level structural map of the repository: languages, hub files, "
+        "and top entry points. Read-only, deterministic, zero side effects. "
+        "When to use: call this first at session start to understand codebase layout and "
+        "identify entry points before detailed queries. Use when deciding where to investigate. "
+        "When NOT to use: do not use to search code (use repo_search) or inspect call "
+        "graphs (use repo_neighbours). Output: markdown summary of languages, hub files, "
+        "and entry points."
+    ),
     "repo_search": (
-        "Search the repo for a question and get cited code back: seed chunks "
-        "plus their graph neighbours, each headed `[cite: path:start-end]`."),
+        "Search repository code for answers to questions using BM25 lexical ranking "
+        "expanded with graph neighbours. Read-only, no side effects, secret files (.env) "
+        "excluded. When to use: use for open-ended queries, locating implementations, "
+        "or finding error strings. When NOT to use: do not use when you already have a "
+        "symbol node_id and want callers/callees (use repo_neighbours); do not use for broad "
+        "repo layout (use repo_map). Output: markdown citation blocks `[cite: path:start-end]` "
+        "bounded by budget_tokens."
+    ),
     "repo_neighbours": (
-        "Graph hop from one node id (e.g. sym:pkg/a.py::run): callers, "
-        "callees, base classes and the defining file, with edge direction."),
+        "Traverse code graph relationships from a known symbol or file node_id (callers, "
+        "callees, base classes, definitions). Read-only, deterministic traversal, no side effects. "
+        "When to use: use with a specific node_id (e.g. from repo_search citations) to inspect "
+        "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
+        "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
+        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+    ),
     "repo_cache_stats": (
-        "Result-cache counters: hits, misses, size, max_size, ttl_s. "
-        "Diagnostics, not repository content."),
+        "Retrieve runtime diagnostic counters for the tool result cache (hits, misses, "
+        "size, max_size, ttl_s). Read-only, in-memory diagnostics, zero side effects. "
+        "When to use: use when evaluating cache hit rate or debugging server performance. "
+        "When NOT to use: do not use to search repository contents or inspect code structure; "
+        "use repo_map or repo_search instead. Output: JSON object with cache metrics."
+    ),
     "repo_build_status": (
-        "Progress of a background index build, by task_id. Only used when the "
-        "server runs with --async-build."),
+        "Query progress and status of a background index build task under --async-build. "
+        "Read-only check of in-memory background worker. When to use: use when polling "
+        "build progress after an async index build was started. When NOT to use: do not use "
+        "when building synchronously or when queries already succeed. Once completed, use "
+        "repo_search or repo_map to query code. Output: JSON object with task_id, status, "
+        "parsed file progress, and error details."
+    ),
 }
 
 TOOL_SCHEMAS = {
@@ -99,25 +141,60 @@ TOOL_SCHEMAS = {
     "repo_search": {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "the question"},
-            "k": {"type": "integer",
-                  "description": f"seed chunks (default 8, max {MCP_MAX_K})"},
-            "hops": {"type": "integer",
-                     "description": f"graph hops (default 1, max {MCP_MAX_HOPS})"},
-            "budget_tokens": {"type": "integer",
-                              "description": f"max {MCP_MAX_BUDGET_TOKENS}"},
+            "query": {
+                "type": "string",
+                "description": (
+                    "Natural language question, search terms, or symbol identifier to search for "
+                    "(e.g. 'pack_context' or 'how does export work')."
+                ),
+            },
+            "k": {
+                "type": "integer",
+                "description": (
+                    f"Number of initial seed chunks retrieved via BM25 lexical scoring "
+                    f"(default 8, max {MCP_MAX_K})."
+                ),
+            },
+            "hops": {
+                "type": "integer",
+                "description": (
+                    f"Graph traversal depth around seed chunks (default 1, max {MCP_MAX_HOPS}; "
+                    f"0 returns seeds only)."
+                ),
+            },
+            "budget_tokens": {
+                "type": "integer",
+                "description": (
+                    f"Maximum token ceiling for returned markdown pack (default {MCP_BUDGET_TOKENS}, "
+                    f"max {MCP_MAX_BUDGET_TOKENS})."
+                ),
+            },
         },
         "required": ["query"],
     },
     "repo_neighbours": {
         "type": "object",
         "properties": {
-            "node_id": {"type": "string", "description": "e.g. sym:pkg/a.py::run"},
-            "hops": {"type": "integer",
-                     "description": f"graph hops (default 1, max {MCP_MAX_HOPS})"},
-            "limit": {"type": "integer",
-                      "description": (f"neighbours (default {MCP_NEIGHBOUR_LIMIT}, "
-                                      f"max {MCP_MAX_NEIGHBOURS})")},
+            "node_id": {
+                "type": "string",
+                "description": (
+                    "Target graph node identifier to expand from (e.g. 'sym:pkg/mod.py::func', "
+                    "'file:pkg/mod.py', 'dir:pkg')."
+                ),
+            },
+            "hops": {
+                "type": "integer",
+                "description": (
+                    f"Traversal depth from node_id (default 1, max {MCP_MAX_HOPS})."
+                ),
+            },
+            "limit": {
+                "type": "integer",
+                "description": (
+                    f"Maximum neighbor rows to return (default {MCP_NEIGHBOUR_LIMIT}, "
+                    f"max {MCP_MAX_NEIGHBOURS})."
+                ),
+            },
         },
         "required": ["node_id"],
     },
@@ -125,8 +202,13 @@ TOOL_SCHEMAS = {
     "repo_build_status": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string",
-                        "description": "the id a previous call returned"},
+            "task_id": {
+                "type": "string",
+                "description": (
+                    "Task ID string returned by a previous tool call when an asynchronous build "
+                    "was initiated."
+                ),
+            },
         },
         "required": ["task_id"],
     },
@@ -491,6 +573,42 @@ def _require_sdk():
     return mcp
 
 
+def get_tools(types_module=None):
+    """Construct Tool instances with descriptions, schemas, and annotations."""
+    if types_module is None:
+        try:
+            import mcp.types as types_module
+        except ImportError:
+            return []
+    tool_cls = getattr(types_module, "Tool", None)
+    if tool_cls is None:
+        return []
+    tool_ann_cls = getattr(types_module, "ToolAnnotations", None)
+    tools = []
+    for name, description in TOOL_DESCRIPTIONS.items():
+        kwargs = {
+            "name": name,
+            "description": description,
+            "inputSchema": TOOL_SCHEMAS[name],
+        }
+        tool_fields = getattr(tool_cls, "model_fields", None)
+        if tool_fields is None:
+            tool_fields = getattr(tool_cls, "__annotations__", {})
+        if "annotations" in tool_fields or hasattr(tool_cls, "annotations"):
+            ann = dict(TOOL_ANNOTATIONS)
+            if name in TOOL_TITLES:
+                ann["title"] = TOOL_TITLES[name]
+            if tool_ann_cls is not None:
+                try:
+                    kwargs["annotations"] = tool_ann_cls(**ann)
+                except Exception:
+                    kwargs["annotations"] = ann
+            else:
+                kwargs["annotations"] = ann
+        tools.append(tool_cls(**kwargs))
+    return tools
+
+
 def serve(out, repo=None, cache=None, tasks=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
@@ -506,7 +624,7 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
     index to disk -- so even if *that* call times out, the work is not lost and
     the retry is instant. A failure that heals itself beats one that does not.
     """
-    _require_sdk()
+    mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
         # No repo to build from: the index must already exist, so say so now
@@ -516,7 +634,7 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
-    from mcp.types import TextContent, Tool
+    from mcp.types import TextContent
 
     # version= is not optional in practice. Left unset, the SDK fills serverInfo
     # with *its own* version, so every client is told repo2graph is whatever
@@ -527,9 +645,7 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
 
     @server.list_tools()
     async def list_tools():
-        return [Tool(name=name, description=description,
-                     inputSchema=TOOL_SCHEMAS[name])
-                for name, description in TOOL_DESCRIPTIONS.items()]
+        return get_tools(mcp.types)
 
     @server.call_tool()
     async def call_tool(name, arguments):

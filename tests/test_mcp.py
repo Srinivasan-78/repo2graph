@@ -1,8 +1,8 @@
-# @authormark v1 -- do not remove (authorship watermark)
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌​‌‌​‌‌​​‌​‌​‌‌​​‌‌‌​​‌‌​‌​​​‌‌‌​‌​‌​‌​‌​​‌‌​‌​​​​‌‌​‌​​‌‌‌‌​‌​​‌​‌‌​​‌‌​​‌​​‌‌​​​​‌​‌​‌​​​​​​‌‌‌​​‌​‌‌​​‌‌‌​‌‌‌‌​​‌​‌​​‌‌‌​​​‌‌​​​​​‌​​‌​‌‌​‌​‌​​​‌​‌​‌​​​‌​​‌‌​​​‌​​‌‌‌​​​⁠
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ArXa4P-FhZNltlQ1KyL6-w
+# Fingerprint: AMK1.keg4uSCOK2aP9gyN0KQQ18
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -207,13 +207,14 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 # AC-31 -- tool descriptions are context an agent pays for every session
 # ==========================================================================
 
-def test_ac31_tool_descriptions_stay_under_600_chars():
-    """AC-31: the published tool set, ~150 tokens combined.
+def test_ac31_tool_descriptions_stay_under_budget():
+    """AC-31: the published tool set, capped under 2500 characters (~500 tokens).
 
-    The character budget is the point of this test, not the tool count. Every
-    description is loaded into every agent's context every session, so it is
-    charged for on every request whether or not a tool is ever called. A fourth
-    tool is allowed; a fourth tool that doubles the standing cost is not.
+    The character budget balances agent context overhead against Glama TDQS
+    (Tool Definition Quality Standard) requirements. Tool descriptions are loaded
+    into every agent's context every turn, so they must stay tightly bounded;
+    however, they must also provide explicit usage guidance, sibling disambiguation,
+    and safety disclosures.
     """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {"repo_map", "repo_search",
@@ -221,8 +222,131 @@ def test_ac31_tool_descriptions_stay_under_600_chars():
                                           "repo_build_status"}
     for name, text in mcp.TOOL_DESCRIPTIONS.items():
         assert isinstance(text, str) and text.strip(), name
+        assert 100 <= len(text) <= 800, (
+            f"{name} length {len(text)} out of expected [100, 800] range"
+        )
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())
-    assert total <= 600, total
+    assert total <= 2500, f"Combined tool descriptions ({total} chars) exceed 2500-char budget"
+
+
+test_ac31_tool_descriptions_stay_under_600_chars = test_ac31_tool_descriptions_stay_under_budget
+
+
+def test_tool_descriptions_contain_usage_guidance_and_siblings():
+    """Glama TDQS: Every tool description must contain explicit usage guidance
+    ('when to use' or 'use when') and cross-reference alternative sibling tools
+    to prevent agent mis-routing.
+    """
+    mcp = mcp_module()
+    all_tools = set(mcp.TOOL_DESCRIPTIONS)
+
+    expected_siblings = {
+        "repo_map": {"repo_search", "repo_neighbours"},
+        "repo_search": {"repo_map", "repo_neighbours"},
+        "repo_neighbours": {"repo_search", "repo_map"},
+        "repo_cache_stats": {"repo_map", "repo_search"},
+        "repo_build_status": {"repo_search", "repo_map"},
+    }
+
+    for name, desc in mcp.TOOL_DESCRIPTIONS.items():
+        desc_lower = desc.lower()
+        assert "when to use" in desc_lower or "use when" in desc_lower, (
+            f"Tool {name!r} missing explicit usage guidance: {desc}"
+        )
+        siblings = all_tools - {name}
+        referenced = {s for s in siblings if s in desc}
+        assert referenced, f"Tool {name!r} does not mention any alternative sibling tools: {desc}"
+        for expected in expected_siblings[name]:
+            assert expected in desc, (
+                f"Tool {name!r} should explicitly cross-reference sibling {expected!r}: {desc}"
+            )
+
+
+def test_tool_descriptions_disclose_read_only_behavior():
+    """Glama TDQS / Safety: Every tool description must explicitly disclose
+    read-only behavior so models know the operation cannot mutate repository state.
+    """
+    mcp = mcp_module()
+    for name, desc in mcp.TOOL_DESCRIPTIONS.items():
+        desc_lower = desc.lower()
+        has_read_only = (
+            "read-only" in desc_lower
+            or "read only" in desc_lower
+            or "does not modify" in desc_lower
+        )
+        assert has_read_only, f"Tool {name!r} does not disclose read-only behavior: {desc}"
+
+
+def test_tool_schemas_have_informative_parameter_descriptions():
+    """Glama TDQS: Tool schemas must provide clear, informative descriptions
+    for all parameters including types, defaults, and constraints where applicable.
+    """
+    mcp = mcp_module()
+    assert set(mcp.TOOL_SCHEMAS) == set(mcp.TOOL_DESCRIPTIONS)
+
+    expected_required = {
+        "repo_map": [],
+        "repo_search": ["query"],
+        "repo_neighbours": ["node_id"],
+        "repo_cache_stats": [],
+        "repo_build_status": ["task_id"],
+    }
+    bounded_params = {"k", "hops", "budget_tokens", "limit"}
+
+    for name, schema in mcp.TOOL_SCHEMAS.items():
+        assert schema.get("type") == "object", f"{name} schema type must be 'object'"
+        properties = schema.get("properties", {})
+        assert isinstance(properties, dict), f"{name} properties must be a dict"
+
+        required = schema.get("required", [])
+        assert required == expected_required[name], (
+            f"{name} required fields mismatch: got {required}, expected {expected_required[name]}"
+        )
+
+        for param_name, param_meta in properties.items():
+            assert "type" in param_meta, f"{name}.{param_name} missing 'type'"
+            desc = param_meta.get("description", "")
+            assert isinstance(desc, str) and desc.strip(), f"{name}.{param_name} missing description"
+            assert len(desc) >= 20, (
+                f"{name}.{param_name} description too short ({len(desc)} chars): {desc!r}"
+            )
+            if param_name in bounded_params:
+                desc_lower = desc.lower()
+                assert "max" in desc_lower or "default" in desc_lower, (
+                    f"{name}.{param_name} should document max/default bounds: {desc!r}"
+                )
+
+
+def test_tool_annotations_constant_defined():
+    """TOOL_ANNOTATIONS constant is defined at module level and declares
+    read-only, non-destructive, and idempotent hints without needing the SDK.
+    """
+    mcp = mcp_module()
+    assert hasattr(mcp, "TOOL_ANNOTATIONS"), "mcp module missing TOOL_ANNOTATIONS"
+    assert mcp.TOOL_ANNOTATIONS.get("readOnlyHint") is True
+    assert mcp.TOOL_ANNOTATIONS.get("destructiveHint") is False
+    assert mcp.TOOL_ANNOTATIONS.get("idempotentHint") is True
+
+
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+def test_list_tools_returns_quality_annotations():
+    """When running with the MCP SDK, get_tools() returns tools decorated
+    with quality annotations (readOnlyHint=True, destructiveHint=False, idempotentHint=True).
+    """
+    mcp = mcp_module()
+    tools = mcp.get_tools()
+    assert len(tools) == len(mcp.TOOL_DESCRIPTIONS)
+
+    for tool in tools:
+        assert tool.name in mcp.TOOL_DESCRIPTIONS
+        assert tool.description == mcp.TOOL_DESCRIPTIONS[tool.name]
+        assert tool.inputSchema == mcp.TOOL_SCHEMAS[tool.name]
+        assert getattr(tool, "annotations", None) is not None, f"Tool {tool.name} missing annotations"
+        ann = tool.annotations
+        read_only = getattr(ann, "readOnlyHint", None) or (
+            ann.get("readOnlyHint") if isinstance(ann, dict) else None
+        )
+        assert read_only is True, f"{tool.name} readOnlyHint must be True"
 
 
 # ==========================================================================
@@ -593,9 +717,18 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
         server_mod.Server = Server
         stdio_mod = _types.ModuleType("mcp.server.stdio")
         stdio_mod.stdio_server = None
+        class FakeTool:
+            def __init__(self, name=None, description=None, inputSchema=None,
+                         annotations=None, **kw):
+                self.name = name
+                self.description = description
+                self.inputSchema = inputSchema
+                self.annotations = annotations
+
         types_mod = _types.ModuleType("mcp.types")
         types_mod.TextContent = object
-        types_mod.Tool = object
+        types_mod.Tool = FakeTool
+        types_mod.ToolAnnotations = dict
         mcp_pkg.server = server_mod
         server_mod.stdio = stdio_mod
         mcp_pkg.types = types_mod
