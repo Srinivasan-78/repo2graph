@@ -59,7 +59,7 @@ rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # (`@server.list_tools()` / `@server.call_tool()`), which mcp 2.x removed. An
 # unbounded `mcp>=1.0` resolves to 2.x today and crashes the server on start.
 # See docs/BACKLOG.md ("Port the MCP server to the 2.x SDK API").
-mcp = ["mcp>=1.0,<2"]
+mcp = ["mcp>=1.0,<3"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
