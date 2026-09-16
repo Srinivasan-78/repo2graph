@@ -3,7 +3,7 @@
   Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
   Author: https://github.com/Srinivasan-78
   SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.It4uMdmyZDPa4nxBHGsiYG
+  Fingerprint: AMK1.i9V_9vHIRo2fq3PBcN4B-0
 -->
 # Changelog
 
@@ -64,6 +64,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   redirected and piped, over a repository whose source contains U+2192, U+00E9
   and U+4E2D.
 - `.pre-commit-config.yaml` running ruff and a version-consistency check.
+- `glama.json`, and `uv.lock` so hosted builds are reproducible.
+- A `packaging` CI job that installs the package the way a third-party host does
+  — once without the `mcp` extra, asserting the refusal stays a legible sentence
+  on stderr with nothing on stdout, and once with it, driving a real stdio round
+  trip through the installed console script via `scripts/mcp_roundtrip.py`.
 
 ### Changed
 
@@ -93,6 +98,10 @@ makes keeping it current a release-blocking step rather than a good intention.
   pinned.
 - `events.encodable` no longer flattens ordinary characters to ASCII when a
   stream reports an encoding Python does not have.
+- The stdio server reported the **MCP SDK's** version as its own in
+  `serverInfo`, because `Server()` was constructed without `version=` and the
+  SDK fills that field from its own package — so clients saw `1.30.0` against a
+  1.4.0 release, and the two transports disagreed about what they were.
 
 ### Security
 

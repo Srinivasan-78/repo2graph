@@ -50,6 +50,55 @@ Both are generated from `TOOL_DESCRIPTIONS`/`TOOL_SCHEMAS` in
 Licence, homepage and author live in `pyproject.toml` (`license`,
 `project.urls.Homepage`, `authors`) and reach PyPI from there.
 
+### Hosted builds (Glama, and anything else that containerises this)
+
+A host that builds the server itself needs to install the `mcp` extra. This is
+the one thing that is easy to get wrong, and it fails in a way that looks like a
+server bug and is not.
+
+The working build spec:
+
+```json
+{
+  "buildSteps": ["uv sync --extra mcp"],
+  "cmdArguments": ["mcp-proxy", "--", "uv", "run", "repo2graph-mcp", "/app"]
+}
+```
+
+Three things about it:
+
+- **`--extra mcp` is required.** Plain `uv sync` installs the base dependencies
+  only — `tree-sitter` and `tree-sitter-language-pack` — because the MCP SDK is
+  deliberately an extra: the CLI and the GitHub Action never import it, so it is
+  not a runtime dependency of the package. Without it `repo2graph-mcp` exits 1
+  with `the MCP server needs the optional 'mcp' extra`, the proxy sees the child
+  die, and the build reports `Connection closed`.
+- **Do not use `--all-extras`.** That pulls `rag`, and with it
+  `sentence-transformers` and torch: a multi-gigabyte image and a build likely
+  to time out, for a dependency the MCP server never calls.
+- **Name the repository explicitly.** With no positional argument the server
+  falls back to the working directory, so it happens to index its own checkout.
+  That works, but it makes the behaviour depend on where the container starts.
+
+The index is built on the *first tool call*, not at startup, so `initialize`
+answers immediately and a host's readiness ping will not time out.
+
+CI's `packaging` job runs both halves of this on every push — the install
+without the extra, asserting the refusal stays a legible sentence on stderr with
+nothing on stdout, and the install with it, driving a real stdio round trip
+through `scripts/mcp_roundtrip.py`. Run that script locally against any
+installed copy:
+
+```bash
+uv sync --extra mcp
+uv run python scripts/mcp_roundtrip.py
+```
+
+`uv.lock` is committed so these builds are reproducible. It is checked with
+`uv lock --check` in the same job, because a stale lockfile makes `uv sync` fail
+outright and would break the hosts it exists to help. Regenerate it with
+`uv lock` whenever `pyproject.toml`'s dependencies change.
+
 ### Glama quality score
 
 [Glama](https://glama.ai/mcp/servers) indexes public MCP servers and assigns a
@@ -62,10 +111,12 @@ To submit:
    most servers from there and from `awesome-mcp-servers`.
 2. If it has not appeared within a week, submit the repository URL directly at
    <https://glama.ai/mcp/servers> using the "Add server" flow.
-3. Glama builds the server in a sandbox, so `pip install "repo2graph[mcp]"`
-   followed by `repo2graph-mcp <repo>` must work from a clean environment. CI's
-   `tests` job installs `[dev,mcp]` and runs a real stdio round trip, which is
-   the same thing.
+3. Glama builds the server in a sandbox, so the build spec must install the
+   `mcp` extra — see "Hosted builds" above, which is the single most common way
+   this fails. CI's `packaging` job runs that exact install and round trip.
+4. `glama.json` at the repo root records the maintainers Glama recognises. It is
+   validated against <https://glama.ai/mcp/schemas/server.json>, where
+   `maintainers` is the only required field.
 
 Once a score is assigned, Glama issues a badge URL containing the server's
 generated slug. Add it in two places:

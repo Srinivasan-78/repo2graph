@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.Yt1XAPA2TYmJNHn4K-NL8v
+# Fingerprint: AMK1.Bo2_EyQQV3WerSZDDKLbxJ
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call
@@ -35,6 +35,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
 from .query import Index, _fit_lines, count_tokens
@@ -517,7 +518,12 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 
-    server = Server("repo2graph")
+    # version= is not optional in practice. Left unset, the SDK fills serverInfo
+    # with *its own* version, so every client is told repo2graph is whatever
+    # release of `mcp` happens to be installed -- 1.30.0 against a 1.4.0 package.
+    # The HTTP transport reports __version__ correctly, so omitting it here also
+    # made the two transports disagree about what they are.
+    server = Server("repo2graph", version=__version__)
 
     @server.list_tools()
     async def list_tools():

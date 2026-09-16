@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.DobftFmPGUcoxNWau5j2f8
+# Fingerprint: AMK1.Aqu0WfjVygD5wUWGsayoAh
 """Bearer and OIDC authentication, including the forgeries it must refuse.
 
 Signing happens here in pure Python for the same reason verification does in
@@ -136,9 +136,23 @@ class FakeIssuer:
         raise AssertionError(f"unexpected fetch: {url}")
 
 
-def cache(issuer=None, ttl=300.0):
+class Clock:
+    """A monotonic clock a test can advance without sleeping."""
+
+    def __init__(self, now=1000.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += seconds
+
+
+def cache(issuer=None, ttl=300.0, clock=None):
     issuer = issuer or FakeIssuer()
-    return JWKSCache(ISSUER, ttl, opener=issuer), issuer
+    return (JWKSCache(ISSUER, ttl, opener=issuer, clock=clock or Clock()),
+            issuer)
 
 
 # ----------------------------------------------------------------- rsa ----
@@ -273,10 +287,42 @@ def test_jwks_is_cached_between_calls():
 
 
 def test_an_expired_ttl_refetches():
-    jwks, issuer = cache(ttl=0.0)
+    """Keys are re-read once the TTL has elapsed.
+
+    The clock is injected rather than slept through. An earlier version used
+    ttl=0.0 and two back-to-back calls, which passes only if the monotonic
+    clock ticks between them -- so it passed on one machine and failed on
+    another, where Windows falls back to GetTickCount64's ~15.6ms granularity
+    and both calls read the same instant.
+    """
+    clock = Clock()
+    jwks, issuer = cache(ttl=300.0, clock=clock)
+
     decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    assert issuer.calls.count(f"{ISSUER}/jwks") == 1
+
+    clock.advance(299)                      # still inside the TTL
     decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
-    assert issuer.calls.count(f"{ISSUER}/jwks") >= 2
+    assert issuer.calls.count(f"{ISSUER}/jwks") == 1, "refetched too early"
+
+    clock.advance(2)                        # now past it
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    assert issuer.calls.count(f"{ISSUER}/jwks") == 2
+
+
+def test_a_zero_ttl_never_caches():
+    """`ttl=0` means "do not cache", whatever the clock's resolution.
+
+    With a strict `>` comparison this promise silently depended on the clock
+    ticking between calls, which is exactly the flake above in its other form:
+    a configuration that says "never cache" would keep serving stale keys.
+    """
+    frozen = Clock()                        # never advances
+    jwks, issuer = cache(ttl=0.0, clock=frozen)
+
+    for _ in range(3):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    assert issuer.calls.count(f"{ISSUER}/jwks") == 3, issuer.calls
 
 
 def test_an_unknown_kid_refetches_exactly_once_then_fails():

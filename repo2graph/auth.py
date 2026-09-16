@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.hv7e4J9wWEEcM8K4Lasskg
+# Fingerprint: AMK1.HFd-qnwjZH9QhneX0eMPNw
 """Bearer-token and OIDC authentication for the HTTP MCP transport.
 
 **This module is for the HTTP transport only.** Authenticating the stdio
@@ -170,13 +170,19 @@ class JWKSCache:
         ttl: Seconds a fetched key set is trusted before it is re-read.
         opener: Callable taking a URL and returning decoded JSON. Injected so
             tests never touch the network; defaults to a urllib fetch.
+        clock: Monotonic time source, injected so a test can age the cache
+            without sleeping. `ResultCache` takes one for the same reason: a
+            test that waits for real time to pass is a test that fails on
+            somebody else's machine.
     """
 
     def __init__(self, issuer: str, ttl: float = DEFAULT_JWKS_TTL,
-                 opener: Callable[[str], Any] | None = None) -> None:
+                 opener: Callable[[str], Any] | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.issuer = issuer.rstrip("/")
         self.ttl = ttl
         self._open = opener or _fetch_json
+        self._clock = clock
         self._lock = threading.Lock()
         self._keys: dict[str, dict[str, Any]] = {}
         self._fetched_at = 0.0
@@ -209,7 +215,7 @@ class JWKSCache:
             raise AuthError("issuer JWKS has no key list")
         self._keys = {str(k.get("kid")): k for k in keys
                       if isinstance(k, dict) and k.get("kid")}
-        self._fetched_at = time.monotonic()
+        self._fetched_at = self._clock()
 
     def key_for(self, kid: str) -> dict[str, Any]:
         """Return the JWK with this `kid`, refetching at most once on a miss.
@@ -224,7 +230,13 @@ class JWKSCache:
             AuthError: If the key is unknown even after one refetch.
         """
         with self._lock:
-            stale = (time.monotonic() - self._fetched_at) > self.ttl
+            # >=, not >: `ttl=0` means "do not cache this at all", and with a
+            # strict > that promise depends on the clock's resolution rather
+            # than on the configuration. Two calls inside one tick of a coarse
+            # monotonic clock -- Windows can fall back to GetTickCount64, at
+            # ~15.6ms -- read an elapsed time of exactly 0.0 and would keep
+            # serving keys a ttl of 0 said to discard.
+            stale = (self._clock() - self._fetched_at) >= self.ttl
             if not self._keys or stale:
                 self._refresh()
             key = self._keys.get(kid)
@@ -398,12 +410,15 @@ class Authenticator:
     Args:
         config: The configured modes.
         opener: JSON fetcher for OIDC discovery, injected for tests.
+        clock: Monotonic time source for the JWKS cache, injected for tests.
     """
 
     def __init__(self, config: AuthConfig,
-                 opener: Callable[[str], Any] | None = None) -> None:
+                 opener: Callable[[str], Any] | None = None,
+                 clock: Callable[[], float] = time.monotonic) -> None:
         self.config = config
-        self._jwks = (JWKSCache(config.oidc_issuer, config.jwks_ttl, opener)
+        self._jwks = (JWKSCache(config.oidc_issuer, config.jwks_ttl, opener,
+                                clock)
                       if config.oidc_issuer else None)
 
     def authenticate(self, header: str | None) -> Identity:

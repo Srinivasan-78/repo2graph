@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
 # Author: https://github.com/Srinivasan-78
 # SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.2PvMaOtFI4x6dD1LXBXzwX
+# Fingerprint: AMK1.ArXa4P-FhZNltlQ1KyL6-w
 """Change 2 -- the stdio MCP server. AC-26 .. AC-33.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
@@ -570,8 +570,15 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0",
         return register
 
     class Server:
-        def __init__(self, name):
+        # Mirrors the real SDK's signature. `version` matters: left unset there,
+        # the SDK reports *its own* version as the server's, so the fake has to
+        # be able to record what it was actually given.
+        last: dict = {}
+
+        def __init__(self, name, version=None, **kw):
             self.name = name
+            self.version = version
+            Server.last = {"name": name, "version": version, **kw}
 
         def create_initialization_options(self):
             return {}
@@ -1011,3 +1018,42 @@ def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
 
     assert seen.get("jobs") == 1, (
         f"auto-build must stay single-process inside the server: {seen}")
+
+
+# ==========================================================================
+# serverInfo -- what the server says it is
+# ==========================================================================
+
+def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
+    """`Server(name)` without `version=` makes the SDK report *its* version.
+
+    The MCP SDK fills serverInfo.version from its own package when the server
+    does not supply one, so every client was told repo2graph was whatever
+    release of `mcp` happened to be installed -- 1.30.0 against a 1.4.0
+    package. It also put the two transports in disagreement, since the HTTP
+    one has always reported __version__ correctly.
+    """
+    mcp = mcp_module()
+    from repo2graph import __version__
+
+    sdk = _fake_sdk(monkeypatch, decorators=True, version="99.99.99")
+    Server = sdk.server.Server
+
+    # stdio_server is None in the fake, so serve() gets as far as constructing
+    # the Server and wiring the handlers, then fails on the transport. That is
+    # exactly far enough to see what it passed.
+    with pytest.raises(Exception):
+        mcp.serve(Path(mini_index))
+
+    assert Server.last["name"] == "repo2graph"
+    assert Server.last["version"] == __version__, Server.last
+    assert Server.last["version"] != "99.99.99", (
+        "serverInfo is reporting the SDK's version as the server's")
+
+
+def test_both_transports_agree_on_the_version():
+    """Coherence: stdio and HTTP must not describe themselves differently."""
+    from repo2graph import __version__
+    from repo2graph.http_server import server_metadata
+
+    assert server_metadata(None, False, ["none"])["version"] == __version__
