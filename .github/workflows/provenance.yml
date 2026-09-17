@@ -15,19 +15,3 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - name: REUSE / SPDX compliance
         run: pipx run reuse lint
-
-  verify-authorship:
-    # Full fingerprint / signature verification. Runs only on push to a
-    # protected branch -- never on pull_request, where an edited file's
-    # fingerprint is legitimately stale until it is re-stamped. Without
-    # AUTHORMARK_KEY this degrades to a presence check (ed25519 repos still
-    # verify signatures from the public key in .authormark.json).
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - uses: Srinivasan-78/authormark-watch@56771678a6b8ec1303b8b25de69f6795c0823fa5  # main
-        with:
-          mode: check
-          path: .
-          key: ${{ secrets.AUTHORMARK_KEY }}

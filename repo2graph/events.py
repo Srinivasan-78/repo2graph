@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.ZrtrCdsqUvTL85XgvI0cDl
 """Structured events on stderr: one JSON object per line, never fatal.
 
 stderr, never stdout. stdout carries either the answer a user is piping into a

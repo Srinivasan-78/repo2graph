@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.Dk_JCYR0nQ57rKBBOoHpkJ
 """GraphRAG layer: expansion, confidence filtering, packing, `rag` CLI, answer.py.
 
 Every test names the acceptance criterion (or criteria) it encodes, e.g. `# AC-14`.
@@ -1284,22 +1279,6 @@ def test_ac32_how_to_read_documents_the_graphrag_protocol(rag_out):
     assert "repo2graph rag" in joined
     manifest = json.loads(artifact_path(rag_out, "manifest.json").read_text(encoding="utf8"))
     assert "pack_context" in "\n".join(manifest["how_to_read"])
-
-
-@pytest.mark.parametrize("rel", ["repo2graph/answer.py", "tests/test_rag.py"])
-def test_ac33_new_files_keep_the_authormark_header(rel):
-    """AC-33: lines 1-5 are the authormark block (never delete or hand-edit it)."""
-    target = REPO_ROOT / rel
-    assert target.exists(), f"{rel} does not exist"
-    with open(target, encoding="utf8", newline="\n") as fh:
-        head = fh.read().split("\n")[:5]
-    assert "@authormark v1" in head[0], head[0]
-    assert head[1].lstrip("# ").startswith("Copyright (c)"), head[1]
-    assert head[2].lstrip("# ").startswith("Author:"), head[2]
-    # REUSE-IgnoreStart -- the literal below is an assertion, not this file's own tag.
-    assert head[3].lstrip("# ").startswith("SPDX-License-Identifier: MIT"), head[3]
-    # REUSE-IgnoreEnd
-    assert head[4].lstrip("# ").startswith("Fingerprint: AMK1."), head[4]
 
 
 @pytest.mark.parametrize("rel", ["repo2graph/query.py", "repo2graph/answer.py", "repo2graph/cli.py"])

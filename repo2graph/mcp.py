@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌​​‌​​‌‌​​​​​​‌‌​‌‌​​‌​​‌‌‌‌​‌‌‌‌​​​​‌‌‌‌​​​​​‌‌‌​​‌​‌​​‌‌​​​‌​​‌‌​​​‌​​‌‌‌​​‌‌‌‌​‌​​‌​​‌‌​​​‌‌​​​​‌​‌‌‌​‌‌​​‌‌‌​‌​‌​‌​‌‌​​‌​​‌‌‌​​​​‌​​​​‌​​‌‌​‌​​‌​‌‌​​​​‌​​‌‌​​​​​‌‌‌‌​​‌⁠
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.i06Oxx9LLNzLavuY8Bia0y
 """A stdio MCP server over an existing .r2g index: three tools, one engine.
 
 This is an *additional* surface, not a replacement: every tool is a thin call

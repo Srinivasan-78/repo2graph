@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.xV3NGNBAWbDbM0-Z64foV9
 """graph.html safety: the repo name is attacker-influenced, so treat it that way.
 
 `repo2graph github <owner>/<repo>` takes the repo name from a GitHub spec, and

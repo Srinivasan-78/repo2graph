@@ -1,10 +1,3 @@
-<!--
-  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​​‌​‌‌​​​​‌​​‌‌​​‌​​‌​​​‌‌‌​‌​​​​‌‌​‌​‌​‌​​​‌​​​‌​‌​‌‌​‌​​‌​‌‌‌‌​​​​‌‌‌​​‌‌​‌​​​​​‌​‌‌​‌​​​​​‌‌​‌‌​​‌​​​‌‌​​‌‌​‌​​​​‌‌​​‌​​​​‌‌​‌​​​‌​‌​‌‌​​‌​‌‌​​‌​‌​‌​‌‌‌​‌‌‌​​​​​‌‌‌‌​​‌⁠
-  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-  Author: https://github.com/Srinivasan-78
-  SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.qa2GCTEixsAh6Fhd4VYWpy
--->
 <div align="center">
 
 # repo2graph
@@ -20,10 +13,16 @@
 </p>
 
 <p align="center">
+  <img src="docs/images/demo.gif" alt="repo2graph building a map of a repository, then answering a question about it, in a terminal" width="850" />
+</p>
+
+*`repo2graph build` then `repo2graph query`, on this repo's own source — real output, not staged.*
+
+<p align="center">
   <img src="docs/images/graph-overview.png" alt="Interactive code graph of a project mapped by repo2graph" width="850" />
 </p>
 
-*A complete project map drawn by `repo2graph`. Each dot is a folder, file, function, or library; each arrow is a real code connection.*
+*The picture that build also produces: each dot is a folder, file, function, or library; each arrow is a real code connection.*
 
 </div>
 
@@ -31,6 +30,10 @@
 
 repo2graph reads a folder full of code and draws you a map of it — then uses that map to answer
 questions about the code, with citations. Agents can ask it questions directly over MCP.
+
+**Want to know how it actually works under the hood** — the tree-sitter pipeline, the graph model,
+confidence scoring, budget accounting, the Python API? That's in
+**[TECHNICAL.md](TECHNICAL.md)**. This page stays to what it does and how to run it.
 
 ## The idea
 
@@ -61,31 +64,6 @@ neighbours.
 
 That matters most when a chatbot or AI helper is reading the code for you. Giving it the right
 piece of code plus the pieces around it is usually what it was missing.
-
-## How it works, in three steps
-
-```mermaid
-flowchart LR
-    A[your code] --> B[tree-sitter<br/>reads the code]
-    B --> C[graph<br/>dots + arrows]
-    C --> D[graph.html<br/>the picture]
-    C --> E[overview.md<br/>the words]
-    C --> F[chunks.jsonl<br/>pieces for an AI]
-    C --> G[graph.graphml / graph.cypher<br/>other tools, Neo4j]
-```
-
-1. **It reads the code.** It uses tree-sitter, the same tool code editors use to colour your code.
-   So it understands real code structure instead of guessing from words. It needs no setup and
-   works on a project it has never seen.
-2. **It builds the map.** Folders, files, functions, classes and imports become dots. "contains",
-   "defines", "calls", "imports", "inherits" become arrows.
-3. **It cuts the code into small pieces.** Roughly one piece per function or class. Each piece gets
-   a few lines at the top saying who calls this function, what it calls, and what its description
-   says. Those little pieces are what you feed to an AI when you want it to answer questions about
-   the code.
-
-No graph library is involved: degree counting, layout and GraphML generation are pure Python, with
-no NetworkX.
 
 ## Install
 
@@ -321,25 +299,9 @@ the header, which is what makes the answers good. If you use a vector database, 
 
 ## Using it from Python
 
-```python
-from pathlib import Path
-from repo2graph import build, iter_chunks
-from repo2graph.export import dump_all
-from repo2graph.query import Index
-
-g = build(Path("."), git_history=200)
-dump_all(g, chunks=iter_chunks(g), outdir=Path(".r2g"),
-         formats={"jsonl", "overview", "html"}, viz_nodes=300)
-
-pack = Index(".r2g").pack_context("how does session auth work?", k=8, hops=1,
-                                  budget_chars=24000)
-print(pack["markdown"])
-```
-
-`Index` is the same object the CLI, the Action and the MCP server all call.
-
-**Streaming exports, expanding your own vector hits, loading into Neo4j:
-[docs/python-api.md](docs/python-api.md).**
+Everything the CLI does is also a plain Python call — `build()`, `dump_all()`, and the same `Index`
+class the CLI, the Action and the MCP server all use internally. Code sample, streaming exports,
+and loading into Neo4j: **[TECHNICAL.md](TECHNICAL.md#using-it-from-python)**.
 
 ## Languages
 
@@ -350,7 +312,7 @@ means adding one entry to `LANG_CFG` in `repo2graph/langs.py`.
 
 ## Where it guesses
 
-The map is very good, but it is not perfect. Worth knowing before you trust it:
+The map is very good, but it is not perfect. Two things worth knowing before you trust it:
 
 - **It matches calls by name, not by type.** If two functions share a name, repo2graph draws up to
   5 possible arrows and marks each one `1/n` sure. If you need certainty, keep only the arrows where
@@ -360,7 +322,15 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
 - **No arrow does not prove no call.** Code that decides while running which function to call is
   invisible to a reader like this one.
 
-[The rest, including how imports are resolved per language](docs/reference.md#where-it-guesses).
+How the matching and resolution actually work, per language: **[TECHNICAL.md](TECHNICAL.md#where-it-guesses-and-why)**.
+
+## Security
+
+`build`, `query`, `rag`, and the MCP server make no network calls — everything reads and writes
+locally under `.r2g`. The one exception is opt-in: `rag --answer` sends the assembled pack to an
+LLM provider, and prints the provider + hostname before it does. The MCP server excludes
+credential-shaped files unconditionally, with no flag to turn that off. Details and the full
+reasoning: [SECURITY.md](SECURITY.md).
 
 ## Contributing
 

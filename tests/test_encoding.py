@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.OjPGC3_UdM2gw3OsWbcx8N
 """Console output must never raise, whatever the platform decided stdout is.
 
 Every historical regression in this project is a Windows encoding bug

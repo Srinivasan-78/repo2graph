@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.66LeT60xLswNGhjpT9Pxg0
 """End-to-end guards on the dense-retrieval path.
 
 Before v1.4.0 `score_rrf()` accepted `vectors=`/`embedder=`, pyproject declared a

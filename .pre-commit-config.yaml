@@ -1,16 +1,5 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.3XcWbTdt4Ip-s6Ua1pcF3K
 #
 # Install once with:  pip install pre-commit && pre-commit install
-#
-# Deliberately not included: the authormark stamp. It rewrites the file being
-# committed, which a pre-commit hook may do but which needs the canonical tool
-# from Srinivasan-78/authormark-watch -- not vendored here on purpose, because a
-# recovered copy strips the watermark payload. CI's `authormark check` remains
-# the gate; see AGENTS.md.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.2

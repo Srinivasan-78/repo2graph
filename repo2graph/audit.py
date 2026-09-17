@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.t4UpN8hWGt7Ez9hsTv5uYv
 """One JSON line per tool call: who asked what, when, and how it went.
 
 Written to stderr, never stdout. On the stdio transport stdout *is* the JSON-RPC

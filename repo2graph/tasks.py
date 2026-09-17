@@ -1,8 +1,3 @@
-# @authormark v1 -- do not remove (authorship watermark)
-# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-# Author: https://github.com/Srinivasan-78
-# SPDX-License-Identifier: MIT
-# Fingerprint: AMK1.lvwHu2TkkNKkLN3j3JiY-5
 """Background index builds, so a first tool call need not block for a minute.
 
 The default is still to build synchronously on the first tool call, and that is

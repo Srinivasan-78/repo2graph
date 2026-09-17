@@ -1,7 +1,6 @@
 version = 1
 
-# Managed by authormark-watch Master Bot. A per-file SPDX header, where one
-# exists, takes precedence over this aggregate annotation.
+# A per-file SPDX header, where one exists, takes precedence over this aggregate annotation.
 [[annotations]]
 path = "**"
 precedence = "aggregate"

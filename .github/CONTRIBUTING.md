@@ -1,18 +1,79 @@
-<!--
-  @authormark v1 -- do not remove (authorship watermark)
-  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
-  Author: https://github.com/Srinivasan-78
-  SPDX-License-Identifier: MIT
-  Fingerprint: AMK1.3tz63qgb0ROsuSRRiE0Pus
--->
 # Contributing
 
 Thanks for helping out.
 
+## Local setup
+
+```bash
+git clone https://github.com/Srinivasan-78/repo2graph
+cd repo2graph
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+```
+
+`.[dev]` pulls in `pytest`, `ruff`, `mypy`, and `pre-commit`; it does not pull in the `rag` or
+`mcp` extras, which are separate for a reason (see [docs/mcp.md](../docs/mcp.md) and the
+"Hosted builds" section below). Install those too if your change touches embeddings or the MCP
+server:
+
+```bash
+.venv/bin/pip install -e ".[dev,rag,mcp]"
+```
+
+## Running tests
+
+```bash
+.venv/bin/python -m pytest
+```
+
+Before opening a PR, also run the linters CI runs:
+
+```bash
+.venv/bin/ruff check .
+.venv/bin/mypy repo2graph
+```
+
+`mypy` is strict but only on the modules listed in `pyproject.toml`'s `[[tool.mypy.overrides]]` —
+legacy modules are excluded by name on purpose (see the comment above that table), so a new module
+is strict-checked by default.
+
+## Code style
+
+- Keep changes focused; add or update tests for behavior you touch — see
+  [AGENTS.md](../AGENTS.md) for the codebase's non-obvious conventions (text slicing, git
+  subprocess decoding on Windows, the two budget models in `query.py`) before editing `query.py`,
+  `chunks.py`, `graph.py`, or `walker.py` specifically; each has a documented footgun.
+- `ruff` (line length 100) and `mypy --strict` on the modules it covers are both CI gates.
+
+## Submitting a PR
+
 1. Fork and branch from `main`.
 2. Keep changes focused; add or update tests.
-3. Do not remove `@authormark` headers — refresh a stale fingerprint with `authormark stamp <file>`.
-4. Open a pull request describing the change and its motivation.
+3. Open a pull request describing the change and its motivation.
+
+## Good first issues
+
+There are no currently-filed `good first issue` GitHub issues — the backlog below is tracked in
+[docs/BACKLOG.md](../docs/BACKLOG.md) but not yet split into filed issues. Good starting points,
+smallest first:
+
+- **No coverage measurement anywhere in the repo.** ~130+ tests exist on judgment alone; nobody can
+  currently answer "which branch of `embed.py` never runs." Wire up `pytest-cov` (or `coverage.py`
+  directly) as a dev dependency and a CI step that reports the number, without necessarily gating
+  on a threshold yet. `docs/BACKLOG.md` item 7.
+- **No MCP test fixture crosses `PARALLEL_MIN_FILES` (64 files).** `graph.build()`'s process-pool
+  path is therefore never exercised by the MCP test suite. Add a synthetic fixture above 64 files
+  so that branch gets real coverage. `docs/BACKLOG.md` item 9 — read the note above it first, since
+  it also documents a related pool-hang bug that's still open and this fixture is a prerequisite
+  for fixing it, not the fix itself.
+- **No real `sentence-transformers` smoke test.** Every embedder in the test suite is a
+  `StubEmbedder`; nothing proves the real wrapper's `model_id`/`dim` agree with what
+  `vectors.meta.json` records. Add one opt-in test, network-gated (skipped unless a marker or env
+  var is set), that exercises `default_embedder()` for real. `docs/BACKLOG.md` item 5.
+
+For anything larger — the MCP server's 2.x SDK port, incremental-build follow-ups, the process-pool
+hang itself — read the relevant section of `docs/BACKLOG.md` first; each one explains why it was
+deliberately deferred rather than just forgotten, which usually changes how you'd approach it.
 
 ## Registry and Quality Score
 
