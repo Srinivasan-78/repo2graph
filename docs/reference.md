@@ -125,8 +125,8 @@ door can eventually get to. A big `reach` means a main path through the project.
 
 ## Languages
 
-Sixteen grammars get the full treatment — functions, classes and calls — across
-28 file extensions:
+Seventeen grammars get the full treatment — functions, classes and calls — across
+29 file extensions:
 
 | Grammar | Extensions |
 |---|---|
@@ -146,6 +146,7 @@ Sixteen grammars get the full treatment — functions, classes and calls — acr
 | `swift` | `.swift` |
 | `scala` | `.scala` |
 | `bash` | `.sh` `.bash` |
+| `lua` | `.lua` |
 
 `.h` maps to `c`; a C++ header that uses `.h` rather than `.hpp` is parsed with
 the C grammar, which is the usual reason a C++ project shows parse errors in

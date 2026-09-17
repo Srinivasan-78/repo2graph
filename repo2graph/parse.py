@@ -58,6 +58,7 @@ EXT_LANG = {
     ".swift": "swift",
     ".sh": "bash",
     ".bash": "bash",
+    ".lua": "lua",
 }
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
@@ -206,6 +207,12 @@ LANG_CFG: dict[str, LangConfig] = {
     "bash": {
         "kind_map": {"function_definition": "function"},
         "call_types": {"command"},
+        "import_types": set(),
+        "doc": "line",
+    },
+    "lua": {
+        "kind_map": {"function_declaration": "function"},
+        "call_types": {"function_call"},
         "import_types": set(),
         "doc": "line",
     },
