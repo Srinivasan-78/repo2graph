@@ -1,0 +1,49 @@
+{
+  "query": "What participates in eager execution?",
+  "results": [
+    {
+      "node_id": "sym:tensorflow/core/common_runtime/eager/custom_device_test.cc::tensorflow.eager",
+      "path": "tensorflow/core/common_runtime/eager/custom_device_test.cc",
+      "lang": "cpp",
+      "kind": "namespace",
+      "name": "tensorflow.eager",
+      "start_line": 32,
+      "end_line": 236,
+      "why": "lexical",
+      "score": 9.144
+    },
+    {
+      "node_id": "sym:tensorflow/core/common_runtime/eager/placement_utils.h::tensorflow.eager",
+      "path": "tensorflow/core/common_runtime/eager/placement_utils.h",
+      "lang": "c",
+      "kind": "function",
+      "name": "tensorflow.eager",
+      "start_line": 25,
+      "end_line": 46,
+      "why": "lexical",
+      "score": 7.981
+    },
+    {
+      "node_id": "sym:tensorflow/core/common_runtime/eager/custom_device_test.cc::tensorflow.eager.TestCustomDevice",
+      "path": "tensorflow/core/common_runtime/eager/custom_device_test.cc",
+      "lang": "cpp",
+      "kind": "class",
+      "name": "tensorflow.eager.TestCustomDevice",
+      "start_line": 38,
+      "end_line": 76,
+      "why": "DEFINES out of eager",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:tensorflow/core/common_runtime/eager/custom_device_test.cc::tensorflow.eager.TestCustomDeviceTensorHandle",
+      "path": "tensorflow/core/common_runtime/eager/custom_device_test.cc",
+      "lang": "cpp",
+      "kind": "class",
+      "name": "tensorflow.eager.TestCustomDeviceTensorHandle",
+      "start_line": 78,
+      "end_line": 106,
+      "why": "DEFINES out of eager",
+      "score": 0.0
+    }
+  ]
+}

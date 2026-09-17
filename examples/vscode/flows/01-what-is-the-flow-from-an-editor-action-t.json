@@ -1,0 +1,82 @@
+{
+  "query": "What is the flow from an editor action to a service?",
+  "results": [
+    {
+      "node_id": "sym:src/vs/base/common/uri.ts::URI.from",
+      "path": "src/vs/base/common/uri.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "URI.from",
+      "start_line": 341,
+      "end_line": 351,
+      "why": "lexical",
+      "score": 14.861
+    },
+    {
+      "node_id": "sym:src/vs/workbench/browser/parts/editor/editorActions.ts::AbstractCreateEditorGroupAction.run",
+      "path": "src/vs/workbench/browser/parts/editor/editorActions.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "AbstractCreateEditorGroupAction.run",
+      "start_line": 2467,
+      "end_line": 2491,
+      "why": "lexical",
+      "score": 13.366
+    },
+    {
+      "node_id": "sym:src/vs/workbench/browser/parts/editor/editorActions.ts::AbstractCreateEditorGroupAction",
+      "path": "src/vs/workbench/browser/parts/editor/editorActions.ts",
+      "lang": "typescript",
+      "kind": "class",
+      "name": "AbstractCreateEditorGroupAction",
+      "start_line": 2458,
+      "end_line": 2492,
+      "why": "lexical",
+      "score": 12.821
+    },
+    {
+      "node_id": "sym:src/vs/base/common/uri.ts::Uri",
+      "path": "src/vs/base/common/uri.ts",
+      "lang": "typescript",
+      "kind": "class",
+      "name": "Uri",
+      "start_line": 455,
+      "end_line": 514,
+      "why": "CALLS out of from",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/base/browser/dom.ts::getActiveDocument",
+      "path": "src/vs/base/browser/dom.ts",
+      "lang": "typescript",
+      "kind": "function",
+      "name": "getActiveDocument",
+      "start_line": 1055,
+      "end_line": 1073,
+      "why": "CALLS out of run",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/workbench/browser/parts/editor/editorActions.ts::AbstractCreateEditorGroupAction.constructor",
+      "path": "src/vs/workbench/browser/parts/editor/editorActions.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "AbstractCreateEditorGroupAction.constructor",
+      "start_line": 2460,
+      "end_line": 2465,
+      "why": "DEFINES out of AbstractCreateEditorGroupAction",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/platform/actions/common/actions.ts::Action2",
+      "path": "src/vs/platform/actions/common/actions.ts",
+      "lang": "typescript",
+      "kind": "class",
+      "name": "Action2",
+      "start_line": 723,
+      "end_line": 726,
+      "why": "INHERITS out of AbstractCreateEditorGroupAction",
+      "score": 0.0
+    }
+  ]
+}

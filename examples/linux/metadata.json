@@ -1,0 +1,42 @@
+{
+  "repository": "https://github.com/torvalds/linux",
+  "id": "linux",
+  "commit": "238650ef6c7c7cca08e032527329424c9fbd70e5",
+  "branch": "master",
+  "generated_at": "2026-09-17T15:32:06Z",
+  "repo2graph_version": "1.5.1",
+  "graph_schema_version": "repo2graph/1",
+  "languages": [
+    "c"
+  ],
+  "scope": "scoped",
+  "include": [
+    "kernel/**",
+    "fs/ext4/**",
+    "drivers/net/ethernet/intel/e1000/**",
+    "include/linux/**"
+  ],
+  "nodes": 136182,
+  "edges": 257655,
+  "stats": {
+    "discovery": "git",
+    "files": 3660,
+    "edge:CONTAINS": 3876,
+    "parsed": 3574,
+    "parse_errors": 14663,
+    "symbol:struct": 127710,
+    "edge:DEFINES": 125401,
+    "symbol:enum": 6503,
+    "edge:IMPORTS": 13949,
+    "symbol:function": 39944,
+    "edge:CALLS_EXTERNAL": 44350,
+    "edge:CALLS": 70079,
+    "ambiguous_calls": 227,
+    "entrypoints": 16471,
+    "nodes": 136182,
+    "edges": 257655
+  },
+  "clone_seconds": 8.0,
+  "build_seconds": 62.2,
+  "viz_nodes": 300
+}

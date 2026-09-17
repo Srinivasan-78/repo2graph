@@ -1,0 +1,21 @@
+{
+  "discovery": "git",
+  "files": 1022,
+  "edge:CONTAINS": 1041,
+  "parsed": 969,
+  "parse_errors": 12469,
+  "symbol:namespace": 466,
+  "edge:DEFINES": 14968,
+  "symbol:function": 15388,
+  "symbol:class": 956,
+  "edge:IMPORTS": 9634,
+  "symbol:struct": 384,
+  "symbol:enum": 43,
+  "edge:CALLS_EXTERNAL": 27313,
+  "edge:CALLS": 42395,
+  "edge:INHERITS": 662,
+  "ambiguous_calls": 5631,
+  "entrypoints": 5676,
+  "nodes": 20641,
+  "edges": 96013
+}

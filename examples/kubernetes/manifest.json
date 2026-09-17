@@ -1,0 +1,284 @@
+{
+  "format": "repo2graph/1",
+  "repo": "kubernetes",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/index.state.json",
+    "agent/parse.cache.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.html": "the interactive map, for a person in a browser",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "discovery": "git",
+    "files": 1082,
+    "edge:CONTAINS": 1339,
+    "parsed": 1005,
+    "parse_errors": 260,
+    "symbol:function": 5275,
+    "edge:DEFINES": 10502,
+    "edge:IMPORTS": 8665,
+    "symbol:type": 1440,
+    "symbol:method": 4423,
+    "edge:CALLS": 37612,
+    "edge:CALLS_EXTERNAL": 25407,
+    "ambiguous_calls": 5192,
+    "entrypoints": 3516,
+    "nodes": 14197,
+    "edges": 83525
+  },
+  "entrypoints": [
+    {
+      "id": "sym:pkg/scheduler/schedule_one_test.go::TestSchedulerScheduleOne",
+      "path": "pkg/scheduler/schedule_one_test.go",
+      "qualname": "TestSchedulerScheduleOne",
+      "kind": "function",
+      "reach": 1203
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_test.go::TestSchedulerFailedSchedulingReasons",
+      "path": "pkg/scheduler/schedule_one_test.go",
+      "qualname": "TestSchedulerFailedSchedulingReasons",
+      "kind": "function",
+      "reach": 1182
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGBasicWithGangChildren_Internal",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGBasicWithGangChildren_Internal",
+      "kind": "function",
+      "reach": 1177
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGHierarchicalScheduling_Internal",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGHierarchicalScheduling_Internal",
+      "kind": "function",
+      "reach": 1177
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGMinGroupCount_Internal",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGMinGroupCount_Internal",
+      "kind": "function",
+      "reach": 1177
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_test.go::TestScheduleOneMarksPodAsProcessedBeforePreBind",
+      "path": "pkg/scheduler/schedule_one_test.go",
+      "qualname": "TestScheduleOneMarksPodAsProcessedBeforePreBind",
+      "kind": "function",
+      "reach": 1177
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_SchedulerNameMismatchUpdatesStatus",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestScheduleOnePodGroup_SchedulerNameMismatchUpdatesStatus",
+      "kind": "function",
+      "reach": 1174
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_PodGroupStateAvailability",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestScheduleOnePodGroup_PodGroupStateAvailability",
+      "kind": "function",
+      "reach": 1173
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_FillsPodResultsOnFewerResults",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_FillsPodResultsOnFewerResults",
+      "kind": "function",
+      "reach": 1171
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodStatusConditions",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_PodStatusConditions",
+      "kind": "function",
+      "reach": 1171
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_FinishesAttemptWhenAllPoppedPodsAreAssumed",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestScheduleOnePodGroup_FinishesAttemptWhenAllPoppedPodsAreAssumed",
+      "kind": "function",
+      "reach": 1165
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodGroupPostFilter",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_PodGroupPostFilter",
+      "kind": "function",
+      "reach": 1162
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_NominatedNodes",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_NominatedNodes",
+      "kind": "function",
+      "reach": 1146
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestSubmitPodGroupAlgorithmResult",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestSubmitPodGroupAlgorithmResult",
+      "kind": "function",
+      "reach": 1072
+    },
+    {
+      "id": "sym:pkg/scheduler/framework/runtime/framework_test.go::TestRecordingMetrics",
+      "path": "pkg/scheduler/framework/runtime/framework_test.go",
+      "qualname": "TestRecordingMetrics",
+      "kind": "function",
+      "reach": 881
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGSchedulingPlacementAlgorithm",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGSchedulingPlacementAlgorithm",
+      "kind": "function",
+      "reach": 803
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGSchedulingPlacementAlgorithm_Scoring",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGSchedulingPlacementAlgorithm_Scoring",
+      "kind": "function",
+      "reach": 802
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPlacementCycleStateLifecycle_MultiLevel",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPlacementCycleStateLifecycle_MultiLevel",
+      "kind": "function",
+      "reach": 801
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingAlgorithm",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupSchedulingAlgorithm",
+      "kind": "function",
+      "reach": 801
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupSchedulingPlacementAlgorithm",
+      "kind": "function",
+      "reach": 801
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm_NominatedNode",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupSchedulingPlacementAlgorithm_NominatedNode",
+      "kind": "function",
+      "reach": 791
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm_Scoring",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupSchedulingPlacementAlgorithm_Scoring",
+      "kind": "function",
+      "reach": 791
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPlacementCycleStateLifecycle",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPlacementCycleStateLifecycle",
+      "kind": "function",
+      "reach": 790
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGHierarchicalScheduling_RecursiveAlgorithm",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGHierarchicalScheduling_RecursiveAlgorithm",
+      "kind": "function",
+      "reach": 783
+    },
+    {
+      "id": "sym:pkg/scheduler/eventhandlers_test.go::TestEventHandlers_MoveToActiveOnNominatedNodeUpdate",
+      "path": "pkg/scheduler/eventhandlers_test.go",
+      "qualname": "TestEventHandlers_MoveToActiveOnNominatedNodeUpdate",
+      "kind": "function",
+      "reach": 777
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off)."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}

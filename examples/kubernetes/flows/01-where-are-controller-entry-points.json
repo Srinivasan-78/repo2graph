@@ -1,0 +1,71 @@
+{
+  "query": "Where are controller entry points?",
+  "results": [
+    {
+      "node_id": "sym:pkg/controller/nodelifecycle/node_lifecycle_controller.go::Controller",
+      "path": "pkg/controller/nodelifecycle/node_lifecycle_controller.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Controller",
+      "start_line": 224,
+      "end_line": 311,
+      "why": "lexical",
+      "score": 8.81
+    },
+    {
+      "node_id": "file:pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "path": "pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "lang": "go",
+      "kind": "code",
+      "name": "pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "start_line": 1,
+      "end_line": 53,
+      "why": "lexical",
+      "score": 7.28
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/plugins/helper/shape_score.go::BuildBrokenLinearFunction",
+      "path": "pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "lang": "go",
+      "kind": "function",
+      "name": "BuildBrokenLinearFunction",
+      "start_line": 40,
+      "end_line": 52,
+      "why": "lexical",
+      "score": 6.874
+    },
+    {
+      "node_id": "sym:pkg/controller/ttl/ttl_controller.go::Controller",
+      "path": "pkg/controller/ttl/ttl_controller.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Controller",
+      "start_line": 56,
+      "end_line": 78,
+      "why": "lexical",
+      "score": 6.411
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/plugins/helper/shape_score.go::FunctionShape",
+      "path": "pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "FunctionShape",
+      "start_line": 20,
+      "end_line": 20,
+      "why": "DEFINES out of shape_score.go",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/plugins/helper/shape_score.go::FunctionShapePoint",
+      "path": "pkg/scheduler/framework/plugins/helper/shape_score.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "FunctionShapePoint",
+      "start_line": 23,
+      "end_line": 28,
+      "why": "DEFINES out of shape_score.go",
+      "score": 0.0
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "query": "What is the dependency path between the Python framework and the C++ core runtime?",
+  "results": [
+    {
+      "node_id": "file:tensorflow/python/framework/error_interpolation.py",
+      "path": "tensorflow/python/framework/error_interpolation.py",
+      "lang": "python",
+      "kind": "code",
+      "name": "tensorflow/python/framework/error_interpolation.py",
+      "start_line": 1,
+      "end_line": 439,
+      "why": "lexical",
+      "score": 11.527
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/extension_type_field.py::_convert_value",
+      "path": "tensorflow/python/framework/extension_type_field.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "_convert_value",
+      "start_line": 270,
+      "end_line": 321,
+      "why": "lexical",
+      "score": 11.34
+    }
+  ]
+}

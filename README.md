@@ -21,6 +21,16 @@
   If repo2graph is useful to you, a ⭐ on <a href="https://github.com/Srinivasan-78/repo2graph">GitHub</a> helps others find it.
 </p>
 
+<p align="center">
+  <a href="#the-idea">Overview</a> ·
+  <a href="#see-it-on-real-repositories">Examples</a> ·
+  <a href="docs/benchmarks.md">Benchmarks</a> ·
+  <a href="#install">Install</a> ·
+  <a href="docs/README.md">Docs</a> ·
+  <a href="SECURITY.md">Security</a> ·
+  <a href=".github/CONTRIBUTING.md">Contributing</a>
+</p>
+
 *`repo2graph build` then `repo2graph query`, on this repo's own source — real output, not staged.*
 
 <p align="center">
@@ -69,6 +79,30 @@ neighbours.
 
 That matters most when a chatbot or AI helper is reading the code for you. Giving it the right
 piece of code plus the pieces around it is usually what it was missing.
+
+## See it on real repositories
+
+Not a toy demo — five real, large, public repositories, each indexed at a pinned commit, with the
+generated graph committed and the exact reproduction command recorded. Every number below is
+measured, from [`benchmarks/results.json`](benchmarks/results.json), not estimated.
+
+| Repository | Language(s) | Scope | Nodes | Edges | Example |
+|---|---|---|---:|---:|---|
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server) | 14,197 | 83,525 | [examples/kubernetes](examples/kubernetes/) |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | scoped (Python/C++ boundary) | 20,641 | 96,013 | [examples/tensorflow](examples/tensorflow/) |
+| [Django](https://github.com/django/django) | Python | full repository | 54,544 | 228,461 | [examples/django](examples/django/) |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`) | 113,115 | 431,453 | [examples/vscode](examples/vscode/) |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (extreme-scale) | 136,182 | 257,655 | [examples/linux](examples/linux/) |
+
+"Scoped" means only an architecturally coherent subtree was indexed, not the whole repository —
+Kubernetes' and TensorFlow's full trees run to hundreds of thousands of files once vendored
+dependencies and generated bindings are counted, and the Linux kernel's is every driver ever merged
+for every supported architecture at once. Each example's own README explains exactly why, with the
+paths and commit pinned for reproduction. See **[examples/README.md](examples/README.md)** for the
+full index, **[docs/benchmarks.md](docs/benchmarks.md)** for methodology, and
+**[docs/limitations.md](docs/limitations.md)** for what running the pipeline against five real
+repositories actually surfaced (parse-error rates on macro-heavy C/C++, call-name ambiguity,
+cross-language resolution limits).
 
 ## Install
 
@@ -328,6 +362,10 @@ The map is very good, but it is not perfect. Two things worth knowing before you
   invisible to a reader like this one.
 
 How the matching and resolution actually work, per language: **[TECHNICAL.md](TECHNICAL.md#where-it-guesses-and-why)**.
+What that looked like against five real, large repositories — parse-error rates on macro-heavy
+C/C++, call-name ambiguity, cross-language resolution — is in
+**[docs/limitations.md](docs/limitations.md)**. Why a graph instead of just search, and when it is
+not the right tool: **[docs/why-graph.md](docs/why-graph.md)**.
 
 ## Security
 
@@ -337,6 +375,12 @@ LLM provider, and prints the provider + hostname before it does. The MCP server 
 credential-shaped files unconditionally, with no flag to turn that off. Details and the full
 reasoning: [SECURITY.md](SECURITY.md).
 
+## Documentation
+
+The [documentation index](docs/README.md) is the hub for everything past this README: architecture,
+the MCP/CLI/Python surfaces, the real-world examples and benchmarks above, security and enterprise
+deployment, and how to contribute.
+
 ## Contributing
 
 ```bash
@@ -344,8 +388,8 @@ reasoning: [SECURITY.md](SECURITY.md).
 .venv/bin/python -m pytest
 ```
 
-See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). Source files carry an `@authormark`
-watermark header — read [AGENTS.md](AGENTS.md) before editing one.
+See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for this
+codebase's non-obvious conventions before editing `repo2graph/`.
 
 ## Licence
 

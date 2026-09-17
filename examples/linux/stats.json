@@ -1,0 +1,18 @@
+{
+  "discovery": "git",
+  "files": 3660,
+  "edge:CONTAINS": 3876,
+  "parsed": 3574,
+  "parse_errors": 14663,
+  "symbol:struct": 127710,
+  "edge:DEFINES": 125401,
+  "symbol:enum": 6503,
+  "edge:IMPORTS": 13949,
+  "symbol:function": 39944,
+  "edge:CALLS_EXTERNAL": 44350,
+  "edge:CALLS": 70079,
+  "ambiguous_calls": 227,
+  "entrypoints": 16471,
+  "nodes": 136182,
+  "edges": 257655
+}

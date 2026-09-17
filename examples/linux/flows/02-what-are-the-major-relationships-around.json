@@ -1,0 +1,60 @@
+{
+  "query": "What are the major relationships around ext4's core structures?",
+  "results": [
+    {
+      "node_id": "file:include/linux/ecryptfs.h",
+      "path": "include/linux/ecryptfs.h",
+      "lang": "c",
+      "kind": "code",
+      "name": "include/linux/ecryptfs.h",
+      "start_line": 1,
+      "end_line": 107,
+      "why": "lexical",
+      "score": 13.75
+    },
+    {
+      "node_id": "file:include/linux/zstd_lib.h",
+      "path": "include/linux/zstd_lib.h",
+      "lang": "c",
+      "kind": "code",
+      "name": "include/linux/zstd_lib.h",
+      "start_line": 1,
+      "end_line": 3161,
+      "why": "lexical",
+      "score": 12.604
+    },
+    {
+      "node_id": "sym:include/linux/ecryptfs.h::ecryptfs_session_key",
+      "path": "include/linux/ecryptfs.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "ecryptfs_session_key",
+      "start_line": 55,
+      "end_line": 65,
+      "why": "DEFINES out of ecryptfs.h",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:include/linux/ecryptfs.h::ecryptfs_token_types",
+      "path": "include/linux/ecryptfs.h",
+      "lang": "c",
+      "kind": "enum",
+      "name": "ecryptfs_token_types",
+      "start_line": 82,
+      "end_line": 82,
+      "why": "DEFINES out of ecryptfs.h",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:include/linux/zstd_lib.h::ZSTD_CCtx_s",
+      "path": "include/linux/zstd_lib.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "ZSTD_CCtx_s",
+      "start_line": 259,
+      "end_line": 259,
+      "why": "DEFINES out of zstd_lib.h",
+      "score": 0.0
+    }
+  ]
+}

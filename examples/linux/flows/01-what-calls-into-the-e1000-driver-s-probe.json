@@ -1,0 +1,60 @@
+{
+  "query": "What calls into the e1000 driver's probe function?",
+  "results": [
+    {
+      "node_id": "file:include/linux/device/driver.h",
+      "path": "include/linux/device/driver.h",
+      "lang": "c",
+      "kind": "code",
+      "name": "include/linux/device/driver.h",
+      "start_line": 1,
+      "end_line": 301,
+      "why": "lexical",
+      "score": 12.163
+    },
+    {
+      "node_id": "sym:include/linux/device/driver.h::probe_type",
+      "path": "include/linux/device/driver.h",
+      "lang": "c",
+      "kind": "enum",
+      "name": "probe_type",
+      "start_line": 47,
+      "end_line": 51,
+      "why": "DEFINES out of driver.h",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:include/linux/device/driver.h::device_driver",
+      "path": "include/linux/device/driver.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "device_driver",
+      "start_line": 167,
+      "end_line": 167,
+      "why": "DEFINES out of driver.h",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:include/linux/device/driver.h::bus_type",
+      "path": "include/linux/device/driver.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "bus_type",
+      "start_line": 139,
+      "end_line": 139,
+      "why": "DEFINES out of driver.h",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:include/linux/device/driver.h::driver_attribute",
+      "path": "include/linux/device/driver.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "driver_attribute",
+      "start_line": 163,
+      "end_line": 163,
+      "why": "DEFINES out of driver.h",
+      "score": 0.0
+    }
+  ]
+}

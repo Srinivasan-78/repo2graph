@@ -1,0 +1,49 @@
+{
+  "query": "How does a request flow through the API server?",
+  "results": [
+    {
+      "node_id": "sym:staging/src/k8s.io/apiserver/pkg/endpoints/apiserver_test.go::TestCreateChecksAPIVersion",
+      "path": "staging/src/k8s.io/apiserver/pkg/endpoints/apiserver_test.go",
+      "lang": "go",
+      "kind": "function",
+      "name": "TestCreateChecksAPIVersion",
+      "start_line": 4055,
+      "end_line": 4086,
+      "why": "lexical",
+      "score": 8.208
+    },
+    {
+      "node_id": "file:pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go",
+      "path": "pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go",
+      "lang": "go",
+      "kind": "code",
+      "name": "pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go",
+      "start_line": 1,
+      "end_line": 616,
+      "why": "lexical",
+      "score": 8.115
+    },
+    {
+      "node_id": "sym:staging/src/k8s.io/apiserver/pkg/endpoints/apiserver_test.go::handle",
+      "path": "staging/src/k8s.io/apiserver/pkg/endpoints/apiserver_test.go",
+      "lang": "go",
+      "kind": "function",
+      "name": "handle",
+      "start_line": 222,
+      "end_line": 224,
+      "why": "CALLS out of TestCreateChecksAPIVersion",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go::draExtendedResource",
+      "path": "pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "draExtendedResource",
+      "start_line": 94,
+      "end_line": 97,
+      "why": "DEFINES out of extendeddynamicresources.go",
+      "score": 0.0
+    }
+  ]
+}

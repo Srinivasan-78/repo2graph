@@ -1,0 +1,284 @@
+{
+  "format": "repo2graph/1",
+  "repo": "linux",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/index.state.json",
+    "agent/parse.cache.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.html": "the interactive map, for a person in a browser",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "discovery": "git",
+    "files": 3660,
+    "edge:CONTAINS": 3876,
+    "parsed": 3574,
+    "parse_errors": 14663,
+    "symbol:struct": 127710,
+    "edge:DEFINES": 125401,
+    "symbol:enum": 6503,
+    "edge:IMPORTS": 13949,
+    "symbol:function": 39944,
+    "edge:CALLS_EXTERNAL": 44350,
+    "edge:CALLS": 70079,
+    "ambiguous_calls": 227,
+    "entrypoints": 16471,
+    "nodes": 136182,
+    "edges": 257655
+  },
+  "entrypoints": [
+    {
+      "id": "sym:kernel/bpf/syscall.c::__sys_bpf",
+      "path": "kernel/bpf/syscall.c",
+      "qualname": "__sys_bpf",
+      "kind": "function",
+      "reach": 5327
+    },
+    {
+      "id": "sym:kernel/kthread.c::kthreadd",
+      "path": "kernel/kthread.c",
+      "qualname": "kthreadd",
+      "kind": "function",
+      "reach": 3802
+    },
+    {
+      "id": "sym:kernel/umh.c::call_usermodehelper_exec_async",
+      "path": "kernel/umh.c",
+      "qualname": "call_usermodehelper_exec_async",
+      "kind": "function",
+      "reach": 3639
+    },
+    {
+      "id": "sym:fs/ext4/fast_commit.c::ext4_fc_replay",
+      "path": "fs/ext4/fast_commit.c",
+      "qualname": "ext4_fc_replay",
+      "kind": "function",
+      "reach": 3212
+    },
+    {
+      "id": "sym:fs/ext4/extents.c::ext4_fallocate",
+      "path": "fs/ext4/extents.c",
+      "qualname": "ext4_fallocate",
+      "kind": "function",
+      "reach": 3200
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_setattr",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_setattr",
+      "kind": "function",
+      "reach": 3168
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_evict_inode",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_evict_inode",
+      "kind": "function",
+      "reach": 3164
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_da_write_begin",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_da_write_begin",
+      "kind": "function",
+      "reach": 3155
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_journalled_write_end",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_journalled_write_end",
+      "kind": "function",
+      "reach": 3113
+    },
+    {
+      "id": "sym:fs/ext4/verity.c::ext4_end_enable_verity",
+      "path": "fs/ext4/verity.c",
+      "qualname": "ext4_end_enable_verity",
+      "kind": "function",
+      "reach": 3113
+    },
+    {
+      "id": "sym:fs/ext4/ialloc.c::__ext4_new_inode",
+      "path": "fs/ext4/ialloc.c",
+      "qualname": "__ext4_new_inode",
+      "kind": "function",
+      "reach": 3056
+    },
+    {
+      "id": "sym:kernel/power/main.c::state_store",
+      "path": "kernel/power/main.c",
+      "qualname": "state_store",
+      "kind": "function",
+      "reach": 3011
+    },
+    {
+      "id": "sym:kernel/power/autosleep.c::try_to_suspend",
+      "path": "kernel/power/autosleep.c",
+      "qualname": "try_to_suspend",
+      "kind": "function",
+      "reach": 3004
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_map_blocks",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_map_blocks",
+      "kind": "function",
+      "reach": 2977
+    },
+    {
+      "id": "sym:kernel/cgroup/cpuset.c::cpuset_write_resmask",
+      "path": "kernel/cgroup/cpuset.c",
+      "qualname": "cpuset_write_resmask",
+      "kind": "function",
+      "reach": 2963
+    },
+    {
+      "id": "sym:drivers/net/ethernet/intel/e1000/e1000_ethtool.c::e1000_diag_test",
+      "path": "drivers/net/ethernet/intel/e1000/e1000_ethtool.c",
+      "qualname": "e1000_diag_test",
+      "kind": "function",
+      "reach": 2960
+    },
+    {
+      "id": "sym:kernel/cgroup/cgroup.c::css_free_rwork_fn",
+      "path": "kernel/cgroup/cgroup.c",
+      "qualname": "css_free_rwork_fn",
+      "kind": "function",
+      "reach": 2929
+    },
+    {
+      "id": "sym:fs/ext4/extents-test.c::test_split_convert",
+      "path": "fs/ext4/extents-test.c",
+      "qualname": "test_split_convert",
+      "kind": "function",
+      "reach": 2926
+    },
+    {
+      "id": "sym:kernel/sched/ext/ext.c::scx_root_enable_workfn",
+      "path": "kernel/sched/ext/ext.c",
+      "qualname": "scx_root_enable_workfn",
+      "kind": "function",
+      "reach": 2919
+    },
+    {
+      "id": "sym:kernel/sched/ext/sub.c::scx_sub_enable_workfn",
+      "path": "kernel/sched/ext/sub.c",
+      "qualname": "scx_sub_enable_workfn",
+      "kind": "function",
+      "reach": 2892
+    },
+    {
+      "id": "sym:fs/ext4/extents-test.c::extents_kunit_init",
+      "path": "fs/ext4/extents-test.c",
+      "qualname": "extents_kunit_init",
+      "kind": "function",
+      "reach": 2891
+    },
+    {
+      "id": "sym:kernel/sched/core.c::sched_cpu_deactivate",
+      "path": "kernel/sched/core.c",
+      "qualname": "sched_cpu_deactivate",
+      "kind": "function",
+      "reach": 2866
+    },
+    {
+      "id": "sym:fs/ext4/namei.c::ext4_mkdir",
+      "path": "fs/ext4/namei.c",
+      "qualname": "ext4_mkdir",
+      "kind": "function",
+      "reach": 2863
+    },
+    {
+      "id": "sym:kernel/sched/core.c::sched_cpu_activate",
+      "path": "kernel/sched/core.c",
+      "qualname": "sched_cpu_activate",
+      "kind": "function",
+      "reach": 2860
+    },
+    {
+      "id": "sym:fs/ext4/namei.c::ext4_symlink",
+      "path": "fs/ext4/namei.c",
+      "qualname": "ext4_symlink",
+      "kind": "function",
+      "reach": 2851
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off)."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}

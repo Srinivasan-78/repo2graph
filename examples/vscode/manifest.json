@@ -1,0 +1,288 @@
+{
+  "format": "repo2graph/1",
+  "repo": "vscode",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/index.state.json",
+    "agent/parse.cache.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.html": "the interactive map, for a person in a browser",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "discovery": "git",
+    "files": 6000,
+    "edge:CONTAINS": 7231,
+    "parsed": 5488,
+    "parse_errors": 6,
+    "symbol:class": 7577,
+    "edge:DEFINES": 88981,
+    "symbol:method": 56615,
+    "symbol:enum": 1174,
+    "symbol:function": 13076,
+    "edge:IMPORTS": 75900,
+    "symbol:interface": 9086,
+    "symbol:type": 3578,
+    "edge:CALLS": 223594,
+    "edge:CALLS_EXTERNAL": 25166,
+    "ambiguous_calls": 73028,
+    "edge:INHERITS": 10581,
+    "entrypoints": 19390,
+    "nodes": 113115,
+    "edges": 431453
+  },
+  "entrypoints": [
+    {
+      "id": "sym:src/vs/workbench/browser/actions/windowActions.ts::BaseOpenRecentAction.run",
+      "path": "src/vs/workbench/browser/actions/windowActions.ts",
+      "qualname": "BaseOpenRecentAction.run",
+      "kind": "method",
+      "reach": 13867
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/voiceClient/voiceSessionController.ts::VoiceSessionController.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/voiceClient/voiceSessionController.ts",
+      "qualname": "VoiceSessionController.constructor",
+      "kind": "method",
+      "reach": 13857
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts::AgentFeedbackEditorInputContribution.constructor",
+      "path": "src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts",
+      "qualname": "AgentFeedbackEditorInputContribution.constructor",
+      "kind": "method",
+      "reach": 13845
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/chat/browser/chatView.ts::ChatView.constructor",
+      "path": "src/vs/sessions/contrib/chat/browser/chatView.ts",
+      "qualname": "ChatView.constructor",
+      "kind": "method",
+      "reach": 13813
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.contribution.ts::run",
+      "path": "src/vs/workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.contribution.ts",
+      "qualname": "run",
+      "kind": "method",
+      "reach": 13811
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts::InlineChatController.constructor",
+      "path": "src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts",
+      "qualname": "InlineChatController.constructor",
+      "kind": "method",
+      "reach": 13810
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWidget.ts::AgentsVoiceWidget.constructor",
+      "path": "src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWidget.ts",
+      "qualname": "AgentsVoiceWidget.constructor",
+      "kind": "method",
+      "reach": 13801
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/actions/chatContinueInAction.ts::CreateRemoteAgentJobAction.run",
+      "path": "src/vs/workbench/contrib/chat/browser/actions/chatContinueInAction.ts",
+      "qualname": "CreateRemoteAgentJobAction.run",
+      "kind": "method",
+      "reach": 13754
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/actions/chatActions.ts::OpenChatGlobalAction.run",
+      "path": "src/vs/workbench/contrib/chat/browser/actions/chatActions.ts",
+      "qualname": "OpenChatGlobalAction.run",
+      "kind": "method",
+      "reach": 13734
+    },
+    {
+      "id": "sym:src/vs/workbench/api/common/extHost.api.impl.ts::createApiFactoryAndRegisterActors",
+      "path": "src/vs/workbench/api/common/extHost.api.impl.ts",
+      "qualname": "createApiFactoryAndRegisterActors",
+      "kind": "function",
+      "reach": 13218
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/chat/browser/newChatWidget.ts::NewChatWidget.constructor",
+      "path": "src/vs/sessions/contrib/chat/browser/newChatWidget.ts",
+      "qualname": "NewChatWidget.constructor",
+      "kind": "method",
+      "reach": 13207
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts::ChatWidget.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts",
+      "qualname": "ChatWidget.constructor",
+      "kind": "method",
+      "reach": 13138
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/input/chatInputPart.ts::ChatInputPart.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/input/chatInputPart.ts",
+      "qualname": "ChatInputPart.constructor",
+      "kind": "method",
+      "reach": 13133
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/automationsView.ts::AutomationCardsSection.constructor",
+      "path": "src/vs/sessions/contrib/sessions/browser/views/automationsView.ts",
+      "qualname": "AutomationCardsSection.constructor",
+      "kind": "method",
+      "reach": 12977
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentHostMain.ts::startAgentHost",
+      "path": "src/vs/platform/agentHost/node/agentHostMain.ts",
+      "qualname": "startAgentHost",
+      "kind": "function",
+      "reach": 12963
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/comments/browser/commentsController.ts::CommentController.constructor",
+      "path": "src/vs/workbench/contrib/comments/browser/commentsController.ts",
+      "qualname": "CommentController.constructor",
+      "kind": "method",
+      "reach": 12937
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentHostServerMain.ts::main",
+      "path": "src/vs/platform/agentHost/node/agentHostServerMain.ts",
+      "qualname": "main",
+      "kind": "function",
+      "reach": 12907
+    },
+    {
+      "id": "sym:src/vs/base/browser/ui/actionbar/actionbar.ts::ActionBar.constructor",
+      "path": "src/vs/base/browser/ui/actionbar/actionbar.ts",
+      "qualname": "ActionBar.constructor",
+      "kind": "method",
+      "reach": 12890
+    },
+    {
+      "id": "sym:src/vs/editor/contrib/inlineCompletions/browser/model/inlineCompletionsSource.ts::InlineCompletionsSource.fetch",
+      "path": "src/vs/editor/contrib/inlineCompletions/browser/model/inlineCompletionsSource.ts",
+      "qualname": "InlineCompletionsSource.fetch",
+      "kind": "method",
+      "reach": 12866
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentService.ts::AgentService.constructor",
+      "path": "src/vs/platform/agentHost/node/agentService.ts",
+      "qualname": "AgentService.constructor",
+      "kind": "method",
+      "reach": 12866
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/chat/browser/sessionWorkspacePicker.ts::WorkspacePicker.constructor",
+      "path": "src/vs/sessions/contrib/chat/browser/sessionWorkspacePicker.ts",
+      "qualname": "WorkspacePicker.constructor",
+      "kind": "method",
+      "reach": 12846
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts::ChatMarkdownContentPart.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts",
+      "qualname": "ChatMarkdownContentPart.constructor",
+      "kind": "method",
+      "reach": 12841
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts::SessionsList.constructor",
+      "path": "src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts",
+      "qualname": "SessionsList.constructor",
+      "kind": "method",
+      "reach": 12831
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/chatEditing/notebook/chatEditingNotebookEditorIntegration.ts::ChatEditingNotebookEditorWidgetIntegration.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/chatEditing/notebook/chatEditingNotebookEditorIntegration.ts",
+      "qualname": "ChatEditingNotebookEditorWidgetIntegration.constructor",
+      "kind": "method",
+      "reach": 12829
+    },
+    {
+      "id": "sym:src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts::NativeEditContext.constructor",
+      "path": "src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts",
+      "qualname": "NativeEditContext.constructor",
+      "kind": "method",
+      "reach": 12811
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off)."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}

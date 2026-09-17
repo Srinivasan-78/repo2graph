@@ -1,0 +1,185 @@
+# Registry of real-world repositories analyzed by repo2graph.
+#
+# Consumed by scripts/generate_examples.py. Do not hand-edit the generated
+# artifacts under examples/<id>/ — edit this file and regenerate:
+#
+#   python scripts/generate_examples.py --repo <id>
+#   python scripts/generate_examples.py --all
+#
+# `sparse_paths` (git sparse-checkout, non-cone patterns) keep the clone from
+# downloading blobs outside the analyzed scope. `include`/`exclude` are
+# repo2graph's own discovery globs, applied after checkout, and are the
+# authoritative record of what was actually indexed — `sparse_paths` is only
+# a bandwidth optimization and must be a superset of `include`.
+#
+# scope: full   -> the whole repository at the pinned commit was indexed.
+# scope: scoped -> only the listed subtrees were indexed; see each repo's
+#                  README.md "Why this scope" section for the reasoning.
+# `git_history` > 0 requires a clone deep enough to carry that many commits
+# (clone_depth 0 = full history); scoped repositories use depth 1 and skip
+# CO_CHANGE edges entirely, since a 1-commit clone has no history to mine.
+
+repositories:
+  - id: django
+    name: Django
+    url: https://github.com/django/django
+    ref: main
+    clone_depth: 300
+    git_history: 200
+    scope: full
+    sparse_paths: null
+    include: null
+    exclude: []
+    max_files: 0
+    language_focus: [python]
+    category: [web-framework, mature, single-language]
+    why: >
+      Mature, long-lived, single-language Python framework — decorators, URL
+      routing, an ORM, middleware, and an extensive test suite. Small enough
+      relative to the other four that the whole repository is indexed at
+      once, making it the pipeline's full-repository (non-scoped) baseline.
+    queries:
+      - "How does a request travel through Django middleware?"
+      - "How does URL resolution reach a view?"
+      - "Where does model query execution originate?"
+      - "How does a management command get invoked?"
+
+  - id: kubernetes
+    name: Kubernetes
+    url: https://github.com/kubernetes/kubernetes
+    ref: master
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /cmd/kube-controller-manager/
+      - /pkg/controller/
+      - /pkg/scheduler/
+      - /pkg/registry/core/pod/
+      - /staging/src/k8s.io/apiserver/pkg/endpoints/
+    include:
+      - cmd/kube-controller-manager/**
+      - pkg/controller/**
+      - pkg/scheduler/**
+      - pkg/registry/core/pod/**
+      - staging/src/k8s.io/apiserver/pkg/endpoints/**
+    exclude:
+      - "**/testdata/**"
+    max_files: 4000
+    language_focus: [go]
+    category: [cloud-native, monorepo, large-scale]
+    why: >
+      Kubernetes' full tree is on the order of hundreds of thousands of files
+      once vendor/ and generated clients are counted — not a repository size
+      that a single reproducible CI-friendly run should attempt whole. This
+      is a scoped benchmark (see docs/limitations.md and section "Why this
+      scope" below): the controller-manager entrypoint, the built-in
+      controllers, the scheduler, the pod registry, and the API server's
+      request-handling package (apiserver/pkg/endpoints) — a coherent slice
+      that a "how does a request flow through the API server" or "what calls
+      a specific controller" question can actually be answered against.
+    queries:
+      - "How does a request flow through the API server?"
+      - "Where are controller entry points?"
+      - "What calls the pod controller?"
+      - "What is the impact radius of changing the scheduler's core interface?"
+
+  - id: tensorflow
+    name: TensorFlow
+    url: https://github.com/tensorflow/tensorflow
+    ref: master
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /tensorflow/python/framework/
+      - /tensorflow/python/eager/
+      - /tensorflow/core/framework/
+      - /tensorflow/core/common_runtime/
+    include:
+      - tensorflow/python/framework/**
+      - tensorflow/python/eager/**
+      - tensorflow/core/framework/**
+      - tensorflow/core/common_runtime/**
+    exclude:
+      - "**/testdata/**"
+    max_files: 4000
+    language_focus: [python, cpp]
+    category: [machine-learning, multi-language, large-scale]
+    why: >
+      TensorFlow's full tree includes generated bindings, third-party
+      vendoring and a bazel build graph that dwarf the hand-written source.
+      This scope covers the Python/C++ boundary directly: `python/framework`
+      and `python/eager` are the Python-side op/eager machinery, `core/framework`
+      and `core/common_runtime` are the C++ execution core they call into —
+      the pair this project exists to test cross-language behavior against
+      (see docs/limitations.md, "cross-language resolution").
+    queries:
+      - "Where does a Python API cross into C++?"
+      - "What participates in eager execution?"
+      - "What is the dependency path between the Python framework and the C++ core runtime?"
+
+  - id: vscode
+    name: VS Code
+    url: https://github.com/microsoft/vscode
+    ref: main
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /src/vs/
+    include:
+      - src/vs/**
+    exclude:
+      - "**/test/**"
+      - "**/*.test.ts"
+    max_files: 6000
+    language_focus: [typescript]
+    category: [application, editor, large-scale]
+    why: >
+      `extensions/` (bundled extensions, each with its own dependency tree)
+      and `node_modules`-shaped build tooling dominate file count without
+      adding architecturally interesting graph structure. `src/vs/` is the
+      actual editor/workbench/platform source — base services, the editor,
+      the workbench UI, and the Electron/Node entry points — where the
+      "command to handler" and "editor action to service" flows this example
+      set is built around actually live.
+    queries:
+      - "How does a command reach its handler?"
+      - "What is the flow from an editor action to a service?"
+      - "What are the core platform services other layers depend on?"
+
+  - id: linux
+    name: Linux kernel
+    url: https://github.com/torvalds/linux
+    ref: master
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /kernel/
+      - /fs/ext4/
+      - /drivers/net/ethernet/intel/e1000/
+      - /include/linux/
+    include:
+      - kernel/**
+      - fs/ext4/**
+      - drivers/net/ethernet/intel/e1000/**
+      - include/linux/**
+    exclude: []
+    max_files: 6000
+    language_focus: [c]
+    category: [kernel, extreme-scale, heterogeneous]
+    why: >
+      The full kernel tree is architecture-specific code times every
+      supported CPU family times every driver ever merged — not a size any
+      single machine should attempt to index in one CI-friendly run (see
+      docs/limitations.md, "extreme-scale"). This scope is one representative
+      slice of each category the task calls out: `kernel/` (core subsystems:
+      scheduler, cgroups, module loading), `fs/ext4/` (a representative
+      filesystem), `drivers/net/ethernet/intel/e1000/` (a representative
+      driver), and `include/linux/` (the headers those subsystems share).
+    queries:
+      - "Where is the scheduler subsystem initialized?"
+      - "What calls into the e1000 driver's probe function?"
+      - "What are the major relationships around ext4's core structures?"

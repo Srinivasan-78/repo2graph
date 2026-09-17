@@ -1,0 +1,46 @@
+{
+  "repository": "https://github.com/tensorflow/tensorflow",
+  "id": "tensorflow",
+  "commit": "41283216e55ebfb30fe61b9ae4bd034404584c57",
+  "branch": "master",
+  "generated_at": "2026-09-17T15:46:14Z",
+  "repo2graph_version": "1.5.1",
+  "graph_schema_version": "repo2graph/1",
+  "languages": [
+    "python",
+    "cpp"
+  ],
+  "scope": "scoped",
+  "include": [
+    "tensorflow/python/framework/**",
+    "tensorflow/python/eager/**",
+    "tensorflow/core/framework/**",
+    "tensorflow/core/common_runtime/**"
+  ],
+  "nodes": 20641,
+  "edges": 96013,
+  "stats": {
+    "discovery": "git",
+    "files": 1022,
+    "edge:CONTAINS": 1041,
+    "parsed": 969,
+    "parse_errors": 12469,
+    "symbol:namespace": 466,
+    "edge:DEFINES": 14968,
+    "symbol:function": 15388,
+    "symbol:class": 956,
+    "edge:IMPORTS": 9634,
+    "symbol:struct": 384,
+    "symbol:enum": 43,
+    "edge:CALLS_EXTERNAL": 27313,
+    "edge:CALLS": 42395,
+    "edge:INHERITS": 662,
+    "ambiguous_calls": 5631,
+    "entrypoints": 5676,
+    "nodes": 20641,
+    "edges": 96013
+  },
+  "clone_seconds": 4.5,
+  "build_seconds": 12.9,
+  "viz_nodes": 300
+}

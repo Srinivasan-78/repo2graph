@@ -1,0 +1,16 @@
+{
+  "query": "What are the core platform services other layers depend on?",
+  "results": [
+    {
+      "node_id": "file:src/vs/sessions/LAYERS.md",
+      "path": "src/vs/sessions/LAYERS.md",
+      "lang": "md",
+      "kind": "doc",
+      "name": "src/vs/sessions/LAYERS.md",
+      "start_line": 1,
+      "end_line": 128,
+      "why": "lexical",
+      "score": 12.021
+    }
+  ]
+}

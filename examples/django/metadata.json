@@ -1,0 +1,40 @@
+{
+  "repository": "https://github.com/django/django",
+  "id": "django",
+  "commit": "f91c8897f568a8075f4f0c1c9dcc81b8ec798ef3",
+  "branch": "main",
+  "generated_at": "2026-09-17T15:45:24Z",
+  "repo2graph_version": "1.5.1",
+  "graph_schema_version": "repo2graph/1",
+  "languages": [
+    "python"
+  ],
+  "scope": "full",
+  "include": null,
+  "nodes": 54544,
+  "edges": 228461,
+  "stats": {
+    "discovery": "git",
+    "files": 5637,
+    "edge:CONTAINS": 8888,
+    "parsed": 2979,
+    "parse_errors": 11,
+    "symbol:function": 32799,
+    "edge:DEFINES": 43779,
+    "edge:IMPORTS": 11579,
+    "symbol:class": 11106,
+    "symbol:method": 10,
+    "edge:CALLS": 104418,
+    "edge:CALLS_EXTERNAL": 35777,
+    "ambiguous_calls": 18797,
+    "edge:INHERITS": 24012,
+    "cochange_commits_skipped": 5,
+    "edge:CO_CHANGE": 8,
+    "entrypoints": 25543,
+    "nodes": 54544,
+    "edges": 228461
+  },
+  "clone_seconds": 9.1,
+  "build_seconds": 44.4,
+  "viz_nodes": 300
+}

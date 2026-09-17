@@ -1,0 +1,49 @@
+{
+  "query": "Where does model query execution originate?",
+  "results": [
+    {
+      "node_id": "sym:django/db/models/sql/query.py::Query",
+      "path": "django/db/models/sql/query.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Query",
+      "start_line": 232,
+      "end_line": 2801,
+      "why": "lexical",
+      "score": 14.874
+    },
+    {
+      "node_id": "sym:django/db/models/sql/query.py::Query.__init__",
+      "path": "django/db/models/sql/query.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "Query.__init__",
+      "start_line": 306,
+      "end_line": 331,
+      "why": "DEFINES out of Query",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:django/db/models/sql/query.py::Query.output_field",
+      "path": "django/db/models/sql/query.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "Query.output_field",
+      "start_line": 334,
+      "end_line": 339,
+      "why": "DEFINES out of Query",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:django/db/models/sql/query.py::Query.base_table",
+      "path": "django/db/models/sql/query.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "Query.base_table",
+      "start_line": 342,
+      "end_line": 344,
+      "why": "DEFINES out of Query",
+      "score": 0.0
+    }
+  ]
+}

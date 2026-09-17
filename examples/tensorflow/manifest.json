@@ -1,0 +1,287 @@
+{
+  "format": "repo2graph/1",
+  "repo": "tensorflow",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/index.state.json",
+    "agent/parse.cache.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.html": "the interactive map, for a person in a browser",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "discovery": "git",
+    "files": 1022,
+    "edge:CONTAINS": 1041,
+    "parsed": 969,
+    "parse_errors": 12469,
+    "symbol:namespace": 466,
+    "edge:DEFINES": 14968,
+    "symbol:function": 15388,
+    "symbol:class": 956,
+    "edge:IMPORTS": 9634,
+    "symbol:struct": 384,
+    "symbol:enum": 43,
+    "edge:CALLS_EXTERNAL": 27313,
+    "edge:CALLS": 42395,
+    "edge:INHERITS": 662,
+    "ambiguous_calls": 5631,
+    "entrypoints": 5676,
+    "nodes": 20641,
+    "edges": 96013
+  },
+  "entrypoints": [
+    {
+      "id": "sym:tensorflow/python/framework/experimental/def_function.py::Function.__call__",
+      "path": "tensorflow/python/framework/experimental/def_function.py",
+      "qualname": "Function.__call__",
+      "kind": "function",
+      "reach": 1640
+    },
+    {
+      "id": "sym:tensorflow/python/framework/experimental/unified_api.cc::PYBIND11_MODULE",
+      "path": "tensorflow/python/framework/experimental/unified_api.cc",
+      "qualname": "PYBIND11_MODULE",
+      "kind": "function",
+      "reach": 1640
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/execute_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/eager/execute_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 1629
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/context_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/eager/context_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 1627
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/execute.cc::tensorflow.EagerLocalExecuteAsync",
+      "path": "tensorflow/core/common_runtime/eager/execute.cc",
+      "qualname": "tensorflow.EagerLocalExecuteAsync",
+      "kind": "function",
+      "reach": 1597
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 1568
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 1553
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/function.cc::tensorflow.CallOp.ComputeAsync",
+      "path": "tensorflow/core/common_runtime/function.cc",
+      "qualname": "tensorflow.CallOp.ComputeAsync",
+      "kind": "function",
+      "reach": 1410
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/kernel_and_device.cc::tensorflow.Init",
+      "path": "tensorflow/core/common_runtime/eager/kernel_and_device.cc",
+      "qualname": "tensorflow.Init",
+      "kind": "function",
+      "reach": 1157
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/function_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/function_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 1146
+    },
+    {
+      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST",
+      "path": "tensorflow/core/framework/model_test.cc",
+      "qualname": "tensorflow.data.model.TEST",
+      "kind": "function",
+      "reach": 1106
+    },
+    {
+      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST_F",
+      "path": "tensorflow/core/framework/model_test.cc",
+      "qualname": "tensorflow.data.model.TEST_F",
+      "kind": "function",
+      "reach": 1083
+    },
+    {
+      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST_P",
+      "path": "tensorflow/core/framework/model_test.cc",
+      "qualname": "tensorflow.data.model.TEST_P",
+      "kind": "function",
+      "reach": 1072
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/process_function_library_runtime_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/process_function_library_runtime_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 1011
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 996
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/placement_utils_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/eager/placement_utils_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 962
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/ring_gatherer.cc::tensorflow.Run",
+      "path": "tensorflow/core/common_runtime/ring_gatherer.cc",
+      "qualname": "tensorflow.Run",
+      "kind": "function",
+      "reach": 960
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/context_distributed_manager.cc::tensorflow.InitializeLocalOnlyContext",
+      "path": "tensorflow/core/common_runtime/eager/context_distributed_manager.cc",
+      "qualname": "tensorflow.InitializeLocalOnlyContext",
+      "kind": "function",
+      "reach": 958
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/executor_test.cc::tensorflow.BM_executor",
+      "path": "tensorflow/core/common_runtime/executor_test.cc",
+      "qualname": "tensorflow.BM_executor",
+      "kind": "function",
+      "reach": 954
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/single_threaded_executor_test.cc::tensorflow.data.BM_executor",
+      "path": "tensorflow/core/common_runtime/single_threaded_executor_test.cc",
+      "qualname": "tensorflow.data.BM_executor",
+      "kind": "function",
+      "reach": 954
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/execute_node_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/eager/execute_node_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 943
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/constant_folding_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/constant_folding_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 941
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/executor_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/executor_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 940
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/lower_case_op_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/lower_case_op_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 939
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/lower_if_op_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/lower_if_op_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 938
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off)."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}

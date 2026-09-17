@@ -1,0 +1,50 @@
+name: Regenerate real-world examples
+
+# Manual only (see docs/benchmarks.md "CI tiers"): every one of the five
+# repositories in examples/repositories.yaml moves upstream, so an automatic
+# schedule would mean either constant no-op noise or a workflow silently
+# committing whatever changed on someone else's main branch. This runs only
+# when a maintainer asks for it, and never commits by itself — it uploads the
+# regenerated examples/ and benchmarks/results.json as an artifact for a human
+# to review and open as a PR.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Registry id from examples/repositories.yaml, or 'all'"
+        required: true
+        default: "django"
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e "." pyyaml
+
+      - name: Generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.repo }}" = "all" ]; then
+            python scripts/generate_examples.py --all
+          else
+            python scripts/generate_examples.py --repo "${{ inputs.repo }}"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: regenerated-examples
+          path: |
+            examples/
+            benchmarks/results.json
+          retention-days: 14

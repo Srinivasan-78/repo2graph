@@ -1,0 +1,43 @@
+{
+  "repository": "https://github.com/kubernetes/kubernetes",
+  "id": "kubernetes",
+  "commit": "24512b5e734ed10a309fd9795a5e7c305acd52d9",
+  "branch": "master",
+  "generated_at": "2026-09-17T15:45:51Z",
+  "repo2graph_version": "1.5.1",
+  "graph_schema_version": "repo2graph/1",
+  "languages": [
+    "go"
+  ],
+  "scope": "scoped",
+  "include": [
+    "cmd/kube-controller-manager/**",
+    "pkg/controller/**",
+    "pkg/scheduler/**",
+    "pkg/registry/core/pod/**",
+    "staging/src/k8s.io/apiserver/pkg/endpoints/**"
+  ],
+  "nodes": 14197,
+  "edges": 83525,
+  "stats": {
+    "discovery": "git",
+    "files": 1082,
+    "edge:CONTAINS": 1339,
+    "parsed": 1005,
+    "parse_errors": 260,
+    "symbol:function": 5275,
+    "edge:DEFINES": 10502,
+    "edge:IMPORTS": 8665,
+    "symbol:type": 1440,
+    "symbol:method": 4423,
+    "edge:CALLS": 37612,
+    "edge:CALLS_EXTERNAL": 25407,
+    "ambiguous_calls": 5192,
+    "entrypoints": 3516,
+    "nodes": 14197,
+    "edges": 83525
+  },
+  "clone_seconds": 5.5,
+  "build_seconds": 15.4,
+  "viz_nodes": 300
+}

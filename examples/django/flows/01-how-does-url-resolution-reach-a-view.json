@@ -1,0 +1,49 @@
+{
+  "query": "How does URL resolution reach a view?",
+  "results": [
+    {
+      "node_id": "sym:tests/forms_tests/widget_tests/test_clearablefileinput.py::ClearableFileInputTest.test_html_does_not_mask_exceptions.FailingURLFieldFile.url",
+      "path": "tests/forms_tests/widget_tests/test_clearablefileinput.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "ClearableFileInputTest.test_html_does_not_mask_exceptions.FailingURLFieldFile.url",
+      "start_line": 186,
+      "end_line": 187,
+      "why": "lexical",
+      "score": 12.5
+    },
+    {
+      "node_id": "sym:django/template/defaulttags.py::url",
+      "path": "django/template/defaulttags.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "url",
+      "start_line": 1515,
+      "end_line": 1584,
+      "why": "lexical",
+      "score": 11.347
+    },
+    {
+      "node_id": "sym:tests/admin_views/test_autocomplete_view.py::AutocompleteJsonViewTests.test_to_field_resolution_with_fk_pk",
+      "path": "tests/admin_views/test_autocomplete_view.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "AutocompleteJsonViewTests.test_to_field_resolution_with_fk_pk",
+      "start_line": 197,
+      "end_line": 216,
+      "why": "lexical",
+      "score": 8.841
+    },
+    {
+      "node_id": "sym:tests/admin_views/test_autocomplete_view.py::AutocompleteJsonViewTests.test_to_field_resolution_with_mti",
+      "path": "tests/admin_views/test_autocomplete_view.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "AutocompleteJsonViewTests.test_to_field_resolution_with_mti",
+      "start_line": 163,
+      "end_line": 195,
+      "why": "lexical",
+      "score": 8.77
+    }
+  ]
+}

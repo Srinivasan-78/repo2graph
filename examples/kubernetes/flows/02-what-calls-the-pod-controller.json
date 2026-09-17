@@ -1,0 +1,38 @@
+{
+  "query": "What calls the pod controller?",
+  "results": [
+    {
+      "node_id": "sym:pkg/controller/job/job_controller.go::Controller",
+      "path": "pkg/controller/job/job_controller.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Controller",
+      "start_line": 91,
+      "end_line": 155,
+      "why": "lexical",
+      "score": 6.517
+    },
+    {
+      "node_id": "sym:pkg/controller/resourceclaim/controller.go::Controller",
+      "path": "pkg/controller/resourceclaim/controller.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Controller",
+      "start_line": 103,
+      "end_line": 157,
+      "why": "lexical",
+      "score": 6.414
+    },
+    {
+      "node_id": "sym:pkg/controller/endpoint/endpoints_controller.go::Controller",
+      "path": "pkg/controller/endpoint/endpoints_controller.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Controller",
+      "start_line": 139,
+      "end_line": 187,
+      "why": "lexical",
+      "score": 6.263
+    }
+  ]
+}

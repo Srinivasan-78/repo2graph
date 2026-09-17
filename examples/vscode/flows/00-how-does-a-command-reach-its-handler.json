@@ -1,0 +1,71 @@
+{
+  "query": "How does a command reach its handler?",
+  "results": [
+    {
+      "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command",
+      "path": "src/vs/editor/browser/editorExtensions.ts",
+      "lang": "typescript",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 104,
+      "end_line": 183,
+      "why": "lexical",
+      "score": 9.015
+    },
+    {
+      "node_id": "sym:src/vs/platform/diagnostics/node/diagnosticsService.ts::DiagnosticsService.reportWorkspaceStats.WorkspaceStatsMetadataClassification",
+      "path": "src/vs/platform/diagnostics/node/diagnosticsService.ts",
+      "lang": "typescript",
+      "kind": "type",
+      "name": "DiagnosticsService.reportWorkspaceStats.WorkspaceStatsMetadataClassification",
+      "start_line": 645,
+      "end_line": 652,
+      "why": "lexical",
+      "score": 8.735
+    },
+    {
+      "node_id": "file:src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "path": "src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "lang": "typescript",
+      "kind": "code",
+      "name": "src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "start_line": 1,
+      "end_line": 165,
+      "why": "lexical",
+      "score": 8.581
+    },
+    {
+      "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command.constructor",
+      "path": "src/vs/editor/browser/editorExtensions.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "Command.constructor",
+      "start_line": 112,
+      "end_line": 119,
+      "why": "DEFINES out of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command.register",
+      "path": "src/vs/editor/browser/editorExtensions.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "Command.register",
+      "start_line": 121,
+      "end_line": 166,
+      "why": "DEFINES out of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command._registerMenuItem",
+      "path": "src/vs/editor/browser/editorExtensions.ts",
+      "lang": "typescript",
+      "kind": "method",
+      "name": "Command._registerMenuItem",
+      "start_line": 168,
+      "end_line": 180,
+      "why": "DEFINES out of Command",
+      "score": 0.0
+    }
+  ]
+}

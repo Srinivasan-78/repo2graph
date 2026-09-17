@@ -1,0 +1,49 @@
+{
+  "query": "Where does a Python API cross into C++?",
+  "results": [
+    {
+      "node_id": "file:tensorflow/python/framework/pluggable_device_c_api_test.py",
+      "path": "tensorflow/python/framework/pluggable_device_c_api_test.py",
+      "lang": "python",
+      "kind": "code",
+      "name": "tensorflow/python/framework/pluggable_device_c_api_test.py",
+      "start_line": 1,
+      "end_line": 171,
+      "why": "lexical",
+      "score": 7.535
+    },
+    {
+      "node_id": "sym:tensorflow/python/eager/polymorphic_function/attributes.py::parse_func_attrs",
+      "path": "tensorflow/python/eager/polymorphic_function/attributes.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "parse_func_attrs",
+      "start_line": 160,
+      "end_line": 184,
+      "why": "lexical",
+      "score": 6.824
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/experimental/_nn_ops.pyi::sparse_softmax_cross_entropy_with_logits",
+      "path": "tensorflow/python/framework/experimental/_nn_ops.pyi",
+      "lang": "python",
+      "kind": "function",
+      "name": "sparse_softmax_cross_entropy_with_logits",
+      "start_line": 17,
+      "end_line": 17,
+      "why": "lexical",
+      "score": 6.792
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/experimental/nn_ops.py::sparse_softmax_cross_entropy_with_logits",
+      "path": "tensorflow/python/framework/experimental/nn_ops.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "sparse_softmax_cross_entropy_with_logits",
+      "start_line": 26,
+      "end_line": 29,
+      "why": "lexical",
+      "score": 6.683
+    }
+  ]
+}

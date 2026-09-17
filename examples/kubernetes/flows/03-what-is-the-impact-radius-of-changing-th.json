@@ -1,0 +1,38 @@
+{
+  "query": "What is the impact radius of changing the scheduler's core interface?",
+  "results": [
+    {
+      "node_id": "sym:pkg/controller/history/controller_history.go::Interface",
+      "path": "pkg/controller/history/controller_history.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Interface",
+      "start_line": 199,
+      "end_line": 227,
+      "why": "lexical",
+      "score": 15.964
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/preemption/preemption.go::Interface",
+      "path": "pkg/scheduler/framework/preemption/preemption.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Interface",
+      "start_line": 46,
+      "end_line": 64,
+      "why": "lexical",
+      "score": 15.367
+    },
+    {
+      "node_id": "sym:pkg/scheduler/scheduler.go::Scheduler",
+      "path": "pkg/scheduler/scheduler.go",
+      "lang": "go",
+      "kind": "type",
+      "name": "Scheduler",
+      "start_line": 61,
+      "end_line": 115,
+      "why": "lexical",
+      "score": 14.416
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "query": "How does a management command get invoked?",
+  "results": [
+    {
+      "node_id": "sym:django/core/management/commands/makemessages.py::Command",
+      "path": "django/core/management/commands/makemessages.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 199,
+      "end_line": 779,
+      "why": "lexical",
+      "score": 20.591
+    },
+    {
+      "node_id": "sym:django/contrib/auth/management/commands/changepassword.py::Command",
+      "path": "django/contrib/auth/management/commands/changepassword.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 12,
+      "end_line": 82,
+      "why": "lexical",
+      "score": 19.582
+    },
+    {
+      "node_id": "sym:tests/user_commands/management/commands/common_args.py::Command",
+      "path": "tests/user_commands/management/commands/common_args.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 6,
+      "end_line": 16,
+      "why": "lexical",
+      "score": 18.086
+    },
+    {
+      "node_id": "sym:django/core/management/commands/makemessages.py::Command.settings_available",
+      "path": "django/core/management/commands/makemessages.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "Command.settings_available",
+      "start_line": 489,
+      "end_line": 496,
+      "why": "DEFINES out of Command",
+      "score": 0.0
+    }
+  ]
+}

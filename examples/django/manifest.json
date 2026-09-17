@@ -1,0 +1,287 @@
+{
+  "format": "repo2graph/1",
+  "repo": "django",
+  "written": [
+    "agent/nodes.jsonl",
+    "agent/edges.jsonl",
+    "agent/chunks.jsonl",
+    "human/overview.md",
+    "agent/overview.md",
+    "human/graph.html",
+    "agent/stats.json",
+    "agent/index.state.json",
+    "agent/parse.cache.json",
+    "agent/manifest.json"
+  ],
+  "sections": {
+    "human": "for people: prose map and drawings",
+    "agent": "for programs: the graph, the chunks, this manifest"
+  },
+  "files": {
+    "chunks.jsonl": "retrieval chunks, written whenever chunks are built regardless of --formats (split at ~4000 chars) plus residual and whole-file chunks; `text` opens with a header naming the chunk's neighbours",
+    "edges.jsonl": "one JSON object per edge: src, dst, type, plus edge attributes",
+    "graph.html": "the interactive map, for a person in a browser",
+    "index.state.json": "per-file sha256 of the bytes that were indexed, for change detection between builds",
+    "manifest.json": "this file",
+    "nodes.jsonl": "one JSON object per node; `id` and `type` always present, the rest depends on type",
+    "overview.md": "the repo map in prose: languages, most depended-on files, most called symbols",
+    "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
+    "stats.json": "node, edge and symbol counts, parse errors, entrypoint count"
+  },
+  "node_types": {
+    "repo": "the repository itself; one per index",
+    "dir": "a directory",
+    "file": "a source, doc or config file",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
+    "module": "an import target that is not a file in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)"
+  },
+  "edge_types": {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+    "INHERITS": "symbol -> base class or interface",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+  },
+  "id_grammar": {
+    "repo": "repo:<name>",
+    "dir": "dir:<path>",
+    "file": "file:<path>",
+    "symbol": "sym:<path>::<qualname>",
+    "module": "module:<import target>",
+    "external": "external:<name>",
+    "note": "Ids are stable and constructible by hand; paths are relative to the repo root."
+  },
+  "chunk_fields": [
+    "id",
+    "node_id",
+    "type",
+    "kind",
+    "path",
+    "lang",
+    "name",
+    "qualname",
+    "start_line",
+    "end_line",
+    "entrypoint",
+    "callers",
+    "callees",
+    "callees_external",
+    "text"
+  ],
+  "counts": {
+    "discovery": "git",
+    "files": 5637,
+    "edge:CONTAINS": 8888,
+    "parsed": 2979,
+    "parse_errors": 11,
+    "symbol:function": 32799,
+    "edge:DEFINES": 43779,
+    "edge:IMPORTS": 11579,
+    "symbol:class": 11106,
+    "symbol:method": 10,
+    "edge:CALLS": 104418,
+    "edge:CALLS_EXTERNAL": 35777,
+    "ambiguous_calls": 18797,
+    "edge:INHERITS": 24012,
+    "cochange_commits_skipped": 5,
+    "edge:CO_CHANGE": 8,
+    "entrypoints": 25543,
+    "nodes": 54544,
+    "edges": 228461
+  },
+  "entrypoints": [
+    {
+      "id": "sym:django/core/management/commands/migrate.py::Command.handle",
+      "path": "django/core/management/commands/migrate.py",
+      "qualname": "Command.handle",
+      "kind": "function",
+      "reach": 1124
+    },
+    {
+      "id": "sym:tests/admin_views/test_templatetags.py::AdminTemplateTagsTest.test_submit_row_save_as_new_add_permission_required",
+      "path": "tests/admin_views/test_templatetags.py",
+      "qualname": "AdminTemplateTagsTest.test_submit_row_save_as_new_add_permission_required",
+      "kind": "function",
+      "reach": 974
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_field_check_does_not_remove_meta_constraints",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_remove_field_check_does_not_remove_meta_constraints",
+      "kind": "function",
+      "reach": 903
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_field_unique_does_not_remove_meta_constraints",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_remove_field_unique_does_not_remove_meta_constraints",
+      "kind": "function",
+      "reach": 900
+    },
+    {
+      "id": "sym:tests/admin_changelist/tests.py::ChangeListTests.test_dynamic_list_display",
+      "path": "tests/admin_changelist/tests.py",
+      "qualname": "ChangeListTests.test_dynamic_list_display",
+      "kind": "function",
+      "reach": 898
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_db_index_doesnt_remove_custom_indexes",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_remove_db_index_doesnt_remove_custom_indexes",
+      "kind": "function",
+      "reach": 895
+    },
+    {
+      "id": "sym:tests/admin_changelist/tests.py::ChangeListTests.test_dynamic_list_display_links",
+      "path": "tests/admin_changelist/tests.py",
+      "qualname": "ChangeListTests.test_dynamic_list_display_links",
+      "kind": "function",
+      "reach": 892
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_db_index_doesnt_remove_unique_constraints",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_remove_db_index_doesnt_remove_unique_constraints",
+      "kind": "function",
+      "reach": 889
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_text_field_to_not_null_with_default_value",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_text_field_to_not_null_with_default_value",
+      "kind": "function",
+      "reach": 886
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_generated_field",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_generated_field",
+      "kind": "function",
+      "reach": 880
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_field_add_index_to_integerfield",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_field_add_index_to_integerfield",
+      "kind": "function",
+      "reach": 879
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_rename_column_renames_deferred_sql_references",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_rename_column_renames_deferred_sql_references",
+      "kind": "function",
+      "reach": 879
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_array_field_decrease_base_field_length",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_array_field_decrease_base_field_length",
+      "kind": "function",
+      "reach": 878
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_array_field_decrease_nested_base_field_length",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_array_field_decrease_nested_base_field_length",
+      "kind": "function",
+      "reach": 878
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_int_pk_to_int_unique",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_int_pk_to_int_unique",
+      "kind": "function",
+      "reach": 878
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_check_constraints",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_check_constraints",
+      "kind": "function",
+      "reach": 878
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_char_field_decrease_length",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_char_field_decrease_length",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_field_default_dropped",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_field_default_dropped",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_db_collation_arrayfield",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_db_collation_arrayfield",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_indexed_charfield_to_textfield",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_indexed_charfield_to_textfield",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_indexes",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_indexes",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_primary_key",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_primary_key",
+      "kind": "function",
+      "reach": 877
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_add_auto_field",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_add_auto_field",
+      "kind": "function",
+      "reach": 876
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_autofield_pk_to_bigautofield_pk",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_autofield_pk_to_bigautofield_pk",
+      "kind": "function",
+      "reach": 876
+    },
+    {
+      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_autofield_pk_to_smallautofield_pk",
+      "path": "tests/schema/tests.py",
+      "qualname": "SchemaTests.test_alter_autofield_pk_to_smallautofield_pk",
+      "kind": "function",
+      "reach": 876
+    }
+  ],
+  "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "how_to_read": [
+    "Start with overview.md: it names the languages, the hub files and the most called symbols.",
+    "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
+    "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
+    "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
+    "repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag \"<question>\" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off)."
+  ],
+  "approximations": [
+    "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call."
+  ]
+}
