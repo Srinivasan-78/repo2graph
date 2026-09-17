@@ -84,6 +84,19 @@ def test_an_error_carries_its_message():
     assert record["outcome"] == "error" and record["error"] == "node not found"
 
 
+def test_a_secret_embedded_in_an_error_message_is_redacted():
+    """A downstream exception's str() can echo caller input verbatim -- e.g. a
+    malformed request or an OS error including a path with an embedded token.
+    The error field must go through the same redaction as every other value.
+    """
+    log, stream = logger()
+    log.record("repo_search", {"query": "x"}, outcome="error",
+               error="upstream rejected token ghp_" + "k" * 36)
+    (record,) = lines(stream)
+    assert "ghp_" + "k" * 36 not in record["error"]
+    assert record["error"].startswith("[redacted:github_token")
+
+
 def test_anonymous_is_the_default_identity():
     log, stream = logger()
     log.record("repo_map", {})

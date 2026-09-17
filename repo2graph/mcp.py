@@ -68,6 +68,16 @@ MCP_MAX_NEIGHBOURS = 50
 MCP_MAX_HOPS = 4
 MCP_MAX_K = 50
 
+# Ceilings on the string arguments, for symmetry with the numeric ones above.
+# Nothing downstream crashes on an overlong query/id -- pack_context and a
+# dict lookup both handle it -- but a model can hand this dispatcher an
+# arbitrarily long string, and tokenising or scoring against megabytes of it
+# is wasted CPU for no real query or node id this long. Every MCP argument is
+# caller-hostile by default; this is the string-typed half of that rule.
+MCP_MAX_QUERY_CHARS = 4000
+MCP_MAX_NODE_ID_CHARS = 2000
+MCP_MAX_TASK_ID_CHARS = 200
+
 TOOL_ANNOTATIONS = {
     "readOnlyHint": True,
     "destructiveHint": False,
@@ -333,6 +343,7 @@ def tool_repo_map(index: Index) -> str:
 def tool_repo_search(index: Index, query: str, k: int = 8, hops: int = 1,
                      budget_tokens=None) -> str:
     """Cited markdown for `query`, never wider than MCP_MAX_BUDGET_TOKENS."""
+    query = _str(query, MCP_MAX_QUERY_CHARS)
     budget = MCP_BUDGET_TOKENS if budget_tokens is None else _int(budget_tokens,
                                                                   MCP_BUDGET_TOKENS)
     budget = max(1, min(budget, MCP_MAX_BUDGET_TOKENS))
@@ -357,6 +368,7 @@ def tool_repo_search(index: Index, query: str, k: int = 8, hops: int = 1,
 def tool_repo_neighbours(index: Index, node_id: str, hops: int = 1,
                          limit: int = MCP_NEIGHBOUR_LIMIT) -> str:
     """One graph hop from `node_id` — the thing grep cannot do."""
+    node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     node = index.nodes.get(node_id)
     if node is None:
         return (f"node not found: {node_id!r}. Ids look like "
@@ -403,6 +415,16 @@ def _clamp(value, fallback: int, low: int, high: int) -> int:
     return max(low, min(_int(value, fallback), high))
 
 
+def _str(value, max_chars: int) -> str:
+    """Coerce a caller-supplied string argument and cap its length.
+
+    A model can hand this dispatcher an arbitrarily long value; this is the
+    string-typed counterpart to `_clamp` for the numeric arguments.
+    """
+    text = "" if value is None else str(value)
+    return text[:max_chars]
+
+
 def tool_cache_stats(cache) -> str:
     """Cache counters as JSON. Diagnostics only: no repository content."""
     import json as _json
@@ -423,13 +445,14 @@ def tool_build_status(tasks, task_id: str) -> str:
         A JSON status document, or a sentence naming why there is none.
     """
     import json as _json
+    task_id = _str(task_id, MCP_MAX_TASK_ID_CHARS)
     if tasks is None:
         return _json.dumps({
             "error": "this server builds synchronously; there are no build "
                      "tasks to report. Start it with --async-build to use "
                      "repo_build_status.",
         }, indent=2)
-    task = tasks.get(str(task_id))
+    task = tasks.get(task_id)
     if task is None:
         return _json.dumps({
             "task_id": task_id,

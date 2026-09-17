@@ -1185,3 +1185,73 @@ def test_both_transports_agree_on_the_version():
     from repo2graph.http_server import server_metadata
 
     assert server_metadata(None, False, ["none"])["version"] == __version__
+
+
+# ==========================================================================
+# R-9: string arguments (query, node_id, task_id) had no length ceiling.
+# Every numeric MCP argument was clamped in the handler, but a model can hand
+# this dispatcher an arbitrarily long string and nothing bounded it -- the
+# string-typed half of "every MCP tool argument is caller-hostile".
+# ==========================================================================
+
+def test_r9_an_absurdly_long_query_is_capped_before_it_reaches_the_index(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    huge = "x" * 10_000_000
+    out = mcp.tool_repo_search(idx, huge)
+    assert isinstance(out, str)
+    assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS, len(seen["query"])
+
+
+def test_r9_dispatch_caps_query_too(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    mcp.dispatch(idx, "repo_search", {"query": "y" * 10_000_000})
+    assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS
+
+
+def test_r9_an_absurdly_long_node_id_does_not_raise(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    huge = "sym:" + "z" * 10_000_000
+    out = mcp.dispatch(idx, "repo_neighbours", {"node_id": huge})
+    assert isinstance(out, str) and "node not found" in out
+
+
+def test_r9_an_absurdly_long_task_id_does_not_raise():
+    mcp = mcp_module()
+    huge = "t" * 10_000_000
+    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge})
+    assert isinstance(out, str)
+
+
+def test_r9_sane_string_arguments_are_left_alone(mini_index):
+    """The ceiling must not quietly rewrite ordinary calls."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    seen = {}
+    real = idx.pack_context
+
+    def spy(query, **kw):
+        seen["query"] = query
+        return real(query, **kw)
+
+    idx.pack_context = spy
+    mcp.tool_repo_search(idx, MINI_QUERY)
+    assert seen["query"] == MINI_QUERY

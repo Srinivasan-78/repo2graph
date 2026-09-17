@@ -13,6 +13,29 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- The audit log's `error` field is now redacted the same way every other
+  value is. A downstream exception's `str()` can echo caller input verbatim
+  (a malformed request, an OS error including a path with an embedded
+  token), and that field previously bypassed `sanitize_value`.
+- Every MCP string argument (`query`, `node_id`, `task_id`) is now
+  length-capped in its handler, matching the existing numeric clamps on
+  `k`/`hops`/`limit`/`budget_tokens`. Nothing downstream crashed on an
+  unbounded string, but tokenising or scoring against an arbitrarily long
+  one was wasted CPU no real query or node id needs.
+- `claude-code-review.yml` now skips forked-repo pull requests explicitly
+  (`if: github.event.pull_request.head.repo.full_name == github.repository`)
+  rather than relying implicitly on GitHub's default secret redaction for
+  `pull_request`-from-fork runs.
+- A whole-repository security audit — architecture, threat model, trust
+  boundaries and a prioritized findings list with evidence — is at
+  [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
+  [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md),
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
+  [docs/PRIVACY.md](docs/PRIVACY.md) and
+  [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).
+
 ## [1.5.1] — 2026-09-16
 
 ### Added

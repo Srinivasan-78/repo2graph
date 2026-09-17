@@ -70,12 +70,27 @@ or a released package, independent of anything the tool does at runtime:
   [REUSE.toml](REUSE.toml)).
 - **GitHub Actions are pinned to full commit SHAs, not tags**, across every workflow in
   `.github/workflows/`, so a compromised or re-tagged upstream action can't silently change what CI
-  runs.
+  runs. The reverse is not true for consumers of *this* repository's own Action: `@v1` is a moving
+  convenience pointer (`release.yml` force-pushes it to the latest release on every tag), not an
+  integrity pin — enterprise consumers who want a SHA-level guarantee should pin
+  `Srinivasan-78/repo2graph@<commit-sha>` rather than `@v1`, the same way this repo's own workflows
+  pin their dependencies.
 - **Dependabot** watches `pyproject.toml`/`uv.lock` and the pinned Action SHAs for known
   vulnerabilities; `uv.lock` is committed, so every install — local, CI, or a hosted MCP build — is
   reproducible from the exact dependency graph that was reviewed.
 - **A dependency-review workflow** runs on every PR that touches dependencies, blocking new
   packages with a disallowed license or a known advisory before merge.
+
+## Further reading
+
+- [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md) — architecture, threat model, trust boundaries,
+  and a prioritized findings list with `file:line` evidence for every claim.
+- [docs/PRIVACY.md](docs/PRIVACY.md) — exactly what leaves the machine, what's cached, and what's
+  logged.
+- [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
+  scoping, and package-pinning guidance for a shared or regulated deployment.
+- [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating
+  with evidence and remaining risk for each.
 
 ## Reporting a Vulnerability
 

@@ -324,7 +324,7 @@ class AuditLogger:
             "outcome": outcome,
             "duration_ms": int(duration_ms),
             "result_tokens": int(result_tokens),
-            "error": error,
+            "error": sanitize_value("error", error) if error is not None else None,
         }
         try:
             line = json.dumps(record, ensure_ascii=False, default=str)

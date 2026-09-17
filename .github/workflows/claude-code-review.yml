@@ -25,6 +25,13 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    # GitHub already withholds repository secrets from `pull_request`-triggered
+    # runs whose head is a fork, so CLAUDE_CODE_OAUTH_TOKEN is never handed to a
+    # fork PR's checked-out workflow. This condition makes that boundary
+    # explicit rather than relying on the platform default staying enabled --
+    # a future org-level "send secrets to fork PRs" toggle must not silently
+    # start executing this step against untrusted, PR-editable workflow code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     permissions:
       contents: read
       pull-requests: read

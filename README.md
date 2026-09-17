@@ -10,10 +10,15 @@
   <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
   <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
+  <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
 </p>
 
 <p align="center">
   <img src="docs/images/demo.gif" alt="repo2graph building a map of a repository, then answering a question about it, in a terminal" width="850" />
+</p>
+
+<p align="center">
+  If repo2graph is useful to you, a ⭐ on <a href="https://github.com/Srinivasan-78/repo2graph">GitHub</a> helps others find it.
 </p>
 
 *`repo2graph build` then `repo2graph query`, on this repo's own source — real output, not staged.*
@@ -345,3 +350,12 @@ watermark header — read [AGENTS.md](AGENTS.md) before editing one.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+<div align="center">
+
+Found repo2graph useful? [Star the repo](https://github.com/Srinivasan-78/repo2graph) — it's the
+easiest way to help other people find it.
+
+</div>
