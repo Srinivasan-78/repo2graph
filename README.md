@@ -344,8 +344,8 @@ and loading into Neo4j: **[TECHNICAL.md](TECHNICAL.md#using-it-from-python)**.
 
 ## Languages
 
-Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala
-and Bash get the full treatment: functions, classes and calls. Files in any other language still
+Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala,
+Bash and Lua get the full treatment: functions, classes and calls. Files in any other language still
 appear on the map as files in their folders, so nothing goes missing. Teaching it a new language
 means adding one entry to `LANG_CFG` in `repo2graph/langs.py`.
 

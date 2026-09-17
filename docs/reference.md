@@ -118,7 +118,7 @@ door can eventually get to. A big `reach` means a main path through the project.
 ## Languages
 
 Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP,
-Kotlin, Swift, Scala and Bash get the full treatment: functions, classes and
+Kotlin, Swift, Scala, Bash and Lua get the full treatment: functions, classes and
 calls.
 
 Files in any other language still appear on the map as files in their folders, so
