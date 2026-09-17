@@ -13,6 +13,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-09-17
+
+### Changed
+
+- Release version 1.5.4.
+
 ## [1.5.3] — 2026-09-17
 
 ### Changed
