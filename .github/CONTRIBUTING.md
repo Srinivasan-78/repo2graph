@@ -51,6 +51,9 @@ is strict-checked by default.
 2. Keep changes focused; add or update tests.
 3. Open a pull request describing the change and its motivation.
 
+When you open a PR, our automated bot `prod-igy` will inspect your branch against `main`, apply relevant labels (type, size, component area), and verify whether your branch is up to date and conflict-free. If your branch has drifted behind `main` or conflicts arise, `prod-igy` will tag you with rebase instructions to keep CI accurate.
+
+
 ## Good first issues
 
 There are no currently-filed `good first issue` GitHub issues — the backlog below is tracked in
