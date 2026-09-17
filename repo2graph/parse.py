@@ -11,6 +11,7 @@ EXT_LANG = {
     ".py": "python", ".pyi": "python",
     ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
     ".ts": "typescript", ".tsx": "tsx",
+    ".mts": "typescript", ".cts": "typescript",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
