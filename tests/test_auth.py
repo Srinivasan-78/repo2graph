@@ -16,6 +16,7 @@ import base64
 import hashlib
 import json
 import random
+import threading
 import time
 
 import pytest
@@ -154,9 +155,23 @@ class Clock:
         self.now += seconds
 
 
-def cache(issuer=None, ttl=300.0, clock=None):
+def cache(issuer=None, ttl=300.0, clock=None, **kwargs):
     issuer = issuer or FakeIssuer()
-    return (JWKSCache(ISSUER, ttl, opener=issuer, clock=clock or Clock()), issuer)
+    return (
+        JWKSCache(ISSUER, ttl, opener=issuer, clock=clock or Clock(), **kwargs),
+        issuer,
+    )
+
+
+def _jwks_fetches(issuer: FakeIssuer) -> int:
+    return issuer.calls.count(f"{ISSUER}/jwks")
+
+
+def junk_jwt(kid: str) -> str:
+    """Three-segment RS256-shaped JWT whose signature is never valid."""
+    header = b64u(json.dumps({"alg": "RS256", "kid": kid, "typ": "JWT"}).encode())
+    payload = b64u(json.dumps(claims()).encode())
+    return f"{header}.{payload}.{b64u(b'not-a-signature')}"
 
 
 # ----------------------------------------------------------------- rsa ----
@@ -392,11 +407,185 @@ def test_an_unknown_kid_refetches_exactly_once_then_fails():
     """Key rotation costs one refetch; a kid flood must not cost one each."""
     jwks, issuer = cache()
     decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
-    before = issuer.calls.count(f"{ISSUER}/jwks")
+    before = _jwks_fetches(issuer)
 
     with pytest.raises(AuthError, match="unknown signing key"):
         decode_jwt(sign(claims(), kid="rotated-in"), jwks, ISSUER, AUDIENCE)
-    assert issuer.calls.count(f"{ISSUER}/jwks") == before + 1
+    assert _jwks_fetches(issuer) == before + 1
+
+
+def test_the_same_unknown_kid_does_not_refetch_on_repeat_lookups():
+    """ISS-195: a negative kid lookup is remembered, so N repeats cost 1 fetch.
+
+    The previous test asked once. Asking again is what distinguishes a
+    per-request refetch (the bug) from a per-kid cap (the control the
+    module docstring claimed).
+    """
+    jwks, issuer = cache(ttl=3600.0)
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    before = _jwks_fetches(issuer)
+
+    for _ in range(5):
+        with pytest.raises(AuthError, match="unknown signing key"):
+            jwks.key_for("no-such-kid")
+    assert _jwks_fetches(issuer) == before + 1, issuer.calls
+
+
+def test_distinct_unknown_kids_share_a_min_refresh_interval():
+    """ISS-195: a stream of distinct kids must not force one fetch each."""
+    clock = Clock()
+    jwks, issuer = cache(ttl=3600.0, clock=clock)
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    before = _jwks_fetches(issuer)
+
+    for i in range(6):
+        with pytest.raises(AuthError, match="unknown signing key"):
+            jwks.key_for(f"rand-{i}")
+    assert _jwks_fetches(issuer) == before + 1, issuer.calls
+
+    clock.advance(auth.DEFAULT_MIN_REFRESH_INTERVAL / 2)
+    with pytest.raises(AuthError, match="unknown signing key"):
+        jwks.key_for("rand-still-inside-window")
+    assert _jwks_fetches(issuer) == before + 1, "min-interval did not bind"
+
+
+def test_a_new_kid_is_fetched_once_the_min_interval_elapses():
+    """The interval is a floor, not a permanent disable of rotation checks."""
+    clock = Clock()
+    jwks, issuer = cache(ttl=3600.0, clock=clock)
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    with pytest.raises(AuthError, match="unknown signing key"):
+        jwks.key_for("ghost-1")
+    mid = _jwks_fetches(issuer)
+
+    clock.advance(auth.DEFAULT_MIN_REFRESH_INTERVAL)
+    new_key = _make_key(seed=7)
+    issuer.jwks = jwks_doc(kid="kid-2", key=new_key)
+    got = decode_jwt(sign(claims(), kid="kid-2", key=new_key), jwks, ISSUER, AUDIENCE)
+    assert got["sub"] == "user-42"
+    assert _jwks_fetches(issuer) == mid + 1
+
+
+def test_unsigned_unknown_kid_tokens_do_not_amplify_jwks_fetches():
+    """decode_jwt looks up the kid before rsa_verify.
+
+    Unsigned junk with random kids is therefore enough to reach key_for, and
+    must still hit the per-window cap — the issue 195 repro, at unit level.
+    """
+    jwks, issuer = cache(ttl=3600.0)
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    before = _jwks_fetches(issuer)
+
+    for i in range(10):
+        with pytest.raises(AuthError, match="unknown signing key"):
+            decode_jwt(junk_jwt(f"junk-{i}"), jwks, ISSUER, AUDIENCE)
+    assert _jwks_fetches(issuer) == before + 1, issuer.calls
+
+
+def test_jwks_network_fetch_is_not_held_under_the_cache_lock():
+    """ISS-195: take the lock to decide/swap, not across the HTTPS round-trip."""
+    issuer = FakeIssuer()
+    jwks = JWKSCache(ISSUER, 3600.0, opener=issuer, clock=Clock())
+    real_open = jwks._open
+
+    def wrapped(url):
+        assert not jwks._lock.locked(), "JWKS fetch held the cache lock"
+        return real_open(url)
+
+    jwks._open = wrapped
+    decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    with pytest.raises(AuthError, match="unknown signing key"):
+        jwks.key_for("missing")
+
+
+def test_cached_key_lookup_is_not_blocked_by_a_slow_unknown_kid_fetch():
+    """A slow issuer on an unknown kid must not serialise a cached lookup."""
+    ready = threading.Event()
+    release = threading.Event()
+    issuer = FakeIssuer()
+    jwks_hits = {"n": 0}
+
+    def opener(url):
+        if url.endswith("/jwks"):
+            jwks_hits["n"] += 1
+            if jwks_hits["n"] > 1:
+                ready.set()
+                assert release.wait(timeout=5)
+        return issuer(url)
+
+    jwks = JWKSCache(ISSUER, 3600.0, opener=opener, clock=time.monotonic)
+    assert jwks.key_for(KID)["kid"] == KID
+
+    errors: list[BaseException] = []
+
+    def miss() -> None:
+        try:
+            jwks.key_for("ghost")
+        except AuthError as exc:
+            errors.append(exc)
+        except Exception as exc:
+            errors.append(exc)
+
+    t_miss = threading.Thread(target=miss)
+    t_miss.start()
+    assert ready.wait(timeout=2), "unknown-kid fetch never started"
+
+    held: list[dict] = []
+
+    def hit() -> None:
+        held.append(jwks.key_for(KID))
+
+    t_hit = threading.Thread(target=hit)
+    t_hit.start()
+    t_hit.join(timeout=0.4)
+    blocked = t_hit.is_alive()
+    release.set()
+    t_miss.join(timeout=5)
+    t_hit.join(timeout=5)
+    assert not blocked, "cached key_for waited on the unknown-kid fetch"
+    assert held and held[0]["kid"] == KID
+    assert errors
+
+
+def test_concurrent_unknown_kids_do_not_serialise_behind_one_slow_fetch():
+    """ISS-195: eight distinct unknown kids must not become eight serial RTTs."""
+    sleep_s = 0.15
+    primed = {"done": False}
+    issuer = FakeIssuer()
+
+    def opener(url):
+        if url.endswith("/jwks") and primed["done"]:
+            time.sleep(sleep_s)
+        return issuer(url)
+
+    jwks = JWKSCache(ISSUER, 3600.0, opener=opener, clock=time.monotonic)
+    assert jwks.key_for(KID)["kid"] == KID
+    before = _jwks_fetches(issuer)
+    primed["done"] = True
+
+    n = 8
+    barrier = threading.Barrier(n)
+    errors: list[str] = []
+
+    def worker(i: int) -> None:
+        barrier.wait()
+        try:
+            jwks.key_for(f"missing-{i}")
+        except AuthError:
+            errors.append(f"missing-{i}")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    t0 = time.monotonic()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    wall = time.monotonic() - t0
+
+    assert len(errors) == n
+    assert _jwks_fetches(issuer) == before + 1, issuer.calls
+    # Old code held the lock across each sleep: ~n * sleep_s of wall time.
+    assert wall < sleep_s * n * 0.6, f"lookups serialised: {wall:.3f}s"
 
 
 def test_a_rotated_key_is_picked_up_on_the_refetch():
