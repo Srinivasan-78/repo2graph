@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal, TextIO
 
-from .events import timestamp, write_safe
+from .events import emit, timestamp, write_safe
 
 # How much of a redacted value's hash is kept. Enough to correlate two
 # occurrences, far too little to attack the original.
@@ -277,6 +277,31 @@ class _LockedAppender:
             pass
 
 
+def _open_file_sink(path: str | None) -> _LockedAppender | None:
+    """Open the optional `--audit-log` sink, or disable it on OSError.
+
+    A typo'd or unwritable path must not take the server with it: the
+    constructor used to raise `FileNotFoundError` (and siblings) before
+    `serve()` ran. `write()` already treats a later I/O failure as
+    survivable; opening the sink has to hold the same line. Parent
+    directories are not created — a missing parent is reported once and
+    the stderr copy still flows.
+    """
+    if not path:
+        return None
+    try:
+        return _LockedAppender(path)
+    except OSError as exc:
+        emit(
+            "audit_log_unwritable",
+            path=path,
+            errno=exc.errno,
+            error=exc.strerror,
+            action="file sink disabled; stderr audit copy still flows",
+        )
+        return None
+
+
 @dataclass
 class AuditConfig:
     """Where audit records go and which ones are kept.
@@ -294,7 +319,10 @@ class AuditLogger:
     """Emits one structured record per tool call.
 
     Args:
-        config: Level and optional file sink.
+        config: Level and optional file sink. If the named file cannot be
+            opened (missing parent, parent is a file, permission denied),
+            the file sink is dropped after one `audit_log_unwritable`
+            event; the stderr copy is unaffected.
         stream: Where the stderr copy goes; resolved at call time when None.
     """
 
@@ -305,7 +333,7 @@ class AuditLogger:
                 f"audit level must be one of {', '.join(LEVELS)}, got {self.config.level!r}"
             )
         self._stream = stream
-        self._file = _LockedAppender(self.config.path) if self.config.path else None
+        self._file = _open_file_sink(self.config.path)
 
     @property
     def enabled(self) -> bool:
