@@ -473,6 +473,9 @@ class ParsedFile:
     parse_errors: int = 0
     used_cpp: bool = False
     is_chunked: bool = False
+    # Slices `_chunk_and_parse` had to drop because they were not valid UTF-8
+    # even after aligning to a character boundary. 0 on the normal path.
+    chunk_decode_skips: int = 0
 
 
 def _text(src: bytes, node) -> str:

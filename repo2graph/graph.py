@@ -274,31 +274,104 @@ def repo_context(root: Path) -> dict:
 
 
 # ---------- parsing ----------
+def _utf8_cut_incomplete(buf: bytes) -> int:
+    """Index where a trailing incomplete UTF-8 sequence begins, or ``len(buf)``.
+
+    A multi-byte character whose lead byte sits at a raw-byte slice boundary
+    must be carried into the next read rather than decoded in isolation.
+    Mid-buffer invalid sequences are *not* peeled: those stay in ``buf[:cut]``
+    so the caller can count the slice as corrupt instead of silently dropping
+    the next slice too (the orphan-continuation half of #196).
+    """
+    n = len(buf)
+    if not n:
+        return 0
+    last = buf[-1]
+    if last < 0x80:
+        return n
+    start = n - 1
+    while start > 0 and (buf[start] & 0xC0) == 0x80 and (n - start) < 4:
+        start -= 1
+    lead = buf[start]
+    if (lead & 0xC0) == 0x80:
+        return n
+    if 0xC2 <= lead <= 0xDF:
+        need = 2
+    elif 0xE0 <= lead <= 0xEF:
+        need = 3
+    elif 0xF0 <= lead <= 0xF4:
+        need = 4
+    else:
+        return n
+    if (n - start) < need:
+        return start
+    return n
+
+
+def _warn_chunk_decode(rel: str) -> None:
+    print(
+        f"repo2graph: warning: {rel}: skipped undecodable UTF-8 in a --chunk-large-files slice",
+        file=sys.stderr,
+    )
+
+
 def _chunk_and_parse(rel, abspath, lang, config, size):
     chunk_size = config.max_file_bytes
     all_symbols = []
     all_imports = []
     total_parse_errors = 0
     used_cpp = False
+    chunk_decode_skips = 0
 
     line_offset = 0
-    raw_content = bytearray()
+    incomplete = b""
+    hasher = hashlib.sha256()
+    nbytes = 0
+    nlines = 0
 
     with open(abspath, "rb") as f:
         while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
+            data = f.read(chunk_size)
+            if not data and not incomplete:
                 break
-            raw_content.extend(chunk)
+            if data:
+                # Hash and count newlines incrementally so this path does not
+                # retain the whole file. `incomplete` was already hashed on
+                # the previous read.
+                hasher.update(data)
+                nbytes += len(data)
+                nlines += data.count(b"\n")
+            eof = not data
+            buf = incomplete + data
+            if not buf:
+                break
+
+            cut = _utf8_cut_incomplete(buf)
+            body, tail = buf[:cut], buf[cut:]
+            if eof:
+                incomplete = b""
+                if tail:
+                    chunk_decode_skips += 1
+                    _warn_chunk_decode(rel)
+            else:
+                incomplete = tail
+
+            if not body:
+                continue
             try:
-                chunk.decode("utf-8")
+                body.decode("utf-8")
             except UnicodeDecodeError:
-                line_offset += chunk.count(b"\n")
+                # Truly corrupt mid-slice — not a straddling character. Count
+                # it so the loss is visible; do not `continue` over the next
+                # read (its lead bytes are in `incomplete` when we peeled).
+                chunk_decode_skips += 1
+                _warn_chunk_decode(rel)
+                line_offset += body.count(b"\n")
                 continue
 
-            pf = parse_source(chunk, lang, filepath=None)
+            pf = parse_source(body, lang, filepath=None)
             if pf is None:
-                line_offset += chunk.count(b"\n")
+                line_offset += body.count(b"\n")
                 continue
 
             for sym in pf.symbols:
@@ -311,7 +384,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             if pf.used_cpp:
                 used_cpp = True
 
-            line_offset += chunk.count(b"\n")
+            line_offset += body.count(b"\n")
 
     seen = set()
     deduped_symbols = []
@@ -338,11 +411,12 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
         parse_errors=total_parse_errors,
         used_cpp=used_cpp,
         is_chunked=True,
+        chunk_decode_skips=chunk_decode_skips,
     )
 
-    digest = hashlib.sha256(raw_content).hexdigest()
-    lines = raw_content.count(b"\n") + 1
-    return rel, lang, (len(raw_content), lines, pf, digest)
+    digest = hasher.hexdigest()
+    lines = nlines + 1
+    return rel, lang, (nbytes, lines, pf, digest)
 
 
 def _read_and_parse(item):
@@ -416,6 +490,7 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             "parse_errors": pf.parse_errors,
             "used_cpp": pf.used_cpp,
             "is_chunked": getattr(pf, "is_chunked", False),
+            "chunk_decode_skips": getattr(pf, "chunk_decode_skips", 0),
             "imports": list(pf.imports),
             "symbols": [asdict(s) for s in pf.symbols],
         },
@@ -448,6 +523,7 @@ def entry_read(entry: dict) -> tuple | None:
             parse_errors=int(raw.get("parse_errors") or 0),
             used_cpp=bool(raw.get("used_cpp") or False),
             is_chunked=bool(raw.get("is_chunked") or False),
+            chunk_decode_skips=int(raw.get("chunk_decode_skips") or 0),
         )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
@@ -649,6 +725,9 @@ def build(
             g.stats["files_with_parse_errors"] += 1
         if getattr(pf, "used_cpp", False):
             g.stats["cpp_fallback_files"] += 1
+        skips = getattr(pf, "chunk_decode_skips", 0)
+        if skips:
+            g.stats["chunk_decode_skips"] += skips
 
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
