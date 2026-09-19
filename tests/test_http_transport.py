@@ -540,9 +540,9 @@ def test_half_sent_content_length_unblocks_within_timeout(make_server, capsys):
             pytest.fail("server neither responded nor closed within 2s")
     elapsed = time.monotonic() - started
     raw = b"".join(chunks)
-    assert elapsed < 2.0
-    # 408 Request Timeout, or a silent close. Either unblocks the thread.
-    assert raw == b"" or b"408" in raw
+    assert 0.2 < elapsed < 1.5
+    assert b"408" in raw
+    assert b"request timed out" in raw
     err = capsys.readouterr().err
     assert "Traceback" not in err
     # The listener itself must still be up after the half-sent request.
