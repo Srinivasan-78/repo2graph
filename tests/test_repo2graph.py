@@ -864,6 +864,58 @@ def test_write_overview_human_at_a_glance_matches_graph_stats(tmp_path, sample_g
     assert "pkg/util.py" in text.split("## Top 10 most-connected files")[1]
 
 
+def test_iss135_overview_human_respects_custom_max_file_mb(tmp_path):
+    """Issue 135: write_overview_human labels skipped_too_large from
+    g.config.max_file_bytes, not the hardcoded '1.5 MB'."""
+    from repo2graph.export import write_overview_human
+    from repo2graph.graph import Graph
+    from repo2graph.parse import BuildConfig
+
+    g = Graph(tmp_path, "test")
+    g.config = BuildConfig(max_file_bytes=10_000_000)
+    g.stats["skipped_too_large"] = 3
+    g.stats["skipped_binary"] = 1
+
+    out_file = tmp_path / "overview.md"
+    write_overview_human(g, out_file)
+    text = out_file.read_text(encoding="utf8")
+    assert "- files over 10 MB: 3" in text
+    assert "- binary files: 1" in text
+    assert "1.5 MB" not in text
+
+
+def test_iss135_overview_human_default_label_when_config_missing(tmp_path):
+    """Default 1.5 MB label is unchanged when config is missing or default."""
+    from repo2graph.export import write_overview_human
+    from repo2graph.graph import Graph
+    from repo2graph.parse import BuildConfig
+
+    g = Graph(tmp_path, "test")
+    g.stats["skipped_too_large"] = 2
+    out_file = tmp_path / "overview.md"
+    write_overview_human(g, out_file)
+    assert "- files over 1.5 MB: 2" in out_file.read_text(encoding="utf8")
+
+    g.config = BuildConfig()
+    write_overview_human(g, out_file)
+    assert "- files over 1.5 MB: 2" in out_file.read_text(encoding="utf8")
+
+
+def test_iss135_build_export_overview_uses_configured_threshold(tmp_path):
+    """build() stores config on the Graph; human/overview.md reflects --max-file-mb."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "keep.py").write_text("KEEP = 1\n")
+    (repo / "too_big.py").write_bytes(b"x = 1\n" + b"y" * 200_000)
+
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "overview", "--max-file-mb", "0.1"])
+    text = artifact_path(out, "overview.md").read_text(encoding="utf8")
+    assert "- files over 0.1 MB:" in text
+    assert "1.5 MB" not in text
+    assert "too_big.py" not in text
+
+
 def test_agent_overview_keeps_the_old_prose_format(tmp_path, sample_repo, sample_graph):
     """agent/overview.md must stay byte-for-byte what write_overview() produces today."""
     from repo2graph.export import write_overview

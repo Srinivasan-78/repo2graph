@@ -636,9 +636,13 @@ def write_overview_human(g, path: Path, top: int = 25):
         out.append("No edges were recorded.")
     out.append("")
 
-    skip_bullets = [
-        f"- {label}: {g.stats[key]}" for key, label in _SKIP_STAT_LABELS if g.stats.get(key)
+    max_bytes = getattr(getattr(g, "config", None), "max_file_bytes", 1_500_000)
+    mb = max_bytes / 1_000_000
+    skip_labels = [
+        (k, f"files over {mb:g} MB" if k == "skipped_too_large" else lbl)
+        for k, lbl in _SKIP_STAT_LABELS
     ]
+    skip_bullets = [f"- {label}: {g.stats[key]}" for key, label in skip_labels if g.stats.get(key)]
     if skip_bullets:
         out.append("## What was skipped")
         out.append("")
