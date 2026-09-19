@@ -261,6 +261,9 @@ def index_github(
     token: str | None = None,
     viz_nodes: int = 300,
     jobs: int = 0,
+    config=None,
+    max_call_candidates: int = 5,
+    no_chunks: bool = False,
 ) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
@@ -280,9 +283,11 @@ def index_github(
             git_history=git_history,
             max_files=max_files,
             jobs=jobs,
+            config=config,
+            max_call_candidates=max_call_candidates,
         )
         g.name = f"{owner}/{repo}"
-        chunks = iter_chunks(g)  # a generator, streamed to disk by dump_all
+        chunks = None if no_chunks else iter_chunks(g)  # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
         # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,
         # empty items) so a format the caller asked for is not silently dropped.

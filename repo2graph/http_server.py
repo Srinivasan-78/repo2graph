@@ -393,7 +393,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 outcome="error",
                 error=str(exc),
             )
-            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
 
     def _reject(self, rpc_id: Any, method: str, params: Any, exc: AuthError) -> None:
         """Refuse a call, record it, and execute nothing."""
@@ -521,7 +521,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     duration_ms=elapsed.ms,
                     error=str(exc),
                 )
-                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
                 return
         self.audit.record(
             tool=name,

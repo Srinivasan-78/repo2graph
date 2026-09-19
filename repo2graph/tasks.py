@@ -145,7 +145,8 @@ class TaskManager:
             existing = self._by_dir.get(key)
             if existing is not None and existing.status == BUILDING:
                 return existing
-            task = BuildTask(estimated_s=self._estimate(repo))
+            est = 1.0 if self._estimator is _default_estimator else self._estimate(repo)
+            task = BuildTask(estimated_s=est)
             self._by_dir[key] = task
             self._by_id[task.task_id] = task
             self._evict_locked()
@@ -184,6 +185,10 @@ class TaskManager:
             return 1.0
 
     def _run(self, task: BuildTask, repo: Any, out: Any) -> None:
+        if self._estimator is _default_estimator:
+            est = self._estimate(repo)
+            with self._lock:
+                task.estimated_s = est
         try:
             self._builder(repo, out)
         except BaseException as exc:

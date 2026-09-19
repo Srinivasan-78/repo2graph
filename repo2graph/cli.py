@@ -137,8 +137,15 @@ def cmd_build(args):
 
 def cmd_github(args):
     from .fetch import index_github
+    from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+    config = BuildConfig(
+        max_file_bytes=int(args.max_file_mb * 1_000_000),
+        extra_exclude_dirs=args.extra_exclude_dirs or [],
+        include_vendor=args.include_vendor,
+        chunk_large_files=args.chunk_large_files,
+    )
     meta = index_github(
         args.repo,
         Path(args.out),
@@ -153,6 +160,9 @@ def cmd_github(args):
         token=args.token,
         viz_nodes=args.viz_nodes,
         jobs=args.jobs,
+        config=config,
+        max_call_candidates=args.max_call_candidates,
+        no_chunks=args.no_chunks,
     )
     _emit(json.dumps(meta, indent=2))
 
@@ -719,6 +729,39 @@ def main(argv=None):
         "--token",
         default=None,
         help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)",
+    )
+    gh.add_argument("--no-chunks", action="store_true")
+    gh.add_argument(
+        "--max-call-candidates",
+        type=_posint,
+        default=5,
+        help="maximum number of candidates to keep for ambiguous calls",
+    )
+    gh.add_argument(
+        "--max-file-mb",
+        type=_max_file_mb,
+        default=1.5,
+        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
+    )
+    gh.add_argument(
+        "--include-vendor",
+        action="store_true",
+        default=False,
+        help="index files in vendor directories (default: off)",
+    )
+    gh.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        dest="extra_exclude_dirs",
+        metavar="NAME",
+        help="additional directory name to exclude (repeatable)",
+    )
+    gh.add_argument(
+        "--chunk-large-files",
+        action="store_true",
+        default=False,
+        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
     )
     gh.set_defaults(func=cmd_github)
 
