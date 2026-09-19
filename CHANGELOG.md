@@ -13,6 +13,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- Audit-log `high_entropy` redaction no longer treats ordinary snake_case
+  identifier queries (`test_iss25_…`, `resolve_import_python3_relative`) as
+  credentials. Vendor shapes (`ghp_…`, `AKIA…`, JWTs, …) are unchanged.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

@@ -110,9 +110,16 @@ def _looks_like_a_secret(value: str) -> str | None:
         if pattern.search(value):
             return name
     # A long unbroken run of token characters with no whitespace is the generic
-    # shape of a credential. Deliberately conservative: real queries are prose
-    # and contain spaces, so this does not fire on ordinary arguments.
+    # shape of a credential — but only when the mix is stronger than an
+    # ordinary identifier. `_` is in the class, so a snake_case name of
+    # ENTROPY_MIN_LEN+ with one digit (`iss25`, `python3`) used to match.
+    # Those are the pinpoint `repo_search` queries worth logging. No
+    # base64/hex credential is lowercase-and-underscore only: those use
+    # mixed case or the `+/=` padding alphabet. Vendor prefixes (AKIA,
+    # ghp_, sk-, eyJ…) are caught above, before this gate.
     if len(value) >= ENTROPY_MIN_LEN and re.fullmatch(r"[A-Za-z0-9+/=_-]+", value):
+        if re.fullmatch(r"[a-z0-9_]+", value):
+            return None
         digits = sum(c.isdigit() for c in value)
         letters = sum(c.isalpha() for c in value)
         if digits and letters:
