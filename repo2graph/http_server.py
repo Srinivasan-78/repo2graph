@@ -22,7 +22,9 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
   memory exhaustion primitive.
 * **`.well-known` documents are public, tool calls are not.** Discovery that
   requires the credential it describes how to obtain is useless, so those two
-  paths skip auth -- and therefore disclose nothing but the server's shape.
+  paths skip auth -- and therefore disclose nothing but the server's shape
+  (auth modes, index presence, and the repository basename -- never an
+  absolute host path).
 * **`Host`/`Origin` are checked on every `POST`.** Loopback-with-no-auth is
   exactly the configuration a page open in a browser on the same machine can
   reach via `fetch()`/XHR -- including via DNS rebinding, where a public
@@ -138,6 +140,19 @@ UNAUTHORIZED = 401
 FORBIDDEN = 403
 
 
+def _public_repo_label(repo: Any) -> str | None:
+    """Basename of `repo` for the unauthenticated discovery document.
+
+    `GET /.well-known/mcp-server-metadata` skips auth, so an absolute host
+    path must never appear. Both `/` and `\\` count as separators so a
+    Windows-style path cannot leak on a POSIX host either.
+    """
+    if not repo:
+        return None
+    name = str(repo).rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
+    return name or None
+
+
 def server_metadata(
     repo: Any,
     index_present: bool,
@@ -150,10 +165,12 @@ def server_metadata(
     Lets a registry or client learn what this server does without opening a
     session. Deliberately says nothing about repository *content* -- only that
     an index exists and when it was built -- because this endpoint is
-    unauthenticated by necessity.
+    unauthenticated by necessity. `repo` is the basename only; the absolute
+    path would locate the project on the host.
 
     Args:
-        repo: Repository path the server was pointed at, or None.
+        repo: Repository path the server was pointed at, or None. Only the
+            basename is published.
         index_present: Whether a readable index exists right now.
         auth_modes: The modes from `AuthConfig.modes`.
         index_built_at: ISO-8601 build time, or None when there is no index.
@@ -178,7 +195,7 @@ def server_metadata(
         ),
         "tools": tools,
         "auth_modes": list(auth_modes),
-        "repo": str(repo) if repo else None,
+        "repo": _public_repo_label(repo),
         "index_present": bool(index_present),
         "index_built_at": index_built_at,
     }

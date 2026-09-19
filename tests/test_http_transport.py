@@ -392,6 +392,23 @@ def test_discovery_is_reachable_without_a_credential(make_server):
     assert status == 200 and doc["auth_modes"] == ["bearer"]
 
 
+def test_unauthenticated_metadata_omits_absolute_repo_path(make_server):
+    """ISS-198: discovery is public; the host path must not appear even with auth configured."""
+    abs_repo = "/srv/repos/acme-billing-service"
+    server = make_server(AuthConfig(token="s3cret"), repo=abs_repo)
+    status, doc = server.get("/.well-known/mcp-server-metadata")
+    assert status == 200
+    raw = json.dumps(doc)
+    assert abs_repo not in raw
+    assert "/srv/repos" not in raw
+    assert doc["repo"] == "acme-billing-service"
+    assert not str(doc["repo"]).startswith("/")
+    assert "\\" not in str(doc["repo"])
+    assert doc["auth_modes"] == ["bearer"]
+    assert "index_present" in doc
+    assert "index_built_at" in doc
+
+
 def test_the_metadata_document_discloses_no_repository_content(make_server):
     """It is unauthenticated, so it must describe shape and nothing else."""
     server = make_server()
@@ -587,7 +604,28 @@ def test_the_server_opens_no_outbound_socket_without_oidc(make_server, monkeypat
 def test_server_metadata_is_pure_and_needs_no_server():
     """The document builder is callable without starting anything."""
     doc = server_metadata("/tmp/repo", True, ["bearer"], "2026-09-16T00:00:00Z")
-    assert doc["repo"] == "/tmp/repo"
+    assert doc["repo"] == "repo"
+    assert "/tmp/repo" not in json.dumps(doc)
     assert doc["index_present"] is True
     assert doc["auth_modes"] == ["bearer"]
     json.dumps(doc)
+
+
+def test_server_metadata_never_includes_an_absolute_repo_path():
+    """ISS-198: unauthenticated discovery used to return str(repo) verbatim."""
+    from pathlib import Path
+
+    abs_repo = Path("/srv/repos/acme-billing-service")
+    doc = server_metadata(abs_repo, True, ["bearer"], "2026-09-16T00:00:00Z")
+    raw = json.dumps(doc)
+    assert str(abs_repo) not in raw
+    assert doc["repo"] == "acme-billing-service"
+    assert not str(doc["repo"]).startswith("/")
+    assert doc["index_present"] is True
+    assert doc["auth_modes"] == ["bearer"]
+
+    win = server_metadata(r"C:\srv\repos\acme-billing-service", False, ["none"])
+    assert win["repo"] == "acme-billing-service"
+    assert r"C:\srv" not in json.dumps(win)
+    assert win["index_present"] is False
+    assert win["auth_modes"] == ["none"]
