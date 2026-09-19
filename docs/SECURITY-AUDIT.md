@@ -288,9 +288,13 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
 - `exclude_secrets=True` is unconditional and hardcoded in every handler.
 - HTTP transport refuses to bind beyond loopback with no auth configured:
   `http_server.py:426-430`.
-- Real RS256-only JWT verification: `alg` taken from the key not the token (blocks `alg:none`/
-  HS256 confusion), constant-time bearer comparison (`hmac.compare_digest`), `iss`/`aud`/`exp`/
-  `nbf` enforced, JWKS refetch capped at one retry per unknown `kid`.
+- JWT verification is RSA-only (`ALGORITHMS` + enforced `kty == "RSA"`). A JWK that
+  declares `alg` pins the hash and a mismatched token header is refused; when the
+  JWK omits `alg` (RFC 7517), the token may choose among RS256/RS384/RS512 only.
+  `alg:none` / HS256 miss the table — that table and the `kty` check, not "alg
+  comes from the key", are what block algorithm confusion. Constant-time bearer
+  comparison (`hmac.compare_digest`), `iss`/`aud`/`exp`/`nbf` enforced, JWKS
+  refetch capped at one retry per unknown `kid`.
 - No outbound network in default mode; OIDC fetch only fires when explicitly configured, and is
   https-only, size-capped, timeout-bound.
 

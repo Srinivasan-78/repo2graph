@@ -13,6 +13,14 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- `decode_jwt` now takes the JWK's `alg` when the key declares one, and falls
+  back to the token header only when RFC 7517's optional field is absent.
+  `alg:none` / HS256 remain refused by the RSA-only table. The module
+  docstring and `docs/SECURITY-AUDIT.md` describe that defence rather than
+  claiming `alg` never comes from the token.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
