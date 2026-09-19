@@ -79,7 +79,9 @@ def _gzip_copy(src: Path, dst: Path) -> None:
 def _read_jsonl_maybe_gz(path: Path) -> list[str]:
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf8") as fh:
-        return fh.read().splitlines()
+        # split("\n"), not splitlines(): U+2028/U+2029/U+0085 inside a JSON
+        # string would otherwise cut the record (AGENTS.md; ISS-137).
+        return [line.rstrip("\r") for line in fh.read().split("\n") if line]
 
 
 def load_registry() -> list[dict]:
