@@ -145,10 +145,20 @@ def rsa_verify(n: int, e: int, signature: bytes, message: bytes, hash_name: str)
     prefix = DIGEST_INFO_PREFIX.get(hash_name)
     if prefix is None:
         return False
+    # A malformed or hostile JWK can hand us a zero, negative, or otherwise
+    # degenerate modulus/exponent. `pow(sig, e, n)` raises ValueError for
+    # n == 0, and a negative n makes `pow(...).to_bytes(...)` raise
+    # OverflowError (the result carries n's sign). Both must fail closed as a
+    # plain verification failure, never propagate as an unhandled exception.
+    if n <= 0 or e <= 0:
+        return False
     k = (n.bit_length() + 7) // 8
     if len(signature) != k:
         return False
-    decoded = pow(int.from_bytes(signature, "big"), e, n).to_bytes(k, "big")
+    try:
+        decoded = pow(int.from_bytes(signature, "big"), e, n).to_bytes(k, "big")
+    except (ValueError, OverflowError):
+        return False
 
     digest = hashlib.new(hash_name, message).digest()
     tail = prefix + digest

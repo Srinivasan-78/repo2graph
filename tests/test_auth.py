@@ -182,6 +182,23 @@ def test_rsa_verify_rejects_a_wrong_length_signature():
     assert not rsa_verify(KEY["n"], KEY["e"], b"\x01\x02", b"msg", "sha256")
 
 
+def test_rsa_verify_rejects_a_zero_modulus():
+    """A malicious JWK with n=0 must fail closed, not raise ValueError from pow()."""
+    assert rsa_verify(0, KEY["e"], b"", b"msg", "sha256") is False
+
+
+def test_rsa_verify_rejects_a_negative_modulus():
+    """A negative n must fail closed, not raise OverflowError from to_bytes()."""
+    n = -KEY["n"]
+    k = (KEY["n"].bit_length() + 7) // 8
+    sig = b"\x01" * k
+    assert rsa_verify(n, KEY["e"], sig, b"msg", "sha256") is False
+
+
+def test_rsa_verify_rejects_a_zero_exponent():
+    assert rsa_verify(KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg", "sha256") is False
+
+
 def test_rsa_verify_rejects_garbage_in_the_padding():
     """The whole block is compared, so a forged DigestInfo in slack space fails.
 
