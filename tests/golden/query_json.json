@@ -28,7 +28,7 @@
     ],
     "base_edges": [],
     "text": "# file: pkg/gateway.py\n# function: route_request  (lines 5-13, python)\n# entry point: nothing in this repo calls it \u2014 a flow starts here\n# calls: pkg/audit.py::audit_event\n# calls (outside the repo): get\n# doc: Dispatch one inbound request to its handler and record the outcome.      The router keeps no state of its own, which makes it safe to call from any     worker thread, and it deliberately never touches a socket or a clock.\ndef route_request(request):\n    \"\"\"Dispatch one inbound request to its handler and record the outcome.\n\n    The router keeps no state of its own, which makes it safe to call from any\n    worker thread, and it deliberately never touches a socket or a clock.\n    \"\"\"\n    handler = request.get(\"handler\")\n    audit_event(handler)\n    return handler",
-    "score": 2.464,
+    "score": 1.767,
     "why": "lexical"
   },
   {
@@ -50,7 +50,7 @@
     "callee_edges": [],
     "base_edges": [],
     "text": "# file: docs/notes.md (md, 10 lines)\n# Notes\n\nThe gateway dispatches an inbound request to a handler.\n# Notes\n\nThe gateway dispatches an inbound request to a handler.\n# Notes\n\nThe gateway dispatches an inbound request to a handler.\n",
-    "score": 1.695,
+    "score": 1.471,
     "why": "lexical"
   },
   {
@@ -72,7 +72,7 @@
     "callee_edges": [],
     "base_edges": [],
     "text": "# file: .env (, 5 lines)\n# deployment ledger credential store\nACME_DEPLOYMENT_LEDGER_TOKEN=abc123deadbeef\nACME_DEPLOYMENT_LEDGER_SECRET=zzz999notreal\nDEPLOYMENT_LEDGER_CREDENTIAL=deployment ledger credential inbound request handler\n",
-    "score": 1.347,
+    "score": 1.055,
     "why": "lexical"
   },
   {
@@ -102,7 +102,7 @@
     "callee_edges": [],
     "base_edges": [],
     "text": "# file: pkg/audit.py\n# function: audit_event  (lines 2-7, python)\n# called by: pkg/gateway.py::route_request\n# doc: Append one entry to the tamper evident journal of handled events.      The journal is append only so that a later reader can replay it verbatim.\ndef audit_event(name):\n    \"\"\"Append one entry to the tamper evident journal of handled events.\n\n    The journal is append only so that a later reader can replay it verbatim.\n    \"\"\"\n    return {\"event\": name}",
-    "score": 0.365,
+    "score": 0.219,
     "why": "lexical"
   }
 ]
