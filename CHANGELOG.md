@@ -13,6 +13,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- Unauthenticated `/.well-known/mcp-server-metadata` now reports the
+  repository *basename* only. The previous `str(repo)` leaked the absolute
+  host path to anyone who could reach the port, including when
+  `--auth-token` or OIDC was configured.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
