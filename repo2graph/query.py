@@ -13,7 +13,9 @@ TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
 SUBTOKEN_RE = re.compile(r"_|(?<=[a-z0-9])(?=[A-Z])")
 
-# BM25 scoring constants: term frequency saturation (K1), length normalization (B), average doc length (AVG_LEN)
+# BM25 scoring constants: term frequency saturation (K1), length normalization (B).
+# BM25_AVG_LEN is the empty-index fallback / documented default; a non-empty
+# Index uses corpus avgdl = sum(lengths) / N for the length term in score().
 BM25_K1 = 1.5
 BM25_B = 0.75
 BM25_AVG_LEN = 400.0
@@ -242,6 +244,7 @@ class Index:
                 self.postings[term].append((i, n))
             self.df.update(counts.keys())
         self.N = len(self.chunks)
+        self.avgdl = (sum(self.lengths) / self.N) if self.N else BM25_AVG_LEN
         # Dense vectors are optional in every sense: absent, unreadable,
         # truncated or stale, the index still answers lexically.
         self.vectors: dict[int, list[float]] | None = None
@@ -379,7 +382,7 @@ class Index:
                 acc[i] += (
                     qn
                     * idf
-                    * (cnt / (cnt + BM25_K1 * ((1.0 - BM25_B) + BM25_B * length / BM25_AVG_LEN)))
+                    * (cnt / (cnt + BM25_K1 * ((1.0 - BM25_B) + BM25_B * length / self.avgdl)))
                 )
         self._boost_identifiers(query, acc)
         scored = [(s, i) for i, s in acc.items() if s]

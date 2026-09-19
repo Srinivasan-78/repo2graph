@@ -1881,6 +1881,73 @@ def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
     assert len(ample_hits) <= 4
 
 
+def test_iss142_bm25_avgdl_is_corpus_mean(tmp_path):
+    """Issue 142: BM25 length norm uses corpus avgdl, not hardcoded 400.0.
+
+    Hand-built chunks have known token lengths (no qualname, no camelCase /
+    underscore splits). avgdl must be their mean; score() must use that mean
+    so a short-vs-long pair is not length-normalized against 400.0.
+    """
+    from repo2graph.query import BM25_AVG_LEN, Index
+
+    def write_index(root, chunks):
+        agent = root / "agent"
+        agent.mkdir(parents=True)
+        (agent / "chunks.jsonl").write_text(
+            "\n".join(json.dumps(c) for c in chunks) + "\n", encoding="utf8"
+        )
+        (agent / "nodes.jsonl").write_text("", encoding="utf8")
+        (agent / "edges.jsonl").write_text("", encoding="utf8")
+        return Index(root)
+
+    empty = write_index(tmp_path / "empty", [])
+    assert empty.N == 0
+    assert empty.lengths == []
+    assert empty.avgdl == BM25_AVG_LEN == 400.0
+
+    # 3 tokens and 81 tokens: mean 42.0, far from the old fixed 400.0.
+    short_text = "needle aaaa bbbb"
+    long_text = "needle " + " ".join(f"w{i:04d}" for i in range(80))
+    idx = write_index(
+        tmp_path / "corpus",
+        [
+            {
+                "id": "c0",
+                "node_id": "n0",
+                "path": "short.py",
+                "text": short_text,
+                "name": "shorty",
+                "qualname": "",
+            },
+            {
+                "id": "c1",
+                "node_id": "n1",
+                "path": "long.py",
+                "text": long_text,
+                "name": "longy",
+                "qualname": "",
+            },
+        ],
+    )
+    assert idx.N == 2
+    assert idx.lengths == [3, 81]
+    assert idx.avgdl == 42.0
+    assert idx.avgdl == sum(idx.lengths) / idx.N
+    assert idx.avgdl != BM25_AVG_LEN
+
+    def scores_by_index(scored):
+        return {i: s for s, i in scored}
+
+    dynamic = scores_by_index(idx.score("needle"))
+    idx.avgdl = BM25_AVG_LEN
+    against_400 = scores_by_index(idx.score("needle"))
+    # Detector: restoring `length / BM25_AVG_LEN` in score() makes these equal.
+    assert dynamic != against_400
+    assert set(dynamic) == {0, 1}
+    # Smaller corpus avgdl penalizes the long chunk more, so short/long widens.
+    assert dynamic[0] / dynamic[1] > against_400[0] / against_400[1]
+
+
 def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
     """Issue 27 (ISS-15, SH-5): DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
     .eggs, .cache, .gradle, .direnv, .yarn) and discovery method is recorded in stats."""
