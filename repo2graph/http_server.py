@@ -23,12 +23,19 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 * **`.well-known` documents are public, tool calls are not.** Discovery that
   requires the credential it describes how to obtain is useless, so those two
   paths skip auth -- and therefore disclose nothing but the server's shape.
+* **`Host`/`Origin` are checked on every `POST`.** Loopback-with-no-auth is
+  exactly the configuration a page open in a browser on the same machine can
+  reach via `fetch()`/XHR -- including via DNS rebinding, where a public
+  hostname resolves to 127.0.0.1. Only loopback Host values (plus the bind
+  host and anything in `--http-allow-hosts`) and same-set Origin values are
+  accepted; everything else is refused with 403 before the body is read.
 """
 
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Literal
+from urllib.parse import urlsplit
 
 from . import __version__
 from .audit import AuditLogger, timer
@@ -43,6 +50,77 @@ MAX_BODY_BYTES = 1 << 20
 # Loopback addresses, where serving without a credential is defensible.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# Bare hostnames (no port, no brackets) accepted in the Host/Origin headers by
+# default. A browser page -- including one that DNS-rebinds a public hostname
+# to 127.0.0.1 -- can only reach this server over POST if the Host/Origin it
+# sends matches something here or in the deployment's explicit
+# --http-allow-hosts allowlist; anything else is refused before the body is
+# even read.
+DEFAULT_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _hostname_from_host_header(value: str | None) -> str | None:
+    """The bare hostname of a `Host` header, with `:port` and `[...]` stripped.
+
+    Returns None for anything empty or unparseable -- fail closed rather than
+    guess.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if value.startswith("["):
+        end = value.find("]")
+        if end == -1:
+            return None
+        return value[1:end].lower() or None
+    head, sep, tail = value.rpartition(":")
+    if sep and tail.isdigit():
+        return head.lower() or None
+    return value.lower()
+
+
+def _hostname_from_origin(value: str | None) -> str | None:
+    """The hostname of an `Origin` header, or None if absent/unparseable.
+
+    `null` (sandboxed iframes, `file://` pages) is treated as unparseable: it
+    never matches an allowlist of real hostnames, so it is rejected.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value or value.lower() == "null":
+        return None
+    try:
+        hostname = urlsplit(value).hostname
+    except ValueError:
+        return None
+    return hostname.lower() if hostname else None
+
+
+def _host_header_allowed(value: str | None, allowed_hostnames: frozenset[str]) -> bool:
+    """Whether a `Host` header names one of the accepted hostnames.
+
+    Fails closed: a missing or unparseable header is not allowed.
+    """
+    hostname = _hostname_from_host_header(value)
+    return hostname is not None and hostname in allowed_hostnames
+
+
+def _origin_header_allowed(value: str | None, allowed_hostnames: frozenset[str]) -> bool:
+    """Whether an `Origin` header, if present, names an accepted hostname.
+
+    No `Origin` header at all is allowed -- that is the common case for
+    non-browser clients (curl, an MCP client library) and carries none of the
+    cross-origin-browser risk this check exists for. A present-but-unparseable
+    or cross-origin value is refused.
+    """
+    if value is None:
+        return True
+    hostname = _hostname_from_origin(value)
+    return hostname is not None and hostname in allowed_hostnames
+
 WELL_KNOWN_METADATA = "/.well-known/mcp-server-metadata"
 WELL_KNOWN_CLIENT = "/.well-known/oauth-client-metadata"
 
@@ -54,6 +132,9 @@ INTERNAL_ERROR = -32603
 # Not a JSON-RPC code: the MCP auth spec carries HTTP semantics, and 401 is what
 # a client acts on. Kept numerically distinct from the reserved range.
 UNAUTHORIZED = 401
+# Also not a JSON-RPC code: a rejected Host/Origin is an HTTP-layer refusal,
+# not a malformed RPC frame. 403 is what a client acts on.
+FORBIDDEN = 403
 
 
 def server_metadata(
@@ -141,6 +222,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
     index_dir: Any = None
     base_url = "http://127.0.0.1:8719"
     publish_cimd = False
+    allowed_hostnames: frozenset[str] = DEFAULT_ALLOWED_HOSTNAMES
 
     # ---------------------------------------------------------- plumbing --
 
@@ -230,6 +312,20 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path not in ("/mcp", "/"):
             self._send_json(404, {"error": f"no such path: {path}"})
+            return
+        # DNS-rebinding shape: a page open in a browser on this machine (or one
+        # that has rebound a public hostname to 127.0.0.1) can drive this
+        # server with ordinary fetch()/XHR unless Host and Origin are checked
+        # *before* anything else runs. Fail closed on anything unrecognised.
+        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._send_json(
+                FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed")
+            )
+            return
+        if not _origin_header_allowed(self.headers.get("Origin"), self.allowed_hostnames):
+            self._send_json(
+                FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed")
+            )
             return
         try:
             raw = self._read_body()
@@ -436,6 +532,7 @@ def make_handler(
     publish_cimd: bool = False,
     opener: Callable[[str], Any] | None = None,
     tasks: Any = None,
+    allowed_hostnames: frozenset[str] | None = None,
 ) -> type[MCPRequestHandler]:
     """Build a request-handler class bound to this server's configuration.
 
@@ -449,6 +546,8 @@ def make_handler(
         publish_cimd: Whether `/.well-known/oauth-client-metadata` is served.
         opener: JSON fetcher for OIDC discovery, injected by tests.
         tasks: A `TaskManager` when builds run in the background, else None.
+        allowed_hostnames: Bare hostnames accepted in Host/Origin headers on
+            `POST`; defaults to `DEFAULT_ALLOWED_HOSTNAMES` (loopback only).
 
     Returns:
         A `MCPRequestHandler` subclass ready to hand to `ThreadingHTTPServer`.
@@ -468,6 +567,7 @@ def make_handler(
     _Handler.tasks = tasks
     _Handler.base_url = base_url
     _Handler.publish_cimd = publish_cimd
+    _Handler.allowed_hostnames = allowed_hostnames or DEFAULT_ALLOWED_HOSTNAMES
     return _Handler
 
 
@@ -484,6 +584,11 @@ class HTTPTransport:
         cache: A `ResultCache`, or None.
         publish_cimd: Whether to serve the client metadata document.
         opener: JSON fetcher for OIDC discovery, injected by tests.
+        allow_hosts: Extra bare hostnames to accept in Host/Origin headers on
+            `POST`, beyond the loopback default and `host` itself -- for a
+            deliberate non-loopback deployment (e.g. behind a reverse proxy
+            that rewrites Host to a public domain name). Everything else is
+            refused with 403, even when `host` is itself non-loopback.
 
     Raises:
         ValueError: If asked to bind beyond loopback with no credential set,
@@ -502,6 +607,7 @@ class HTTPTransport:
         publish_cimd: bool = False,
         opener: Callable[[str], Any] | None = None,
         tasks: Any = None,
+        allow_hosts: Any = None,
     ) -> None:
         auth_config = auth_config or AuthConfig()
         if host not in LOOPBACK and not auth_config.enabled:
@@ -512,6 +618,19 @@ class HTTPTransport:
             )
         self.host, self.port = host, port
         self.auth_config = auth_config
+        # The bind host itself is always trusted -- it's already gated by the
+        # auth-required check above when non-loopback -- plus the loopback
+        # defaults, plus anything the deployment explicitly allowlists. A
+        # wildcard bind (0.0.0.0, ::) names no real hostname a client would
+        # ever send, so it is not added.
+        allowed_hostnames = set(DEFAULT_ALLOWED_HOSTNAMES)
+        if host not in ("0.0.0.0", "::", ""):
+            allowed_hostnames.add(host.lower())
+        for extra in allow_hosts or ():
+            hostname = str(extra).strip().lower()
+            if hostname:
+                allowed_hostnames.add(hostname)
+        self.allowed_hostnames = frozenset(allowed_hostnames)
         self._handler = make_handler(
             index_dir,
             repo,
@@ -522,6 +641,7 @@ class HTTPTransport:
             publish_cimd=publish_cimd,
             opener=opener,
             tasks=tasks,
+            allowed_hostnames=self.allowed_hostnames,
         )
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None

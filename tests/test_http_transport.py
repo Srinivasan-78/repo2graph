@@ -9,6 +9,7 @@ Every OIDC test injects a fake issuer through `opener`, so nothing here opens a
 socket to the outside world. One test asserts that directly.
 """
 
+import argparse
 import json
 import socket
 import threading
@@ -22,6 +23,7 @@ from conftest import MINI_QUERY, build_mini_index, write_mini_repo
 from repo2graph.audit import AuditConfig, AuditLogger
 from repo2graph.auth import AuthConfig
 from repo2graph.http_server import HTTPTransport, server_metadata
+from repo2graph.mcp import _auth_config
 
 from test_auth import FakeIssuer, ISSUER, AUDIENCE, claims, sign
 
@@ -44,13 +46,21 @@ class Server:
     def url(self, path="/mcp"):
         return f"http://127.0.0.1:{self.port}{path}"
 
-    def rpc(self, method, params=None, token=None, rpc_id=1):
-        """POST one JSON-RPC frame; returns (status, parsed body)."""
+    def rpc(self, method, params=None, token=None, rpc_id=1, headers=None):
+        """POST one JSON-RPC frame; returns (status, parsed body).
+
+        `headers` lets a test override transport-level headers (Host, Origin)
+        that `urllib.request` would otherwise set from the URL; anything
+        passed here replaces the default of the same name.
+        """
         body = json.dumps(
             {"jsonrpc": "2.0", "id": rpc_id, "method": method, "params": params or {}}
         ).encode()
         request = urllib.request.Request(
-            self.url(), data=body, method="POST", headers={"Content-Type": "application/json"}
+            self.url(),
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", **(headers or {})},
         )
         if token is not None:
             request.add_header("Authorization", f"Bearer {token}")
@@ -432,6 +442,46 @@ def test_binding_beyond_loopback_with_auth_is_allowed(index):
     transport.stop()
 
 
+def test_a_cross_origin_origin_header_is_rejected(make_server):
+    """The DNS-rebinding shape: a browser page on another origin must not be
+    able to drive this server, even though the request lands on loopback."""
+    server = make_server()
+    status, body = server.rpc(
+        "initialize", headers={"Origin": "https://evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Origin not allowed"
+
+
+def test_a_non_loopback_host_header_is_rejected(make_server):
+    """A DNS-rebound hostname arrives as the Host header, not the socket
+    address -- 127.0.0.1 is what the socket saw, evil.example.com is what
+    the browser believes it is talking to."""
+    server = make_server()
+    status, body = server.rpc(
+        "initialize", headers={"Host": "evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Host header not allowed"
+
+
+def test_a_loopback_request_with_a_same_origin_origin_header_is_accepted(make_server):
+    server = make_server()
+    status, body = server.rpc(
+        "initialize", headers={"Origin": f"http://127.0.0.1:{server.port}"}
+    )
+    assert status == 200
+    assert body["result"]["serverInfo"]["name"] == "repo2graph"
+
+
+def test_a_rejected_host_never_reaches_the_tool(make_server):
+    """The check runs before auth and before dispatch: nothing is audited."""
+    server = make_server()
+    status, _ = server.rpc("initialize", headers={"Host": "evil.example.com"})
+    assert status == 403
+    assert server.audit_lines() == []
+
+
 def test_an_oversized_body_is_refused(make_server):
     server = make_server()
     request = urllib.request.Request(server.url(), data=b"x" * 10, method="POST")
@@ -475,6 +525,49 @@ def test_exclude_secrets_still_holds_over_http(make_server):
     text = body["result"]["content"][0]["text"]
     assert "abc123deadbeef" not in text
     assert "ACME_DEPLOYMENT_LEDGER_TOKEN" not in text
+
+
+# --------------------------------------------------------- env var token ----
+
+
+def test_auth_config_prefers_the_flag_over_the_env_var(monkeypatch):
+    monkeypatch.setenv("R2G_AUTH_TOKEN", "from-env")
+    args = argparse.Namespace(
+        auth_token="from-flag",
+        auth_oidc_issuer=None,
+        auth_audience=None,
+        auth_jwks_ttl=300.0,
+        auth_cimd=False,
+    )
+    assert _auth_config(args).token == "from-flag"
+
+
+def test_auth_config_falls_back_to_the_env_var(monkeypatch):
+    monkeypatch.setenv("R2G_AUTH_TOKEN", "from-env")
+    args = argparse.Namespace(
+        auth_token=None,
+        auth_oidc_issuer=None,
+        auth_audience=None,
+        auth_jwks_ttl=300.0,
+        auth_cimd=False,
+    )
+    assert _auth_config(args).token == "from-env"
+
+
+def test_the_env_var_token_authenticates_a_real_http_call(make_server, monkeypatch):
+    monkeypatch.setenv("R2G_AUTH_TOKEN", "env-secret")
+    args = argparse.Namespace(
+        auth_token=None,
+        auth_oidc_issuer=None,
+        auth_audience=None,
+        auth_jwks_ttl=300.0,
+        auth_cimd=False,
+    )
+    server = make_server(auth_config=_auth_config(args))
+    status, _ = server.call("repo_map", token="env-secret")
+    assert status == 200
+    status, _ = server.call("repo_map", token="wrong")
+    assert status == 401
 
 
 # -------------------------------------------------------------- network ----

@@ -28,6 +28,7 @@ other call worth serving first. It happens once per process, and once on disk.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -883,6 +884,7 @@ def main(argv=None):
             cache=cache,
             publish_cimd=args.auth_cimd,
             tasks=tasks,
+            allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
         )
         transport.start()
         if args.http_only:
@@ -951,6 +953,15 @@ def _add_auth_args(p) -> None:
         help="alias for --http-port; the discovery documents are "
         "served by the same HTTP transport (default: off)",
     )
+    http.add_argument(
+        "--http-allow-hosts",
+        default=None,
+        metavar="HOST[,HOST...]",
+        help="comma-separated extra hostnames accepted in the Host/Origin "
+        "headers on POST /mcp, for a deliberate non-loopback deployment "
+        "(e.g. behind a reverse proxy). Loopback and --http-host are always "
+        "accepted; everything else is refused with 403 (default: none)",
+    )
 
     auth = p.add_argument_group("authentication")
     auth.add_argument(
@@ -958,7 +969,10 @@ def _add_auth_args(p) -> None:
         default=None,
         metavar="TOKEN",
         help="require `Authorization: Bearer <TOKEN>` on every "
-        "HTTP tool call (default: no authentication)",
+        "HTTP tool call (default: no authentication). Prefer the "
+        "R2G_AUTH_TOKEN environment variable: this flag's value is visible "
+        "to other local users via ps/procfs. --auth-token wins when both "
+        "are set",
     )
     auth.add_argument(
         "--auth-oidc-issuer",
@@ -1005,16 +1019,30 @@ def _add_auth_args(p) -> None:
 
 
 def _auth_config(args):
-    """Build an AuthConfig from parsed arguments."""
+    """Build an AuthConfig from parsed arguments.
+
+    The token may come from `--auth-token` or the `R2G_AUTH_TOKEN`
+    environment variable -- the same shape as the `GH_TOKEN`/`GITHUB_TOKEN`
+    fallback in `fetch.py`. The flag wins when both are set, so it stays
+    usable for interactive/CI convenience; the env var exists so the token
+    need not appear in argv (and therefore in `ps`/`/proc`) at all.
+    """
     from .auth import AuthConfig
 
     return AuthConfig(
-        token=args.auth_token,
+        token=args.auth_token or os.environ.get("R2G_AUTH_TOKEN"),
         oidc_issuer=args.auth_oidc_issuer,
         audience=args.auth_audience,
         jwks_ttl=args.auth_jwks_ttl,
         cimd=args.auth_cimd,
     )
+
+
+def _parse_allow_hosts(value: str | None) -> list[str]:
+    """Split `--http-allow-hosts` into a list of bare hostnames."""
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 if __name__ == "__main__":
