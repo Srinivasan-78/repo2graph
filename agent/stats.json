@@ -1,0 +1,117 @@
+{
+  "discovery": "git",
+  "skipped_gitignore": 18,
+  "skipped_binary": 8,
+  "skipped_too_large": 6,
+  "files": 178,
+  "edge:CONTAINS": 201,
+  "parsed": 52,
+  "parse_errors": 0,
+  "symbol:function": 1202,
+  "edge:DEFINES": 1267,
+  "edge:IMPORTS": 485,
+  "symbol:class": 67,
+  "edge:CALLS_EXTERNAL": 2895,
+  "edge:CALLS": 2810,
+  "edge:INHERITS": 3,
+  "cochange_commits_skipped": 4,
+  "edge:CO_CHANGE": 187,
+  "entrypoints": 730,
+  "nodes": 1878,
+  "edges": 7848,
+  "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
+      "label": "ResultCache.get",
+      "in_degree": 100
+    },
+    {
+      "node_id": "sym:.github/scripts/summary.py::main",
+      "label": "main",
+      "in_degree": 92
+    },
+    {
+      "node_id": "sym:repo2graph/cli.py::main",
+      "label": "main",
+      "in_degree": 92
+    },
+    {
+      "node_id": "sym:repo2graph/mcp.py::main",
+      "label": "main",
+      "in_degree": 92
+    },
+    {
+      "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
+      "label": "TaskManager.get",
+      "in_degree": 89
+    },
+    {
+      "node_id": "sym:repo2graph/query.py::Index",
+      "label": "Index",
+      "in_degree": 72
+    },
+    {
+      "node_id": "sym:tests/test_http_transport.py::Server.get",
+      "label": "Server.get",
+      "in_degree": 70
+    },
+    {
+      "node_id": "sym:repo2graph/answer.py::_writer.write_text",
+      "label": "_writer.write_text",
+      "in_degree": 67
+    },
+    {
+      "node_id": "sym:tests/test_mcp.py::mcp_module",
+      "label": "mcp_module",
+      "in_degree": 60
+    },
+    {
+      "node_id": "sym:tests/test_encoding.py::FakeStream.write",
+      "label": "FakeStream.write",
+      "in_degree": 41
+    }
+  ],
+  "languages": {
+    "python": 51,
+    "md": 50,
+    "json": 41,
+    "yml": 18,
+    "html": 5,
+    "yaml": 2,
+    "txt": 2,
+    "toml": 2,
+    "javascript": 1,
+    "lock": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "2d0ffd9",
+  "co_change_hotspots": [
+    {
+      "file_a": "repo2graph/export.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 18
+    },
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 17
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 16
+    },
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "repo2graph/parse.py",
+      "weight": 14
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/export.py",
+      "weight": 14
+    }
+  ]
+}
