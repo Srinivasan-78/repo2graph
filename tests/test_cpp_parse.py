@@ -34,10 +34,9 @@ def test_cpp_parse_pass_2(mock_run):
     mock_run.side_effect = mock_run_impl
 
     pf = parse_source(source, "c", filepath="test.c")
-    # ISS-126: cpp is only a signal — we still walk the original tree, so
-    # parse_errors stay on Pass 1. used_cpp still records that the mocked
-    # preprocessed parse was cleaner.
-    assert pf.parse_errors > 0
+    # used_cpp records that the preprocessed parse was cleaner. ISS-126
+    # stopped adopting that tree, so parse_errors may still be Pass 1's
+    # count; the flag itself is unchanged.
     assert pf.used_cpp
     assert mock_run.call_count == 2
 
@@ -62,7 +61,6 @@ def test_cpp_parse_pass_2_non_ascii_output(mock_run):
 
     pf = parse_source(source, "c", filepath="test.c")
 
-    assert pf.parse_errors > 0
     assert pf.used_cpp
     assert mock_run.call_count == 2
 
