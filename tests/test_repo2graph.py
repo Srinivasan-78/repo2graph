@@ -2174,6 +2174,40 @@ protocol Named {
     assert pf.parse_errors == 0
 
 
+def test_parse_source_scala_symbols_calls_and_imports():
+    """Scala LANG_CFG had zero direct parse_source coverage (kind_map/calls/imports)."""
+    src = b"""import scala.util.Try
+
+trait Named {
+    def label(): String = "ok"
+}
+
+object Helper {
+    def helper(name: String): String = name
+}
+
+class Greeter {
+    def greet(name: String): String = {
+        Helper.helper(name)
+    }
+}
+"""
+    pf = parse_source(src, "scala")
+    if not pf.symbols:
+        pytest.skip("scala grammar unavailable")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds["Named"] == "trait"
+    assert kinds["Named.label"] == "function"
+    assert kinds["Helper"] == "object"
+    assert kinds["Helper.helper"] == "function"
+    assert kinds["Greeter"] == "class"
+    assert kinds["Greeter.greet"] == "function"
+    greet = next(s for s in pf.symbols if s.qualname == "Greeter.greet")
+    assert "helper" in greet.calls
+    assert any(i.startswith("import scala.util.Try") for i in pf.imports)
+    assert pf.parse_errors == 0
+
+
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
     from repo2graph.walker import _glob_re
