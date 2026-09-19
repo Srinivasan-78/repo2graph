@@ -127,13 +127,22 @@ SECRET_DIR_NAMES = frozenset(
 SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
-def _is_secret_path(path: str) -> bool:
+def _is_secret_path(
+    path: str,
+    extra_keywords: tuple[str, ...] | list[str] | set[str] | None = None,
+    extra_dirs: tuple[str, ...] | list[str] | set[str] | None = None,
+) -> bool:
     """Return True if path points to a sensitive file (secrets, keys, credentials)."""
     if not path:
         return False
     p = str(path).replace("\\", "/").lower()
     parts = p.strip("/").split("/")
-    if any(part in SECRET_DIR_NAMES for part in parts[:-1]):
+    dir_names = (
+        SECRET_DIR_NAMES
+        if not extra_dirs
+        else frozenset(SECRET_DIR_NAMES | {d.lower() for d in extra_dirs})
+    )
+    if any(part in dir_names for part in parts[:-1]):
         return True
     name = parts[-1]
     if not name:
@@ -144,10 +153,8 @@ def _is_secret_path(path: str) -> bool:
         return True
     if any(name.endswith(ext) for ext in SECRET_EXTS):
         return True
-    # "token" is common inside legitimate identifiers ("tokenizer.json",
-    # "token_utils.py"), so require it as a standalone word (split on
-    # non-alphanumerics) rather than a bare substring; the remaining
-    # keywords are distinctive enough to stay substring-matched.
+    if extra_keywords and any(kw.lower() in name for kw in extra_keywords):
+        return True
     name_words = None
     for kw in SECRET_KEYWORDS:
         if kw == "token":
@@ -675,6 +682,8 @@ class Index:
         exclude_secrets: bool = False,
         budget_tokens: int | None = None,
         count_tokens=None,
+        extra_secret_keywords: tuple[str, ...] | list[str] | None = None,
+        extra_secret_dirs: tuple[str, ...] | list[str] | None = None,
     ) -> dict:
         """An agent-ready markdown pack: repo map, `---`, then cited chunks.
 
@@ -709,7 +718,9 @@ class Index:
             if nid in seen_nodes:
                 continue
             c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
-            if exclude_secrets and _is_secret_path(c_path):
+            if exclude_secrets and _is_secret_path(
+                c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            ):
                 seen_nodes.add(nid)
                 continue
             seen_nodes.add(nid)
@@ -730,7 +741,9 @@ class Index:
                 c = node_chunks[0]
                 c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
                 seen_nodes.add(nid)
-                if exclude_secrets and _is_secret_path(c_path):
+                if exclude_secrets and _is_secret_path(
+                    c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+                ):
                     continue
                 src_name = self.nodes.get(src, {}).get("name") or src
                 neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})

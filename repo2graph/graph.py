@@ -31,6 +31,12 @@ MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 
 
+class GraphLimitExceeded(RuntimeError):
+    """Raised when the graph exceeds a configured resource limit (ISS-85, ISS-156)."""
+
+    pass
+
+
 class Graph:
     def __init__(self, root: Path, name: str, max_files: int = 0):
         self.root, self.name = root, name
@@ -68,6 +74,12 @@ class Graph:
                 }
             )
         else:
+            max_nodes = getattr(self.config, "max_nodes", 0) if self.config else 0
+            if max_nodes > 0 and len(self.nodes) >= max_nodes:
+                raise GraphLimitExceeded(
+                    f"Graph node limit exceeded: graph reached {len(self.nodes)} nodes (max_nodes={max_nodes}). "
+                    "Use --max-nodes to increase the limit or filter with --include/--exclude."
+                )
             self.nodes[nid] = dict(id=nid, **attrs)
         self._warn_if_large()
         return nid
@@ -346,6 +358,35 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     return rel, lang, (len(raw_content), lines, pf, digest)
 
 
+_ORIGINAL_READ_BYTES = Path.read_bytes
+
+
+def _safe_read_bytes(path: Path) -> bytes:
+    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races (ISS-87).
+
+    On POSIX systems, O_NOFOLLOW causes open() to fail if the trailing component is a
+    symlink (protecting against an attacker replacing a discovered regular file with a
+    symlink to a sensitive file before open). On Windows, O_NOFOLLOW is not supported
+    by the OS open(), so standard read flags are used.
+    """
+    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
+        return path.read_bytes()
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is not None:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
+        fd = os.open(path, flags)
+        try:
+            with os.fdopen(fd, "rb") as fh:
+                return fh.read()
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    return path.read_bytes()
+
+
 def _read_and_parse(item):
     """Read one file and parse it if it is code.
 
@@ -369,7 +410,7 @@ def _read_and_parse(item):
         pass
 
     try:
-        raw = abspath.read_bytes()
+        raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
     try:
@@ -487,7 +528,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         order.append(rel)
         lang = EXT_LANG.get(abspath.suffix.lower())
         try:
-            raw = abspath.read_bytes()
+            raw = _safe_read_bytes(abspath)
         except OSError:
             results[rel] = (rel, lang, None)
             continue

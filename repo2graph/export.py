@@ -81,14 +81,16 @@ def paths(outdir, name) -> list[Path]:
 def make_path(outdir, name) -> Path:
     """Like path(), but creates the section directory first."""
     p = path(outdir, name)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.parent.is_dir():
+        p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def make_paths(outdir, name) -> list[Path]:
     out = paths(outdir, name)
     for p in out:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.parent.is_dir():
+            p.parent.mkdir(parents=True, exist_ok=True)
     return out
 
 

@@ -246,6 +246,7 @@ class BuildConfig:
     extra_exclude_dirs: list[str] = field(default_factory=list)
     include_vendor: bool = False
     chunk_large_files: bool = False
+    max_nodes: int = 0
 
 
 def _git_files(root: Path):
