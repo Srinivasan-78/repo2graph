@@ -165,6 +165,24 @@ def test_parse_bases_are_names_not_keywords():
         assert sym.bases == expected, (lang, sym.bases)
 
 
+def test_parse_multi_param_generic_bases_iss162():
+    """ISS-162: commas inside a generic's type args must not split the base list.
+
+    `class Repo(Generic[T, U], BaseRepo)` used to split on every raw comma,
+    yielding the malformed tokens ['Generic[T', 'U]', 'BaseRepo'] instead of
+    the two real bases. Same bug for `<...>` template/generic args in
+    TS/Java/C++.
+    """
+    for lang, src, expected in [
+        ("python", b"class A(Generic[T, U], BaseRepo):\n    pass\n", ["Generic[T, U]", "BaseRepo"]),
+        ("typescript", b"class A extends Handler<Request, Response> {}\n", ["Handler"]),
+        ("java", b"class A extends B<C, D> {}\n", ["B"]),
+        ("cpp", b"class A : public B<C, D> {};\n", ["B"]),
+    ]:
+        sym = next(s for s in parse_source(src, lang).symbols if s.name == "A")
+        assert sym.bases == expected, (lang, sym.bases)
+
+
 def test_inherits_edges_for_non_python(tmp_path):
     (tmp_path / "A.java").write_text("class A extends B {}\n")
     (tmp_path / "B.java").write_text("class B {}\n")

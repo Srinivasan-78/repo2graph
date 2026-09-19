@@ -629,6 +629,29 @@ _BASE_WORDS = {
 }
 
 
+def _split_bases(text: str) -> list[str]:
+    """Split a base-class list on top-level commas only.
+
+    A generic's type arguments (`Generic[T, U]`, `Handler<Request, Response>`)
+    contain commas that must not split the base list itself, so track bracket
+    depth and only split where it is zero.
+    """
+    opens, closes = "([<", ")]>"
+    parts = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in opens:
+            depth += 1
+        elif ch in closes:
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+    parts.append(text[start:])
+    return parts
+
+
 def _clean_base(text: str) -> str:
     """'public B', 'extends B', '< B' -> 'B'."""
     words = [
@@ -660,10 +683,14 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
-            out += [t.strip() for t in _text(src, n).strip("(): ").split(",") if t.strip()]
+            out += [
+                t.strip()
+                for t in _split_bases(_text(src, n).strip("(): "))
+                if t.strip()
+            ]
     for clause in _base_clauses(node):
         raw = _text(src, clause).replace(" with ", ",")
-        out += [c for c in (_clean_base(t) for t in raw.split(",")) if c]
+        out += [c for c in (_clean_base(t) for t in _split_bases(raw)) if c]
     seen, uniq = set(), []
     for b in out:
         if b not in seen:
