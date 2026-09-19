@@ -13,6 +13,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- `prod-igy` no longer starts privileged triage from an outsider `issue_comment`.
+  The workflow `if:` and the script both require `author_association` in
+  (`OWNER`, `MEMBER`, `COLLABORATOR`). Bot comments also strip backticks from
+  `headRef` / `baseRef` so a fork branch name cannot break a markdown code span.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
