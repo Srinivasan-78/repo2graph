@@ -47,21 +47,22 @@ def _pathological_nested_python() -> bytes:
 
 
 class _HangingParser:
-    """A binding that ignores timeout: bytes parse sleeps; a reader is consumed."""
+    """A binding that ignores timeout and would block the worker.
+
+    Bytes `parse(source)` sleeps 30s — if `_parse_tree` takes that path
+    when native timeout is missing, the 2s join below fails. The reader
+    path must call the callback *after* the 1ms budget has already
+    expired (sleep 5ms first) so the fallback raises instead of hanging.
+    """
 
     def parse(self, source, **_kwargs):
-        if callable(source):
-            point = SimpleNamespace(row=0, column=0)
-            offset = 0
-            while True:
-                chunk = source(offset, point)
-                if not chunk:
-                    break
-                offset += len(chunk)
+        if not callable(source):
             time.sleep(30)
-            raise AssertionError("reader timeout should have fired before EOF")
+            raise AssertionError("unbounded bytes parse: native timeout missing, use reader")
+        time.sleep(0.005)
+        source(0, SimpleNamespace(row=0, column=0))
         time.sleep(30)
-        raise AssertionError("unbounded bytes parse: native timeout missing, use reader")
+        raise AssertionError("reader timeout should have fired on the first read")
 
 
 def test_iss81_default_timeout_is_five_seconds():
