@@ -32,7 +32,7 @@
     "why": "lexical"
   },
   {
-    "id": "file:docs/notes.md#0",
+    "id": "file:docs/notes.md",
     "node_id": "file:docs/notes.md",
     "type": "file",
     "kind": "doc",
@@ -54,7 +54,7 @@
     "why": "lexical"
   },
   {
-    "id": "file:.env#0",
+    "id": "file:.env",
     "node_id": "file:.env",
     "type": "file",
     "kind": "other",
