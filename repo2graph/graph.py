@@ -116,11 +116,25 @@ _IMPORT_RE = {
 
 def import_targets(raw: str, lang: str) -> list[str]:
     if lang == "python":
-        m = _IMPORT_RE["python"].match(raw.strip())
+        stripped = raw.strip()
+        m = _IMPORT_RE["python"].match(stripped)
         if not m:
             return []
         if m.group(1):
-            return [m.group(1)]
+            pkg = m.group(1)
+            if pkg.startswith("."):
+                # Relative imports (#160's territory) are left untouched: just
+                # the dotted package, as before.
+                return [pkg]
+            # `from pkg import a, b as c` -- capture the imported names so
+            # resolve_import() can prefer pkg/a.py over pkg/__init__.py (#161).
+            names = [
+                p.strip().split(" as ")[0].strip() for p in stripped[m.end() :].split(",")
+            ]
+            names = [n for n in names if n and n != "*" and re.fullmatch(r"\w+", n)]
+            if names:
+                return [f"{pkg}.{n}" for n in names]
+            return [pkg]
         return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
     # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
@@ -181,6 +195,15 @@ def resolve_import(
             cands += [f"src/{c}" for c in [f"{base}.py", f"{base}/__init__.py"]]
             tail = base.split("/")[-1]
             cands += [p for p in by_name.get(f"{tail}.py", []) if "/" in p][:1]
+            # `from pkg import name` (#161): if `name` isn't a submodule file
+            # (or package), it's a symbol defined directly in `pkg` -- either
+            # `pkg.py` (pkg is itself a module, e.g. `from pkg.alpha import
+            # handle`) or `pkg/__init__.py` (pkg is a package). Try both last,
+            # only after every submodule-file candidate above.
+            if "/" in base:
+                parent = base.rsplit("/", 1)[0]
+                cands.append(f"{parent}.py")
+                cands.append(f"{parent}/__init__.py")
     elif lang in ("javascript", "typescript", "tsx"):
         if target.startswith("."):
             base = Path(src_dir, target).as_posix()
