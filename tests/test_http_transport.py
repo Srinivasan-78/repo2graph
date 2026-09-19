@@ -591,3 +591,53 @@ def test_server_metadata_is_pure_and_needs_no_server():
     assert doc["index_present"] is True
     assert doc["auth_modes"] == ["bearer"]
     json.dumps(doc)
+
+
+def test_iss152_head_healthz(make_server):
+    """Issue 152: HEAD requests return headers without response body."""
+    server = make_server()
+    req = urllib.request.Request(server.url("/healthz"), method="HEAD")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        assert int(resp.headers.get("Content-Length") or 0) > 0
+        body = resp.read()
+        assert len(body) == 0
+
+    req_404 = urllib.request.Request(server.url("/nonexistent"), method="HEAD")
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_404, timeout=10)
+    assert exc_info.value.code == 404
+    assert len(exc_info.value.read()) == 0
+
+
+def test_iss152_options_cors(make_server):
+    """Issue 152: OPTIONS preflight requests return CORS headers."""
+    server = make_server()
+
+    # Allowed loopback origin
+    req = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 204
+        assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+        allow_methods = resp.headers.get("Access-Control-Allow-Methods")
+        assert "POST" in allow_methods
+        assert "OPTIONS" in allow_methods
+        assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
+
+    # Disallowed origin -> 403 Forbidden
+    req_bad = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={"Origin": "http://evil.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_bad, timeout=10)
+    assert exc_info.value.code == 403

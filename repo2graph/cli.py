@@ -19,6 +19,7 @@ from .export import (
     load_parse_cache,
     make_path,
     path as artifact_path,
+    register_written,
     rel as artifact_rel,
 )
 from .events import SAFE_ERRORS, encodable, write_safe
@@ -124,6 +125,10 @@ def cmd_build(args):
         from datetime import date
 
         write_changelog(outdir, g, prev_state, short_sha, prev_short_sha, date.today().isoformat())
+        cl_rel = artifact_rel("CHANGELOG.md")
+        register_written(outdir, [cl_rel])
+        if cl_rel not in written:
+            written.append(cl_rel)
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental

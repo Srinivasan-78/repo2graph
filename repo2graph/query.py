@@ -562,7 +562,7 @@ class Index:
                     nxt.append(dst)
                     order.append((dst, etype, direction, nid))
                     added_for_nid += 1
-                    if added_for_nid >= 60 or len(nxt) >= cap:
+                    if added_for_nid >= per_hop or len(nxt) >= cap:
                         break
             frontier = nxt
         return order

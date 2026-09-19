@@ -21,6 +21,8 @@ EXT_LANG = {
     ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
