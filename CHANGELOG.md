@@ -13,6 +13,16 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- Per-file tree-sitter parse is now time-bounded (`PARSE_TIMEOUT_MICROS`, 5s).
+  `MAX_BYTES` only capped size; a pathological file inside that cap could pin a
+  worker. Native `timeout_micros` / `set_timeout_micros` is used when the
+  binding provides it. On tree-sitter 0.26 (no native timeout; `progress_callback`
+  is unsafe) the fallback is a chunked reader that raises when the wall clock
+  expires, and a late tree is discarded. After a timeout the cached parser is
+  `reset()` so the next file does not resume mid-document.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
