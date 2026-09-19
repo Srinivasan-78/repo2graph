@@ -13,6 +13,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- HTTP MCP (`MCPRequestHandler`) now sets a 30s socket timeout so a client
+  that sends `Content-Length` and withholds the body cannot pin a handler
+  thread indefinitely. Timed-out reads return 408. The transport still
+  expects a reverse proxy for connection-count caps.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

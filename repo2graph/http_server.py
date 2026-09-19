@@ -19,7 +19,10 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
   with no credential configured is refused at startup rather than served, since
   that combination has no correct use.
 * **Bounded request bodies.** A JSON-RPC frame is small; an unbounded read is a
-  memory exhaustion primitive.
+  memory exhaustion primitive. `MAX_BODY_BYTES` caps size; `REQUEST_TIMEOUT`
+  caps how long a connection may take to deliver that body. This transport
+  still expects a reverse proxy for connection-count caps —
+  `ThreadingHTTPServer` has none.
 * **`.well-known` documents are public, tool calls are not.** Discovery that
   requires the credential it describes how to obtain is useless, so those two
   paths skip auth -- and therefore disclose nothing but the server's shape.
@@ -46,6 +49,13 @@ from .events import emit
 # The largest JSON-RPC frame this server will read. A tool call is a few hundred
 # bytes; a megabyte is already absurd and anything unbounded is a DoS primitive.
 MAX_BODY_BYTES = 1 << 20
+
+# How long a client may take to deliver that body, in seconds.
+# `socketserver.StreamRequestHandler.setup()` applies this via `settimeout`
+# when it is not None. None would let `rfile.read(Content-Length)` block
+# forever on a half-sent request -- the cheaper DoS: it costs the client
+# nothing to hold a socket open.
+REQUEST_TIMEOUT = 30
 
 # Loopback addresses, where serving without a credential is defensible.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -212,6 +222,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
     """
 
     server_version = f"repo2graph/{__version__}"
+    # Finite; None would mean socketserver never calls settimeout.
+    timeout = REQUEST_TIMEOUT
     # Set by make_handler.
     open_index_fn: Any = None
     dispatch_fn: Any = None
@@ -256,14 +268,27 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             return
 
     def _read_body(self) -> bytes:
-        """Read the request body, refusing anything implausibly large."""
+        """Read the request body, refusing anything implausibly large or slow."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise AuthError("invalid Content-Length", status=400) from None
         if length < 0 or length > MAX_BODY_BYTES:
             raise AuthError(f"request body must be at most {MAX_BODY_BYTES} bytes", status=413)
-        return self.rfile.read(length) if length else b""
+        if not length:
+            return b""
+        try:
+            return self.rfile.read(length)
+        except TimeoutError:
+            # Client sent Content-Length and withheld the body. Close rather
+            # than pin this handler thread; 408 is the HTTP-layer signal.
+            self.close_connection = True
+            raise AuthError("request timed out", status=408) from None
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Peer already gone. Same class of disconnect `_send_json` swallows
+            # on write; do_POST returns without answering.
+            self.close_connection = True
+            raise
 
     # ------------------------------------------------------------- routes --
 
@@ -328,6 +353,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             raw = self._read_body()
         except AuthError as exc:
             self._send_json(exc.status, _rpc_error(None, INVALID_REQUEST, exc.message))
+            return
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
 
         try:

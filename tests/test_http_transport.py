@@ -22,7 +22,12 @@ import pytest
 from conftest import MINI_QUERY, build_mini_index, write_mini_repo
 from repo2graph.audit import AuditConfig, AuditLogger
 from repo2graph.auth import AuthConfig
-from repo2graph.http_server import HTTPTransport, server_metadata
+from repo2graph.http_server import (
+    HTTPTransport,
+    MCPRequestHandler,
+    REQUEST_TIMEOUT,
+    server_metadata,
+)
 from repo2graph.mcp import _auth_config
 
 from test_auth import FakeIssuer, ISSUER, AUDIENCE, claims, sign
@@ -486,6 +491,63 @@ def test_an_oversized_body_is_refused(make_server):
         assert exc.code == 413
     except (urllib.error.URLError, OSError):
         pass  # the server may close the connection first; also fine
+
+
+def test_handler_timeout_is_the_named_30s_constant():
+    """socketserver only calls settimeout when the class attribute is not None.
+
+    Pin the production value as a literal: comparing timeout to REQUEST_TIMEOUT
+    would stay green if both drifted together.
+    """
+    assert REQUEST_TIMEOUT == 30
+    assert MCPRequestHandler.timeout == 30
+
+
+def test_http_transport_handler_inherits_the_socket_timeout(make_server):
+    """The class HTTPTransport actually serves must carry the same bound."""
+    server = make_server()
+    assert server.transport._handler.timeout == 30
+
+
+def test_half_sent_content_length_unblocks_within_timeout(make_server, capsys):
+    """Headers + Content-Length and no body must not pin a handler thread.
+
+    Shorten the serving class's `timeout` so this is not a 30s wait. The
+    attribute is the same one socketserver.setup() applies; the pin tests
+    above prove production sets it to 30.
+    """
+    server = make_server()
+    server.transport._handler.timeout = 0.4
+    request = (
+        b"POST /mcp HTTP/1.1\r\n"
+        b"Host: 127.0.0.1\r\n"
+        b"Content-Type: application/json\r\n"
+        b"Content-Length: 100000\r\n"
+        b"\r\n"
+    )
+    started = time.monotonic()
+    with socket.create_connection(("127.0.0.1", server.port), timeout=2) as sock:
+        sock.sendall(request)
+        sock.settimeout(2.0)
+        chunks: list[bytes] = []
+        try:
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+        except TimeoutError:
+            pytest.fail("server neither responded nor closed within 2s")
+    elapsed = time.monotonic() - started
+    raw = b"".join(chunks)
+    assert 0.2 < elapsed < 1.5
+    assert b"408" in raw
+    assert b"request timed out" in raw
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    # The listener itself must still be up after the half-sent request.
+    status, body = server.get("/healthz")
+    assert status == 200 and body["status"] == "ok"
 
 
 def test_the_transport_runs_on_a_daemon_thread(make_server):
