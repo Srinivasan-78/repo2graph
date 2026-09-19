@@ -407,9 +407,7 @@ def test_mcp_main_survives_a_bad_audit_log_path(tmp_path, monkeypatch):
     from repo2graph import mcp as mcp_mod
 
     seen = {}
-    monkeypatch.setattr(
-        mcp_mod, "serve", lambda out, repo=None, **kw: seen.update(reached=True)
-    )
+    monkeypatch.setattr(mcp_mod, "serve", lambda out, repo=None, **kw: seen.update(reached=True))
     repo = tmp_path / "repo"
     repo.mkdir()
     bad = tmp_path / "missing" / "parent" / "audit.log"
