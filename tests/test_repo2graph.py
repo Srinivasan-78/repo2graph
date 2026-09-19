@@ -3155,3 +3155,90 @@ def test_iss147_load_parse_cache_does_not_create_directories(tmp_path, monkeypat
     monkeypatch.setattr(Path, "mkdir", forbid_mkdir)
     res = load_parse_cache(tmp_path)
     assert res == {}
+
+
+def test_graph_limit_exceeded_cli_returns_clean_exit(tmp_path, capsys):
+    """GraphLimitExceeded produces exit code 1 and a clean stderr message, not a traceback."""
+    from repo2graph.cli import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f1.py").write_text("def a(): pass\ndef b(): pass\n")
+    (repo / "f2.py").write_text("def c(): pass\ndef d(): pass\n")
+    out = tmp_path / "idx"
+
+    ret = main(["build", str(repo), "-o", str(out), "--max-nodes", "2"])
+    assert ret == 1
+    captured = capsys.readouterr()
+    assert "Graph node limit exceeded" in captured.err
+    assert "max_nodes=2" in captured.err
+    # No traceback: stderr should not contain "Traceback"
+    assert "Traceback" not in captured.err
+
+
+def test_safe_open_uses_o_nofollow(tmp_path, monkeypatch):
+    """_safe_open uses O_NOFOLLOW where supported, same as _safe_read_bytes."""
+    import os
+    from repo2graph.graph import _safe_open
+
+    f = tmp_path / "test.txt"
+    f.write_bytes(b"chunk data here")
+
+    # Verify basic read works
+    with _safe_open(f) as fh:
+        assert fh.read() == b"chunk data here"
+
+    # Verify O_NOFOLLOW is in the flags when available
+    opened_flags = []
+    real_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        opened_flags.append(flags)
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+
+    with _safe_open(f) as fh:
+        data = fh.read()
+    assert data == b"chunk data here"
+    assert len(opened_flags) == 1
+    assert opened_flags[0] & 0x20000 == 0x20000
+
+
+def test_clone_does_not_checkout_fetch_head_on_failed_fetch(tmp_path, monkeypatch):
+    """When git fetch fails (returncode != 0), clone() must NOT fall back to FETCH_HEAD
+    which could be stale from a prior run."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    recorded_cmds = []
+
+    class _FakeResult:
+        def __init__(self, returncode=0):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = "error: pathspec not found"
+
+    def fake_run(cmd, *args, **kwargs):
+        recorded_cmds.append(cmd)
+        if "fetch" in cmd:
+            return _FakeResult(returncode=128)  # fetch fails
+        if "checkout" in cmd and "FETCH_HEAD" in cmd:
+            # If this is ever called, the bug is back
+            raise AssertionError("FETCH_HEAD checkout must not be attempted when fetch failed")
+        if "checkout" in cmd:
+            return _FakeResult(returncode=1)  # checkout also fails (ref not found)
+        return _FakeResult(returncode=0)
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="git checkout .* failed"):
+        fetch.clone("owner/repo", tmp_path, ref="nonexistent-branch")
+
+    # Verify FETCH_HEAD checkout was never attempted
+    all_cmd_strs = [" ".join(str(c) for c in cmd) for cmd in recorded_cmds]
+    assert not any("FETCH_HEAD" in s for s in all_cmd_strs)

@@ -677,3 +677,53 @@ def test_iss84_internal_500_error_is_sanitized(make_server, monkeypatch):
     assert body2["error"]["code"] == -32603
     assert body2["error"]["message"] == "Internal server error"
     assert "/etc/passwd" not in json.dumps(body2)
+
+
+def test_crlf_injection_in_cors_headers_is_sanitized(make_server):
+    """CodeQL alerts #8/#9: CRLF in Origin and Access-Control-Request-Headers
+    must be stripped so an attacker cannot inject arbitrary response headers.
+
+    Python's http.client rejects CRLF in headers on the *client* side, so we
+    must use a raw socket to actually deliver the malicious header to the server.
+    """
+    import socket
+
+    server = make_server()
+    # Parse host/port from server URL
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(server.url("/mcp"))
+    host, port = parsed.hostname, parsed.port
+
+    # Build a raw HTTP OPTIONS request with CRLF injected into
+    # Access-Control-Request-Headers
+    raw_request = (
+        f"OPTIONS /mcp HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Origin: http://localhost:3000\r\n"
+        f"Access-Control-Request-Headers: Authorization\r\nX-Injected: evil\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    )
+
+    sock = socket.create_connection((host, port), timeout=10)
+    try:
+        sock.sendall(raw_request.encode("ascii"))
+        response_bytes = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response_bytes += chunk
+    finally:
+        sock.close()
+
+    response_text = response_bytes.decode("ascii", errors="replace")
+    # The server must not have reflected X-Injected as a real header
+    # Split response into lines and verify no line starts with "X-Injected:"
+    lines = response_text.split("\r\n")
+    for line in lines:
+        assert not line.startswith("X-Injected:"), (
+            f"CRLF injection succeeded: server reflected injected header: {line!r}"
+        )
+

@@ -137,13 +137,30 @@ def _is_secret_path(
         return False
     p = str(path).replace("\\", "/").lower()
     parts = p.strip("/").split("/")
-    dir_names = (
-        SECRET_DIR_NAMES
-        if not extra_dirs
-        else frozenset(SECRET_DIR_NAMES | {d.lower() for d in extra_dirs})
+    # Only single-segment extra_dirs go into dir_names; multi-segment dirs
+    # (e.g. "configs/secrets") are matched via prefix check below so we don't
+    # inadvertently treat "configs" itself as a secret directory.
+    single_segment_extra = (
+        {d.replace("\\", "/").strip("/").lower() for d in extra_dirs
+         if d and d.strip() and "/" not in d.replace("\\", "/").strip("/")}
+        if extra_dirs else set()
     )
+    dir_names = SECRET_DIR_NAMES | single_segment_extra if single_segment_extra else SECRET_DIR_NAMES
     if any(part in dir_names for part in parts[:-1]):
         return True
+    # Multi-segment extra_dirs: match when any extra_dir is a prefix of the
+    # directory portion of the path (e.g. "configs/secrets" matches
+    # "configs/secrets/token.json").
+    if extra_dirs:
+        dir_path = "/".join(parts[:-1])
+        for d in extra_dirs:
+            if not d or not d.strip():
+                continue
+            norm_d = d.replace("\\", "/").strip("/").lower()
+            # Match exact prefix segment boundary: "a/b" matches "a/b" or "a/b/c"
+            # but not "a/bc".
+            if dir_path == norm_d or dir_path.startswith(norm_d + "/"):
+                return True
     name = parts[-1]
     if not name:
         return False
@@ -153,8 +170,12 @@ def _is_secret_path(
         return True
     if any(name.endswith(ext) for ext in SECRET_EXTS):
         return True
-    if extra_keywords and any(kw.lower() in name for kw in extra_keywords):
-        return True
+    # Filter out empty/whitespace keywords so an empty string doesn't match
+    # every file in the repository.
+    if extra_keywords:
+        valid_kws = [kw.lower() for kw in extra_keywords if kw and kw.strip()]
+        if any(kw in name for kw in valid_kws):
+            return True
     name_words = None
     for kw in SECRET_KEYWORDS:
         if kw == "token":

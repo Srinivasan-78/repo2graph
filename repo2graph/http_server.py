@@ -58,6 +58,20 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 # even read.
 DEFAULT_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# ------------- header value sanitisation (ISS-84 / CodeQL alerts 8,9) --------
+# User-controlled values reflected into HTTP response headers must never contain
+# CR (\r), LF (\n) or NUL (\0) — otherwise an attacker can inject arbitrary
+# headers or body content ("HTTP Response Splitting").  The helpers below are
+# applied to every user-supplied value written via send_header() in do_OPTIONS.
+_HEADER_BAD_CHARS = frozenset("\r\n\0")
+
+
+def _sanitize_header_value(value: str) -> str:
+    """Strip CR/LF/NUL from a value about to be placed in a response header."""
+    if not any(ch in _HEADER_BAD_CHARS for ch in value):
+        return value
+    return "".join(ch for ch in value if ch not in _HEADER_BAD_CHARS)
+
 
 def _hostname_from_host_header(value: str | None) -> str | None:
     """The bare hostname of a `Host` header, with `:port` and `[...]` stripped.
@@ -278,13 +292,17 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests."""
+        # DNS-rebinding: validate Host before doing anything, same as do_POST.
+        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
+            return
         origin = self.headers.get("Origin")
         if not _origin_header_allowed(origin, self.allowed_hostnames):
             self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
             return
         self.send_response(204)
         if origin:
-            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Origin", _sanitize_header_value(origin))
             self.send_header("Vary", "Origin")
         else:
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -292,7 +310,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         req_headers = self.headers.get(
             "Access-Control-Request-Headers", "Authorization, Content-Type"
         )
-        self.send_header("Access-Control-Allow-Headers", req_headers)
+        self.send_header("Access-Control-Allow-Headers", _sanitize_header_value(req_headers))
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()

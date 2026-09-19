@@ -23,7 +23,7 @@ from .export import (
     rel as artifact_rel,
 )
 from .events import SAFE_ERRORS, encodable, write_safe
-from .graph import build
+from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -930,6 +930,9 @@ def main(argv=None):
         except Exception:
             pass
         return 0
+    except _GraphLimitExceeded as exc:
+        print(f"repo2graph: error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

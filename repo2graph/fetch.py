@@ -149,8 +149,9 @@ def clone(
     if target.is_dir() and (target / ".git").exists():
         if ref:
             # ISS-149: fetch ref before checkout in case existing checkout is shallow or missing ref
+            fetch_ok = False
             try:
-                subprocess.run(
+                fetch_proc = subprocess.run(
                     ["git", "-C", str(target), "fetch", "--depth", "1", "origin", ref],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
@@ -159,6 +160,7 @@ def clone(
                     timeout=GIT_TIMEOUT,
                     env=_auth_env(token),
                 )
+                fetch_ok = fetch_proc.returncode == 0
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git fetch timed out") from None
             except (OSError, subprocess.SubprocessError) as e:
@@ -174,9 +176,11 @@ def clone(
                     timeout=GIT_TIMEOUT,
                     env=_auth_env(token),
                 )
-                if proc.returncode != 0:
+                if proc.returncode != 0 and fetch_ok:
                     # In a shallow clone, git fetch origin <ref> puts commit in FETCH_HEAD
-                    # without creating a local branch or remote tracking ref. Try checking out FETCH_HEAD.
+                    # without creating a local branch or remote tracking ref. Try checking
+                    # out FETCH_HEAD — but only when we know the fetch just succeeded,
+                    # otherwise FETCH_HEAD may be stale from a prior run on a different ref.
                     proc_detach = subprocess.run(
                         ["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
                         stdin=subprocess.DEVNULL,

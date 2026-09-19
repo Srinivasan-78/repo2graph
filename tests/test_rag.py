@@ -1695,3 +1695,45 @@ def test_cite_block_handles_none_line_numbers():
     )
     assert "### [cite: module.py:1-1] `residual` (file_residual)" in block
     assert r"\   ### [cite: forged]" in block
+
+
+def test_multi_segment_secret_dir_matching():
+    """Multi-segment extra_dirs like 'configs/secrets' must match paths under that prefix."""
+    from repo2graph.query import _is_secret_path
+
+    # Single-segment still works
+    assert _is_secret_path("vault/token.json", extra_dirs=["vault"])
+    # Multi-segment dir prefix
+    assert _is_secret_path("configs/secrets/token.json", extra_dirs=["configs/secrets"])
+    assert _is_secret_path("configs/secrets/nested/key.pem", extra_dirs=["configs/secrets"])
+    # Must not match partial segment names: "a/bc" does not match "a/b"
+    assert not _is_secret_path("configs/secretsX/foo.txt", extra_dirs=["configs/secrets"])
+    # Windows backslashes are normalised
+    assert _is_secret_path("configs\\secrets\\key.json", extra_dirs=["configs\\secrets"])
+    # Non-matching path
+    assert not _is_secret_path("src/main.py", extra_dirs=["configs/secrets"])
+
+
+def test_empty_secret_keyword_does_not_match_all():
+    """An empty string keyword must not match every file in the repository."""
+    from repo2graph.query import _is_secret_path
+
+    # Empty string keyword should be filtered out (not match everything)
+    assert not _is_secret_path("src/main.py", extra_keywords=[""])
+    assert not _is_secret_path("utils/helpers.py", extra_keywords=["", " "])
+    # A real keyword still works
+    assert _is_secret_path("config_private.json", extra_keywords=["private"])
+    # Whitespace-only keyword is also filtered out
+    assert not _is_secret_path("normal.py", extra_keywords=["  "])
+
+
+def test_sanitize_header_value_strips_crlf():
+    """_sanitize_header_value must strip CR, LF, and NUL from header values."""
+    from repo2graph.http_server import _sanitize_header_value
+
+    assert _sanitize_header_value("clean") == "clean"
+    assert _sanitize_header_value("evil\r\nX-Injected: yes") == "evilX-Injected: yes"
+    assert _sanitize_header_value("evil\0byte") == "evilbyte"
+    assert _sanitize_header_value("\r\n\0") == ""
+    # No mutation on safe values
+    assert _sanitize_header_value("Authorization, Content-Type") == "Authorization, Content-Type"

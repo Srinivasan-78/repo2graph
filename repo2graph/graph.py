@@ -297,7 +297,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     line_offset = 0
     raw_content = bytearray()
 
-    with open(abspath, "rb") as f:
+    with _safe_open(abspath) as f:
         while True:
             chunk = f.read(chunk_size)
             if not chunk:
@@ -385,6 +385,29 @@ def _safe_read_bytes(path: Path) -> bytes:
                 pass
             raise
     return path.read_bytes()
+
+
+def _safe_open(path: Path, mode: str = "rb"):
+    """Open a file with O_NOFOLLOW where supported (ISS-87).
+
+    Like _safe_read_bytes, but returns a file object for chunked reading
+    (used by _chunk_and_parse for files larger than config.max_file_bytes).
+    """
+    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
+        return open(path, mode)  # noqa: SIM115 -- test harness monkey-patched read_bytes
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is not None:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
+        fd = os.open(path, flags)
+        try:
+            return os.fdopen(fd, mode)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    return open(path, mode)  # noqa: SIM115
 
 
 def _read_and_parse(item):
