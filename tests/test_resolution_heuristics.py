@@ -1,5 +1,9 @@
+import json
+
 import pytest
+from repo2graph.export import dump_all
 from repo2graph.graph import build
+from repo2graph.layout import path as artifact_path
 
 
 @pytest.fixture
@@ -101,3 +105,41 @@ def test_ambiguous_flag(repo):
     assert len(edges) == 2
     for e in edges:
         assert e.get("ambiguous") is True
+    # Same-directory pair fires heuristics; both candidates stay, so this site
+    # still counts as one fan-out (ISS-206). Unique / import-resolved sites
+    # in this fixture must not inflate the counter.
+    assert g.stats["ambiguous_calls"] == 1
+
+
+def test_iss206_ambiguous_calls_stat_non_heuristic_fanout(tmp_path):
+    """ISS-206: a bare name in 2+ files, no import/same-file/same-dir boost.
+
+    The non-heuristics loop used to increment only in a `limit == 0` else
+    that N>=2 and max_call_candidates>=1 made unreachable. Count once per
+    call site that emits ambiguous=True CALLS edges, and persist the key
+    through the normal stats.json / manifest dump.
+    """
+    repo = tmp_path / "fanout"
+    (repo / "pkg_a").mkdir(parents=True)
+    (repo / "pkg_b").mkdir()
+    (repo / "pkg_c").mkdir()
+    (repo / "pkg_a" / "alpha.py").write_text("def shared():\n    return 1\n")
+    (repo / "pkg_b" / "beta.py").write_text("def shared():\n    return 2\n")
+    (repo / "pkg_c" / "caller.py").write_text(
+        "def entry():\n    return shared()\n\n\ndef other():\n    return shared()\n"
+    )
+    g = build(repo)
+    sites = ("sym:pkg_c/caller.py::entry", "sym:pkg_c/caller.py::other")
+    calls = [e for e in g.edges if e["type"] == "CALLS" and e["src"] in sites]
+    assert {e["src"] for e in calls} == set(sites)
+    assert len(calls) == 4  # 2 sites × 2 same-name callees
+    assert all(e.get("ambiguous") is True for e in calls)
+    assert g.stats["ambiguous_calls"] >= 1
+    assert g.stats["ambiguous_calls"] == 2
+
+    out = tmp_path / "idx"
+    dump_all(g, None, out, set())
+    dumped = json.loads(artifact_path(out, "stats.json").read_text())
+    assert dumped["ambiguous_calls"] == 2
+    manifest = json.loads(artifact_path(out, "manifest.json").read_text())
+    assert manifest["counts"]["ambiguous_calls"] == 2

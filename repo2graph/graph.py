@@ -733,6 +733,12 @@ def build(
                             kept = dict(sorted_c[: min(N, 3)])
 
                         ambiguous = len(kept) > 1
+                        if ambiguous:
+                            # One increment per call site that fanned out, not
+                            # per edge (ISS-206). The old increment lived in a
+                            # `limit == 0` else that N>=2 and
+                            # max_call_candidates>=1 made unreachable.
+                            g.stats["ambiguous_calls"] += 1
                         for c, conf in kept.items():
                             g.add_edge(
                                 sid,
@@ -756,7 +762,6 @@ def build(
                                     confidence=round(1.0 / min(N, 3), 3),
                                     ambiguous=True,
                                 )
-                        else:
                             g.stats["ambiguous_calls"] += 1
             for base in sym.bases:
                 base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
