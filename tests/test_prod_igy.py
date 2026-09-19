@@ -242,6 +242,7 @@ def test_prod_igy_agents_rules_guidance():
     assert "Caller-Hostile MCP Arguments (`AGENTS.md`)" in content
     assert "Truthiness Seam in `action.yml`" in content
     assert "Examples (`CONTRIBUTING.md`)" in content
+    assert "Lockfile Sync (`uv.lock`)" in content
 
 
 def test_prod_igy_comment_formatting_and_author_tagging():
@@ -256,6 +257,10 @@ def test_prod_igy_comment_formatting_and_author_tagging():
     # Conflict instructions
     assert "Merge conflicts detected!" in content
     assert "git merge origin/${baseRef}" in content
+
+    # Lockfile warning instructions
+    assert "uv lock" in content
+    assert "chore: update uv.lock" in content
 
     # Base description
     assert "primary release branch for" in content

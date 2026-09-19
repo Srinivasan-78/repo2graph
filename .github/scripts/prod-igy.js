@@ -151,6 +151,14 @@ function checkAgentsRules(changedFiles) {
     );
   }
 
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    guidance.push(
+      '- **Lockfile Sync (`uv.lock`)**: `pyproject.toml` was modified without updating `uv.lock`. Run `uv lock` locally and commit `uv.lock`, otherwise the `packaging` CI job will fail (`uv lock --check`).'
+    );
+  }
+
   return guidance;
 }
 
@@ -203,6 +211,23 @@ function formatBotComment({
       `> # Resolve conflicts in your editor, then:\n` +
       `> git add <resolved-files>\n` +
       `> git commit -m "Merge latest ${baseRef} and resolve conflicts"\n` +
+      `> git push\n` +
+      `> \`\`\``
+    );
+  }
+
+  // Lockfile warning
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    warnings.push(
+      `> ⚠️ **Attention @${author}**: \`pyproject.toml\` was modified without updating \`uv.lock\`.\n` +
+      `> The \`packaging\` CI workflow requires \`uv.lock\` to match \`pyproject.toml\`.\n` +
+      `> Please run \`uv lock\` locally and commit the updated \`uv.lock\`:\n` +
+      `> \`\`\`bash\n` +
+      `> uv lock\n` +
+      `> git add uv.lock\n` +
+      `> git commit -m "chore: update uv.lock"\n` +
       `> git push\n` +
       `> \`\`\``
     );
