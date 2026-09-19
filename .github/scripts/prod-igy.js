@@ -47,6 +47,20 @@ const LABEL_DEFINITIONS = {
 
 const BOT_MARKER = '<!-- prod-igy-bot-comment -->';
 
+// issue_comment may be posted by anyone who can comment on a PR. Only these
+// associations may start privileged triage (labels + bot comment).
+const TRUSTED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
+function isTrustedCommenter(association) {
+  return TRUSTED_ASSOCIATIONS.includes(String(association || '').toUpperCase());
+}
+
+// git check-ref-format allows backticks in a ref name. Interpolating a raw
+// fork head/base into markdown `...` would let that ref close the span.
+function escapeMdRef(ref) {
+  return String(ref).replace(/`/g, '');
+}
+
 function calculateSize(linesChanged) {
   if (linesChanged < 10) return 'size/XS';
   if (linesChanged < 50) return 'size/S';
@@ -179,6 +193,8 @@ function formatBotComment({
   guidance,
   labelsApplied,
 }) {
+  baseRef = escapeMdRef(baseRef);
+  headRef = escapeMdRef(headRef);
   const shortBaseSha = baseSha ? baseSha.substring(0, 7) : 'unknown';
   const shortHeadSha = headSha ? headSha.substring(0, 7) : 'unknown';
 
@@ -524,6 +540,13 @@ module.exports = async function run({ github, context, core }) {
       core.info('Comment is not on a pull request. Skipping.');
       return;
     }
+    const association = context.payload?.comment?.author_association;
+    if (!isTrustedCommenter(association)) {
+      core.info(
+        `Ignoring issue_comment from untrusted author_association=${association || 'missing'}.`
+      );
+      return;
+    }
     await triagePullRequest({ github, owner, repo, prNumber: issue.number, core });
     return;
   }
@@ -545,5 +568,8 @@ module.exports.detectAreas = detectAreas;
 module.exports.extractIssues = extractIssues;
 module.exports.checkAgentsRules = checkAgentsRules;
 module.exports.formatBotComment = formatBotComment;
+module.exports.escapeMdRef = escapeMdRef;
+module.exports.isTrustedCommenter = isTrustedCommenter;
+module.exports.TRUSTED_ASSOCIATIONS = TRUSTED_ASSOCIATIONS;
 module.exports.LABEL_DEFINITIONS = LABEL_DEFINITIONS;
 module.exports.BOT_MARKER = BOT_MARKER;

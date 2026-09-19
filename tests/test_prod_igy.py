@@ -74,6 +74,9 @@ def test_prod_igy_script_exists_and_exports():
     assert "module.exports.extractIssues = extractIssues;" in content
     assert "module.exports.checkAgentsRules = checkAgentsRules;" in content
     assert "module.exports.formatBotComment = formatBotComment;" in content
+    assert "module.exports.escapeMdRef = escapeMdRef;" in content
+    assert "module.exports.isTrustedCommenter = isTrustedCommenter;" in content
+    assert "module.exports.TRUSTED_ASSOCIATIONS = TRUSTED_ASSOCIATIONS;" in content
     assert "module.exports.LABEL_DEFINITIONS = LABEL_DEFINITIONS;" in content
     assert "module.exports.BOT_MARKER = BOT_MARKER;" in content
 
@@ -267,3 +270,95 @@ def test_prod_igy_comment_formatting_and_author_tagging():
 
     # Bot marker
     assert "${BOT_MARKER}" in content
+
+
+def test_iss208_issue_comment_job_requires_trusted_author_association():
+    """ISS-208: outsider PR comments must not start the privileged triage job.
+
+    The gate lives in the workflow `if:` so no runner is allocated. Trusted
+    associations are the three GitHub values for people who can change the
+    repo; CONTRIBUTOR / NONE / FIRST_TIME_CONTRIBUTOR are not among them.
+    """
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+
+    assert "github.event.comment.author_association == 'OWNER'" in content
+    assert "github.event.comment.author_association == 'MEMBER'" in content
+    assert "github.event.comment.author_association == 'COLLABORATOR'" in content
+
+    # The association check is on the issue_comment clause only — not a
+    # job-wide filter that would skip pull_request_target / workflow_dispatch.
+    issue_comment_clause = content.split("github.event_name == 'issue_comment'", 1)[1]
+    dispatch_clause = content.split("github.event_name == 'workflow_dispatch'", 1)[0]
+    assert "author_association" in issue_comment_clause
+    assert "author_association" not in dispatch_clause
+
+    # Exact ==, not contains(): 'CONTRIBUTOR' must not match 'COLLABORATOR'.
+    assert "contains(github.event.comment.author_association" not in content
+
+
+def test_iss208_script_issue_comment_skips_untrusted_association():
+    """ISS-208: script defence if the workflow `if:` is ever widened."""
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    match = re.search(
+        r"const TRUSTED_ASSOCIATIONS = \[([^\]]+)\]",
+        content,
+    )
+    assert match, "TRUSTED_ASSOCIATIONS allowlist not found"
+    allowed = [part.strip().strip("'\"") for part in match.group(1).split(",") if part.strip()]
+    assert allowed == ["OWNER", "MEMBER", "COLLABORATOR"]
+    assert "CONTRIBUTOR" not in allowed
+    assert "NONE" not in allowed
+    assert "FIRST_TIME_CONTRIBUTOR" not in allowed
+    assert "FIRST_TIMER" not in allowed
+
+    assert "function isTrustedCommenter(association)" in content
+    assert "context.payload?.comment?.author_association" in content
+
+    # Early return sits on the issue_comment path, before triagePullRequest.
+    start = content.index("if (eventName === 'issue_comment')")
+    end = content.index("await triagePullRequest", start)
+    branch = content[start:end]
+    assert "isTrustedCommenter(association)" in branch
+    assert "return;" in branch
+
+
+def test_iss208_format_bot_comment_strips_backticks_from_refs():
+    """ISS-208: a fork branch name must not break out of a markdown code span.
+
+    git check-ref-format permits `` ` ``. The Head Commit line (and every
+    other `` `${headRef}` `` / `` `${baseRef}` `` interpolation) wraps the
+    ref in backticks; closing that span plants attacker markdown under the
+    bot identity. SHA slices stay raw — they are not attacker-controlled
+    the same way.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    assert "function escapeMdRef(ref)" in content
+    assert ".replace(/`/g, '')" in content
+
+    start = content.index("function formatBotComment")
+    head_assign = content.index("headRef = escapeMdRef(headRef)", start)
+    base_assign = content.index("baseRef = escapeMdRef(baseRef)", start)
+    first_head = content.index("${headRef}", start)
+    first_base = content.index("${baseRef}", start)
+    assert head_assign < first_head
+    assert base_assign < first_base
+
+    # SHAs are not passed through escapeMdRef (not a fork-controlled ref).
+    assert "escapeMdRef(baseSha)" not in content
+    assert "escapeMdRef(headSha)" not in content
+    assert "escapeMdRef(shortBaseSha)" not in content
+    assert "escapeMdRef(shortHeadSha)" not in content
+
+    # Contract pinned by the issue: String(ref).replace(/`/g, '').
+    # Unescaped: `x`](https://evil.example)` closes the span after x.
+    raw = "x`](https://evil.example)"
+    escaped = str(raw).replace("`", "")
+    rendered = f"`{escaped}`"
+    unescaped = f"`{raw}`"
+    assert unescaped == "`x`](https://evil.example)`"
+    assert rendered == "`x](https://evil.example)`"
+    assert rendered.count("`") == 2
+    assert "`" not in escaped
+    assert f"`{raw}`".count("`") == 3
