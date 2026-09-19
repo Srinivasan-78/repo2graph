@@ -207,6 +207,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
+| `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. |
 
 Three things worth knowing:
 
