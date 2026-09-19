@@ -83,7 +83,12 @@ def main() -> None:
             {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"},
         )
         tree_entries.append(
-            {"path": Path(path).as_posix(), "mode": "100644", "type": "blob", "sha": blob["sha"]}
+            {
+                "path": Path(path).as_posix().replace("\\", "/"),
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob["sha"],
+            }
         )
 
     tree = api(

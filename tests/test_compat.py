@@ -717,19 +717,16 @@ def test_iss139_commit_release_api_timeout(monkeypatch):
     assert recorded_timeouts == [30.0]
 
 
-def test_iss146_commit_release_api_path_posix(tmp_path, monkeypatch):
+def test_iss146_commit_release_api_path_posix(monkeypatch):
     """Issue 146: commit_release_via_api.py must normalize Windows paths in git tree entries."""
     import importlib.util
+    import io
 
     script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
     spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-
-    dummy_file = tmp_path / "subdir" / "release.txt"
-    dummy_file.parent.mkdir(parents=True, exist_ok=True)
-    dummy_file.write_text("v1.0.0", encoding="utf8")
 
     tree_entries_sent = []
 
@@ -750,10 +747,10 @@ def test_iss146_commit_release_api_path_posix(tmp_path, monkeypatch):
         return {}
 
     monkeypatch.setattr(mod, "api", dummy_api)
+    monkeypatch.setattr(mod, "open", lambda *a, **k: io.BytesIO(b"v1.0.0"), raising=False)
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
-    # Use a path with backslashes if on Windows or simulate it
-    win_style_path = str(dummy_file).replace("/", "\\")
+    win_style_path = "dist\\sub\\release.txt"
     monkeypatch.setattr(
         mod.sys,
         "argv",
@@ -776,4 +773,4 @@ def test_iss146_commit_release_api_path_posix(tmp_path, monkeypatch):
     assert len(tree_entries_sent) == 1
     # Path must be POSIX normalized (no backslashes)
     assert "\\" not in tree_entries_sent[0]["path"]
-    assert tree_entries_sent[0]["path"] == Path(win_style_path).as_posix()
+    assert tree_entries_sent[0]["path"] == "dist/sub/release.txt"
