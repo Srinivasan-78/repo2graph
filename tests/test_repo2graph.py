@@ -2276,10 +2276,12 @@ def test_iss149_clone_fetches_ref_before_checkout_on_existing(tmp_path, monkeypa
         assert "timeout" in kwargs, cmd
         assert kwargs.get("encoding") == "utf8", cmd
         assert kwargs.get("errors") == "replace", cmd
-        env = kwargs.get("env") or {}
-        assert env.get("GIT_TERMINAL_PROMPT") == "0"
         for part in cmd:
             assert token not in str(part), cmd
+        # `_git_version()` has no env; the reuse fetch/checkout must.
+        if cmd and cmd[0] == "git" and cmd[1] != "--version":
+            env = kwargs.get("env") or {}
+            assert env.get("GIT_TERMINAL_PROMPT") == "0"
 
 
 def test_iss149_clone_reuse_fetch_failure_is_surfaced_and_redacted(tmp_path, monkeypatch):
