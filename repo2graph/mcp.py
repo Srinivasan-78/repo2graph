@@ -871,45 +871,49 @@ def main(argv=None):
 
     auth_config = _auth_config(args)
     transport = None
-    if args.http_port is not None or args.auth_cimd:
-        from .http_server import HTTPTransport
-
-        transport = HTTPTransport(
-            index_dir,
-            build_from,
-            host=args.http_host,
-            port=args.http_port if args.http_port is not None else 8719,
-            auth_config=auth_config,
-            audit=audit,
-            cache=cache,
-            publish_cimd=args.auth_cimd,
-            tasks=tasks,
-            allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
-        )
-        transport.start()
-        if args.http_only:
-            # No stdio peer: block on the HTTP thread instead of returning,
-            # which would tear the daemon thread down on the way out.
-            try:
-                thread = transport._thread
-                if thread is not None:
-                    thread.join()
-            except KeyboardInterrupt:
-                pass
-            finally:
-                transport.stop()
-            return 0
-    elif auth_config.enabled:
-        # Credentials with nowhere to be presented. Refusing beats starting a
-        # server the operator believes is protected and is not: stdio has no
-        # headers, so every one of these flags would be inert.
-        raise SystemExit(
-            "error: --auth-token/--auth-oidc-issuer need a transport that "
-            "carries headers. stdio has none, so the credential could never be "
-            "checked. Add --http-port to serve over HTTP as well."
-        )
-
     try:
+        # --http-only without a transport used to fall through to stdio serve(),
+        # the opposite of the flag. --well-known-port is already aliased into
+        # http_port above; --auth-cimd starts the same server on the default port.
+        if args.http_only and args.http_port is None and not args.auth_cimd:
+            raise SystemExit("error: --http-only needs --http-port")
+
+        if args.http_port is not None or args.auth_cimd:
+            from .http_server import HTTPTransport
+
+            transport = HTTPTransport(
+                index_dir,
+                build_from,
+                host=args.http_host,
+                port=args.http_port if args.http_port is not None else 8719,
+                auth_config=auth_config,
+                audit=audit,
+                cache=cache,
+                publish_cimd=args.auth_cimd,
+                tasks=tasks,
+                allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
+            )
+            transport.start()
+            if args.http_only:
+                # No stdio peer: block on the HTTP thread instead of returning,
+                # which would tear the daemon thread down on the way out.
+                try:
+                    thread = transport._thread
+                    if thread is not None:
+                        thread.join()
+                except KeyboardInterrupt:
+                    pass
+                return 0
+        elif auth_config.enabled:
+            # Credentials with nowhere to be presented. Refusing beats starting a
+            # server the operator believes is protected and is not: stdio has no
+            # headers, so every one of these flags would be inert.
+            raise SystemExit(
+                "error: --auth-token/--auth-oidc-issuer need a transport that "
+                "carries headers. stdio has none, so the credential could never be "
+                "checked. Add --http-port to serve over HTTP as well."
+            )
+
         serve(index_dir, build_from, cache=cache, tasks=tasks)
     finally:
         if transport is not None:
@@ -943,7 +947,8 @@ def _add_auth_args(p) -> None:
     http.add_argument(
         "--http-only",
         action="store_true",
-        help="serve HTTP only, without the stdio transport (default: off)",
+        help="serve HTTP only, without the stdio transport; "
+        "requires --http-port (default: off)",
     )
     http.add_argument(
         "--well-known-port",

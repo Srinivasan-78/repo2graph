@@ -1041,6 +1041,76 @@ def test_no_auto_build_flag_turns_the_repo_off(mini_repo, monkeypatch):
     assert seen["repo"] == Path(mini_repo)
 
 
+def test_http_only_without_port_errors_and_skips_stdio(mini_repo, monkeypatch):
+    """#203: --http-only with no HTTP transport must not fall through to stdio."""
+    mcp = mcp_module()
+    served = []
+    closed = []
+    monkeypatch.setattr(mcp, "serve", lambda *a, **k: served.append(True))
+    from repo2graph.audit import AuditLogger
+
+    real_close = AuditLogger.close
+
+    def _close(self):
+        closed.append(True)
+        return real_close(self)
+
+    monkeypatch.setattr(AuditLogger, "close", _close)
+
+    with pytest.raises(SystemExit, match="--http-only needs --http-port") as exc:
+        mcp.main([str(mini_repo), "--http-only"])
+    assert exc.value.code not in (0, None)
+    assert served == []
+    assert closed == [True]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    (
+        ["--http-only", "--http-port", "8765"],
+        ["--http-only", "--well-known-port", "8765"],
+    ),
+)
+def test_http_only_with_port_starts_http_and_closes_audit(mini_repo, monkeypatch, flags):
+    """#203: HTTP-only with a port never reaches stdio and still closes audit."""
+    mcp = mcp_module()
+    served = []
+    transports = []
+    closed = []
+    monkeypatch.setattr(mcp, "serve", lambda *a, **k: served.append(True))
+
+    class FakeTransport:
+        def __init__(self, *args, **kwargs):
+            self._thread = None
+            self.started = False
+            self.stopped = False
+            transports.append(self)
+
+        def start(self):
+            self.started = True
+            return 8765
+
+        def stop(self):
+            self.stopped = True
+
+    monkeypatch.setattr("repo2graph.http_server.HTTPTransport", FakeTransport)
+    from repo2graph.audit import AuditLogger
+
+    real_close = AuditLogger.close
+
+    def _close(self):
+        closed.append(True)
+        return real_close(self)
+
+    monkeypatch.setattr(AuditLogger, "close", _close)
+
+    assert mcp.main([str(mini_repo), *flags]) == 0
+    assert served == []
+    assert len(transports) == 1
+    assert transports[0].started and transports[0].stopped
+    assert closed == [True]
+
+
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
 def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
     """The onboarding journey, end to end: add the server, ask, get an answer.
