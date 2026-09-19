@@ -2174,6 +2174,57 @@ protocol Named {
     assert pf.parse_errors == 0
 
 
+def test_parse_source_tsx_symbols_calls_and_imports():
+    """TSX LANG_CFG had zero direct parse_source coverage (kind_map extras / calls / imports).
+
+    The snippet is JSX-bearing on purpose: LANG_CFG['tsx'] shares typescript's
+    kind_map (interface / type alias / enum), but only the tsx grammar accepts
+    JSX. A silent drift to the javascript map would drop those extras; pointing
+    'tsx' at the non-JSX typescript grammar would ERROR the greet body and drop
+    the function (parse_errors == 0 is the lock).
+    """
+    src = b"""\
+import { helper } from "./helper";
+
+interface Named {
+    label: string;
+}
+
+type Label = string;
+
+enum Role {
+    Guest,
+    Admin,
+}
+
+function greet(name: string) {
+    return helper(<span>{name}</span>);
+}
+
+class Runner {
+    run(value: string) {
+        return greet(value);
+    }
+}
+"""
+    pf = parse_source(src, "tsx")
+    if not pf.symbols:
+        pytest.skip("tsx grammar unavailable")
+    kinds = {s.qualname: s.kind for s in pf.symbols}
+    assert kinds == {
+        "Named": "interface",
+        "Label": "type",
+        "Role": "enum",
+        "greet": "function",
+        "Runner": "class",
+        "Runner.run": "method",
+    }
+    assert "helper" in next(s for s in pf.symbols if s.qualname == "greet").calls
+    assert "greet" in next(s for s in pf.symbols if s.qualname == "Runner.run").calls
+    assert pf.imports == ['import { helper } from "./helper";']
+    assert pf.parse_errors == 0
+
+
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
     from repo2graph.walker import _glob_re
