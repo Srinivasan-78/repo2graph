@@ -5,6 +5,7 @@ itself": every assertion below is a literal string hand-derived from the
 fixture source, never a value recomputed by `repo2graph.changelog` itself.
 """
 
+import json
 from pathlib import Path
 
 from repo2graph.cli import main
@@ -117,3 +118,27 @@ def test_unchanged_repo_produces_no_delta_sections(tmp_path):
         "### New hotspots",
     ):
         assert heading not in text
+
+
+def test_iss144_changelog_registered_in_manifest(tmp_path, capsys):
+    """Issue 144: CHANGELOG.md is registered in manifest.json and the CLI report.
+
+    dump_all writes manifest.json before write_changelog runs, so validators
+    that trust manifest.written miss human/CHANGELOG.md unless register_written
+    is called afterwards. Pin the relative path, not a value from dump_all.
+    """
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", FORMATS])
+
+    changelog = artifact_path(out, "CHANGELOG.md")
+    assert changelog.is_file()
+    assert changelog == out / "human" / "CHANGELOG.md"
+
+    manifest_path = artifact_path(out, "manifest.json")
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf8"))
+    assert "human/CHANGELOG.md" in manifest["written"]
+
+    report = json.loads(capsys.readouterr().out)
+    assert "human/CHANGELOG.md" in report["written"]
