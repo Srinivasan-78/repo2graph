@@ -538,8 +538,8 @@ class Index:
                 break
             nxt: list[str] = []
             # The cap is per hop, not per frontier node: breaking only the inner
-            # loop let each later frontier node add another 60 edges after the
-            # budget was already spent.
+            # loop let each later frontier node keep adding after the hop budget
+            # was already spent.
             cap = per_hop * len(frontier)
             for nid in frontier:
                 if len(nxt) >= cap:
@@ -562,7 +562,7 @@ class Index:
                     nxt.append(dst)
                     order.append((dst, etype, direction, nid))
                     added_for_nid += 1
-                    if added_for_nid >= 60 or len(nxt) >= cap:
+                    if added_for_nid >= per_hop or len(nxt) >= cap:
                         break
             frontier = nxt
         return order

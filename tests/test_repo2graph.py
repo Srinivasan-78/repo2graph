@@ -2696,6 +2696,49 @@ def test_expand_empty_frontier_breaks_early(tmp_path):
     assert idx.expand([], hops=10**9) == []
 
 
+def test_iss143_expand_per_hop_is_the_per_node_ceiling(tmp_path):
+    """Issue 143: expand() uses per_hop as the per-node added-neighbor ceiling.
+
+    A hardcoded `added_for_nid >= 60` used to ignore per_hop when the caller
+    asked for more than 60 neighbours. Membership is pinned to the fixture
+    edge list (seed --CALLS--> dst_0 .. dst_79), not to a value recomputed
+    by expand() itself.
+    """
+    agent = tmp_path / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    (agent / "chunks.jsonl").write_text("", encoding="utf8")
+    nodes = [{"id": "seed", "type": "symbol", "name": "seed", "path": "s.py"}]
+    edges = []
+    for i in range(80):
+        nid = f"dst_{i}"
+        nodes.append({"id": nid, "type": "symbol", "name": nid, "path": "s.py"})
+        edges.append({"src": "seed", "dst": nid, "type": "CALLS", "confidence": 1.0})
+    (agent / "nodes.jsonl").write_text(
+        "".join(json.dumps(n) + "\n" for n in nodes), encoding="utf8"
+    )
+    (agent / "edges.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in edges), encoding="utf8"
+    )
+
+    idx = Index(tmp_path)
+    tight = idx.expand(["seed"], hops=1, per_hop=3)
+    assert {(dst, etype, direction, src) for dst, etype, direction, src in tight} == {
+        ("dst_0", "CALLS", "out", "seed"),
+        ("dst_1", "CALLS", "out", "seed"),
+        ("dst_2", "CALLS", "out", "seed"),
+    }
+
+    wide = idx.expand(["seed"], hops=1, per_hop=70)
+    wide_ids = {dst for dst, *_ in wide}
+    assert "dst_0" in wide_ids
+    assert "dst_59" in wide_ids
+    assert "dst_60" in wide_ids
+    assert "dst_69" in wide_ids
+    assert "dst_70" not in wide_ids
+    assert "dst_79" not in wide_ids
+    assert wide_ids == {f"dst_{i}" for i in range(70)}
+
+
 def test_cite_block_disarms_citation_forgery():
     from repo2graph.query import _cite_block
 
