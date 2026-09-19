@@ -88,9 +88,9 @@ inputs:
     required: false
     default: ""
   version:
-    description: "repo2graph version spec passed to pip"
+    description: "pip install spec (e.g. repo2graph==1.5.0). Blank installs the action checkout."
     required: false
-    default: "git+https://github.com/Srinivasan-78/repo2graph@v1"
+    default: ""
   token:
     description: "Token used to clone a private target repo"
     required: false
@@ -129,10 +129,15 @@ runs:
         R2G_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        if [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
-          pip install -q -e "$GITHUB_ACTION_PATH"
-        else
+        # Honour a non-empty version spec (PyPI pin, git URL, …). The previous
+        # gate on $GITHUB_ACTION_PATH/pyproject.toml was always true for this
+        # composite action — the file sits next to action.yml — so the input
+        # never reached pip (#204). Blank falls back to the checkout, which is
+        # also the default so `uses: ./` and an omitted input keep working.
+        if [ -n "$R2G_VERSION" ]; then
           pip install -q "$R2G_VERSION"
+        else
+          pip install -q -e "$GITHUB_ACTION_PATH"
         fi
 
     - name: Build the graph

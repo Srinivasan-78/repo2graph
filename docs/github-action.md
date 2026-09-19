@@ -65,7 +65,7 @@ the step.
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
-| `version` | `git+…@v1` | Version spec passed to pip. Only used if the action folder has no source next to it. |
+| `version` | `""` | pip install spec, e.g. `repo2graph==1.5.0`. Non-empty is passed to `pip install` as-is (a PyPI pin, a git URL, …). Blank installs the action checkout. |
 
 ## Outputs
 
