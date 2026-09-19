@@ -15,12 +15,19 @@ on:
         required: true
         default: "django"
 
+concurrency:
+  # Manual, long (five upstream clones), and writes an artifact: queue a second
+  # dispatch behind the first rather than cancelling work already paid for.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   regenerate:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

@@ -13,11 +13,34 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Changed
+
+- `publish.yml` takes a `branch` input, defaulting to `main`, and every stage
+  reads it instead of assuming the dispatch ref. `workflow_dispatch` runs
+  against whatever ref the operator picks, so dispatching from `develop`
+  previously bumped *develop's* content while opening the release PR against a
+  hardcoded `main` base. The checkout is now pinned to the named branch, and
+  the four hardcoded `main` references (`--base`, `gh pr list`, `gh pr create`,
+  and the fetch/checkout/pull that tags the merge) follow it.
+
+- Every workflow job now carries `timeout-minutes`, and every workflow a
+  `concurrency` group. All 19 jobs previously inherited GitHub's 6-hour
+  default, so the worst-case ceiling across the fleet drops from 6,840 minutes
+  to 510. Bounds are set well above measured run times — CI completes in
+  ~4 minutes — because the point is to catch a hang, not to police a slow run.
+  `cancel-in-progress` is decided per workflow rather than uniformly: releases,
+  the two bots that answer humans, and the long dispatch-only jobs are never
+  cancelled; pure checks on a pull request are.
+
 ### Fixed
 
 - Audit-log `high_entropy` redaction no longer treats ordinary snake_case
   identifier queries (`test_iss25_…`, `resolve_import_python3_relative`) as
   credentials. Vendor shapes (`ghp_…`, `AKIA…`, JWTs, …) are unchanged.
+
+- `dependency-review.yml` ends with a newline, which the repo's own
+  `end-of-file-fixer` pre-commit hook requires.
+
 ### Security
 
 - `prod-igy` no longer starts privileged triage from an outsider `issue_comment`.

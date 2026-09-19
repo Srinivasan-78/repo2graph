@@ -8,12 +8,25 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  # A newer push to the same PR makes the older matrix run redundant. Pushes
+  # to main are NOT cancelled: main's runs are the record of what that commit
+  # did, and the expression keeps them running.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   tests:
     runs-on: ${{ matrix.os }}
+    # Every job in this file carries a timeout. The bound exists to catch a
+    # *hang* -- without one a wedged job runs to GitHub's 6-hour default -- not
+    # to police a slow run, so it is set well above the real cost: the last six
+    # CI runs completed end to end in 3.8-4.3 minutes, and this is a per-cell
+    # bound on a 9-cell matrix, not a budget for the matrix as a whole.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +58,7 @@ jobs:
     # extra. The server was right and the install was wrong, and nothing here
     # could see it. Both halves are now covered.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -94,6 +108,7 @@ jobs:
     # on any character cp1252 lacks. The unit tests mock this; this job is the
     # one place it happens for real.
     runs-on: windows-latest
+    timeout-minutes: 20
     env:
       PYTHONIOENCODING: cp1252
     steps:
@@ -139,6 +154,7 @@ jobs:
 
   action:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
