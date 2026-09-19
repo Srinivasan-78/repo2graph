@@ -1508,6 +1508,44 @@ def test_is_secret_path_expanded():
     assert _is_secret_path("README.md") is False
 
 
+def test_is_secret_path_163_no_overmatch(rag_index):
+    """ISS-163: _is_secret_path() must not over-match legitimate source files
+    via bare substrings ("-env" in name, "token" in name), while still
+    excluding genuinely secret-ish paths. Both directions pinned literally
+    per AGENTS.md ("Tests must pin values, not compare the implementation to
+    itself"). Verified as a detector: on the pre-fix code this test fails on
+    the "must NOT match" assertions for react-app-env.d.ts and tokenizer.json.
+    """
+    from repo2graph.query import _is_secret_path
+
+    # Legitimate source files named in issue #163 must NOT be treated as secrets.
+    assert _is_secret_path("src/react-app-env.d.ts") is False
+    assert _is_secret_path("test-environment.py") is False
+    assert _is_secret_path("setup-env.sh") is False
+    assert _is_secret_path("tokenizer.json") is False
+    assert _is_secret_path("token_utils.py") is False
+    assert _is_secret_path("tokenize.go") is False
+
+    # Genuinely secret-ish paths must still be excluded.
+    assert _is_secret_path(".env") is True
+    assert _is_secret_path(".env.local") is True
+    assert _is_secret_path(".env.production") is True
+    assert _is_secret_path("secrets/api_keys.py") is True
+    assert _is_secret_path("id_rsa") is True
+    assert _is_secret_path("path/to/credentials/foo.py") is True
+    assert _is_secret_path("api_token.json") is True
+    assert _is_secret_path("access-token.yaml") is True
+
+    # End-to-end: pack_context(exclude_secrets=True) must still drop a real
+    # secret chunk and must not be affected by the false-positive patterns.
+    norm_chunk = dict(rag_index.chunks[0])
+    norm_chunk["path"] = "secret_key.pem"
+    rag_index.chunks.append(norm_chunk)
+    res = rag_index.pack_context("authenticate", exclude_secrets=True)
+    paths = {c.get("path") for c in res["seeds"]} | {c.get("path") for c in res["neighbors"]}
+    assert "secret_key.pem" not in paths
+
+
 def test_expand_prevents_edge_starvation(tmp_path):
     """query.py: expand() filters matching edges before capping candidates."""
     from repo2graph.query import Index

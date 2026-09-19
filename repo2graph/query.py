@@ -124,6 +124,7 @@ SECRET_DIR_NAMES = frozenset(
         "credentials",
     }
 )
+SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
 def _is_secret_path(path: str) -> bool:
@@ -139,11 +140,23 @@ def _is_secret_path(path: str) -> bool:
         return False
     if name in SECRET_EXACT_NAMES:
         return True
-    if name.startswith(".env") or name.endswith(".env") or ".env." in name or "-env" in name:
+    if name.startswith(".env") or name.endswith(".env") or ".env." in name:
         return True
     if any(name.endswith(ext) for ext in SECRET_EXTS):
         return True
-    if any(kw in name for kw in SECRET_KEYWORDS):
+    # "token" is common inside legitimate identifiers ("tokenizer.json",
+    # "token_utils.py"), so require it as a standalone word (split on
+    # non-alphanumerics) rather than a bare substring; the remaining
+    # keywords are distinctive enough to stay substring-matched.
+    name_words = None
+    for kw in SECRET_KEYWORDS:
+        if kw == "token":
+            if name_words is None:
+                name_words = SECRET_WORD_RE.findall(name)
+            if "token" not in name_words:
+                continue
+        elif kw not in name:
+            continue
         stem = name.lstrip(".")
         if "." not in stem or any(name.endswith(ext) for ext in SECRET_CONFIG_EXTS):
             return True
