@@ -290,7 +290,8 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
   `http_server.py:426-430`.
 - Real RS256-only JWT verification: `alg` taken from the key not the token (blocks `alg:none`/
   HS256 confusion), constant-time bearer comparison (`hmac.compare_digest`), `iss`/`aud`/`exp`/
-  `nbf` enforced, JWKS refetch capped at one retry per unknown `kid`.
+  `nbf` enforced, unknown-`kid` JWKS refetch capped per kid and per refresh
+  interval (not per request), with the fetch performed outside the cache lock.
 - No outbound network in default mode; OIDC fetch only fires when explicitly configured, and is
   https-only, size-capped, timeout-bound.
 
