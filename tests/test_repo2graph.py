@@ -199,6 +199,20 @@ def test_import_targets_python():
     assert import_targets("import os, sys as system", "python") == ["os", "sys"]
 
 
+def test_iss160_import_targets_relative_bare_dot():
+    """`from . import X` / `from .. import X, Y`: the dots have no module name of
+    their own, so the imported names ARE the submodule targets (#160). Before the
+    fix, import_targets() returned ["."]/[".."] and dropped the names entirely."""
+    assert import_targets("from . import utils", "python") == [".utils"]
+    assert import_targets("from .. import utils, foo", "python") == ["..utils", "..foo"]
+
+
+def test_iss160_resolve_import_relative_bare_dot():
+    files = {"pkg/__init__.py", "pkg/utils.py", "pkg/main.py"}
+    ctx = path_index(files)
+    assert resolve_import(".utils", "pkg/main.py", "python", files, ctx) == "pkg/utils.py"
+
+
 def test_resolve_import_relative_and_absolute():
     files = {"pkg/__init__.py", "pkg/util.py", "pkg/main.py"}
     ctx = path_index(files)
@@ -260,6 +274,20 @@ def test_build_edges(sample_graph):
     assert ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper") in edges_of(
         sample_graph, "CALLS"
     )
+
+
+def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
+    """`from . import utils` must register an IMPORTS edge to the sibling module
+    pkg/utils.py, not to pkg/__init__.py (#160)."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "utils.py").write_text('def helper(value):\n    return value * 2\n')
+    (pkg / "main.py").write_text("from . import utils\n\n\ndef entry():\n    return utils.helper(3)\n")
+    g = build(tmp_path)
+    edges = edges_of(g, "IMPORTS")
+    assert ("file:pkg/main.py", "file:pkg/utils.py") in edges
+    assert ("file:pkg/main.py", "file:pkg/__init__.py") not in edges
 
 
 def test_build_file_types_and_stats(sample_graph):

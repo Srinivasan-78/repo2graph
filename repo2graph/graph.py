@@ -101,7 +101,13 @@ class Graph:
 
 # ---------- import parsing ----------
 _IMPORT_RE = {
-    "python": re.compile(r"^(?:from\s+([\w\.]+)\s+import|import\s+([\w\.,\s]+))"),
+    # `from` branch splits module (group 1) from the imported-names list (group
+    # 2): a dots-only module ("from . import X") has no name of its own, so
+    # import_targets() below appends each imported name to the dots instead of
+    # discarding it (#160). The bare `import a, b` form is group 3, unchanged.
+    "python": re.compile(
+        r"^(?:from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)|import\s+([\w\.,\s]+))"
+    ),
     "js": re.compile(r"""['"]([^'"]+)['"]"""),
     "go": re.compile(r"""['"]([^'"]+)['"]"""),
     "rust": re.compile(r"use\s+([\w:]+)"),
@@ -119,9 +125,19 @@ def import_targets(raw: str, lang: str) -> list[str]:
         m = _IMPORT_RE["python"].match(raw.strip())
         if not m:
             return []
-        if m.group(1):
-            return [m.group(1)]
-        return [p.strip().split(" as ")[0].strip() for p in m.group(2).split(",") if p.strip()]
+        module = m.group(1)
+        if module is not None:
+            if module and set(module) <= {"."}:
+                # "from . import X" / "from .. import X, Y": no module name after
+                # the dots, so the imported names ARE the submodule targets.
+                names = m.group(2).replace("(", " ").replace(")", " ")
+                return [
+                    module + p.strip().split(" as ")[0].strip()
+                    for p in names.split(",")
+                    if p.strip() and p.strip() != "*"
+                ]
+            return [module]
+        return [p.strip().split(" as ")[0].strip() for p in m.group(3).split(",") if p.strip()]
     # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
     key = {
