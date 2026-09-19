@@ -553,7 +553,15 @@ def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     assert run["callees_external"] == ["getpid"]
     assert "# calls: pkg/util.py::helper" in run["text"]
     assert "# calls (outside the repo): getpid" in run["text"]
-    assert "# entry point:" in run["text"]
+    # ISS-159: `entry()`'s body is `Runner().run(3)` -- a chained call. Now that
+    # the outer `.run(...)` callee resolves correctly (not just the inner
+    # `Runner()` constructor call), `entry` calls `Runner.run` directly, so
+    # `Runner.run` has an in-repo caller and is no longer an entry point.
+    assert "# called by: pkg/main.py::entry" in run["text"]
+    assert "# entry point:" not in run["text"]
+    entry = next(c for c in chunks if c["qualname"] == "entry")
+    assert "# entry point:" in entry["text"]
+    assert "pkg/main.py::Runner.run" in entry["callees"]
 
 
 def test_chunk_neighbours_carry_structured_edge_info(tmp_path):
@@ -895,6 +903,11 @@ CHAR_TRIPLES = [
     ("sym:pkg/main.py::Runner.run", "external:getpid", "CALLS_EXTERNAL"),
     ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper", "CALLS"),
     ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner", "CALLS"),
+    # ISS-159: entry()'s body is `Runner().run(3)`, a chained call. Fixing the
+    # outer-callee attribution bug means `.run(3)` now correctly resolves to
+    # `Runner.run` (previously the bug attributed it to the inner `Runner`
+    # constructor call a second time, so this edge was silently dropped).
+    ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner.run", "CALLS"),
 ]
 
 CHAR_CHUNK_IDS = [
@@ -2355,6 +2368,31 @@ def test_docstring_rust_outer_attributes():
     src = b"/// Important documentation\n#[inline]\nfn calculate() {}\n"
     pf = parse_source(src, "rust")
     assert pf.symbols[0].docstring == "/// Important documentation"
+
+
+def test_iss159_chained_call_attributes_outer_callee():
+    """ISS-159: a chained call `obj.get_user().save()` must record BOTH
+    `save` (the outer call) and `get_user` (the inner call) as callees --
+    not `get_user` twice with `save` silently dropped.
+
+    Before the fix, `_callee_name` stripped everything from the first "("
+    onward in the outer call's `function`-field text
+    ("obj.get_user().save"), which ate the trailing ".save" and left
+    "obj.get_user" -> "get_user". `save()` never registered at all.
+    """
+    src = b"def test():\n    obj.get_user().save()\n"
+    pf = parse_source(src, "python")
+    calls = pf.symbols[0].calls
+    assert calls.count("save") == 1
+    assert calls.count("get_user") == 1
+    assert "save" in calls and "get_user" in calls
+
+    # Same bug class in JS/TS member_expression chains.
+    src_js = b"function test() { a.b().c(); }\n"
+    pf_js = parse_source(src_js, "javascript")
+    calls_js = pf_js.symbols[0].calls
+    assert calls_js.count("c") == 1
+    assert calls_js.count("b") == 1
 
 
 def test_callee_name_macro_and_fn_pointers():

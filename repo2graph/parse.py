@@ -528,10 +528,18 @@ def _callee_name(src: bytes, node) -> str | None:
     # Strip wrapping parens for function-pointer / expression invocations e.g. (*fn)(arg) or (cb)(arg)
     while txt.startswith("(") and txt.endswith(")") and len(txt) >= 2:
         txt = txt[1:-1].strip()
-    txt = txt.split("(")[0].split("<")[0]
+    # ISS-159: resolve the rightmost member-access segment *before* stripping
+    # "(" / "<" noise. A chained call's `function` field text is the whole
+    # member expression, e.g. `obj.get_user().save` for `obj.get_user().save()`
+    # — the "(" that closes the inner `get_user()` call sits in the middle of
+    # that string. Splitting on "(" first (old order) chopped everything from
+    # that "(" onward, including the outer ".save", and left "obj.get_user".
+    # Splitting on the separator first isolates "save" so the parens/generic
+    # stripping below only ever runs on the final, already-resolved segment.
     for sep in ("::", ".", "->"):
         if sep in txt:
             txt = txt.split(sep)[-1]
+    txt = txt.split("(")[0].split("<")[0]
     # ISS-05: Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
