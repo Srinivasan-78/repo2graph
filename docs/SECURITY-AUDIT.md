@@ -144,7 +144,7 @@ compromised host OS (no application-layer control defends against that — see
 
 ```
 repo source (untrusted) → discover() [size cap, symlink excluded, skip-dirs]
-  → tree-sitter parse [per-file try/except, 1.5MB cap]
+  → tree-sitter parse [per-file try/except, 1.5MB cap, PARSE_TIMEOUT_MICROS]
   → graph nodes/edges [no execution, name-based resolution only]
   → chunks [text slices of the same bytes, no transformation that could inject]
   → .r2g/ on disk [atomic writes, inside the operator-chosen outdir only]
@@ -204,17 +204,23 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    both `dispatch()` and any direct caller inherit the bound. Regression tests: `tests/test_mcp.py`,
    `test_r9_*` (flooded with 10MB strings, matching the existing `test_r5_*` flooding convention).
 
-3. **No per-file parse timeout.** `parse.py:463` (`parser.parse(source)`) has no
+3. **No per-file parse timeout.** `parse.py` (`parser.parse(source)`) had no
    `set_timeout_micros`/wall-clock guard. `MAX_BYTES = 1_500_000` bounds file *size*, not parse
    *time*; a file within the size cap but with pathologically deep/repetitive nesting could still
    consume disproportionate CPU in one worker. Mitigated in practice — the process pool
    (`graph.py:355`, `PARALLEL_MIN_FILES=64`) isolates a slow file to one worker rather than the
    whole build, and tree-sitter's parser is not backtracking-prone the way a regex engine is — but
    this is residual risk, not a closed door, and no test proves a bound exists.
-   **Not fixed in this pass:** `tree_sitter.Parser.set_timeout_micros` support varies across grammar
-   bindings in the `tree-sitter-language-pack`, and adding a wrong per-language timeout risks
-   false-positive truncated parses on legitimately large generated files (which repositories do
-   have) with no fixture to prove the timeout is well-calibrated. Tracked in `docs/BACKLOG.md`.
+   **Fixed:** `PARSE_TIMEOUT_MICROS = 5_000_000` (5s, conservative: a near-cap 1.4 MB Python
+   file parsed in ~180 ms here) wraps every `parser.parse` in `parse_source`, including the C/C++
+   cpp fallback, behind `_parse_tree`. Native `timeout_micros` / `set_timeout_micros` is armed
+   when the binding exposes it. On tree-sitter 0.26 + language-pack 1.20 — every `LANG_CFG`
+   grammar returns the same `tree_sitter.Parser` with those setters removed — the fallback is a
+   chunked reader that raises when the wall clock expires; a late tree is discarded and the
+   cached parser is `reset()`. `progress_callback` is not used: bytestring parse ignores it and
+   the reader form segfaults. Regression tests: `tests/test_parse_timeout.py` (legitimate deep
+   file must complete; pathological nested file and a hanging parser must abort without hanging
+   the suite).
 
 4. **No SBOM generated in CI.** Confirmed absent (grepped all workflow files for `sbom`,
    `cyclonedx`, `syft` — zero hits). `dependency-audit.yml` runs `pip-audit --strict`, which is a
@@ -304,7 +310,9 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
   real CI gate; `twine check dist/*` validates package metadata before upload.
 
 **Parser / resource exhaustion / graph:**
-- Per-file size cap enforced before read: `parse.py:152-253`, `MAX_BYTES = 1_500_000`.
+- Per-file size cap enforced before read: `parse.py` `MAX_BYTES = 1_500_000`.
+- Per-file parse time cap: `PARSE_TIMEOUT_MICROS = 5_000_000`, applied in `_parse_tree`
+  around every `parser.parse` (ISS-81 / P2.3).
 - A single bad file never aborts a build: `graph.py:203-209`, explicitly commented as intentional.
 - `pack_context`'s budget is airtight and cumulative — `fits()` checks before appending, never
   builds the full unbounded string first for the bounded case (`query.py:619-620`).

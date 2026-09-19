@@ -20,8 +20,9 @@ it.
 
 *Remaining risk:* the P3 items listed in the audit (TOCTOU symlink race requiring local code
 execution to exploit, no hard cap on total graph nodes/edges, secret-path denylist not
-user-configurable, no per-file parse timeout, no SBOM). None of these is exploitable by repository
-content alone or by a remote, unprivileged MCP caller.
+user-configurable, no SBOM). None of these is exploitable by repository
+content alone or by a remote, unprivileged MCP caller. Per-file parse time is now
+bounded (`PARSE_TIMEOUT_MICROS`; see `docs/SECURITY-AUDIT.md` P2.3).
 
 *Control:* run with `--no-auto-build` and a read-only repository mount in shared deployments (see
 `docs/ENTERPRISE_DEPLOYMENT.md`); enable `--audit-log` where a record of tool calls matters.
@@ -50,10 +51,10 @@ concurrent audit-log writers, and Windows-specific encoding failures all have de
 tests (`tests/test_encoding.py` — 204 tests across a 5×7×5 matrix; `tests/test_audit.py`'s
 file-locking tests). 838 tests pass on this branch as of this audit.
 
-*Remaining risk:* no per-file parse timeout (P2.3 in the audit) means a single pathological file
-could still consume disproportionate CPU within its own worker process, though not abort the whole
-build. No enforced ceiling on total nodes/edges for an extremely large/adversarial repository
-(P3.5) — memory usage is unbounded by construction for that one dimension.
+*Remaining risk:* no enforced ceiling on total nodes/edges for an extremely large/adversarial
+repository (P3.5) — memory usage is unbounded by construction for that one dimension. A
+pathological file can no longer pin a worker indefinitely: `parse_source` applies
+`PARSE_TIMEOUT_MICROS` (5s) around every `parser.parse`.
 
 *Control:* for untrusted or unusually large repositories, run the indexer with an external resource
 limit (container memory/CPU limits, `ulimit`, or a Kubernetes pod resource request/limit) rather

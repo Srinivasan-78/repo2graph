@@ -4,6 +4,7 @@ import os
 import re
 import stat as statmod
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -236,6 +237,35 @@ DEFAULT_SKIP_DIRS = {
     ".yarn",
 }
 MAX_BYTES = 1_500_000
+
+# Per-file wall-clock bound on `parser.parse` (ISS-81 / SECURITY-AUDIT P2.3).
+# MAX_BYTES caps *size*, not *time*: a file inside that cap with pathological
+# nesting can still pin a worker. 5s is a conservative default against
+# false-positive truncation of legitimate large/generated files:
+#   * a near-cap (1.4 MB) Python file of 44k tiny defs parsed in ~180 ms here;
+#   * 80k nested parens inside a function parsed in ~55 ms;
+#   * PERFORMANCE.md's 3,000-file build is ~6 ms/file average.
+# 5s is >25× the near-cap case and leaves Windows CI (often several times
+# slower) well clear of the ceiling, without letting one file run indefinitely.
+#
+# Grammar survey (tree-sitter 0.26.0 + tree-sitter-language-pack 1.20.0, the
+# versions uv.lock pins and `tree-sitter>=0.23` resolves to): every LANG_CFG
+# language's `get_parser()` returns the same `tree_sitter.Parser`. None of
+# them expose `timeout_micros` / `set_timeout_micros` — 0.26 removed that
+# API in favour of `progress_callback`. The replacement is not safe to use:
+# bytestring parse silently ignores the callback (UserWarning), and the
+# reader+callback form segfaults on real input (exit -11). So "varies across
+# grammars" is no longer per-grammar wrappers; it is per-binding-generation.
+# We still arm the native setter when a future/older binding provides it.
+PARSE_TIMEOUT_MICROS = 5_000_000
+# Chunk size for the reader fallback. Small enough that a deadline is
+# re-checked often; large enough that a 1.5 MB file is only a few hundred
+# Python calls, not a measurable parse-time cost.
+_PARSE_READ_CHUNK = 4096
+
+
+class _ParseTimeout(Exception):
+    """Internal: the per-file parse budget expired. Not part of the public API."""
 
 
 @dataclass
@@ -703,12 +733,120 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     return uniq[:8]
 
 
-def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
+def _reset_parser(parser) -> None:
+    """Drop a mid-document resume so the cached parser can parse the next file.
+
+    tree-sitter's documented contract: after a timeout the next `parse()`
+    resumes where it left off unless `reset()` is called first. `parser_for`
+    is lru-cached, so skipping this would silently splice the next file onto
+    the leftover state of a timed-out one.
+    """
+    reset = getattr(parser, "reset", None)
+    if callable(reset):
+        try:
+            reset()
+        except Exception:
+            pass
+
+
+def _apply_native_timeout(parser, timeout_micros: int) -> bool:
+    """Arm `timeout_micros` / `set_timeout_micros` when the binding has them.
+
+    Returns True only if a setter accepted the value. tree-sitter 0.26 removed
+    both; older 0.23–0.25 bindings still have them. A failed setattr must not
+    look like success — we would then skip the reader fallback and have no
+    bound at all.
+    """
+    if hasattr(parser, "timeout_micros"):
+        try:
+            parser.timeout_micros = timeout_micros
+            return True
+        except (AttributeError, TypeError, ValueError):
+            pass
+    setter = getattr(parser, "set_timeout_micros", None)
+    if callable(setter):
+        try:
+            setter(timeout_micros)
+            return True
+        except (AttributeError, TypeError, ValueError):
+            pass
+    return False
+
+
+def _parse_tree(parser, source: bytes, timeout_micros: int, deadline: float | None = None):
+    """Parse `source` with a per-file time bound. Raises `_ParseTimeout`.
+
+    `timeout_micros <= 0` is unbounded (test escape hatch only).
+    `deadline` is a shared `time.monotonic()` cut-off so the C/C++ cpp
+    fallback cannot spend a second full budget on the same file.
+    """
+    if timeout_micros <= 0:
+        return parser.parse(source)
+    if deadline is None:
+        deadline = time.monotonic() + timeout_micros / 1_000_000
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        _reset_parser(parser)
+        raise _ParseTimeout()
+    remaining_micros = max(1, int(remaining * 1_000_000))
+
+    if _apply_native_timeout(parser, remaining_micros):
+        try:
+            tree = parser.parse(source)
+        except Exception:
+            _reset_parser(parser)
+            raise
+        if tree is None or time.monotonic() >= deadline:
+            _reset_parser(parser)
+            raise _ParseTimeout()
+        return tree
+
+    # Binding ignored / lacks a native timeout (language-pack 1.20 +
+    # tree-sitter 0.26: every LANG_CFG grammar). Do not use
+    # progress_callback — it is ignored for bytes and segfaults for a
+    # reader. Feed the source in chunks and raise when the wall clock
+    # expires so a slow parse cannot keep pulling more input. If the
+    # parser consumes everything before the deadline and then overruns,
+    # discard the late tree: the file is over budget either way.
+    def _read(byte_offset, _point):
+        if time.monotonic() >= deadline:
+            raise _ParseTimeout()
+        if byte_offset >= len(source):
+            return None
+        return source[byte_offset : byte_offset + _PARSE_READ_CHUNK]
+
+    try:
+        tree = parser.parse(_read)
+    except _ParseTimeout:
+        _reset_parser(parser)
+        raise
+    except Exception:
+        _reset_parser(parser)
+        raise
+    if tree is None or time.monotonic() >= deadline:
+        _reset_parser(parser)
+        raise _ParseTimeout()
+    return tree
+
+
+def parse_source(
+    source: bytes,
+    lang: str,
+    filepath: Path | str | None = None,
+    *,
+    timeout_micros: int | None = None,
+) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
         return ParsedFile(lang=lang, symbols=[], imports=[])
-    tree = parser.parse(source)
+    if timeout_micros is None:
+        timeout_micros = PARSE_TIMEOUT_MICROS
+    deadline = None if timeout_micros <= 0 else time.monotonic() + timeout_micros / 1_000_000
+    try:
+        tree = _parse_tree(parser, source, timeout_micros, deadline=deadline)
+    except _ParseTimeout:
+        return ParsedFile(lang=lang, symbols=[], imports=[], parse_errors=1)
 
     def _count_errors(node):
         errs = 0
@@ -740,8 +878,19 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
                         cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
-                            cpp_tree = parser.parse(cpp_bytes)
-                            cpp_errors = _count_errors(cpp_tree.root_node)
+                            try:
+                                cpp_tree = _parse_tree(
+                                    parser, cpp_bytes, timeout_micros, deadline=deadline
+                                )
+                            except _ParseTimeout:
+                                # Keep the first-pass tree: this file already
+                                # spent its parse budget.
+                                cpp_tree = None
+                            cpp_errors = (
+                                _count_errors(cpp_tree.root_node)
+                                if cpp_tree is not None
+                                else errors
+                            )
                             if cpp_errors < errors:
                                 tree = cpp_tree
                                 source = cpp_bytes
