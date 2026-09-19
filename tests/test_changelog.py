@@ -58,6 +58,65 @@ def test_changelog_only_written_for_human_facing_builds(tmp_path):
     assert not artifact_path(out, "CHANGELOG.md").exists()
 
 
+def test_jsonl_rebuild_does_not_load_previous_state(tmp_path, monkeypatch):
+    """ISS-205: a jsonl-only rebuild must not snapshot the previous graph.
+
+    `previous_state` reads whole `agent/nodes.jsonl` and `agent/edges.jsonl`
+    into lists of dicts. That cost is paid only when CHANGELOG.md will be
+    written. A second `--formats jsonl` build into a populated `-o` is the
+    case that used to load both files and then discard them.
+    """
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    assert artifact_path(out, "nodes.jsonl").exists()
+    assert artifact_path(out, "edges.jsonl").exists()
+
+    def boom_previous_state(_outdir):
+        raise AssertionError("previous_state must not run when overview is omitted")
+
+    def boom_read_jsonl(_path):
+        raise AssertionError("read_jsonl must not load the previous graph on a jsonl rebuild")
+
+    monkeypatch.setattr("repo2graph.changelog.previous_state", boom_previous_state)
+    monkeypatch.setattr("repo2graph.changelog.read_jsonl", boom_read_jsonl)
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    assert not artifact_path(out, "CHANGELOG.md").exists()
+
+
+def test_overview_rebuild_still_snapshots_and_diffs(tmp_path, monkeypatch):
+    """ISS-205: an overview rebuild still reads the previous graph and diffs it.
+
+    The snapshot must happen before dump_all overwrites the on-disk jsonl.
+    """
+    from repo2graph.changelog import previous_state as real_previous_state
+
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    build(repo, out)
+
+    seen = []
+
+    def spy(outdir):
+        seen.append(Path(outdir))
+        return real_previous_state(outdir)
+
+    monkeypatch.setattr("repo2graph.changelog.previous_state", spy)
+    (repo / "pkg" / "beta.py").write_text(
+        "BETA_TABLE = {'q': 9}\n\n\ndef greet(name):\n    return BETA_TABLE.get(name)\n",
+        encoding="utf8",
+        newline="\n",
+    )
+    build(repo, out)
+
+    assert seen == [out]
+    text = changelog_text(out)
+    assert "### New nodes" in text
+    assert "- sym:pkg/beta.py::greet  (symbol)" in text
+    assert "- file:pkg/beta.py  (file)" in text
+    assert "### Removed nodes" not in text
+
+
 def test_second_build_lists_the_new_symbol_and_file(tmp_path):
     """A function and file added between builds show up under 'New nodes'."""
     repo = write_repo(tmp_path)
