@@ -32,6 +32,7 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 """
 
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Literal
@@ -138,6 +139,31 @@ UNAUTHORIZED = 401
 FORBIDDEN = 403
 
 
+def _emit_request_error(client_address: Any = None) -> None:
+    """Report a request failure as one JSON line on stderr.
+
+    `socketserver.BaseServer.handle_error` prints a dashed banner and a
+    traceback. This package's stderr is a JSON-lines event stream (see
+    `events.py`), so an ordinary disconnect must not inject multi-line
+    text a SIEM would try to parse as one record.
+    """
+    exc_type, exc, _tb = sys.exc_info()
+    name = exc_type.__name__ if exc_type is not None else "Exception"
+    remote: str | None
+    if isinstance(client_address, (tuple, list)) and client_address:
+        remote = str(client_address[0])
+    elif client_address:
+        remote = str(client_address)
+    else:
+        remote = None
+    emit(
+        "http_request_error",
+        level="error",
+        error=f"{name}: {exc}",
+        remote=remote,
+    )
+
+
 def server_metadata(
     repo: Any,
     index_present: bool,
@@ -236,23 +262,38 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         """
         return
 
+    def handle(self) -> None:
+        try:
+            super().handle()
+        except Exception:
+            self.handle_error()
+
+    def handle_error(self) -> None:
+        """One JSON line on stderr; never socketserver's multi-line printer."""
+        _emit_request_error(getattr(self, "client_address", None))
+
     def _send_json(
         self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None
     ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        # This server answers tools, not browsers: no page should be able to
-        # frame it, sniff it, or reach it cross-origin by default.
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
-        for key, value in (extra_headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
+        # A client that hangs up mid-response can raise on the header flush
+        # (`end_headers`) or the body write, and Windows raises
+        # ConnectionAbortedError (a sibling of BrokenPipeError /
+        # ConnectionResetError under ConnectionError). Guard the whole send
+        # so none of those escape to socketserver.handle_error.
         try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            # This server answers tools, not browsers: no page should be able to
+            # frame it, sniff it, or reach it cross-origin by default.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
+        except (ConnectionError, OSError):
             return
 
     def _read_body(self) -> bytes:
@@ -547,7 +588,7 @@ def make_handler(
             `POST`; defaults to `DEFAULT_ALLOWED_HOSTNAMES` (loopback only).
 
     Returns:
-        A `MCPRequestHandler` subclass ready to hand to `ThreadingHTTPServer`.
+        A `MCPRequestHandler` subclass ready to hand to `MCPHTTPServer`.
     """
     from .mcp import dispatch, open_index_or_task
 
@@ -566,6 +607,18 @@ def make_handler(
     _Handler.publish_cimd = publish_cimd
     _Handler.allowed_hostnames = allowed_hostnames or DEFAULT_ALLOWED_HOSTNAMES
     return _Handler
+
+
+class MCPHTTPServer(ThreadingHTTPServer):
+    """Threading HTTP server that never dumps a traceback onto stderr.
+
+    socketserver's default `handle_error` prints a dashed banner and a
+    traceback. This package promises stderr is one JSON object per line, so
+    anything that escapes a handler is one `events.emit` record instead.
+    """
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        _emit_request_error(client_address)
 
 
 class HTTPTransport:
@@ -650,7 +703,7 @@ class HTTPTransport:
             The port actually bound, which differs from the requested one when
             port 0 asked the OS to choose.
         """
-        self._httpd = ThreadingHTTPServer((self.host, self.port), self._handler)
+        self._httpd = MCPHTTPServer((self.host, self.port), self._handler)
         self._httpd.daemon_threads = True
         self.port = self._httpd.server_address[1]
         self._handler.base_url = f"http://{self.host}:{self.port}"

@@ -13,6 +13,15 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- HTTP `_send_json` now treats a client that disconnects mid-response as
+  silence, not a traceback: `send_response` through the body write is
+  guarded by `ConnectionError` (including Windows `ConnectionAbortedError`)
+  and `OSError`. Anything that still escapes `handle()` is reported through
+  `events.emit` as one JSON line, so a SIEM tailing stderr is not handed
+  `socketserver`'s multi-line printer.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

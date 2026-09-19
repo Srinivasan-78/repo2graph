@@ -22,7 +22,12 @@ import pytest
 from conftest import MINI_QUERY, build_mini_index, write_mini_repo
 from repo2graph.audit import AuditConfig, AuditLogger
 from repo2graph.auth import AuthConfig
-from repo2graph.http_server import HTTPTransport, server_metadata
+from repo2graph.http_server import (
+    HTTPTransport,
+    MCPHTTPServer,
+    MCPRequestHandler,
+    server_metadata,
+)
 from repo2graph.mcp import _auth_config
 
 from test_auth import FakeIssuer, ISSUER, AUDIENCE, claims, sign
@@ -591,3 +596,135 @@ def test_server_metadata_is_pure_and_needs_no_server():
     assert doc["index_present"] is True
     assert doc["auth_modes"] == ["bearer"]
     json.dumps(doc)
+
+
+# ------------------------------------------------- disconnect / stderr ----
+
+
+class _RaisingWrite:
+    """wfile stand-in that fails on a chosen write, then records the rest.
+
+    `end_headers` flushes the header block as write 1; `_send_json` then
+    writes the body as write 2. Raising on either models a client that
+    hung up during headers or during the body.
+    """
+
+    def __init__(self, fail_on, exc):
+        self.fail_on = fail_on
+        self.exc = exc
+        self.writes = 0
+
+    def write(self, data):
+        self.writes += 1
+        if self.writes >= self.fail_on:
+            raise self.exc
+        return len(data)
+
+    def flush(self):
+        return None
+
+
+def _bare_handler(wfile):
+    """An MCPRequestHandler that never opened a socket.
+
+    BaseHTTPRequestHandler.__init__ calls handle() immediately, so tests
+    that only want `_send_json` / `handle_error` construct via __new__.
+    """
+    handler = MCPRequestHandler.__new__(MCPRequestHandler)
+    handler.request_version = "HTTP/1.1"
+    handler.protocol_version = "HTTP/1.0"
+    handler.requestline = "GET /healthz HTTP/1.1"
+    handler.client_address = ("127.0.0.1", 63217)
+    handler.close_connection = True
+    handler.wfile = wfile
+    handler._headers_buffer = []
+    return handler
+
+
+def _stderr_json_records(err):
+    return [json.loads(line) for line in err.split("\n") if line.strip()]
+
+
+@pytest.mark.parametrize(
+    "fail_on,exc",
+    [
+        (1, ConnectionAbortedError("[WinError 10053] connection aborted")),
+        (2, ConnectionAbortedError("[WinError 10053] connection aborted")),
+        (1, BrokenPipeError("broken pipe")),
+        (2, ConnectionResetError("reset")),
+        (1, OSError(32, "Broken pipe")),
+        (2, OSError(32, "Broken pipe")),
+    ],
+)
+def test_send_json_swallows_a_disconnect_without_a_traceback(fail_on, exc, capsys):
+    """A hung-up client during headers or body must not dump onto stderr.
+
+    The write path is mocked: real sockets that drop mid-response are
+    racy and platform-specific (Windows ConnectionAbortedError vs POSIX
+    BrokenPipeError). The exception type and which write fails are the
+    two axes that used to escape.
+    """
+    handler = _bare_handler(_RaisingWrite(fail_on, exc))
+    handler._send_json(200, {"status": "ok"})
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "----------------------------------------" not in err
+    assert [r for r in _stderr_json_records(err) if r.get("event") == "http_request_error"] == []
+
+
+def test_handler_handle_error_is_one_json_line(capsys):
+    """Anything that does escape becomes one events.emit record, not a dump."""
+    handler = _bare_handler(io.BytesIO())
+    try:
+        raise ConnectionAbortedError("[WinError 10053] connection aborted")
+    except ConnectionAbortedError:
+        handler.handle_error()
+    err = capsys.readouterr().err
+    assert "----------------------------------------" not in err
+    records = _stderr_json_records(err)
+    assert len(records) == 1
+    assert records[0]["event"] == "http_request_error"
+    assert records[0]["level"] == "error"
+    assert "ConnectionAbortedError" in records[0]["error"]
+    assert records[0]["remote"] == "127.0.0.1"
+    # json.dumps keeps the record on one line even if the message has spaces
+    assert err.count("\n") == 1 or err.endswith("\n")
+    assert "Traceback (most recent call last)" not in err
+
+
+def test_server_handle_error_is_one_json_line(capsys):
+    """socketserver's default printer is the leak; the override must replace it."""
+    httpd = MCPHTTPServer.__new__(MCPHTTPServer)
+    try:
+        raise ConnectionAbortedError("[WinError 10053] connection aborted")
+    except ConnectionAbortedError:
+        httpd.handle_error(None, ("127.0.0.1", 63217))
+    err = capsys.readouterr().err
+    assert "----------------------------------------" not in err
+    assert "Exception occurred during processing of request" not in err
+    assert "Traceback (most recent call last)" not in err
+    records = _stderr_json_records(err)
+    assert len(records) == 1
+    assert records[0]["event"] == "http_request_error"
+    assert "ConnectionAbortedError" in records[0]["error"]
+    assert records[0]["remote"] == "127.0.0.1"
+
+
+def test_handle_emits_json_instead_of_a_traceback(monkeypatch, capsys):
+    """handle() must not let an unexpected error reach socketserver's printer."""
+    from http.server import BaseHTTPRequestHandler
+
+    handler = _bare_handler(io.BytesIO())
+
+    def boom(_self):
+        raise RuntimeError("escaped")
+
+    monkeypatch.setattr(BaseHTTPRequestHandler, "handle", boom)
+    handler.handle()
+    err = capsys.readouterr().err
+    assert "Traceback (most recent call last)" not in err
+    assert "----------------------------------------" not in err
+    records = _stderr_json_records(err)
+    assert len(records) == 1
+    assert records[0]["event"] == "http_request_error"
+    assert "RuntimeError" in records[0]["error"]
