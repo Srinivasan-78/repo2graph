@@ -101,3 +101,31 @@ def test_ambiguous_flag(repo):
     assert len(edges) == 2
     for e in edges:
         assert e.get("ambiguous") is True
+
+
+def test_iss127_max_call_candidates_fan_out(tmp_path):
+    """Issue 127: call resolution fan-out respects max_call_candidates instead of hard-capping at 3."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "caller.py").write_text("def run():\n    worker()\n")
+    # 5 distant candidate files with worker()
+    for i in range(5):
+        d = repo / f"d{i}"
+        d.mkdir()
+        (d / "worker.py").write_text("def worker():\n    pass\n")
+
+    # With default max_call_candidates=5
+    g5 = build(repo, max_call_candidates=5)
+    edges5 = [e for e in g5.edges if e["type"] == "CALLS" and "caller.py" in e["src"]]
+    assert len(edges5) == 5
+    for e in edges5:
+        assert e["confidence"] == 0.2
+        assert e.get("ambiguous") is True
+
+    # With max_call_candidates=2
+    g2 = build(repo, max_call_candidates=2)
+    edges2 = [e for e in g2.edges if e["type"] == "CALLS" and "caller.py" in e["src"]]
+    assert len(edges2) == 2
+    for e in edges2:
+        assert e["confidence"] == 0.5
+        assert e.get("ambiguous") is True

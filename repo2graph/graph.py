@@ -725,14 +725,17 @@ def build(
                     norm_scores = {c: s / total_score for c, s in scores.items()}
 
                     N = len(pick)
-                    threshold = 1.0 / min(N, 3)
+                    threshold = 1.0 / min(N, max_call_candidates)
                     heuristics_fired = any(s != 1.0 for s in scores.values())
 
                     if heuristics_fired:
                         kept = {c: ns for c, ns in norm_scores.items() if ns >= threshold}
                         if not kept:
                             sorted_c = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
-                            kept = dict(sorted_c[: min(N, 3)])
+                            kept = dict(sorted_c[: min(N, max_call_candidates)])
+                        elif len(kept) > max_call_candidates:
+                            sorted_c = sorted(kept.items(), key=lambda x: x[1], reverse=True)
+                            kept = dict(sorted_c[:max_call_candidates])
 
                         ambiguous = len(kept) > 1
                         for c, conf in kept.items():
@@ -745,8 +748,7 @@ def build(
                                 **({"ambiguous": True} if ambiguous else {}),
                             )
                     else:
-                        limit = min(N, 3)
-                        limit = min(limit, max_call_candidates)
+                        limit = min(N, max_call_candidates)
                         if limit > 0:
                             # keep up to limit
                             for c in pick[:limit]:
@@ -755,7 +757,7 @@ def build(
                                     c,
                                     "CALLS",
                                     count=count,
-                                    confidence=round(1.0 / min(N, 3), 3),
+                                    confidence=round(1.0 / limit, 3),
                                     ambiguous=True,
                                 )
                         else:

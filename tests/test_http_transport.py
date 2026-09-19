@@ -641,3 +641,39 @@ def test_iss152_options_cors(make_server):
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(req_bad, timeout=10)
     assert exc_info.value.code == 403
+
+
+def test_iss84_internal_500_error_is_sanitized(make_server, monkeypatch):
+    """Issue 84: HTTP 500 responses do not leak internal exception details to network callers."""
+    server = make_server()
+
+    # 1. Exception during tool execution (handled in line 524)
+    from repo2graph import mcp
+
+    def exploding_tool(*args, **kwargs):
+        raise RuntimeError("database secret /path/to/private/key exploded")
+
+    monkeypatch.setattr(mcp, "tool_repo_map", exploding_tool)
+
+    status, body = server.call("repo_map")
+    assert status == 500
+    assert body["error"]["code"] == -32603
+    assert body["error"]["message"] == "Internal server error"
+    assert "private" not in json.dumps(body)
+
+    # The audit logger records the internal error message for operators
+    audit = server.audit_lines()
+    assert any("database secret" in line.get("error", "") for line in audit)
+
+    # 2. Exception during dispatch (handled in line 396)
+    from repo2graph.http_server import MCPRequestHandler
+
+    def exploding_dispatch(*args, **kwargs):
+        raise ValueError("unhandled internal crash at /etc/passwd")
+
+    monkeypatch.setattr(MCPRequestHandler, "_dispatch", exploding_dispatch)
+    status2, body2 = server.rpc("any_method")
+    assert status2 == 500
+    assert body2["error"]["code"] == -32603
+    assert body2["error"]["message"] == "Internal server error"
+    assert "/etc/passwd" not in json.dumps(body2)

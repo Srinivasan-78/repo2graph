@@ -761,6 +761,53 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
     assert len(set(coords)) == len(coords)  # no stack of boxes at the origin
 
 
+def test_iss155_graphml_preserves_custom_nodegraphics_edgegraphics_attributes(tmp_path):
+    """Issue 155: write_graphml preserves custom attributes named nodegraphics and edgegraphics."""
+    import xml.etree.ElementTree as ET
+    from repo2graph.export import write_graphml
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    g.add_node("n1", type="file", path="a.py", nodegraphics="custom_node_attr_value")
+    g.add_node("n2", type="file", path="b.py")
+    g.add_edge("n1", "n2", "IMPORTS", edgegraphics="custom_edge_attr_value")
+
+    out_file = tmp_path / "graph.graphml"
+    write_graphml(g, out_file)
+
+    tree = ET.parse(out_file)
+    root = tree.getroot()
+    ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+
+    keys = {elem.get("id"): elem.attrib for elem in root.findall("g:key", ns)}
+    assert "d_nodegraphics" in keys
+    assert keys["d_nodegraphics"].get("yfiles.type") == "nodegraphics"
+    assert "d_edgegraphics" in keys
+    assert keys["d_edgegraphics"].get("yfiles.type") == "edgegraphics"
+
+    custom_node_keys = [
+        k
+        for k, v in keys.items()
+        if v.get("attr.name") == "nodegraphics" and v.get("for") == "node"
+    ]
+    assert len(custom_node_keys) == 1
+    assert custom_node_keys[0] != "d_nodegraphics"
+
+    custom_edge_keys = [
+        k
+        for k, v in keys.items()
+        if v.get("attr.name") == "edgegraphics" and v.get("for") == "edge"
+    ]
+    assert len(custom_edge_keys) == 1
+    assert custom_edge_keys[0] != "d_edgegraphics"
+
+    text = out_file.read_text(encoding="utf-8")
+    assert "custom_node_attr_value" in text
+    assert "custom_edge_attr_value" in text
+    assert "<y:ShapeNode>" in text
+    assert "<y:PolyLineEdge>" in text
+
+
 def test_overview_lists_hubs(tmp_path, sample_repo):
     """human/overview.md gets the new structured map (artifact_path resolves human/)."""
     out = tmp_path / "idx"
@@ -2513,9 +2560,64 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
     assert meta["repo"] == "octocat/repo"
     assert meta["nodes"] > 0 and meta["chunks"] > 0
     assert len(meta["commit"]) == 12 and meta["commit"] != "unknown"  # head_sha ran for real
-    assert artifact_path(out, "manifest.json").exists()
     node_lines = artifact_path(out, "nodes.jsonl").read_text(encoding="utf8").splitlines()
     assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
+
+
+def test_iss145_index_github_options(tmp_path, monkeypatch):
+    """Issue 145: index_github and repo2graph github respect config, exclude-dir, vendor, and chunking options."""
+    from repo2graph import fetch
+    from repo2graph.cli import main
+    from repo2graph.parse import BuildConfig
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "app.py").write_text("def main():\n    pass\n")
+    vend = origin / "vendor"
+    vend.mkdir()
+    (vend / "v.py").write_text("def vend():\n    pass\n")
+    skipped = origin / "skip_me"
+    skipped.mkdir()
+    (skipped / "s.py").write_text("def skipped_sym():\n    pass\n")
+
+    subprocess.run(["git", "init", "-q", str(origin)], check=True, capture_output=True)
+    g = lambda *a: subprocess.run(["git", "-C", str(origin), *a], check=True, capture_output=True)
+    g("config", "user.email", "t@e.com")
+    g("config", "user.name", "t")
+    g("add", "-A")
+    g("commit", "-qm", "init")
+
+    def fake_clone(spec, dest, ref=None, depth=0, token=None):
+        target = Path(dest) / "repo"
+        subprocess.run(
+            ["git", "clone", "-q", origin.as_uri(), str(target)], check=True, capture_output=True
+        )
+        return target
+
+    monkeypatch.setattr(fetch, "clone", fake_clone)
+
+    # 1. Direct fetch.index_github with config and no_chunks=True
+    cfg = BuildConfig(extra_exclude_dirs=["skip_me"])
+    out1 = tmp_path / "idx1"
+    meta1 = fetch.index_github("octocat/repo", out1, config=cfg, no_chunks=True)
+    assert meta1["chunks"] == 0
+    node_lines1 = artifact_path(out1, "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ids1 = {json.loads(x)["id"] for x in node_lines1 if x.strip()}
+    assert "sym:app.py::main" in ids1
+    assert "sym:skip_me/s.py::skipped_sym" not in ids1
+    # Vendor excluded by default
+    assert "sym:vendor/v.py::vend" not in ids1
+
+    # 2. CLI repo2graph github with --include-vendor and --no-chunks
+    out2 = tmp_path / "idx2"
+    ret = main(["github", "octocat/repo", "-o", str(out2), "--include-vendor", "--no-chunks"])
+    assert ret == 0
+    node_lines2 = artifact_path(out2, "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ids2 = {json.loads(x)["id"] for x in node_lines2 if x.strip()}
+    assert "sym:vendor/v.py::vend" in ids2
+    manifest2 = json.loads(artifact_path(out2, "manifest.json").read_text(encoding="utf8"))
+    assert "chunks" not in manifest2.get("counts", {})
+    assert not artifact_path(out2, "chunks.jsonl").exists()
 
 
 def test_docstring_raw_and_unicode_prefixes():
