@@ -30,11 +30,12 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `-o`, `--out` | `.r2g` | Where the map is written. |
 | `--formats` | `jsonl,graphml,cypher,overview,html` | Which artifacts to write. Drop what you do not need to save time. |
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
-| `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
+| `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
+| `--max-call-candidates` | `5` | Maximum number of candidates kept for an ambiguous call. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |

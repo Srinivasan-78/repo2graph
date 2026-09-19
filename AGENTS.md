@@ -139,7 +139,9 @@ reorders chunks and then mis-rank silently, forever.
   defaults to `embed.DEFAULT_MODEL`, never to what the index happens to claim.
 - `embed.py`'s `.npy` reader/writer is stdlib-only **by design**, not for lack of effort. A machine
   that only *queries* a shipped index must not need numpy, or the zero-dependency promise breaks for
-  exactly the case vectors were added for. numpy is a fast path when importable, never a requirement.
+  exactly the case vectors were added for. There is no numpy import anywhere in the package and none
+  is planned; cosine similarity is the pure-Python `_cosine` in `query.py`. `BUILD_STATE.graphrag-2026-09.md`
+  records the deviation.
 
 ## Every MCP tool argument is caller-hostile
 
