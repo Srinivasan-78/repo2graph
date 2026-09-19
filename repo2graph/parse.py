@@ -700,11 +700,14 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     out = subprocess.run(
                         ["cpp", "-w", "-P", "-undef", str(filepath)],
                         capture_output=True,
-                        text=True,
                         timeout=10,
                     )
                     if out.returncode == 0:
-                        cpp_bytes = out.stdout.encode("utf8", "replace")
+                        # Never pass text=True to a subprocess reading git/cpp output on
+                        # Windows -- it decodes with the cp1252 locale and raises
+                        # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
+                        # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
+                        cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)
