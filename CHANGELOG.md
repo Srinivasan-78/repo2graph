@@ -13,6 +13,14 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- POSIX `fcntl.flock` raising `OSError` (advisory locks unsupported on
+  NFS/FUSE/overlay) no longer silently drops every `--audit-log` record.
+  The file sink falls through to the unlocked write the code already
+  promised, matching win32; one `audit_lock_unavailable` event is emitted
+  the first time.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

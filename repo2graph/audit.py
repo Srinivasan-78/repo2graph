@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Literal, TextIO
 
-from .events import timestamp, write_safe
+from .events import emit, timestamp, write_safe
 
 # How much of a redacted value's hash is kept. Enough to correlate two
 # occurrences, far too little to attack the original.
@@ -191,6 +191,11 @@ class _LockedAppender:
         path: File to append to; created if absent.
     """
 
+    # One warning per process: unlockable filesystems (NFS without lockd,
+    # some FUSE and container overlay mounts) fall through to an unlocked
+    # write, and repeating that on every record is noise, not signal.
+    _lock_unavailable_warned: bool = False
+
     def __init__(self, path: Any) -> None:
         self.path = str(path)
         self._lock = threading.Lock()
@@ -226,8 +231,13 @@ class _LockedAppender:
 
                 fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
                 return
-            except ImportError:
-                pass
+            except (ImportError, OSError) as exc:
+                # Matching win32: an unlockable file must fall through to
+                # the unlocked write below. fcntl.flock raises OSError
+                # (ENOTSUP) on filesystems without advisory locks; catching
+                # only ImportError let that escape into write()'s
+                # except Exception and silently drop the record.
+                self._warn_lock_unavailable(exc)
         if sys.platform == "win32":
             try:
                 import msvcrt
@@ -248,6 +258,20 @@ class _LockedAppender:
         # smaller problem than a dropped audit record.
         self._locked_at = None
 
+    def _warn_lock_unavailable(self, exc: ImportError | OSError) -> None:
+        """Emit one process-wide warning when advisory locking is unavailable."""
+        if _LockedAppender._lock_unavailable_warned:
+            return
+        _LockedAppender._lock_unavailable_warned = True
+        errno: int | None = exc.errno if isinstance(exc, OSError) else None
+        emit(
+            "audit_lock_unavailable",
+            path=self.path,
+            errno=errno,
+            error=str(exc),
+            action="writing unlocked; records kept rather than dropped",
+        )
+
     def _release(self) -> None:
         if sys.platform != "win32":
             try:
@@ -255,7 +279,7 @@ class _LockedAppender:
 
                 fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
                 return
-            except ImportError:
+            except (ImportError, OSError):
                 pass
         if self._locked_at is None:
             return

@@ -11,6 +11,7 @@ is as useless as one that redacts nothing.
 
 import io
 import json
+import sys
 
 import pytest
 
@@ -335,6 +336,38 @@ def test_an_unwritable_file_sink_does_not_take_the_server_down(tmp_path):
     log._file._fh.close()  # simulate the sink failing mid-run
     log.record("repo_map", {})  # must not raise
     log.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX flock path")
+def test_posix_flock_oserror_still_appends_the_record(tmp_path, monkeypatch, capsys):
+    """fcntl.flock OSError must fall through to an unlocked write, not drop the line."""
+    import fcntl
+
+    from repo2graph.audit import _LockedAppender
+
+    _LockedAppender._lock_unavailable_warned = False
+
+    def _unsupported(_fd: int, _op: int) -> None:
+        raise OSError(95, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", _unsupported)
+
+    path = tmp_path / "audit.log"
+    log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
+    log.record("repo_map", {"query": "flock-oserror"})
+    log.record("repo_map", {"query": "second-write"})
+    log.close()
+
+    rows = [
+        json.loads(line) for line in path.read_text(encoding="utf8").splitlines() if line.strip()
+    ]
+    assert [r["params"]["query"] for r in rows] == ["flock-oserror", "second-write"]
+
+    diagnostics = [json.loads(line) for line in capsys.readouterr().err.split("\n") if line.strip()]
+    lock_events = [d for d in diagnostics if d.get("event") == "audit_lock_unavailable"]
+    assert len(lock_events) == 1
+    assert lock_events[0]["errno"] == 95
+    assert lock_events[0]["path"] == str(path)
 
 
 def test_a_record_that_will_not_serialise_still_produces_a_line():
