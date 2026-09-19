@@ -203,20 +203,15 @@ def _delta(name: str, raw: bytes) -> str:
 def _writer(out=None):
     """A write callable that cannot raise UnicodeEncodeError.
 
-    The Windows console is cp1252: a single non-ASCII token from a model would
-    otherwise abort the whole answer mid-sentence. Bytes go straight to
-    sys.stdout.buffer when there is one; a text stream gets its input folded to
-    what its own encoding can represent first.
+    Always writes through the stream's own text-mode `write`, never through
+    `sys.stdout.buffer`: on Windows the console expects bytes in its active
+    codepage (cp1252, cp437, ...), and writing raw UTF-8 bytes straight to
+    the buffer bypasses `TextIOWrapper`'s console translation, producing
+    mojibake even though no exception is raised (#169). A non-ASCII token
+    from a model would otherwise abort the whole answer mid-sentence, so the
+    chunk is folded to what the stream's own encoding can represent first.
     """
     stream = sys.stdout if out is None else out
-    buffer = getattr(stream, "buffer", None) if out is None else None
-    if buffer is not None:
-
-        def write_bytes(chunk: str) -> None:
-            buffer.write(chunk.encode("utf8", "replace"))
-            _flush(buffer)
-
-        return write_bytes
 
     def write_text(chunk: str) -> None:
         enc = getattr(stream, "encoding", None) or "utf8"

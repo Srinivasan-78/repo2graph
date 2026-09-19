@@ -1003,6 +1003,36 @@ def test_ac30_cp1252_stdout_never_raises_unicodeencodeerror(monkeypatch):
     assert fake.buffer.getvalue(), "nothing was written to sys.stdout"
 
 
+def test_iss169_writer_uses_stdout_text_not_buffer_bytes(monkeypatch):
+    """ISS-169: _writer(None) must write through sys.stdout's text `write`,
+    never through sys.stdout.buffer. Writing raw UTF-8 bytes straight to the
+    buffer bypasses TextIOWrapper's console codepage translation on Windows,
+    producing mojibake with no exception raised.
+    """
+    import repo2graph.answer as answer
+
+    payload = "café — done"  # every char is representable in cp1252
+
+    class FakeStdout:
+        def __init__(self):
+            self.buffer = io.BytesIO()
+            self.encoding = "cp1252"
+            self.text_writes = []
+
+        def write(self, s):
+            self.text_writes.append(s)
+
+        def flush(self):
+            pass
+
+    fake = FakeStdout()
+    monkeypatch.setattr(sys, "stdout", fake)
+    answer._writer(None)(payload)
+
+    assert fake.text_writes == [payload]
+    assert fake.buffer.getvalue() == b"", "writer must not write raw bytes to sys.stdout.buffer"
+
+
 def test_emit_surrogateescape_and_lookup_error(monkeypatch):
     """S-12/S-13: _emit preserves surrogateescape and survives LookupError."""
     from repo2graph.cli import _emit
