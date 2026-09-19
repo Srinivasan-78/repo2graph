@@ -35,6 +35,7 @@ Security properties this module is responsible for, none of them optional:
 import hashlib
 import hmac
 import json
+import math
 import threading
 import time
 import urllib.error
@@ -353,18 +354,20 @@ def _check_claims(claims: dict[str, Any], issuer: str, audience: str | None) -> 
     if exp is None:
         raise AuthError("token has no exp claim")
     try:
-        if float(exp) + CLOCK_SKEW < now:
-            raise AuthError("token has expired")
+        exp_f = float(exp)
     except (TypeError, ValueError):
         raise AuthError("token exp claim is not a number") from None
+    if not math.isfinite(exp_f) or exp_f + CLOCK_SKEW < now:
+        raise AuthError("token has expired")
 
     nbf = claims.get("nbf")
     if nbf is not None:
         try:
-            if float(nbf) - CLOCK_SKEW > now:
-                raise AuthError("token is not valid yet")
+            nbf_f = float(nbf)
         except (TypeError, ValueError):
             raise AuthError("token nbf claim is not a number") from None
+        if not math.isfinite(nbf_f) or nbf_f - CLOCK_SKEW > now:
+            raise AuthError("token is not valid yet")
 
     if audience is not None:
         aud = claims.get("aud")

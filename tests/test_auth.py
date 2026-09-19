@@ -251,6 +251,40 @@ def test_a_not_yet_valid_token_is_refused():
         decode_jwt(sign(claims(nbf=time.time() + 3600)), jwks, ISSUER, AUDIENCE)
 
 
+def test_a_nan_exp_claim_is_refused():
+    """NaN compares False against every relational operator in IEEE 754.
+
+    `float("nan") + CLOCK_SKEW < now` is False, so a naive expiry check lets a
+    NaN `exp` claim through as if the token never expires. It must fail closed.
+    """
+    jwks, _ = cache()
+    with pytest.raises(AuthError, match="expired"):
+        decode_jwt(sign(claims(exp=float("nan"))), jwks, ISSUER, AUDIENCE)
+
+
+def test_an_infinite_exp_claim_is_refused():
+    """+Infinity satisfies `exp + CLOCK_SKEW < now` as False forever too."""
+    jwks, _ = cache()
+    with pytest.raises(AuthError, match="expired"):
+        decode_jwt(sign(claims(exp=float("inf"))), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_nan_nbf_claim_is_refused():
+    jwks, _ = cache()
+    with pytest.raises(AuthError, match="not valid yet"):
+        decode_jwt(sign(claims(nbf=float("nan"))), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_negative_infinite_nbf_claim_is_refused():
+    """-Infinity is not finite either; a not-a-finite-number claim must reject,
+
+    not be reinterpreted as "always valid".
+    """
+    jwks, _ = cache()
+    with pytest.raises(AuthError, match="not valid yet"):
+        decode_jwt(sign(claims(nbf=float("-inf"))), jwks, ISSUER, AUDIENCE)
+
+
 def test_the_wrong_issuer_is_refused():
     jwks, _ = cache()
     with pytest.raises(AuthError, match="issuer"):
