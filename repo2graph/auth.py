@@ -245,9 +245,7 @@ class JWKSCache:
         keys = doc.get("keys") if isinstance(doc, dict) else None
         if not isinstance(keys, list):
             raise AuthError("issuer JWKS has no key list")
-        parsed = {
-            str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")
-        }
+        parsed = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
         return parsed, uri
 
     def _install(self, keys: dict[str, dict[str, Any]], uri: str, now: float) -> None:
@@ -327,8 +325,10 @@ class JWKSCache:
                 # Stale. Honour ttl for keys we already have. An unknown kid
                 # against a populated cache still obeys the negative /
                 # min-interval cap — otherwise `ttl=0` is a free amplifier.
-                if key is None and self._keys and (
-                    self._is_negative(kid, now) or not self._unknown_refresh_ok(now)
+                if (
+                    key is None
+                    and self._keys
+                    and (self._is_negative(kid, now) or not self._unknown_refresh_ok(now))
                 ):
                     self._refuse_unknown(kid)
                 if self._in_flight is not None:
