@@ -58,6 +58,20 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 # even read.
 DEFAULT_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
 
+# ------------- header value sanitisation (ISS-84 / CodeQL alerts 8,9) --------
+# User-controlled values reflected into HTTP response headers must never contain
+# CR (\r), LF (\n) or NUL (\0) — otherwise an attacker can inject arbitrary
+# headers or body content ("HTTP Response Splitting").  The helpers below are
+# applied to every user-supplied value written via send_header() in do_OPTIONS.
+_HEADER_BAD_CHARS = frozenset("\r\n\0")
+
+
+def _sanitize_header_value(value: str) -> str:
+    """Strip CR/LF/NUL from a value about to be placed in a response header."""
+    if not any(ch in _HEADER_BAD_CHARS for ch in value):
+        return value
+    return "".join(ch for ch in value if ch not in _HEADER_BAD_CHARS)
+
 
 def _hostname_from_host_header(value: str | None) -> str | None:
     """The bare hostname of a `Host` header, with `:port` and `[...]` stripped.
@@ -237,7 +251,11 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _send_json(
-        self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None
+        self,
+        status: int,
+        payload: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+        send_body: bool = True,
     ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf8")
         self.send_response(status)
@@ -250,10 +268,11 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
-        try:
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            return
+        if send_body:
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
     def _read_body(self) -> bytes:
         """Read the request body, refusing anything implausibly large."""
@@ -267,7 +286,36 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- routes --
 
-    def do_GET(self) -> None:
+    def do_HEAD(self) -> None:
+        """Serve headers for GET paths without sending response body."""
+        self.do_GET(send_body=False)
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight requests."""
+        # DNS-rebinding: validate Host before doing anything, same as do_POST.
+        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
+            return
+        origin = self.headers.get("Origin")
+        if not _origin_header_allowed(origin, self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
+            return
+        self.send_response(204)
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", _sanitize_header_value(origin))
+            self.send_header("Vary", "Origin")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
+        req_headers = self.headers.get(
+            "Access-Control-Request-Headers", "Authorization, Content-Type"
+        )
+        self.send_header("Access-Control-Allow-Headers", _sanitize_header_value(req_headers))
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self, send_body: bool = True) -> None:
         """Serve the unauthenticated discovery documents, and nothing else."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == WELL_KNOWN_METADATA.rstrip("/"):
@@ -280,6 +328,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     self.authenticator.config.modes,
                     index_built_at(self.index_dir),
                 ),
+                send_body=send_body,
             )
             return
         if path == WELL_KNOWN_CLIENT.rstrip("/"):
@@ -290,14 +339,15 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                         "error": "client metadata is not published; "
                         "start the server with --auth-cimd"
                     },
+                    send_body=send_body,
                 )
                 return
-            self._send_json(200, client_metadata_document(self.base_url))
+            self._send_json(200, client_metadata_document(self.base_url), send_body=send_body)
             return
         if path == "/healthz":
-            self._send_json(200, {"status": "ok", "version": __version__})
+            self._send_json(200, {"status": "ok", "version": __version__}, send_body=send_body)
             return
-        self._send_json(404, {"error": f"no such path: {path}"})
+        self._send_json(404, {"error": f"no such path: {path}"}, send_body=send_body)
 
     def _index_present(self) -> bool:
         from .mcp import _has_index
@@ -361,7 +411,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 outcome="error",
                 error=str(exc),
             )
-            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
 
     def _reject(self, rpc_id: Any, method: str, params: Any, exc: AuthError) -> None:
         """Refuse a call, record it, and execute nothing."""
@@ -489,7 +539,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     duration_ms=elapsed.ms,
                     error=str(exc),
                 )
-                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
                 return
         self.audit.record(
             tool=name,

@@ -257,6 +257,40 @@ def test_a_high_entropy_blob_is_redacted():
     assert got.startswith("[redacted:high_entropy")
 
 
+def test_identifier_queries_are_not_high_entropy():
+    """Single-identifier repo_search queries are intentional and must remain.
+
+    The old high_entropy gate treated any 24+ token-class string with a
+    letter and a digit as a credential. `_` is in that class, so a
+    snake_case name with a version digit matched — exactly the pinpoint
+    queries Index._boost_identifiers exists to serve.
+    """
+    for text in (
+        "resolve_import_python3_relative",
+        "sha256_of_the_bytes_that_were_indexed",
+        "test_iss25_query_constants_and_budget_bounds",
+        "parse_source",
+        "how does export write manifest",
+    ):
+        assert sanitize_value("query", text) == text, text
+
+    params = sanitize_params({"query": "test_iss25_query_constants_and_budget_bounds"})
+    assert params == {"query": "test_iss25_query_constants_and_budget_bounds"}
+
+
+def test_high_entropy_and_vendor_shapes_still_redact_identifier_fields():
+    """Tightening the identifier exemption must not open a hole for tokens."""
+    blob = "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9v"
+    got = sanitize_value("query", blob)
+    assert blob not in got
+    assert got.startswith("[redacted:high_entropy")
+
+    token = "ghp_" + "k" * 36
+    got = sanitize_value("query", token)
+    assert token not in got
+    assert got.startswith("[redacted:github_token")
+
+
 def test_prose_is_not_mistaken_for_a_credential():
     """The entropy rule must not fire on real questions."""
     for text in (

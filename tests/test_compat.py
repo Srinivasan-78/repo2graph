@@ -11,6 +11,10 @@ golden, never how you make a red test go green: a characterization test that
 fails means either the golden was captured against a dirty tree or the
 implementation broke something it promised not to touch.
 
+Score fields in query_json.json / rag_json.json / pack_context.json were
+refreshed for #142 (corpus BM25 avgdl). Ranking and pack membership are
+unchanged; do not treat that refresh as a license to regen other goldens.
+
 Every test names the acceptance criterion it encodes as `# AC-n`.
 """
 
@@ -650,3 +654,127 @@ def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path)
     for call in calls:
         assert not any("x-access-token" in word for word in call), call
         assert not any(word.startswith("https://") and "@" in word for word in call), call
+
+
+def test_iss108_examples_workflow_routes_inputs_through_env():
+    """Issue 108: examples.yml must route ${{ inputs.repo }} via env:, not direct run: interpolation."""
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "examples.yml"
+    assert workflow_path.exists()
+    content = workflow_path.read_text(encoding="utf8")
+    generate_block = content.split("- name: Generate")[1]
+    run_part = generate_block.split("run:")[1].split("- uses:")[0]
+    assert "${{ inputs.repo }}" not in run_part
+    assert "INPUT_REPO: ${{ inputs.repo }}" in generate_block
+    assert '"$INPUT_REPO"' in run_part
+
+
+def test_iss137_generate_examples_split_rule(tmp_path):
+    """Issue 137: generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
+    import gzip
+    import importlib.util
+
+    script_path = REPO_ROOT / "scripts" / "generate_examples.py"
+    spec = importlib.util.spec_from_file_location("generate_examples", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _read_jsonl_maybe_gz = mod._read_jsonl_maybe_gz
+
+    # A JSON record containing embedded U+2028 (line separator) in string
+    record = '{"id": "chunk-1", "text": "hello\u2028world"}'
+    jsonl_path = tmp_path / "test.jsonl.gz"
+    with gzip.open(jsonl_path, "wt", encoding="utf8") as fh:
+        fh.write(record + "\n")
+
+    lines = _read_jsonl_maybe_gz(jsonl_path)
+    assert len(lines) == 1
+    assert lines[0] == record
+
+
+def test_iss139_commit_release_api_timeout(monkeypatch):
+    """Issue 139: api() in commit_release_via_api.py must pass timeout to urlopen."""
+    import importlib.util
+    import io
+
+    script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
+    spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    recorded_timeouts = []
+
+    class DummyResponse:
+        def __enter__(self):
+            return io.BytesIO(b'{"status": "ok"}')
+
+        def __exit__(self, *args):
+            pass
+
+    def dummy_urlopen(req, timeout=None):
+        recorded_timeouts.append(timeout)
+        return DummyResponse()
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", dummy_urlopen)
+    res = mod.api("GET", "/test", "dummy-token")
+    assert res == {"status": "ok"}
+    assert recorded_timeouts == [30.0]
+
+
+def test_iss146_commit_release_api_path_posix(monkeypatch):
+    """Issue 146: commit_release_via_api.py must normalize Windows paths in git tree entries."""
+    import importlib.util
+    import io
+
+    script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
+    spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    tree_entries_sent = []
+
+    def dummy_api(method, path, token, payload=None, timeout=30.0):
+        if method == "GET" and "ref/heads" in path:
+            return {"object": {"sha": "basesha"}}
+        if method == "GET" and "commits" in path:
+            return {"tree": {"sha": "treesha"}}
+        if method == "POST" and "blobs" in path:
+            return {"sha": "blobsha"}
+        if method == "POST" and "trees" in path:
+            tree_entries_sent.extend(payload["tree"])
+            return {"sha": "newtreesha"}
+        if method == "POST" and "commits" in path:
+            return {"sha": "newcommitsha"}
+        if method == "POST" and "refs" in path:
+            return {}
+        return {}
+
+    monkeypatch.setattr(mod, "api", dummy_api)
+    monkeypatch.setattr(mod, "open", lambda *a, **k: io.BytesIO(b"v1.0.0"), raising=False)
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    win_style_path = "dist\\sub\\release.txt"
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "commit_release_via_api.py",
+            "--repo",
+            "test/repo",
+            "--branch",
+            "release-branch",
+            "--base",
+            "main",
+            "--message",
+            "Release commit",
+            "--files",
+            win_style_path,
+        ],
+    )
+    mod.main()
+
+    assert len(tree_entries_sent) == 1
+    # Path must be POSIX normalized (no backslashes)
+    assert "\\" not in tree_entries_sent[0]["path"]
+    assert tree_entries_sent[0]["path"] == "dist/sub/release.txt"

@@ -357,3 +357,44 @@ def test_async_build_is_off_by_default(mini_repo, monkeypatch):
     seen.clear()
     mcp.main([str(mini_repo), "--async-build"])
     assert seen["tasks"] is not None, "--async-build did not reach serve()"
+
+
+def test_iss151_default_estimator_runs_in_background_thread(tmp_path, monkeypatch):
+    """Issue 151: TaskManager.start does not run _default_estimator synchronously on calling thread."""
+    calling_thread_id = threading.get_ident()
+    estimator_thread_ids = []
+    real_estimator = tasks_module._default_estimator
+
+    can_estimate = threading.Event()
+    estimator_started = threading.Event()
+
+    def wrapped_estimator(repo):
+        estimator_thread_ids.append(threading.get_ident())
+        estimator_started.set()
+        can_estimate.wait(timeout=5)
+        return real_estimator(repo)
+
+    monkeypatch.setattr(tasks_module, "_default_estimator", wrapped_estimator)
+
+    builder_block = threading.Event()
+
+    def stub_builder(repo, out):
+        builder_block.wait(timeout=5)
+
+    mgr = TaskManager(builder=stub_builder)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f.py").write_text("x = 1\n")
+    out = tmp_path / "out"
+
+    # If start() called the estimator synchronously, this would deadlock/timeout because
+    # can_estimate is not yet set.
+    task = mgr.start(repo, out)
+    assert task.status == BUILDING
+
+    assert wait_for(lambda: estimator_started.is_set())
+    assert estimator_thread_ids[0] != calling_thread_id
+
+    can_estimate.set()
+    builder_block.set()
+    assert wait_for(lambda: task.status == READY)

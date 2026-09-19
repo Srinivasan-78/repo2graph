@@ -36,7 +36,13 @@ from typing import Any
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
-from .query import Index, _fit_lines, count_tokens
+from .query import (
+    ALL_EDGE_DIRS,
+    DEFAULT_EDGE_TYPES,
+    Index,
+    _fit_lines,
+    count_tokens,
+)
 
 
 def check_mcp_version(version_str: str | None = None):
@@ -255,6 +261,16 @@ EMPTY_RESULT = (
 )
 
 _INDEXES: dict[str, Index] = {}
+_INDEX_MTIMES: dict[str, float] = {}
+
+
+def _index_mtime(out_path: Path) -> float:
+    manifest = artifact_path(out_path, "manifest.json")
+    target = manifest if manifest.is_file() else artifact_path(out_path, "chunks.jsonl")
+    try:
+        return target.stat().st_mtime if target.is_file() else 0.0
+    except OSError:
+        return 0.0
 
 
 def _has_index(out_path: Path) -> bool:
@@ -302,9 +318,24 @@ def open_index(out, repo=None, cache=None) -> Index:
     """
     out_path = Path(out)
     key = str(out_path.resolve())
+    current_mtime = _index_mtime(out_path)
+
     index = _INDEXES.get(key)
+    if index is not None and key in _INDEX_MTIMES and current_mtime <= _INDEX_MTIMES[key]:
+        return index
+
+    # If the index is already loaded but its on-disk artifacts have been updated,
+    # reload the Index and invalidate the result cache.
+    if index is not None and _has_index(out_path):
+        if cache is not None:
+            cache.clear()
+        index = _INDEXES[key] = Index(out_path)
+        _INDEX_MTIMES[key] = current_mtime
+        return index
+
     if index is not None:
         return index
+
     if not _has_index(out_path):
         if repo is None:
             raise SystemExit(
@@ -317,7 +348,9 @@ def open_index(out, repo=None, cache=None) -> Index:
         # sites means no path can rebuild and forget to.
         if cache is not None:
             cache.clear()
+        current_mtime = _index_mtime(out_path)
     index = _INDEXES[key] = Index(out_path)
+    _INDEX_MTIMES[key] = current_mtime
     return index
 
 
@@ -415,7 +448,11 @@ def tool_repo_neighbours(
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
     for dst, etype, direction, _src in index.expand(
-        [node_id], hops=_clamp(hops, 1, 0, MCP_MAX_HOPS)
+        [node_id],
+        hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
+        edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
+        edge_dirs=ALL_EDGE_DIRS,
+        min_confidence=0.0,
     ):
         target = index.nodes.get(dst, {})
         if index._is_secret_path(target.get("path") or ""):

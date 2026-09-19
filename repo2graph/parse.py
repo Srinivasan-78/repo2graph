@@ -21,6 +21,8 @@ EXT_LANG = {
     ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".go": "go",
     ".rs": "rust",
     ".java": "java",
@@ -244,6 +246,7 @@ class BuildConfig:
     extra_exclude_dirs: list[str] = field(default_factory=list)
     include_vendor: bool = False
     chunk_large_files: bool = False
+    max_nodes: int = 0
 
 
 def _git_files(root: Path):
@@ -743,9 +746,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)
                             if cpp_errors < errors:
-                                tree = cpp_tree
-                                source = cpp_bytes
-                                errors = cpp_errors
+                                # ISS-126 (approach a): do not adopt cpp_bytes
+                                # or cpp_tree. cpp is invoked with -P, which
+                                # strips `# <linenum> "<file>"` markers, so
+                                # preprocessed row numbers cannot be mapped
+                                # back to the on-disk file. chunks.py always
+                                # slices the original, and storing cpp rows
+                                # desyncs every citation. used_cpp still
+                                # records that a macro-aware retry produced
+                                # fewer ERROR nodes.
                                 used_cpp = True
                         else:
                             import logging

@@ -591,3 +591,138 @@ def test_server_metadata_is_pure_and_needs_no_server():
     assert doc["index_present"] is True
     assert doc["auth_modes"] == ["bearer"]
     json.dumps(doc)
+
+
+def test_iss152_head_healthz(make_server):
+    """Issue 152: HEAD requests return headers without response body."""
+    server = make_server()
+    req = urllib.request.Request(server.url("/healthz"), method="HEAD")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        assert int(resp.headers.get("Content-Length") or 0) > 0
+        body = resp.read()
+        assert len(body) == 0
+
+    req_404 = urllib.request.Request(server.url("/nonexistent"), method="HEAD")
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_404, timeout=10)
+    assert exc_info.value.code == 404
+    assert len(exc_info.value.read()) == 0
+
+
+def test_iss152_options_cors(make_server):
+    """Issue 152: OPTIONS preflight requests return CORS headers."""
+    server = make_server()
+
+    # Allowed loopback origin
+    req = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 204
+        assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
+        allow_methods = resp.headers.get("Access-Control-Allow-Methods")
+        assert "POST" in allow_methods
+        assert "OPTIONS" in allow_methods
+        assert "Authorization" in resp.headers.get("Access-Control-Allow-Headers", "")
+
+    # Disallowed origin -> 403 Forbidden
+    req_bad = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={"Origin": "http://evil.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req_bad, timeout=10)
+    assert exc_info.value.code == 403
+
+
+def test_iss84_internal_500_error_is_sanitized(make_server, monkeypatch):
+    """Issue 84: HTTP 500 responses do not leak internal exception details to network callers."""
+    server = make_server()
+
+    # 1. Exception during tool execution (handled in line 524)
+    from repo2graph import mcp
+
+    def exploding_tool(*args, **kwargs):
+        raise RuntimeError("database secret /path/to/private/key exploded")
+
+    monkeypatch.setattr(mcp, "tool_repo_map", exploding_tool)
+
+    status, body = server.call("repo_map")
+    assert status == 500
+    assert body["error"]["code"] == -32603
+    assert body["error"]["message"] == "Internal server error"
+    assert "private" not in json.dumps(body)
+
+    # The audit logger records the internal error message for operators
+    audit = server.audit_lines()
+    assert any("database secret" in line.get("error", "") for line in audit)
+
+    # 2. Exception during dispatch (handled in line 396)
+    from repo2graph.http_server import MCPRequestHandler
+
+    def exploding_dispatch(*args, **kwargs):
+        raise ValueError("unhandled internal crash at /etc/passwd")
+
+    monkeypatch.setattr(MCPRequestHandler, "_dispatch", exploding_dispatch)
+    status2, body2 = server.rpc("any_method")
+    assert status2 == 500
+    assert body2["error"]["code"] == -32603
+    assert body2["error"]["message"] == "Internal server error"
+    assert "/etc/passwd" not in json.dumps(body2)
+
+
+def test_crlf_injection_in_cors_headers_is_sanitized(make_server):
+    """CodeQL alerts #8/#9: CRLF in Origin and Access-Control-Request-Headers
+    must be stripped so an attacker cannot inject arbitrary response headers.
+
+    Python's http.client rejects CRLF in headers on the *client* side, so we
+    must use a raw socket to actually deliver the malicious header to the server.
+    """
+    import socket
+
+    server = make_server()
+    # Parse host/port from server URL
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(server.url("/mcp"))
+    host, port = parsed.hostname, parsed.port
+
+    # Build a raw HTTP OPTIONS request with CRLF injected into
+    # Access-Control-Request-Headers
+    raw_request = (
+        f"OPTIONS /mcp HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Origin: http://localhost:3000\r\n"
+        f"Access-Control-Request-Headers: Authorization\r\nX-Injected: evil\r\n"
+        f"Connection: close\r\n"
+        f"\r\n"
+    )
+
+    sock = socket.create_connection((host, port), timeout=10)
+    try:
+        sock.sendall(raw_request.encode("ascii"))
+        response_bytes = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response_bytes += chunk
+    finally:
+        sock.close()
+
+    response_text = response_bytes.decode("ascii", errors="replace")
+    # The server must not have reflected X-Injected as a real header
+    # Split response into lines and verify no line starts with "X-Injected:"
+    lines = response_text.split("\r\n")
+    for line in lines:
+        assert not line.startswith("X-Injected:"), (
+            f"CRLF injection succeeded: server reflected injected header: {line!r}"
+        )

@@ -27,9 +27,11 @@ Security properties this module is responsible for, none of them optional:
   algorithm.
 * `iss`, `aud` and `exp` are all enforced. A signature check alone proves the
   issuer minted *a* token, not that it minted one for this server.
-* A `kid` miss triggers at most one JWKS refetch, then fails. Without the cap,
-  a stream of tokens carrying random `kid`s is a free amplification attack
-  against the issuer.
+* An unknown `kid` is remembered as a miss for a bounded window, and
+  unknown-kid JWKS refetches share a minimum interval independent of `ttl`.
+  A stream of tokens carrying random `kid`s therefore cannot amplify
+  one-for-one against the issuer. The fetch itself runs outside the cache
+  lock so a slow issuer cannot serialise unrelated authentications.
 """
 
 import hashlib
@@ -42,10 +44,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 # How long a fetched JWKS is trusted before it is re-read.
 DEFAULT_JWKS_TTL = 300.0
+# Floor between unknown-kid JWKS refetches. Independent of `ttl`: a long-lived
+# cache still cannot be forced to fetch once per distinct attacker-chosen kid.
+DEFAULT_MIN_REFRESH_INTERVAL = 5.0
+# Bound on remembered unknown kids so a flood cannot grow the miss cache
+# without limit. Oldest entries are evicted first.
+MAX_NEGATIVE_KIDS = 256
 # Network timeout for discovery and JWKS fetches, in seconds.
 HTTP_TIMEOUT = 10.0
 # A JWKS is a small JSON document; anything larger is not one, and reading it
@@ -182,6 +190,9 @@ class JWKSCache:
             without sleeping. `ResultCache` takes one for the same reason: a
             test that waits for real time to pass is a test that fails on
             somebody else's machine.
+        min_refresh_interval: Seconds that must elapse between unknown-kid
+            refetches. Independent of `ttl`; a long-lived cache still cannot
+            be forced to fetch once per distinct attacker-chosen kid.
     """
 
     def __init__(
@@ -190,15 +201,21 @@ class JWKSCache:
         ttl: float = DEFAULT_JWKS_TTL,
         opener: Callable[[str], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        *,
+        min_refresh_interval: float = DEFAULT_MIN_REFRESH_INTERVAL,
     ) -> None:
         self.issuer = issuer.rstrip("/")
         self.ttl = ttl
+        self.min_refresh_interval = min_refresh_interval
         self._open = opener or _fetch_json
         self._clock = clock
         self._lock = threading.Lock()
         self._keys: dict[str, dict[str, Any]] = {}
         self._fetched_at = 0.0
         self._jwks_uri: str | None = None
+        self._misses: dict[str, float] = {}
+        self._unknown_refresh_at: float | None = None
+        self._in_flight: threading.Event | None = None
 
     def discovery_url(self) -> str:
         """The OIDC discovery document URL for this issuer."""
@@ -221,16 +238,52 @@ class JWKSCache:
         self._jwks_uri = uri
         return uri
 
-    def _refresh(self) -> None:
-        doc = self._open(self._resolve_jwks_uri())
+    def _fetch_key_set(self) -> tuple[dict[str, dict[str, Any]], str]:
+        """GET the JWKS. Must not run while `_lock` is held."""
+        uri = self._resolve_jwks_uri()
+        doc = self._open(uri)
         keys = doc.get("keys") if isinstance(doc, dict) else None
         if not isinstance(keys, list):
             raise AuthError("issuer JWKS has no key list")
-        self._keys = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
-        self._fetched_at = self._clock()
+        parsed = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
+        return parsed, uri
+
+    def _install(self, keys: dict[str, dict[str, Any]], uri: str, now: float) -> None:
+        self._keys = keys
+        self._jwks_uri = uri
+        self._fetched_at = now
+        for seen in list(self._misses):
+            if seen in keys:
+                del self._misses[seen]
+
+    def _is_negative(self, kid: str, now: float) -> bool:
+        seen = self._misses.get(kid)
+        if seen is None:
+            return False
+        if (now - seen) >= self.min_refresh_interval:
+            del self._misses[kid]
+            return False
+        return True
+
+    def _unknown_refresh_ok(self, now: float) -> bool:
+        if self._unknown_refresh_at is None:
+            return True
+        return (now - self._unknown_refresh_at) >= self.min_refresh_interval
+
+    def _remember_miss(self, kid: str, now: float) -> None:
+        self._misses[kid] = now
+        extra = len(self._misses) - MAX_NEGATIVE_KIDS
+        if extra <= 0:
+            return
+        doomed = sorted(self._misses, key=self._misses.__getitem__)[:extra]
+        for old in doomed:
+            del self._misses[old]
+
+    def _refuse_unknown(self, kid: str) -> NoReturn:
+        raise AuthError(f"unknown signing key {kid!r}")
 
     def key_for(self, kid: str) -> dict[str, Any]:
-        """Return the JWK with this `kid`, refetching at most once on a miss.
+        """Return the JWK with this `kid`, refetching under a per-window cap.
 
         Args:
             kid: The key id from the token header.
@@ -239,8 +292,10 @@ class JWKSCache:
             The matching JWK as a dict.
 
         Raises:
-            AuthError: If the key is unknown even after one refetch.
+            AuthError: If the key is unknown after any allowed refetch.
         """
+        waiter: threading.Event | None = None
+
         with self._lock:
             # >=, not >: `ttl=0` means "do not cache this at all", and with a
             # strict > that promise depends on the clock's resolution rather
@@ -248,20 +303,88 @@ class JWKSCache:
             # monotonic clock -- Windows can fall back to GetTickCount64, at
             # ~15.6ms -- read an elapsed time of exactly 0.0 and would keep
             # serving keys a ttl of 0 said to discard.
-            stale = (self._clock() - self._fetched_at) >= self.ttl
-            if not self._keys or stale:
-                self._refresh()
+            now = self._clock()
+            stale = (not self._keys) or (now - self._fetched_at) >= self.ttl
             key = self._keys.get(kid)
-            if key is None:
-                # A kid we have never seen is the signal for key rotation. One
-                # refetch, then a refusal: without the cap, tokens carrying
-                # random kids would turn this server into a traffic amplifier
-                # pointed at the issuer.
-                self._refresh()
-                key = self._keys.get(kid)
-            if key is None:
-                raise AuthError(f"unknown signing key {kid!r}")
-            return key
+            if key is not None and not stale:
+                return key
+
+            if not stale:
+                # Fresh cache, unknown kid: rotation signal, but not a per-
+                # request fetch. A repeat miss or a burst of distinct kids
+                # must not turn this server into an amplifier pointed at the
+                # issuer, and must not wait on an in-flight fetch either —
+                # that would serialise every junk token behind one slow RTT.
+                if self._is_negative(kid, now) or not self._unknown_refresh_ok(now):
+                    self._refuse_unknown(kid)
+                if self._in_flight is not None:
+                    self._refuse_unknown(kid)
+                self._unknown_refresh_at = now
+                self._in_flight = threading.Event()
+            else:
+                # Stale. Honour ttl for keys we already have. An unknown kid
+                # against a populated cache still obeys the negative /
+                # min-interval cap — otherwise `ttl=0` is a free amplifier.
+                if (
+                    key is None
+                    and self._keys
+                    and (self._is_negative(kid, now) or not self._unknown_refresh_ok(now))
+                ):
+                    self._refuse_unknown(kid)
+                if self._in_flight is not None:
+                    if key is not None:
+                        return key
+                    if self._keys:
+                        self._refuse_unknown(kid)
+                    waiter = self._in_flight
+                else:
+                    if key is None and self._keys:
+                        # Stale miss against a populated cache: reserve the
+                        # unknown-kid slot so a follow-up distinct kid cannot
+                        # immediately force a second trip after this one lands.
+                        # A cold start (`_keys` empty) is not an unknown-kid
+                        # refresh — the kid is missing because we have no
+                        # JWKS yet, and the first populate must not consume
+                        # the rotation-check slot.
+                        self._unknown_refresh_at = now
+                    self._in_flight = threading.Event()
+
+        if waiter is not None:
+            waiter.wait()
+            with self._lock:
+                waited = self._keys.get(kid)
+                if waited is None:
+                    self._remember_miss(kid, self._clock())
+                    self._refuse_unknown(kid)
+                return waited
+
+        fetch_error: Exception | None = None
+        keys: dict[str, dict[str, Any]] | None = None
+        uri: str | None = None
+        try:
+            keys, uri = self._fetch_key_set()
+        except Exception as exc:
+            fetch_error = exc
+        found: dict[str, Any] | None = None
+        with self._lock:
+            ev = self._in_flight
+            self._in_flight = None
+            if fetch_error is None and keys is not None and uri is not None:
+                now = self._clock()
+                self._install(keys, uri, now)
+                found = self._keys.get(kid)
+                if found is None:
+                    self._remember_miss(kid, now)
+                    self._unknown_refresh_at = now
+                else:
+                    self._misses.pop(kid, None)
+            if ev is not None:
+                ev.set()
+        if fetch_error is not None:
+            raise fetch_error
+        if found is None:
+            self._refuse_unknown(kid)
+        return found
 
 
 def _fetch_json(url: str) -> Any:

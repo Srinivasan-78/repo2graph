@@ -27,7 +27,11 @@ jobs:
     if: |
       github.event_name == 'pull_request_target' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '@prod-igy') || contains(github.event.comment.body, '/prod-igy')))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+       (contains(github.event.comment.body, '@prod-igy') || contains(github.event.comment.body, '/prod-igy')) &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

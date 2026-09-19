@@ -47,6 +47,20 @@ const LABEL_DEFINITIONS = {
 
 const BOT_MARKER = '<!-- prod-igy-bot-comment -->';
 
+// issue_comment may be posted by anyone who can comment on a PR. Only these
+// associations may start privileged triage (labels + bot comment).
+const TRUSTED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
+function isTrustedCommenter(association) {
+  return TRUSTED_ASSOCIATIONS.includes(String(association || '').toUpperCase());
+}
+
+// git check-ref-format allows backticks in a ref name. Interpolating a raw
+// fork head/base into markdown `...` would let that ref close the span.
+function escapeMdRef(ref) {
+  return String(ref).replace(/`/g, '');
+}
+
 function calculateSize(linesChanged) {
   if (linesChanged < 10) return 'size/XS';
   if (linesChanged < 50) return 'size/S';
@@ -151,6 +165,14 @@ function checkAgentsRules(changedFiles) {
     );
   }
 
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    guidance.push(
+      '- **Lockfile Sync (`uv.lock`)**: `pyproject.toml` was modified without updating `uv.lock`. Run `uv lock` locally and commit `uv.lock`, otherwise the `packaging` CI job will fail (`uv lock --check`).'
+    );
+  }
+
   return guidance;
 }
 
@@ -170,12 +192,25 @@ function formatBotComment({
   changedFiles,
   guidance,
   labelsApplied,
+  retargetedToDevelop = false,
 }) {
+  baseRef = escapeMdRef(baseRef);
+  headRef = escapeMdRef(headRef);
   const shortBaseSha = baseSha ? baseSha.substring(0, 7) : 'unknown';
   const shortHeadSha = headSha ? headSha.substring(0, 7) : 'unknown';
 
   let alertBlock = '';
   const warnings = [];
+
+  // Retargeted notice
+  if (retargetedToDevelop) {
+    warnings.push(
+      `> 🔄 **Base Branch Notice @${author}**: This pull request was opened against \`main\`.\n` +
+      `> In this repository, all contributions and bug fixes are developed and tested on the \`develop\` branch first.\n` +
+      `> **\`prod-igy\` has automatically retargeted this PR to \`develop\`**.\n` +
+      `> Once merged into \`develop\` and verified through our CI pipeline, changes will be promoted to \`main\` in official releases. Thank you!`
+    );
+  }
 
   // Outdated check
   if (behindBy > 0) {
@@ -208,13 +243,32 @@ function formatBotComment({
     );
   }
 
+  // Lockfile warning
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    warnings.push(
+      `> ⚠️ **Attention @${author}**: \`pyproject.toml\` was modified without updating \`uv.lock\`.\n` +
+      `> The \`packaging\` CI workflow requires \`uv.lock\` to match \`pyproject.toml\`.\n` +
+      `> Please run \`uv lock\` locally and commit the updated \`uv.lock\`:\n` +
+      `> \`\`\`bash\n` +
+      `> uv lock\n` +
+      `> git add uv.lock\n` +
+      `> git commit -m "chore: update uv.lock"\n` +
+      `> git push\n` +
+      `> \`\`\``
+    );
+  }
+
   if (warnings.length > 0) {
     alertBlock = warnings.join('\n\n') + '\n\n---\n\n';
   }
 
   // Base description
   let baseDesc = '';
-  if (baseRef === 'main') {
+  if (baseRef === 'develop') {
+    baseDesc = `Targets \`develop\`, the primary integration and development branch for \`repo2graph\`.`;
+  } else if (baseRef === 'main') {
     baseDesc = `Targets \`main\`, the primary release branch for \`repo2graph\`.`;
   } else {
     baseDesc = `Targets \`${baseRef}\` (non-default branch).`;
@@ -274,10 +328,30 @@ async function triagePullRequest({ github, owner, repo, prNumber, core }) {
   });
 
   const author = pr.user.login;
-  const baseRef = pr.base.ref;
-  const baseSha = pr.base.sha;
+  let baseRef = pr.base.ref;
+  let baseSha = pr.base.sha;
   const headRef = pr.head.ref;
   const headSha = pr.head.sha;
+
+  // Auto-retarget to 'develop' if PR targets 'main' and is not a release PR from develop -> main
+  let retargetedToDevelop = false;
+  if (baseRef === 'main' && headRef !== 'develop') {
+    core.info(`[PR #${prNumber}] Base branch is 'main'. Retargeting to 'develop'...`);
+    try {
+      const { data: updatedPr } = await github.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        base: 'develop',
+      });
+      baseRef = 'develop';
+      baseSha = updatedPr.base.sha;
+      retargetedToDevelop = true;
+      core.info(`[PR #${prNumber}] Successfully retargeted base to 'develop'.`);
+    } catch (err) {
+      core.warning(`[PR #${prNumber}] Failed to retarget base to 'develop': ${err.message}`);
+    }
+  }
 
   // 2. Fetch list of changed files
   const changedFilesData = await github.paginate(github.rest.pulls.listFiles, {
@@ -436,6 +510,7 @@ async function triagePullRequest({ github, owner, repo, prNumber, core }) {
     changedFiles,
     guidance,
     labelsApplied: Array.from(labelsToAdd),
+    retargetedToDevelop,
   });
 
   // 10. Post or update comment idempotently
@@ -499,6 +574,13 @@ module.exports = async function run({ github, context, core }) {
       core.info('Comment is not on a pull request. Skipping.');
       return;
     }
+    const association = context.payload?.comment?.author_association;
+    if (!isTrustedCommenter(association)) {
+      core.info(
+        `Ignoring issue_comment from untrusted author_association=${association || 'missing'}.`
+      );
+      return;
+    }
     await triagePullRequest({ github, owner, repo, prNumber: issue.number, core });
     return;
   }
@@ -520,5 +602,8 @@ module.exports.detectAreas = detectAreas;
 module.exports.extractIssues = extractIssues;
 module.exports.checkAgentsRules = checkAgentsRules;
 module.exports.formatBotComment = formatBotComment;
+module.exports.escapeMdRef = escapeMdRef;
+module.exports.isTrustedCommenter = isTrustedCommenter;
+module.exports.TRUSTED_ASSOCIATIONS = TRUSTED_ASSOCIATIONS;
 module.exports.LABEL_DEFINITIONS = LABEL_DEFINITIONS;
 module.exports.BOT_MARKER = BOT_MARKER;
