@@ -35,7 +35,7 @@ Tree-sitter parses raw source, which means C/C++ macros can produce syntax it ca
 
 To mitigate this, repo2graph now uses a two-pass strategy for C/C++ files:
 1. Parse raw source (Pass 1).
-2. If errors are found, optionally run the system's `cpp` preprocessor (Pass 2) and parse the expanded output. If it yields fewer errors and output size constraints are met, the expanded parse is kept (`used_cpp=True`).
+2. If errors are found, optionally run the system's `cpp` preprocessor (Pass 2) and parse the expanded output. If it yields fewer errors and output size constraints are met, `used_cpp=True` is recorded as a signal that macros were the problem. Symbol extraction and `start_line`/`end_line` stay on the original file — cpp is invoked with `-P`, which drops `# <linenum> "<file>"` markers, so adopting the preprocessed tree would make `chunks.py` slice the wrong on-disk rows.
 
 Even with this fallback, across the five examples:
 
