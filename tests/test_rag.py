@@ -1494,6 +1494,43 @@ def test_pick_provider_google_api_key_fallback():
     assert spec_both["value"] == "gem-key"
 
 
+def test_iss130_default_models_current_and_overridable():
+    """#130: DEFAULT_MODELS stay on current cheap/fast ids; --model overrides."""
+    import repo2graph.answer as answer
+
+    assert answer.DEFAULT_MODELS == {
+        "gemini": "gemini-3.6-flash",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-haiku-4-5",
+        "ollama": "llama3.1",
+    }
+    assert "claude-3-5-haiku" not in answer.DEFAULT_MODELS["anthropic"]
+
+    _, _, payload = answer._request(
+        {"name": "anthropic", "value": "sk-test"},
+        None,
+        "system",
+        "user",
+    )
+    assert payload["model"] == "claude-haiku-4-5"
+
+    _, _, overridden = answer._request(
+        {"name": "anthropic", "value": "sk-test"},
+        "custom-haiku-override",
+        "system",
+        "user",
+    )
+    assert overridden["model"] == "custom-haiku-override"
+
+    url, _, _ = answer._request(
+        {"name": "gemini", "value": "k"},
+        None,
+        "system",
+        "user",
+    )
+    assert url.endswith("/v1beta/models/gemini-3.6-flash:streamGenerateContent?alt=sse")
+
+
 def test_ollama_request_num_ctx_and_gemini_traversal():
     """answer.py: Ollama sets num_ctx; Gemini blocks path traversal."""
     import repo2graph.answer as answer

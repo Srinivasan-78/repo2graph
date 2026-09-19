@@ -22,10 +22,11 @@ PROVIDER_MAP = {
     "ollama": "OLLAMA_HOST",
 }
 PROVIDER_ENV = tuple(PROVIDER_MAP.values())
+# Best-effort cheap/fast ids; `rag --answer --model` overrides.
 DEFAULT_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.6-flash",
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-3-5-haiku-latest",
+    "anthropic": "claude-haiku-4-5",
     "ollama": "llama3.1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
