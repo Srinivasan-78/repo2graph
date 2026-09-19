@@ -421,6 +421,133 @@ def test_an_unknown_path_is_404(make_server):
     assert make_server().get("/admin")[0] == 404
 
 
+# --------------------------------------------------- HEAD / OPTIONS (#152) --
+
+
+def _raw_http(port, method, path, extra_headers=()):
+    """One HTTP/1.0 request; returns (status, headers, body).
+
+    urllib is a poor HEAD detector: ``HTTPResponse`` zeros ``length`` for
+    HEAD, so ``resp.read()`` is empty even if the server wrote a body.
+    """
+    lines = [f"{method} {path} HTTP/1.0", f"Host: 127.0.0.1:{port}", *extra_headers]
+    request = ("\r\n".join(lines) + "\r\n\r\n").encode("ascii")
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
+        sock.sendall(request)
+        chunks = []
+        while True:
+            data = sock.recv(65536)
+            if not data:
+                break
+            chunks.append(data)
+    raw = b"".join(chunks)
+    head, sep, body = raw.partition(b"\r\n\r\n")
+    assert sep, raw
+    status_line, *header_lines = head.split(b"\r\n")
+    status = int(status_line.split()[1])
+    headers = {}
+    for line in header_lines:
+        name, _, value = line.partition(b":")
+        headers[name.decode("latin1").lower()] = value.strip().decode("latin1")
+    return status, headers, body
+
+
+def test_iss152_head_healthz_matches_get_headers_without_body(make_server):
+    """HEAD /healthz is 200 with an empty body and GET's Content-Length."""
+    server = make_server()
+    get_status, get_headers, get_body = _raw_http(server.port, "GET", "/healthz")
+    head_status, head_headers, head_body = _raw_http(server.port, "HEAD", "/healthz")
+
+    assert get_status == 200
+    assert get_body
+    assert json.loads(get_body)["status"] == "ok"
+    assert get_headers.get("content-type") == "application/json"
+    assert get_headers.get("content-length") == str(len(get_body))
+
+    assert head_status == 200
+    assert head_body == b""
+    assert head_headers.get("content-type") == "application/json"
+    assert head_headers.get("content-length") == str(len(get_body))
+    assert head_headers.get("content-length") == get_headers.get("content-length")
+
+
+def test_iss152_head_healthz_via_urllib_is_not_501(make_server):
+    server = make_server()
+    req = urllib.request.Request(server.url("/healthz"), method="HEAD")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 200
+        assert int(resp.headers.get("Content-Length") or 0) > 0
+        assert resp.read() == b""
+
+
+def test_iss152_head_unknown_path_is_404_without_body(make_server):
+    server = make_server()
+    get_status, get_headers, get_body = _raw_http(server.port, "GET", "/admin")
+    head_status, head_headers, head_body = _raw_http(server.port, "HEAD", "/admin")
+    assert get_status == 404 and get_body
+    assert head_status == 404
+    assert head_body == b""
+    assert head_headers.get("content-length") == str(len(get_body))
+
+
+def test_iss152_options_mcp_is_not_501_and_lists_methods(make_server):
+    server = make_server()
+    req = urllib.request.Request(server.url("/mcp"), method="OPTIONS")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 204
+        allow = resp.headers.get("Allow") or ""
+        allow_methods = resp.headers.get("Access-Control-Allow-Methods") or ""
+        for method in ("GET", "POST", "HEAD", "OPTIONS"):
+            assert method in allow, method
+            assert method in allow_methods, method
+        assert resp.read() == b""
+        # Fail closed: no Origin means no ACAO wildcard.
+        assert resp.headers.get("Access-Control-Allow-Origin") is None
+
+
+def test_iss152_options_preflight_echoes_an_allowed_origin(make_server):
+    server = make_server()
+    origin = "http://localhost:3000"
+    req = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Authorization, Content-Type",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.status == 204
+        assert resp.headers.get("Access-Control-Allow-Origin") == origin
+        assert "POST" in (resp.headers.get("Access-Control-Allow-Methods") or "")
+        allow_headers = resp.headers.get("Access-Control-Allow-Headers") or ""
+        assert "Authorization" in allow_headers
+        assert "Content-Type" in allow_headers
+
+
+def test_iss152_options_rejects_a_cross_origin_origin(make_server):
+    """CORS stays fail-closed: a foreign Origin is 403, same as POST."""
+    server = make_server()
+    req = urllib.request.Request(
+        server.url("/mcp"),
+        method="OPTIONS",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc_info.value.code == 403
+    assert exc_info.value.code != 501
+
+
+def test_iss152_get_and_post_are_unchanged(make_server):
+    server = make_server()
+    status, body = server.get("/healthz")
+    assert status == 200 and body["status"] == "ok" and "version" in body
+    status, body = server.rpc("initialize")
+    assert status == 200 and body["result"]["serverInfo"]["name"] == "repo2graph"
+
+
 # ------------------------------------------------------------- refusals ----
 
 

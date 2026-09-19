@@ -125,6 +125,11 @@ def _origin_header_allowed(value: str | None, allowed_hostnames: frozenset[str])
 WELL_KNOWN_METADATA = "/.well-known/mcp-server-metadata"
 WELL_KNOWN_CLIENT = "/.well-known/oauth-client-metadata"
 
+# Methods this handler implements. Quoted on OPTIONS via Allow /
+# Access-Control-Allow-Methods so health probes and preflight see a real
+# answer instead of the stdlib 501.
+_HTTP_METHODS = "GET, HEAD, POST, OPTIONS"
+
 # JSON-RPC 2.0 error codes, plus the HTTP status each maps to.
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
@@ -237,7 +242,12 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _send_json(
-        self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None
+        self,
+        status: int,
+        payload: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+        *,
+        send_body: bool = True,
     ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf8")
         self.send_response(status)
@@ -250,6 +260,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         for key, value in (extra_headers or {}).items():
             self.send_header(key, value)
         self.end_headers()
+        if not send_body:
+            return
         try:
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
@@ -267,8 +279,49 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- routes --
 
+    def do_HEAD(self) -> None:
+        """Same routing, status and headers as GET; omit the body.
+
+        ``Content-Length`` still names the would-be body, matching stdlib
+        ``SimpleHTTPRequestHandler`` HEAD. K8s/Docker probes use
+        ``HEAD /healthz`` so they do not download JSON.
+        """
+        self._handle_get(send_body=False)
+
+    def do_OPTIONS(self) -> None:
+        """Answer method discovery and CORS preflight without a 501.
+
+        Cross-origin stays fail-closed: an ``Origin`` is echoed only when it
+        would already be accepted on ``POST`` (loopback / ``--http-allow-hosts``).
+        A request with no ``Origin`` still gets ``Allow``, which is enough for
+        same-origin tooling. ``Access-Control-Allow-Origin: *`` is never sent.
+        """
+        origin = self.headers.get("Origin")
+        if not _origin_header_allowed(origin, self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
+            return
+        self.send_response(204)
+        self.send_header("Allow", _HTTP_METHODS)
+        self.send_header("Access-Control-Allow-Methods", _HTTP_METHODS)
+        requested = self.headers.get("Access-Control-Request-Headers")
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            requested if requested else "Authorization, Content-Type",
+        )
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
     def do_GET(self) -> None:
         """Serve the unauthenticated discovery documents, and nothing else."""
+        self._handle_get(send_body=True)
+
+    def _handle_get(self, *, send_body: bool) -> None:
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == WELL_KNOWN_METADATA.rstrip("/"):
             present = bool(self.open_index_fn and self._index_present())
@@ -280,6 +333,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     self.authenticator.config.modes,
                     index_built_at(self.index_dir),
                 ),
+                send_body=send_body,
             )
             return
         if path == WELL_KNOWN_CLIENT.rstrip("/"):
@@ -290,14 +344,15 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                         "error": "client metadata is not published; "
                         "start the server with --auth-cimd"
                     },
+                    send_body=send_body,
                 )
                 return
-            self._send_json(200, client_metadata_document(self.base_url))
+            self._send_json(200, client_metadata_document(self.base_url), send_body=send_body)
             return
         if path == "/healthz":
-            self._send_json(200, {"status": "ok", "version": __version__})
+            self._send_json(200, {"status": "ok", "version": __version__}, send_body=send_body)
             return
-        self._send_json(404, {"error": f"no such path: {path}"})
+        self._send_json(404, {"error": f"no such path: {path}"}, send_body=send_body)
 
     def _index_present(self) -> bool:
         from .mcp import _has_index
