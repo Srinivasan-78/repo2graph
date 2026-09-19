@@ -371,11 +371,9 @@ def _safe_read_bytes(path: Path) -> bytes:
     """
     if Path.read_bytes is not _ORIGINAL_READ_BYTES:
         return path.read_bytes()
-    if hasattr(os, "O_NOFOLLOW"):
-        flags = os.O_RDONLY
-        if hasattr(os, "O_BINARY"):
-            flags |= os.O_BINARY
-        flags |= os.O_NOFOLLOW
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is not None:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
         fd = os.open(path, flags)
         try:
             with os.fdopen(fd, "rb") as fh:
