@@ -11,6 +11,10 @@ golden, never how you make a red test go green: a characterization test that
 fails means either the golden was captured against a dirty tree or the
 implementation broke something it promised not to touch.
 
+Score fields in query_json.json / rag_json.json / pack_context.json were
+refreshed for #142 (corpus BM25 avgdl). Ranking and pack membership are
+unchanged; do not treat that refresh as a license to regen other goldens.
+
 Every test names the acceptance criterion it encodes as `# AC-n`.
 """
 
