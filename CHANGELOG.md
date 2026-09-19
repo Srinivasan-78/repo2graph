@@ -13,6 +13,14 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- A missing or unwritable `--audit-log` path no longer kills
+  `repo2graph-mcp` with a traceback before the server starts. The file
+  sink is dropped after one structured `audit_log_unwritable` event; the
+  stderr audit copy still flows (`write()` already treated a later I/O
+  failure the same way).
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

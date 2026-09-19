@@ -11,6 +11,7 @@ is as useless as one that redacts nothing.
 
 import io
 import json
+import os
 
 import pytest
 
@@ -335,6 +336,85 @@ def test_an_unwritable_file_sink_does_not_take_the_server_down(tmp_path):
     log._file._fh.close()  # simulate the sink failing mid-run
     log.record("repo_map", {})  # must not raise
     log.close()
+
+
+def _diagnostic(err: str) -> dict:
+    rows = [json.loads(line) for line in err.split("\n") if line.strip()]
+    assert rows, err
+    return rows[-1]
+
+
+def test_a_missing_parent_does_not_take_construction_down(tmp_path, capsys):
+    """A typo'd --audit-log path is a degraded file sink, not a traceback."""
+    path = tmp_path / "no" / "such" / "dir" / "audit.log"
+    stream = io.StringIO()
+    log = AuditLogger(AuditConfig(path=str(path)), stream=stream)
+    assert log._file is None
+    log.record("repo_map", {"k": 1})
+    (record,) = lines(stream)
+    assert record["tool"] == "repo_map"
+    assert record["params"]["k"] == 1
+    log.close()
+
+    diagnostic = _diagnostic(capsys.readouterr().err)
+    assert diagnostic["event"] == "audit_log_unwritable"
+    assert diagnostic["path"] == str(path)
+    assert diagnostic["errno"] is not None
+    assert "file sink disabled" in diagnostic["action"]
+
+
+def test_a_parent_that_is_a_file_does_not_take_construction_down(tmp_path, capsys):
+    parent = tmp_path / "not-a-dir"
+    parent.write_text("x", encoding="utf8")
+    path = parent / "audit.log"
+    stream = io.StringIO()
+    log = AuditLogger(AuditConfig(path=str(path)), stream=stream)
+    assert log._file is None
+    log.record("repo_map", {})
+    assert lines(stream)
+    log.close()
+
+    diagnostic = _diagnostic(capsys.readouterr().err)
+    assert diagnostic["event"] == "audit_log_unwritable"
+    assert diagnostic["path"] == str(path)
+    assert diagnostic["errno"] is not None
+
+
+def test_a_read_only_parent_does_not_take_construction_down(tmp_path, capsys):
+    parent = tmp_path / "ro"
+    parent.mkdir()
+    parent.chmod(0o555)
+    try:
+        if os.access(parent, os.W_OK):
+            pytest.skip("this OS still allows writes here (root or Windows)")
+        path = parent / "audit.log"
+        stream = io.StringIO()
+        log = AuditLogger(AuditConfig(path=str(path)), stream=stream)
+        assert log._file is None
+        log.record("repo_map", {})
+        assert lines(stream)
+        log.close()
+    finally:
+        parent.chmod(0o755)
+
+    diagnostic = _diagnostic(capsys.readouterr().err)
+    assert diagnostic["event"] == "audit_log_unwritable"
+    assert diagnostic["errno"] is not None
+
+
+def test_mcp_main_survives_a_bad_audit_log_path(tmp_path, monkeypatch):
+    """repo2graph-mcp constructs AuditLogger before serve(); a bad path must not abort."""
+    from repo2graph import mcp as mcp_mod
+
+    seen = {}
+    monkeypatch.setattr(
+        mcp_mod, "serve", lambda out, repo=None, **kw: seen.update(reached=True)
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    bad = tmp_path / "missing" / "parent" / "audit.log"
+    assert mcp_mod.main([str(repo), "--no-auto-build", "--audit-log", str(bad)]) == 0
+    assert seen.get("reached") is True
 
 
 def test_a_record_that_will_not_serialise_still_produces_a_line():
