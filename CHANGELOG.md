@@ -13,6 +13,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- `repo2graph-mcp --http-only` without `--http-port` (or `--well-known-port` /
+  `--auth-cimd`) now exits with an error instead of silently serving stdio.
+  The HTTP-only path also closes the audit sink on teardown.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
