@@ -100,13 +100,17 @@ def cmd_build(args):
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
     # them below -- CHANGELOG.md (written after dump_all, when "overview" is
-    # requested) diffs the graph just built against this.
+    # requested) diffs the graph just built against this. previous_state
+    # materialises both jsonl files; skip it when no changelog will be written
+    # so a `--formats jsonl` rebuild does not hold a second copy of the graph
+    # for the duration of build() + dump_all() (#205).
     from .changelog import previous_state, resolve_shas, write_changelog
 
-    prev_state = previous_state(outdir)
     write_human_changelog = "overview" in formats
+    prev_state = None
     short_sha = prev_short_sha = None
     if write_human_changelog:
+        prev_state = previous_state(outdir)
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
     g = build(
