@@ -10,6 +10,11 @@ on:
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
 
+concurrency:
+  # One review per PR; a force-push supersedes the review of the old head.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 # Top-level default: the narrowest thing any job here could need. The job below
 # widens it explicitly. Without this, a job added later with no permissions
 # block of its own inherits the repository default, which may be write-all.
@@ -25,6 +30,7 @@ jobs:
     #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
 
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # GitHub already withholds repository secrets from `pull_request`-triggered
     # runs whose head is a fork, so CLAUDE_CODE_OAUTH_TOKEN is never handed to a
     # fork PR's checked-out workflow. This condition makes that boundary

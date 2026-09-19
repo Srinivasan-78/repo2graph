@@ -27,12 +27,19 @@ on:
         required: false
         default: false
 
+concurrency:
+  # Per target repository, so indexing two different repos stays parallel while
+  # a repeat dispatch for the same one queues.
+  group: ${{ github.workflow }}-${{ inputs.repo }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
 jobs:
   index:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Check out repo2graph
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1

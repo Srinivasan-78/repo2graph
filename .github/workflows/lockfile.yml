@@ -17,6 +17,15 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  # Cancel only the pull_request runs, which are pure checks and where a newer
+  # push makes the older one redundant. A workflow_dispatch run can reach the
+  # auto_commit step and `git push`, so those queue instead: the two event
+  # types already land in different groups (head_ref vs ref), so this only
+  # affects a second dispatch racing the first.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -24,6 +33,7 @@ jobs:
   check-lockfile:
     name: Lockfile Freshness
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write

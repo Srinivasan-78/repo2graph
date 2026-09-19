@@ -17,6 +17,15 @@ name: prod-igy
   issue_comment:
     types: [created]
 
+concurrency:
+  # Serialise per PR/issue, but do not cancel. Two triage runs racing on one PR
+  # is the failure mode to avoid, and the group alone prevents that. Cancelling
+  # would also reach the `issue_comment` trigger, where a run is answering a
+  # human who typed `@prod-igy`: a `synchronize` arriving a moment later would
+  # kill that reply and the comment would never be posted.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: false
+
 # Top-level default: read-only
 permissions:
   contents: read
@@ -33,6 +42,7 @@ jobs:
         github.event.comment.author_association == 'MEMBER' ||
         github.event.comment.author_association == 'COLLABORATOR'))
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
