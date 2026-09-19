@@ -469,6 +469,41 @@ def test_chunk_ids_are_unique(sample_graph):
     assert len({c["id"] for c in chunks}) == len(chunks)
 
 
+def test_iss141_file_chunk0_id_matches_node_id(tmp_path):
+    """ISS-141: file chunk 0 uses the unsuffixed node id, same as symbols.
+
+    On main, file chunks were `file:{path}#0` while symbol chunk 0 was
+    `sym:{path}::{qualname}`. A lookup for `file:notes.md` therefore missed
+    chunk 0 unless the caller stripped `#0`. Multi-part splits still get
+    `#1`, `#2`, … so ids stay unique and ordered.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # Whole-file chunk, no symbols. Body is well under MAX_CHARS, so one part.
+    (repo / "notes.md").write_text(
+        "# Notes\n\nEnough leftover prose that this file emits a chunk.\n",
+        encoding="utf-8",
+    )
+    # Five 1500-char lines: _split(MAX_CHARS=4000, OVERLAP_LINES=8) packs
+    # three lines per part and walks back, emitting exactly three parts.
+    # Hand-counted: part0=lines 0-2, part1=lines 1-3, part2=lines 2-4.
+    (repo / "long.md").write_text("".join("W" * 1500 + "\n" for _ in range(5)), encoding="utf-8")
+    g = build(repo)
+    chunks = build_chunks(g)
+    by_id = {c["id"]: c for c in chunks}
+
+    notes = [c for c in chunks if c["path"] == "notes.md"]
+    assert [c["id"] for c in notes] == ["file:notes.md"]
+    assert notes[0]["node_id"] == "file:notes.md"
+    assert notes[0]["id"] == notes[0]["node_id"]
+    assert "file:notes.md#0" not in by_id
+    assert by_id["file:notes.md"]["node_id"] == "file:notes.md"
+
+    long_ids = [c["id"] for c in chunks if c["path"] == "long.md"]
+    assert long_ids == ["file:long.md", "file:long.md#1", "file:long.md#2"]
+    assert all(c["node_id"] == "file:long.md" for c in chunks if c["path"] == "long.md")
+
+
 # ---------- query ----------
 
 
@@ -1029,8 +1064,8 @@ CHAR_TRIPLES = [
 ]
 
 CHAR_CHUNK_IDS = [
-    "file:README.md#0",
-    "file:conf.yaml#0",
+    "file:README.md",
+    "file:conf.yaml",
     "sym:pkg/main.py::Runner",
     "sym:pkg/main.py::Runner.run",
     "sym:pkg/main.py::entry",
