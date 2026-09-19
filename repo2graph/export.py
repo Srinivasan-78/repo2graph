@@ -81,14 +81,16 @@ def paths(outdir, name) -> list[Path]:
 def make_path(outdir, name) -> Path:
     """Like path(), but creates the section directory first."""
     p = path(outdir, name)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.parent.is_dir():
+        p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def make_paths(outdir, name) -> list[Path]:
     out = paths(outdir, name)
     for p in out:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.parent.is_dir():
+            p.parent.mkdir(parents=True, exist_ok=True)
     return out
 
 
@@ -331,6 +333,17 @@ def write_graphml(g, path: Path):
     ET.register_namespace("y", Y_NS)
     root = ET.Element(f"{{{GRAPHML_NS}}}graphml")
 
+    ET.SubElement(
+        root,
+        f"{{{GRAPHML_NS}}}key",
+        {"id": "d_nodegraphics", "for": "node", "yfiles.type": "nodegraphics"},
+    )
+    ET.SubElement(
+        root,
+        f"{{{GRAPHML_NS}}}key",
+        {"id": "d_edgegraphics", "for": "edge", "yfiles.type": "edgegraphics"},
+    )
+
     # One data key per attribute name, typed from the values it carries.
     keys: dict[tuple[str, str], str] = {}
 
@@ -376,9 +389,7 @@ def write_graphml(g, path: Path):
         label = labels[nid]
         x, y = pos.get(nid, (0.0, 0.0))
         width, height = sizes[nid]
-        gfx = ET.SubElement(
-            node, f"{{{GRAPHML_NS}}}data", {"key": key_for("node", "nodegraphics", "")}
-        )
+        gfx = ET.SubElement(node, f"{{{GRAPHML_NS}}}data", {"key": "d_nodegraphics"})
         shape = ET.SubElement(gfx, f"{{{Y_NS}}}ShapeNode")
         ET.SubElement(
             shape,
@@ -420,24 +431,13 @@ def write_graphml(g, path: Path):
             graph, f"{{{GRAPHML_NS}}}edge", {"source": _xml_safe(src), "target": _xml_safe(dst)}
         )
         add_data(edge, "edge", attrs)
-        gfx = ET.SubElement(
-            edge, f"{{{GRAPHML_NS}}}data", {"key": key_for("edge", "edgegraphics", "")}
-        )
+        gfx = ET.SubElement(edge, f"{{{GRAPHML_NS}}}data", {"key": "d_edgegraphics"})
         poly = ET.SubElement(gfx, f"{{{Y_NS}}}PolyLineEdge")
         ET.SubElement(
             poly, f"{{{Y_NS}}}LineStyle", {"color": "#a5adba", "type": "line", "width": "1.0"}
         )
         ET.SubElement(poly, f"{{{Y_NS}}}Arrows", {"source": "none", "target": "standard"})
         ET.SubElement(poly, f"{{{Y_NS}}}BendStyle", {"smoothed": "false"})
-
-    # yFiles keys carry graphics, not data, and take yfiles.type instead of
-    # attr.name/attr.type; fix them up now that every key exists.
-    for element in root.findall(f"{{{GRAPHML_NS}}}key"):
-        name = element.get("attr.name")
-        if name in ("nodegraphics", "edgegraphics"):
-            del element.attrib["attr.name"]
-            del element.attrib["attr.type"]
-            element.set("yfiles.type", name)
 
     root.append(graph)
     ET.indent(root, space="  ")
@@ -636,9 +636,13 @@ def write_overview_human(g, path: Path, top: int = 25):
         out.append("No edges were recorded.")
     out.append("")
 
-    skip_bullets = [
-        f"- {label}: {g.stats[key]}" for key, label in _SKIP_STAT_LABELS if g.stats.get(key)
+    max_bytes = getattr(getattr(g, "config", None), "max_file_bytes", 1_500_000)
+    mb = max_bytes / 1_000_000
+    skip_labels = [
+        (k, f"files over {mb:g} MB" if k == "skipped_too_large" else lbl)
+        for k, lbl in _SKIP_STAT_LABELS
     ]
+    skip_bullets = [f"- {label}: {g.stats[key]}" for key, label in skip_labels if g.stats.get(key)]
     if skip_bullets:
         out.append("## What was skipped")
         out.append("")
@@ -992,8 +996,8 @@ def load_parse_cache(outdir: Path) -> dict:
     from .graph import PARSE_CACHE_FORMAT
 
     try:
-        path = make_paths(Path(outdir), "parse.cache.json")[0]
-        data = json.loads(path.read_text(encoding="utf8"))
+        cache_path = path(Path(outdir), "parse.cache.json")
+        data = json.loads(cache_path.read_text(encoding="utf8"))
     except (OSError, ValueError, KeyError):
         return {}
     if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:

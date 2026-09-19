@@ -469,6 +469,41 @@ def test_chunk_ids_are_unique(sample_graph):
     assert len({c["id"] for c in chunks}) == len(chunks)
 
 
+def test_iss141_file_chunk0_id_matches_node_id(tmp_path):
+    """ISS-141: file chunk 0 uses the unsuffixed node id, same as symbols.
+
+    On main, file chunks were `file:{path}#0` while symbol chunk 0 was
+    `sym:{path}::{qualname}`. A lookup for `file:notes.md` therefore missed
+    chunk 0 unless the caller stripped `#0`. Multi-part splits still get
+    `#1`, `#2`, … so ids stay unique and ordered.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    # Whole-file chunk, no symbols. Body is well under MAX_CHARS, so one part.
+    (repo / "notes.md").write_text(
+        "# Notes\n\nEnough leftover prose that this file emits a chunk.\n",
+        encoding="utf-8",
+    )
+    # Five 1500-char lines: _split(MAX_CHARS=4000, OVERLAP_LINES=8) packs
+    # three lines per part and walks back, emitting exactly three parts.
+    # Hand-counted: part0=lines 0-2, part1=lines 1-3, part2=lines 2-4.
+    (repo / "long.md").write_text("".join("W" * 1500 + "\n" for _ in range(5)), encoding="utf-8")
+    g = build(repo)
+    chunks = build_chunks(g)
+    by_id = {c["id"]: c for c in chunks}
+
+    notes = [c for c in chunks if c["path"] == "notes.md"]
+    assert [c["id"] for c in notes] == ["file:notes.md"]
+    assert notes[0]["node_id"] == "file:notes.md"
+    assert notes[0]["id"] == notes[0]["node_id"]
+    assert "file:notes.md#0" not in by_id
+    assert by_id["file:notes.md"]["node_id"] == "file:notes.md"
+
+    long_ids = [c["id"] for c in chunks if c["path"] == "long.md"]
+    assert long_ids == ["file:long.md", "file:long.md#1", "file:long.md#2"]
+    assert all(c["node_id"] == "file:long.md" for c in chunks if c["path"] == "long.md")
+
+
 # ---------- query ----------
 
 
@@ -761,6 +796,53 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
     assert len(set(coords)) == len(coords)  # no stack of boxes at the origin
 
 
+def test_iss155_graphml_preserves_custom_nodegraphics_edgegraphics_attributes(tmp_path):
+    """Issue 155: write_graphml preserves custom attributes named nodegraphics and edgegraphics."""
+    import xml.etree.ElementTree as ET
+    from repo2graph.export import write_graphml
+    from repo2graph.graph import Graph
+
+    g = Graph(tmp_path, "test")
+    g.add_node("n1", type="file", path="a.py", nodegraphics="custom_node_attr_value")
+    g.add_node("n2", type="file", path="b.py")
+    g.add_edge("n1", "n2", "IMPORTS", edgegraphics="custom_edge_attr_value")
+
+    out_file = tmp_path / "graph.graphml"
+    write_graphml(g, out_file)
+
+    tree = ET.parse(out_file)
+    root = tree.getroot()
+    ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+
+    keys = {elem.get("id"): elem.attrib for elem in root.findall("g:key", ns)}
+    assert "d_nodegraphics" in keys
+    assert keys["d_nodegraphics"].get("yfiles.type") == "nodegraphics"
+    assert "d_edgegraphics" in keys
+    assert keys["d_edgegraphics"].get("yfiles.type") == "edgegraphics"
+
+    custom_node_keys = [
+        k
+        for k, v in keys.items()
+        if v.get("attr.name") == "nodegraphics" and v.get("for") == "node"
+    ]
+    assert len(custom_node_keys) == 1
+    assert custom_node_keys[0] != "d_nodegraphics"
+
+    custom_edge_keys = [
+        k
+        for k, v in keys.items()
+        if v.get("attr.name") == "edgegraphics" and v.get("for") == "edge"
+    ]
+    assert len(custom_edge_keys) == 1
+    assert custom_edge_keys[0] != "d_edgegraphics"
+
+    text = out_file.read_text(encoding="utf-8")
+    assert "custom_node_attr_value" in text
+    assert "custom_edge_attr_value" in text
+    assert "<y:ShapeNode>" in text
+    assert "<y:PolyLineEdge>" in text
+
+
 def test_overview_lists_hubs(tmp_path, sample_repo):
     """human/overview.md gets the new structured map (artifact_path resolves human/)."""
     out = tmp_path / "idx"
@@ -1029,8 +1111,8 @@ CHAR_TRIPLES = [
 ]
 
 CHAR_CHUNK_IDS = [
-    "file:README.md#0",
-    "file:conf.yaml#0",
+    "file:README.md",
+    "file:conf.yaml",
     "sym:pkg/main.py::Runner",
     "sym:pkg/main.py::Runner.run",
     "sym:pkg/main.py::entry",
@@ -2513,9 +2595,139 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
     assert meta["repo"] == "octocat/repo"
     assert meta["nodes"] > 0 and meta["chunks"] > 0
     assert len(meta["commit"]) == 12 and meta["commit"] != "unknown"  # head_sha ran for real
-    assert artifact_path(out, "manifest.json").exists()
     node_lines = artifact_path(out, "nodes.jsonl").read_text(encoding="utf8").splitlines()
     assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
+
+
+def test_iss145_index_github_options(tmp_path, monkeypatch):
+    """Issue 145: index_github and repo2graph github respect config, exclude-dir, vendor, and chunking options."""
+    from repo2graph import fetch
+    from repo2graph.cli import main
+    from repo2graph.parse import BuildConfig
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "app.py").write_text("def main():\n    pass\n")
+    vend = origin / "vendor"
+    vend.mkdir()
+    (vend / "v.py").write_text("def vend():\n    pass\n")
+    skipped = origin / "skip_me"
+    skipped.mkdir()
+    (skipped / "s.py").write_text("def skipped_sym():\n    pass\n")
+
+    subprocess.run(["git", "init", "-q", str(origin)], check=True, capture_output=True)
+    g = lambda *a: subprocess.run(["git", "-C", str(origin), *a], check=True, capture_output=True)
+    g("config", "user.email", "t@e.com")
+    g("config", "user.name", "t")
+    g("add", "-A")
+    g("commit", "-qm", "init")
+
+    def fake_clone(spec, dest, ref=None, depth=0, token=None):
+        target = Path(dest) / "repo"
+        subprocess.run(
+            ["git", "clone", "-q", origin.as_uri(), str(target)], check=True, capture_output=True
+        )
+        return target
+
+    monkeypatch.setattr(fetch, "clone", fake_clone)
+
+    # 1. Direct fetch.index_github with config and no_chunks=True
+    cfg = BuildConfig(extra_exclude_dirs=["skip_me"])
+    out1 = tmp_path / "idx1"
+    meta1 = fetch.index_github("octocat/repo", out1, config=cfg, no_chunks=True)
+    assert meta1["chunks"] == 0
+    node_lines1 = artifact_path(out1, "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ids1 = {json.loads(x)["id"] for x in node_lines1 if x.strip()}
+    assert "sym:app.py::main" in ids1
+    assert "sym:skip_me/s.py::skipped_sym" not in ids1
+    # Vendor excluded by default
+    assert "sym:vendor/v.py::vend" not in ids1
+
+    # 2. CLI repo2graph github with --include-vendor and --no-chunks
+    out2 = tmp_path / "idx2"
+    ret = main(["github", "octocat/repo", "-o", str(out2), "--include-vendor", "--no-chunks"])
+    assert ret == 0
+    node_lines2 = artifact_path(out2, "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ids2 = {json.loads(x)["id"] for x in node_lines2 if x.strip()}
+    assert "sym:vendor/v.py::vend" in ids2
+    manifest2 = json.loads(artifact_path(out2, "manifest.json").read_text(encoding="utf8"))
+    assert "chunks" not in manifest2.get("counts", {})
+    assert not artifact_path(out2, "chunks.jsonl").exists()
+
+
+def test_iss85_iss156_graph_max_nodes_limit(tmp_path):
+    """Issues 85 & 156: Graph node accumulation is bounded by max_nodes limit."""
+    from repo2graph.graph import GraphLimitExceeded, build
+    from repo2graph.parse import BuildConfig
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f1.py").write_text("def a(): pass\ndef b(): pass\n")
+    (repo / "f2.py").write_text("def c(): pass\ndef d(): pass\n")
+
+    # Building with max_nodes=2 on a repo with file+symbol nodes (>2) raises GraphLimitExceeded
+    cfg = BuildConfig(max_nodes=2)
+    with pytest.raises(GraphLimitExceeded) as exc_info:
+        build(repo, config=cfg)
+    assert "Graph node limit exceeded" in str(exc_info.value)
+    assert "max_nodes=2" in str(exc_info.value)
+
+    # Building with max_nodes=0 (default) succeeds
+    g = build(repo, config=BuildConfig(max_nodes=0))
+    assert len(g.nodes) > 2
+
+
+def test_iss87_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
+    """Issue 87: _safe_read_bytes uses O_NOFOLLOW where supported to avoid symlink TOCTOU races."""
+    import os
+    from repo2graph.graph import _safe_read_bytes
+
+    f = tmp_path / "test.txt"
+    f.write_bytes(b"hello security")
+
+    # Regular reading works
+    assert _safe_read_bytes(f) == b"hello security"
+
+    # Verify that O_NOFOLLOW is incorporated into flags passed to os.open when present
+    opened_flags = []
+    real_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        opened_flags.append(flags)
+        # Strip synthetic O_NOFOLLOW bit before calling real_open if on Windows
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+
+    data = _safe_read_bytes(f)
+    assert data == b"hello security"
+    assert len(opened_flags) == 1
+    assert opened_flags[0] & 0x20000 == 0x20000
+
+
+def test_iss147_make_path_avoids_mkdir_when_parent_exists(tmp_path, monkeypatch):
+    """Issue 147: make_path and make_paths avoid mkdir on existing parent directories (read-only safe)."""
+    from repo2graph.export import make_path, make_paths
+
+    out = tmp_path / "out"
+    # Pre-create the directory hierarchy (simulating existing/read-only volume)
+    (out / "agent").mkdir(parents=True)
+    (out / "human").mkdir(parents=True)
+
+    # Monkeypatch mkdir to raise PermissionError if called
+    def exploding_mkdir(*args, **kwargs):
+        raise PermissionError("Read-only file system")
+
+    monkeypatch.setattr(Path, "mkdir", exploding_mkdir)
+
+    # Neither make_path nor make_paths should call mkdir when the parent exists
+    p1 = make_path(out, "nodes.jsonl")
+    assert p1.parent == out / "agent"
+
+    p2 = make_paths(out, "overview.md")
+    assert len(p2) == 2
 
 
 def test_docstring_raw_and_unicode_prefixes():
@@ -2826,3 +3038,242 @@ def test_pack_context_exclude_secrets(tmp_path):
     assert ".env" not in paths_clean
     assert "secret.json" not in paths_clean
     assert "main.py" in paths_clean
+
+
+def test_iss75_ext_lang_mts_cts(tmp_path):
+    """Issue 75: EXT_LANG recognizes .mts and .cts as TypeScript."""
+    from repo2graph.parse import EXT_LANG, parse_source
+
+    assert EXT_LANG.get(".mts") == "typescript"
+    assert EXT_LANG.get(".cts") == "typescript"
+
+    src = b"export function greet(name: string): string {\n    return `Hello, ${name}`;\n}\n"
+    pf_mts = parse_source(src, EXT_LANG[".mts"])
+    assert any(s.name == "greet" for s in pf_mts.symbols)
+
+    pf_cts = parse_source(src, EXT_LANG[".cts"])
+    assert any(s.name == "greet" for s in pf_cts.symbols)
+
+
+def test_iss135_overview_human_respects_custom_max_file_mb(tmp_path):
+    """Issue 135: write_overview_human dynamically labels the skipped_too_large
+    threshold based on config.max_file_mb rather than hardcoding 1.5 MB."""
+    from repo2graph.export import write_overview_human
+    from repo2graph.graph import Graph
+    from repo2graph.parse import BuildConfig
+
+    g = Graph(tmp_path, "test")
+    g.config = BuildConfig(max_file_bytes=10_000_000)
+    g.stats["skipped_too_large"] = 3
+
+    out_file = tmp_path / "overview.md"
+    write_overview_human(g, out_file)
+    text = out_file.read_text(encoding="utf8")
+    assert "- files over 10 MB: 3" in text
+    assert "1.5 MB" not in text
+
+
+def test_iss140_fetch_subprocess_passes_stdin_devnull(tmp_path, monkeypatch):
+    """Issue 140: fetch.py subprocess invocations must specify stdin=subprocess.DEVNULL."""
+    from repo2graph import fetch
+
+    recorded_calls = []
+
+    class _FakeResult:
+        returncode = 0
+        stdout = "git version 2.40.0\n"
+        stderr = ""
+
+    def fake_run(*args, **kwargs):
+        recorded_calls.append((args, kwargs))
+        res = _FakeResult()
+        if "rev-parse" in args[0]:
+            res.stdout = "0123456789abcdef\n"
+        return res
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+    # Test _git_version
+    fetch._git_version_cache = None
+    fetch._git_version()
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+    # Test head_sha
+    fetch.head_sha(tmp_path)
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+    # Test clone (new)
+    fetch.clone("owner/repo", tmp_path)
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+
+def test_iss149_clone_fetches_ref_on_existing_clone(tmp_path, monkeypatch):
+    """Issue 149: clone() fetches target ref before checkout when reusing existing clone."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    recorded_cmds = []
+
+    class _FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, *args, **kwargs):
+        recorded_cmds.append((cmd, kwargs.get("stdin")))
+        return _FakeResult()
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+    res = fetch.clone("owner/repo", tmp_path, ref="feature-x")
+    assert res == target
+
+    # Assert fetch origin feature-x was called before checkout
+    cmds = [c[0] for c in recorded_cmds]
+    assert any("fetch" in cmd and "feature-x" in cmd and "--depth" in cmd for cmd in cmds)
+    assert any("checkout" in cmd and "feature-x" in cmd for cmd in cmds)
+
+    fetch_idx = next(i for i, cmd in enumerate(cmds) if "fetch" in cmd and "feature-x" in cmd)
+    checkout_idx = next(i for i, cmd in enumerate(cmds) if "checkout" in cmd and "feature-x" in cmd)
+    assert fetch_idx < checkout_idx
+
+    # All commands must pass stdin=subprocess.DEVNULL
+    for cmd, stdin_val in recorded_cmds:
+        assert stdin_val == subprocess.DEVNULL, f"{cmd} missing stdin=DEVNULL"
+
+
+def test_iss143_expand_respects_per_hop(tmp_path):
+    """Issue 143: expand(per_hop=...) allows expansion beyond 60 nodes."""
+    from repo2graph.query import Index
+
+    agent = tmp_path / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    (agent / "chunks.jsonl").write_text("", encoding="utf8")
+    nodes = [{"id": "seed", "type": "symbol", "name": "seed", "path": "s.py"}]
+    edges = []
+    for i in range(80):
+        nid = f"dst_{i}"
+        nodes.append({"id": nid, "type": "symbol", "name": nid, "path": "s.py"})
+        edges.append({"src": "seed", "dst": nid, "type": "CALLS", "confidence": 1.0})
+
+    (agent / "nodes.jsonl").write_text(
+        "".join(json.dumps(n) + "\n" for n in nodes), encoding="utf8"
+    )
+    (agent / "edges.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in edges), encoding="utf8"
+    )
+
+    idx = Index(tmp_path)
+    # With per_hop=70, should expand exactly 70 nodes (previously capped at 60)
+    exp70 = idx.expand(["seed"], hops=1, per_hop=70)
+    assert len(exp70) == 70
+
+    # With per_hop=40, should expand exactly 40 nodes
+    exp40 = idx.expand(["seed"], hops=1, per_hop=40)
+    assert len(exp40) == 40
+
+
+def test_iss147_load_parse_cache_does_not_create_directories(tmp_path, monkeypatch):
+    """Issue 147: load_parse_cache does not call make_paths or mkdir on nonexistent/read-only directories."""
+    from repo2graph.export import load_parse_cache
+
+    nonexistent = tmp_path / "nonexistent_index"
+    # Calling load_parse_cache on nonexistent path must not create directories
+    res = load_parse_cache(nonexistent)
+    assert res == {}
+    assert not nonexistent.exists()
+
+    # Also verify that if mkdir raises PermissionError, load_parse_cache succeeds without invoking mkdir
+    def forbid_mkdir(*args, **kwargs):
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", forbid_mkdir)
+    res = load_parse_cache(tmp_path)
+    assert res == {}
+
+
+def test_graph_limit_exceeded_cli_returns_clean_exit(tmp_path, capsys):
+    """GraphLimitExceeded produces exit code 1 and a clean stderr message, not a traceback."""
+    from repo2graph.cli import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f1.py").write_text("def a(): pass\ndef b(): pass\n")
+    (repo / "f2.py").write_text("def c(): pass\ndef d(): pass\n")
+    out = tmp_path / "idx"
+
+    ret = main(["build", str(repo), "-o", str(out), "--max-nodes", "2"])
+    assert ret == 1
+    captured = capsys.readouterr()
+    assert "Graph node limit exceeded" in captured.err
+    assert "max_nodes=2" in captured.err
+    # No traceback: stderr should not contain "Traceback"
+    assert "Traceback" not in captured.err
+
+
+def test_safe_open_uses_o_nofollow(tmp_path, monkeypatch):
+    """_safe_open uses O_NOFOLLOW where supported, same as _safe_read_bytes."""
+    import os
+    from repo2graph.graph import _safe_open
+
+    f = tmp_path / "test.txt"
+    f.write_bytes(b"chunk data here")
+
+    # Verify basic read works
+    with _safe_open(f) as fh:
+        assert fh.read() == b"chunk data here"
+
+    # Verify O_NOFOLLOW is in the flags when available
+    opened_flags = []
+    real_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        opened_flags.append(flags)
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+
+    with _safe_open(f) as fh:
+        data = fh.read()
+    assert data == b"chunk data here"
+    assert len(opened_flags) == 1
+    assert opened_flags[0] & 0x20000 == 0x20000
+
+
+def test_clone_does_not_checkout_fetch_head_on_failed_fetch(tmp_path, monkeypatch):
+    """When git fetch fails (returncode != 0), clone() must NOT fall back to FETCH_HEAD
+    which could be stale from a prior run."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    recorded_cmds = []
+
+    class _FakeResult:
+        def __init__(self, returncode=0):
+            self.returncode = returncode
+            self.stdout = ""
+            self.stderr = "error: pathspec not found"
+
+    def fake_run(cmd, *args, **kwargs):
+        recorded_cmds.append(cmd)
+        if "fetch" in cmd:
+            return _FakeResult(returncode=128)  # fetch fails
+        if "checkout" in cmd and "FETCH_HEAD" in cmd:
+            # If this is ever called, the bug is back
+            raise AssertionError("FETCH_HEAD checkout must not be attempted when fetch failed")
+        if "checkout" in cmd:
+            return _FakeResult(returncode=1)  # checkout also fails (ref not found)
+        return _FakeResult(returncode=0)
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+
+    with pytest.raises(RuntimeError, match="git checkout .* failed"):
+        fetch.clone("owner/repo", tmp_path, ref="nonexistent-branch")
+
+    # Verify FETCH_HEAD checkout was never attempted
+    all_cmd_strs = [" ".join(str(c) for c in cmd) for cmd in recorded_cmds]
+    assert not any("FETCH_HEAD" in s for s in all_cmd_strs)

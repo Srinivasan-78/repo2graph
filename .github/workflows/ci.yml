@@ -52,12 +52,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install uv
+      - name: Install uv
+        run: pip install uv
 
       - name: uv.lock must be current
         # A stale lockfile makes `uv sync` fail outright, so it would break the
         # very hosts the lockfile exists to make reproducible.
-        run: uv lock --check
+        run: |
+          if ! uv lock --check; then
+            echo "::error title=Stale uv.lock::uv.lock is out of sync with pyproject.toml. Please run 'uv lock' locally and commit the updated uv.lock file."
+            exit 1
+          fi
 
       - name: Without the mcp extra, the server refuses legibly
         run: |

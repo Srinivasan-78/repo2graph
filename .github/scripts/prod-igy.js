@@ -47,6 +47,20 @@ const LABEL_DEFINITIONS = {
 
 const BOT_MARKER = '<!-- prod-igy-bot-comment -->';
 
+// issue_comment may be posted by anyone who can comment on a PR. Only these
+// associations may start privileged triage (labels + bot comment).
+const TRUSTED_ASSOCIATIONS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
+function isTrustedCommenter(association) {
+  return TRUSTED_ASSOCIATIONS.includes(String(association || '').toUpperCase());
+}
+
+// git check-ref-format allows backticks in a ref name. Interpolating a raw
+// fork head/base into markdown `...` would let that ref close the span.
+function escapeMdRef(ref) {
+  return String(ref).replace(/`/g, '');
+}
+
 function calculateSize(linesChanged) {
   if (linesChanged < 10) return 'size/XS';
   if (linesChanged < 50) return 'size/S';
@@ -151,6 +165,14 @@ function checkAgentsRules(changedFiles) {
     );
   }
 
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    guidance.push(
+      '- **Lockfile Sync (`uv.lock`)**: `pyproject.toml` was modified without updating `uv.lock`. Run `uv lock` locally and commit `uv.lock`, otherwise the `packaging` CI job will fail (`uv lock --check`).'
+    );
+  }
+
   return guidance;
 }
 
@@ -171,6 +193,8 @@ function formatBotComment({
   guidance,
   labelsApplied,
 }) {
+  baseRef = escapeMdRef(baseRef);
+  headRef = escapeMdRef(headRef);
   const shortBaseSha = baseSha ? baseSha.substring(0, 7) : 'unknown';
   const shortHeadSha = headSha ? headSha.substring(0, 7) : 'unknown';
 
@@ -203,6 +227,23 @@ function formatBotComment({
       `> # Resolve conflicts in your editor, then:\n` +
       `> git add <resolved-files>\n` +
       `> git commit -m "Merge latest ${baseRef} and resolve conflicts"\n` +
+      `> git push\n` +
+      `> \`\`\``
+    );
+  }
+
+  // Lockfile warning
+  const touchesPyproject = changedFiles.some(f => f === 'pyproject.toml');
+  const touchesLock = changedFiles.some(f => f === 'uv.lock');
+  if (touchesPyproject && !touchesLock) {
+    warnings.push(
+      `> ⚠️ **Attention @${author}**: \`pyproject.toml\` was modified without updating \`uv.lock\`.\n` +
+      `> The \`packaging\` CI workflow requires \`uv.lock\` to match \`pyproject.toml\`.\n` +
+      `> Please run \`uv lock\` locally and commit the updated \`uv.lock\`:\n` +
+      `> \`\`\`bash\n` +
+      `> uv lock\n` +
+      `> git add uv.lock\n` +
+      `> git commit -m "chore: update uv.lock"\n` +
       `> git push\n` +
       `> \`\`\``
     );
@@ -499,6 +540,13 @@ module.exports = async function run({ github, context, core }) {
       core.info('Comment is not on a pull request. Skipping.');
       return;
     }
+    const association = context.payload?.comment?.author_association;
+    if (!isTrustedCommenter(association)) {
+      core.info(
+        `Ignoring issue_comment from untrusted author_association=${association || 'missing'}.`
+      );
+      return;
+    }
     await triagePullRequest({ github, owner, repo, prNumber: issue.number, core });
     return;
   }
@@ -520,5 +568,8 @@ module.exports.detectAreas = detectAreas;
 module.exports.extractIssues = extractIssues;
 module.exports.checkAgentsRules = checkAgentsRules;
 module.exports.formatBotComment = formatBotComment;
+module.exports.escapeMdRef = escapeMdRef;
+module.exports.isTrustedCommenter = isTrustedCommenter;
+module.exports.TRUSTED_ASSOCIATIONS = TRUSTED_ASSOCIATIONS;
 module.exports.LABEL_DEFINITIONS = LABEL_DEFINITIONS;
 module.exports.BOT_MARKER = BOT_MARKER;

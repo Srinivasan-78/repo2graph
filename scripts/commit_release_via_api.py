@@ -21,13 +21,18 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 API = "https://api.github.com"
 
 
 def api(
-    method: str, path: str, token: str, payload: dict[str, Any] | None = None
+    method: str,
+    path: str,
+    token: str,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 30.0,
 ) -> dict[str, Any]:
     req = urllib.request.Request(
         f"{API}{path}",
@@ -40,7 +45,7 @@ def api(
         },
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             result: dict[str, Any] = json.load(resp)
             return result
     except urllib.error.HTTPError as exc:
@@ -77,7 +82,14 @@ def main() -> None:
             token,
             {"content": base64.b64encode(content).decode("ascii"), "encoding": "base64"},
         )
-        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+        tree_entries.append(
+            {
+                "path": Path(path).as_posix().replace("\\", "/"),
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob["sha"],
+            }
+        )
 
     tree = api(
         "POST",

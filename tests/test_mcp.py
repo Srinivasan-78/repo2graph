@@ -13,7 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from conftest import MINI_QUERY, REPO_ROOT, SECRET_QUERY, SYM_AUDIT, SYM_ROUTE
+from conftest import (
+    MINI_QUERY,
+    REPO_ROOT,
+    SECRET_QUERY,
+    SYM_AUDIT,
+    SYM_ROUTE,
+    build_mini_index,
+    write_mini_repo,
+)
 from repo2graph.query import Index, _is_secret_path
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -1278,3 +1286,58 @@ def test_r9_sane_string_arguments_are_left_alone(mini_index):
     idx.pack_context = spy
     mcp.tool_repo_search(idx, MINI_QUERY)
     assert seen["query"] == MINI_QUERY
+
+
+def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
+    """Issue 125: open_index detects when index was rebuilt externally and reloads."""
+    import os
+    import time
+    from repo2graph.export import path as artifact_path
+    from repo2graph.cache import ResultCache
+
+    mcp = mcp_module()
+    repo = write_mini_repo(tmp_path)
+    out = tmp_path / "idx"
+    build_mini_index(repo, out)
+
+    cache = ResultCache()
+    idx1 = mcp.open_index(out, cache=cache)
+    assert idx1 is not None
+    assert mcp.open_index(out, cache=cache) is idx1
+
+    cache.put("test_key", "cached_val")
+    assert cache.get("test_key") == "cached_val"
+
+    time.sleep(0.05)
+    manifest = artifact_path(out, "manifest.json")
+    if manifest.exists():
+        new_mtime = manifest.stat().st_mtime + 10.0
+        os.utime(manifest, (new_mtime, new_mtime))
+    chunks = artifact_path(out, "chunks.jsonl")
+    if chunks.exists():
+        new_mtime = chunks.stat().st_mtime + 10.0
+        os.utime(chunks, (new_mtime, new_mtime))
+
+    idx2 = mcp.open_index(out, cache=cache)
+    assert idx2 is not idx1
+    assert cache.get("test_key") is None
+
+
+def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
+    """Issue 124: repo_neighbours explores CONTAINS edges for dirs and files, and includes low-confidence calls."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+
+    # For dir: node, CONTAINS edges should return contained files
+    dir_id = "dir:pkg"
+    out_dir = mcp.tool_repo_neighbours(idx, dir_id)
+    assert "CONTAINS" in out_dir
+    assert "pkg/gateway.py" in out_dir or "gateway.py" in out_dir
+    assert "- (none)" not in out_dir
+
+    # For file: node, CONTAINS edges should return contained symbols
+    file_id = "file:pkg/gateway.py"
+    out_file = mcp.tool_repo_neighbours(idx, file_id)
+    assert "CONTAINS" in out_file
+    assert "route_request" in out_file
+    assert "- (none)" not in out_file

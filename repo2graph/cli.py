@@ -19,10 +19,11 @@ from .export import (
     load_parse_cache,
     make_path,
     path as artifact_path,
+    register_written,
     rel as artifact_rel,
 )
 from .events import SAFE_ERRORS, encodable, write_safe
-from .graph import build
+from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -93,18 +94,23 @@ def cmd_build(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        max_nodes=getattr(args, "max_nodes", 0),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
     # them below -- CHANGELOG.md (written after dump_all, when "overview" is
-    # requested) diffs the graph just built against this.
+    # requested) diffs the graph just built against this. previous_state
+    # materialises both jsonl files; skip it when no changelog will be written
+    # so a `--formats jsonl` rebuild does not hold a second copy of the graph
+    # for the duration of build() + dump_all() (#205).
     from .changelog import previous_state, resolve_shas, write_changelog
 
-    prev_state = previous_state(outdir)
     write_human_changelog = "overview" in formats
+    prev_state = None
     short_sha = prev_short_sha = None
     if write_human_changelog:
+        prev_state = previous_state(outdir)
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
     g = build(
@@ -124,6 +130,10 @@ def cmd_build(args):
         from datetime import date
 
         write_changelog(outdir, g, prev_state, short_sha, prev_short_sha, date.today().isoformat())
+        cl_rel = artifact_rel("CHANGELOG.md")
+        register_written(outdir, [cl_rel])
+        if cl_rel not in written:
+            written.append(cl_rel)
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
@@ -132,8 +142,16 @@ def cmd_build(args):
 
 def cmd_github(args):
     from .fetch import index_github
+    from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+    config = BuildConfig(
+        max_file_bytes=int(args.max_file_mb * 1_000_000),
+        extra_exclude_dirs=args.extra_exclude_dirs or [],
+        include_vendor=args.include_vendor,
+        chunk_large_files=args.chunk_large_files,
+        max_nodes=getattr(args, "max_nodes", 0),
+    )
     meta = index_github(
         args.repo,
         Path(args.out),
@@ -148,6 +166,9 @@ def cmd_github(args):
         token=args.token,
         viz_nodes=args.viz_nodes,
         jobs=args.jobs,
+        config=config,
+        max_call_candidates=args.max_call_candidates,
+        no_chunks=args.no_chunks,
     )
     _emit(json.dumps(meta, indent=2))
 
@@ -466,10 +487,16 @@ def cmd_rag(args):
         budget_chars=args.budget,
         min_confidence=args.min_conf,
         expand_graph=not args.no_expand,
-        exclude_secrets=args.answer,
+        exclude_secrets=args.answer
+        or getattr(args, "exclude_secrets", False)
+        or bool(
+            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
+        ),
         vectors=vectors,
         embedder=embedder,
         budget_tokens=getattr(args, "budget_tokens", None),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
     )
     if args.answer:
         from .answer import stream_answer
@@ -693,6 +720,12 @@ def main(argv=None):
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
     )
+    b.add_argument(
+        "--max-nodes",
+        type=_nonneg,
+        default=0,
+        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
+    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
@@ -714,6 +747,45 @@ def main(argv=None):
         "--token",
         default=None,
         help="GitHub token for private repos (else $GH_TOKEN/$GITHUB_TOKEN)",
+    )
+    gh.add_argument("--no-chunks", action="store_true")
+    gh.add_argument(
+        "--max-call-candidates",
+        type=_posint,
+        default=5,
+        help="maximum number of candidates to keep for ambiguous calls",
+    )
+    gh.add_argument(
+        "--max-file-mb",
+        type=_max_file_mb,
+        default=1.5,
+        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
+    )
+    gh.add_argument(
+        "--include-vendor",
+        action="store_true",
+        default=False,
+        help="index files in vendor directories (default: off)",
+    )
+    gh.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        dest="extra_exclude_dirs",
+        metavar="NAME",
+        help="additional directory name to exclude (repeatable)",
+    )
+    gh.add_argument(
+        "--chunk-large-files",
+        action="store_true",
+        default=False,
+        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
+    gh.add_argument(
+        "--max-nodes",
+        type=_nonneg,
+        default=0,
+        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
     gh.set_defaults(func=cmd_github)
 
@@ -776,6 +848,28 @@ def main(argv=None):
         choices=("gemini", "openai", "anthropic", "ollama"),
         default=None,
         help="force a specific LLM provider for --answer",
+    )
+    r.add_argument(
+        "--exclude-secrets",
+        action="store_true",
+        default=False,
+        help="exclude secret files from pack even when --answer is not set",
+    )
+    r.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to exclude as secret file/path (repeatable)",
+    )
+    r.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to exclude as secret path (repeatable)",
     )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)
@@ -840,6 +934,9 @@ def main(argv=None):
         except Exception:
             pass
         return 0
+    except _GraphLimitExceeded as exc:
+        print(f"repo2graph: error: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

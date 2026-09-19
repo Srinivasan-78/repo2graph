@@ -1352,6 +1352,57 @@ def test_pack_context_exclude_secrets(rag_index):
     assert not any(c.get("path") in (".env", "secret_key.pem") for c in res_excluded["neighbors"])
 
 
+def test_iss83_configurable_secret_denylist(rag_index):
+    """Issue 83: pack_context supports user-configurable secret keywords and directories."""
+    chunk1 = [c for c in rag_index.chunks if c.get("name") == "authenticate"][0]
+    chunk1["path"] = "custom_vault/config.json"
+    chunk2 = [c for c in rag_index.chunks if c.get("name") == "normalize_provider"][0]
+    chunk2["path"] = "corp_internal_secret.py"
+
+    # Default exclude_secrets=True does not know about custom_vault or corp_internal_secret
+    res_default = rag_index.pack_context("authenticate", exclude_secrets=True)
+    paths_default = {c.get("path") for c in res_default["chunks"]}
+    assert "custom_vault/config.json" in paths_default
+    assert "corp_internal_secret.py" in paths_default
+
+    # With extra_secret_dirs and extra_secret_keywords specified
+    res_custom = rag_index.pack_context(
+        "authenticate",
+        exclude_secrets=True,
+        extra_secret_dirs=["custom_vault"],
+        extra_secret_keywords=["corp_internal_secret"],
+    )
+    paths_custom = {c.get("path") for c in res_custom["chunks"]}
+    assert "custom_vault/config.json" not in paths_custom
+    assert "corp_internal_secret.py" not in paths_custom
+    assert "custom_vault/config.json" not in res_custom["markdown"]
+    assert "corp_internal_secret.py" not in res_custom["markdown"]
+
+
+def test_iss83_cli_flags(monkeypatch):
+    """Issue 83: CLI supports --secret-keyword, --secret-dir, and --exclude-secrets flags."""
+    from repo2graph import cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_rag", lambda args: seen.update(vars(args)))
+    cli.main(
+        [
+            "rag",
+            "question",
+            "--secret-keyword",
+            "foo",
+            "--secret-keyword",
+            "bar",
+            "--secret-dir",
+            "baz",
+            "--exclude-secrets",
+        ]
+    )
+    assert seen["extra_secret_keywords"] == ["foo", "bar"]
+    assert seen["extra_secret_dirs"] == ["baz"]
+    assert seen["exclude_secrets"] is True
+
+
 def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
     """N-11: BrokenPipeError from stream writer propagates directly, not wrapped in SystemExit."""
     import repo2graph.answer as answer
@@ -1492,6 +1543,43 @@ def test_pick_provider_google_api_key_fallback():
     assert spec_both["name"] == "gemini"
     assert spec_both["env"] == "GEMINI_API_KEY"
     assert spec_both["value"] == "gem-key"
+
+
+def test_iss130_default_models_current_and_overridable():
+    """#130: DEFAULT_MODELS stay on current cheap/fast ids; --model overrides."""
+    import repo2graph.answer as answer
+
+    assert answer.DEFAULT_MODELS == {
+        "gemini": "gemini-3.6-flash",
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-haiku-4-5",
+        "ollama": "llama3.1",
+    }
+    assert "claude-3-5-haiku" not in answer.DEFAULT_MODELS["anthropic"]
+
+    _, _, payload = answer._request(
+        {"name": "anthropic", "value": "sk-test"},
+        None,
+        "system",
+        "user",
+    )
+    assert payload["model"] == "claude-haiku-4-5"
+
+    _, _, overridden = answer._request(
+        {"name": "anthropic", "value": "sk-test"},
+        "custom-haiku-override",
+        "system",
+        "user",
+    )
+    assert overridden["model"] == "custom-haiku-override"
+
+    url, _, _ = answer._request(
+        {"name": "gemini", "value": "k"},
+        None,
+        "system",
+        "user",
+    )
+    assert url.endswith("/v1beta/models/gemini-3.6-flash:streamGenerateContent?alt=sse")
 
 
 def test_ollama_request_num_ctx_and_gemini_traversal():
@@ -1644,3 +1732,45 @@ def test_cite_block_handles_none_line_numbers():
     )
     assert "### [cite: module.py:1-1] `residual` (file_residual)" in block
     assert r"\   ### [cite: forged]" in block
+
+
+def test_multi_segment_secret_dir_matching():
+    """Multi-segment extra_dirs like 'configs/secrets' must match paths under that prefix."""
+    from repo2graph.query import _is_secret_path
+
+    # Single-segment still works
+    assert _is_secret_path("vault/token.json", extra_dirs=["vault"])
+    # Multi-segment dir prefix
+    assert _is_secret_path("configs/secrets/token.json", extra_dirs=["configs/secrets"])
+    assert _is_secret_path("configs/secrets/nested/key.pem", extra_dirs=["configs/secrets"])
+    # Must not match partial segment names: "a/bc" does not match "a/b"
+    assert not _is_secret_path("configs/secretsX/foo.txt", extra_dirs=["configs/secrets"])
+    # Windows backslashes are normalised
+    assert _is_secret_path("configs\\secrets\\key.json", extra_dirs=["configs\\secrets"])
+    # Non-matching path
+    assert not _is_secret_path("src/main.py", extra_dirs=["configs/secrets"])
+
+
+def test_empty_secret_keyword_does_not_match_all():
+    """An empty string keyword must not match every file in the repository."""
+    from repo2graph.query import _is_secret_path
+
+    # Empty string keyword should be filtered out (not match everything)
+    assert not _is_secret_path("src/main.py", extra_keywords=[""])
+    assert not _is_secret_path("utils/helpers.py", extra_keywords=["", " "])
+    # A real keyword still works
+    assert _is_secret_path("config_private.json", extra_keywords=["private"])
+    # Whitespace-only keyword is also filtered out
+    assert not _is_secret_path("normal.py", extra_keywords=["  "])
+
+
+def test_sanitize_header_value_strips_crlf():
+    """_sanitize_header_value must strip CR, LF, and NUL from header values."""
+    from repo2graph.http_server import _sanitize_header_value
+
+    assert _sanitize_header_value("clean") == "clean"
+    assert _sanitize_header_value("evil\r\nX-Injected: yes") == "evilX-Injected: yes"
+    assert _sanitize_header_value("evil\0byte") == "evilbyte"
+    assert _sanitize_header_value("\r\n\0") == ""
+    # No mutation on safe values
+    assert _sanitize_header_value("Authorization, Content-Type") == "Authorization, Content-Type"

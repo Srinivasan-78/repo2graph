@@ -31,10 +31,17 @@ MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 
 
+class GraphLimitExceeded(RuntimeError):
+    """Raised when the graph exceeds a configured resource limit (ISS-85, ISS-156)."""
+
+    pass
+
+
 class Graph:
     def __init__(self, root: Path, name: str, max_files: int = 0):
         self.root, self.name = root, name
         self.max_files = max_files
+        self.config = None
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
@@ -67,6 +74,12 @@ class Graph:
                 }
             )
         else:
+            max_nodes = getattr(self.config, "max_nodes", 0) if self.config else 0
+            if max_nodes > 0 and len(self.nodes) >= max_nodes:
+                raise GraphLimitExceeded(
+                    f"Graph node limit exceeded: graph reached {len(self.nodes)} nodes (max_nodes={max_nodes}). "
+                    "Use --max-nodes to increase the limit or filter with --include/--exclude."
+                )
             self.nodes[nid] = dict(id=nid, **attrs)
         self._warn_if_large()
         return nid
@@ -284,7 +297,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     line_offset = 0
     raw_content = bytearray()
 
-    with open(abspath, "rb") as f:
+    with _safe_open(abspath) as f:
         while True:
             chunk = f.read(chunk_size)
             if not chunk:
@@ -345,6 +358,58 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     return rel, lang, (len(raw_content), lines, pf, digest)
 
 
+_ORIGINAL_READ_BYTES = Path.read_bytes
+
+
+def _safe_read_bytes(path: Path) -> bytes:
+    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races (ISS-87).
+
+    On POSIX systems, O_NOFOLLOW causes open() to fail if the trailing component is a
+    symlink (protecting against an attacker replacing a discovered regular file with a
+    symlink to a sensitive file before open). On Windows, O_NOFOLLOW is not supported
+    by the OS open(), so standard read flags are used.
+    """
+    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
+        return path.read_bytes()
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is not None:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
+        fd = os.open(path, flags)
+        try:
+            with os.fdopen(fd, "rb") as fh:
+                return fh.read()
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    return path.read_bytes()
+
+
+def _safe_open(path: Path, mode: str = "rb"):
+    """Open a file with O_NOFOLLOW where supported (ISS-87).
+
+    Like _safe_read_bytes, but returns a file object for chunked reading
+    (used by _chunk_and_parse for files larger than config.max_file_bytes).
+    """
+    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
+        return open(path, mode)  # noqa: SIM115 -- test harness monkey-patched read_bytes
+    o_nofollow = getattr(os, "O_NOFOLLOW", None)
+    if o_nofollow is not None:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
+        fd = os.open(path, flags)
+        try:
+            return os.fdopen(fd, mode)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+    return open(path, mode)  # noqa: SIM115
+
+
 def _read_and_parse(item):
     """Read one file and parse it if it is code.
 
@@ -368,7 +433,7 @@ def _read_and_parse(item):
         pass
 
     try:
-        raw = abspath.read_bytes()
+        raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
     try:
@@ -486,7 +551,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         order.append(rel)
         lang = EXT_LANG.get(abspath.suffix.lower())
         try:
-            raw = abspath.read_bytes()
+            raw = _safe_read_bytes(abspath)
         except OSError:
             results[rel] = (rel, lang, None)
             continue
@@ -581,6 +646,7 @@ def build(
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
     g = Graph(root, root.name, max_files=max_files)
+    g.config = config
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
@@ -723,14 +789,17 @@ def build(
                     norm_scores = {c: s / total_score for c, s in scores.items()}
 
                     N = len(pick)
-                    threshold = 1.0 / min(N, 3)
+                    threshold = 1.0 / min(N, max_call_candidates)
                     heuristics_fired = any(s != 1.0 for s in scores.values())
 
                     if heuristics_fired:
                         kept = {c: ns for c, ns in norm_scores.items() if ns >= threshold}
                         if not kept:
                             sorted_c = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
-                            kept = dict(sorted_c[: min(N, 3)])
+                            kept = dict(sorted_c[: min(N, max_call_candidates)])
+                        elif len(kept) > max_call_candidates:
+                            sorted_c = sorted(kept.items(), key=lambda x: x[1], reverse=True)
+                            kept = dict(sorted_c[:max_call_candidates])
 
                         ambiguous = len(kept) > 1
                         for c, conf in kept.items():
@@ -743,8 +812,7 @@ def build(
                                 **({"ambiguous": True} if ambiguous else {}),
                             )
                     else:
-                        limit = min(N, 3)
-                        limit = min(limit, max_call_candidates)
+                        limit = min(N, max_call_candidates)
                         if limit > 0:
                             # keep up to limit
                             for c in pick[:limit]:
@@ -753,7 +821,7 @@ def build(
                                     c,
                                     "CALLS",
                                     count=count,
-                                    confidence=round(1.0 / min(N, 3), 3),
+                                    confidence=round(1.0 / limit, 3),
                                     ambiguous=True,
                                 )
                         else:
