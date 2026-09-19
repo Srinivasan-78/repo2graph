@@ -325,6 +325,9 @@ runs:
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add -A
         git commit -qm "graph for ${GITHUB_SHA:0:12}"
-        git push -q --force \
-          "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
-          "$R2G_BRANCH"
+        git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+        # Credential goes through a config value, never CLI argv or a URL: argv is
+        # readable via `ps`/`/proc/$PID/cmdline` by any process on the host.
+        git config --local http.https://github.com/.extraheader \
+          "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+        git push -q --force origin "$R2G_BRANCH"

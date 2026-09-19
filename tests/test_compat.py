@@ -580,3 +580,74 @@ def test_r9_the_fallback_version_agrees_with_pyproject():
     literals = re.findall(r"""__version__\s*=\s*["']([^"']+)["']""", source)
     assert literals, "no __version__ literal found"
     assert set(literals) == {declared}, (literals, declared)
+
+
+# ==========================================================================
+# Issue #165: the "Push graph to branch" step used to interpolate
+# GITHUB_TOKEN directly into the `git push` argv --
+#   git push -q --force "https://x-access-token:${GITHUB_TOKEN}@github.com/..." "$R2G_BRANCH"
+# -- which puts the token in a word any process on the host/runner can read
+# via `ps aux` or `/proc/$PID/cmdline` for the duration of the push. The fix
+# routes the credential through `http.extraheader` in the local git config
+# instead, so `git push`'s own argv never contains it.
+
+
+def _resolved_push_git_calls(tmp_path: Path, token: str) -> list:
+    """Every `git ...` invocation the "Push graph to branch" step's real body
+    makes, as the literal argv bash hands it -- captured by overriding `git`
+    with a shell function instead of truncating/rewriting the script, so the
+    step body under test is exactly what's in action.yml, unmodified."""
+    body = _run_body(_action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch"))
+    log = tmp_path / "git-calls.log"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
+    script = (
+        'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n'
+        + body
+    )
+    env = dict(os.environ)
+    env.update(
+        GITHUB_TOKEN=token,
+        GITHUB_REPOSITORY="acme/widgets",
+        GITHUB_SHA="0" * 40,
+        R2G_OUT=str(out_dir),
+        R2G_BRANCH="r2g-graph",
+        GIT_LOG=str(log),
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = []
+    for line in log.read_text(encoding="utf8").split("\n"):
+        if line:
+            calls.append(line.split("\x1f")[:-1])
+    return calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss165_the_token_never_appears_in_a_git_argv_word(tmp_path):
+    """The exact secret value must not be a word in any `git` invocation's
+    argv -- not just the `push` call, since a leak in `remote add` or
+    elsewhere would be just as visible to `ps`."""
+    token = "ghs_TotallyFakeIssue165ProbeToken"  # noqa: S105 - test fixture, not a real credential
+    calls = _resolved_push_git_calls(tmp_path, token)
+    assert calls, "the step made no git calls"
+    for call in calls:
+        assert not any(token in word for word in call), call
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
+    """`git push`'s own argv is exactly the safe, credential-free form --
+    the URL-with-embedded-token this issue reports is gone, and so is any
+    other rendering of the credential (e.g. a bare `x-access-token`)."""
+    token = "ghs_TotallyFakeIssue165ProbeToken"  # noqa: S105 - test fixture, not a real credential
+    calls = _resolved_push_git_calls(tmp_path, token)
+    push_calls = [c for c in calls if c[:1] == ["push"]]
+    assert len(push_calls) == 1, calls
+    assert push_calls[0] == ["push", "-q", "--force", "origin", "r2g-graph"]
+    for call in calls:
+        assert not any("x-access-token" in word for word in call), call
+        assert not any(word.startswith("https://") and "@" in word for word in call), call
