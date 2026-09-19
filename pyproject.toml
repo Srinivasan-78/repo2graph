@@ -50,10 +50,11 @@ dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5
 # boost with zero extra dependencies when these are not installed.
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
-# Bounded below 2 on purpose: `serve()` drives the 1.x decorator API
-# (`@server.list_tools()` / `@server.call_tool()`), which mcp 2.x removed. An
-# unbounded `mcp>=1.0` resolves to 2.x today and crashes the server on start.
-# See docs/BACKLOG.md ("Port the MCP server to the 2.x SDK API").
+# Bounded below 3 on purpose: `serve()` prefers the 1.x decorator API
+# (`@server.list_tools()` / `@server.call_tool()`) and falls back to the 2.x
+# constructor hooks (`on_list_tools` / `on_call_tool`) when those methods
+# are gone. 3.x is untested. A remaining native 2.x registration-API port
+# is in docs/BACKLOG.md ("Port the MCP server to the 2.x SDK API").
 mcp = ["mcp>=1.0,<3.0"]
 
 [tool.pytest.ini_options]
