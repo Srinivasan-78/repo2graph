@@ -198,8 +198,9 @@ resolution limits).
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
 **Environment variables** (only read by `rag --answer`, in this precedence order):
-`GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `OLLAMA_HOST`. No other command makes a
-network call or reads these. Full flag tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
+`GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `OLLAMA_HOST`. `--model` overrides the
+provider's best-effort default. No other command makes a network call or reads these. Full flag
+tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 
 ## 🔐 Security
 
