@@ -362,3 +362,16 @@ def test_iss208_format_bot_comment_strips_backticks_from_refs():
     assert rendered.count("`") == 2
     assert "`" not in escaped
     assert f"`{raw}`".count("`") == 3
+
+
+def test_prod_igy_auto_retargets_main_to_develop():
+    """Verify that prod-igy automatically retargets PRs from main to develop and posts notice."""
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    # Triage step checks base == 'main' and retargets to 'develop'
+    assert "baseRef === 'main' && headRef !== 'develop'" in content
+    assert "base: 'develop'" in content
+
+    # formatBotComment contains the retargeted notice
+    assert "Base Branch Notice @${author}" in content
+    assert "automatically retargeted this PR to \\`develop\\`" in content

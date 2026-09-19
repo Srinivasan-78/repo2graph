@@ -192,6 +192,7 @@ function formatBotComment({
   changedFiles,
   guidance,
   labelsApplied,
+  retargetedToDevelop = false,
 }) {
   baseRef = escapeMdRef(baseRef);
   headRef = escapeMdRef(headRef);
@@ -200,6 +201,16 @@ function formatBotComment({
 
   let alertBlock = '';
   const warnings = [];
+
+  // Retargeted notice
+  if (retargetedToDevelop) {
+    warnings.push(
+      `> 🔄 **Base Branch Notice @${author}**: This pull request was opened against \`main\`.\n` +
+      `> In this repository, all contributions and bug fixes are developed and tested on the \`develop\` branch first.\n` +
+      `> **\`prod-igy\` has automatically retargeted this PR to \`develop\`**.\n` +
+      `> Once merged into \`develop\` and verified through our CI pipeline, changes will be promoted to \`main\` in official releases. Thank you!`
+    );
+  }
 
   // Outdated check
   if (behindBy > 0) {
@@ -255,7 +266,9 @@ function formatBotComment({
 
   // Base description
   let baseDesc = '';
-  if (baseRef === 'main') {
+  if (baseRef === 'develop') {
+    baseDesc = `Targets \`develop\`, the primary integration and development branch for \`repo2graph\`.`;
+  } else if (baseRef === 'main') {
     baseDesc = `Targets \`main\`, the primary release branch for \`repo2graph\`.`;
   } else {
     baseDesc = `Targets \`${baseRef}\` (non-default branch).`;
@@ -315,10 +328,30 @@ async function triagePullRequest({ github, owner, repo, prNumber, core }) {
   });
 
   const author = pr.user.login;
-  const baseRef = pr.base.ref;
-  const baseSha = pr.base.sha;
+  let baseRef = pr.base.ref;
+  let baseSha = pr.base.sha;
   const headRef = pr.head.ref;
   const headSha = pr.head.sha;
+
+  // Auto-retarget to 'develop' if PR targets 'main' and is not a release PR from develop -> main
+  let retargetedToDevelop = false;
+  if (baseRef === 'main' && headRef !== 'develop') {
+    core.info(`[PR #${prNumber}] Base branch is 'main'. Retargeting to 'develop'...`);
+    try {
+      const { data: updatedPr } = await github.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        base: 'develop',
+      });
+      baseRef = 'develop';
+      baseSha = updatedPr.base.sha;
+      retargetedToDevelop = true;
+      core.info(`[PR #${prNumber}] Successfully retargeted base to 'develop'.`);
+    } catch (err) {
+      core.warning(`[PR #${prNumber}] Failed to retarget base to 'develop': ${err.message}`);
+    }
+  }
 
   // 2. Fetch list of changed files
   const changedFilesData = await github.paginate(github.rest.pulls.listFiles, {
@@ -477,6 +510,7 @@ async function triagePullRequest({ github, owner, repo, prNumber, core }) {
     changedFiles,
     guidance,
     labelsApplied: Array.from(labelsToAdd),
+    retargetedToDevelop,
   });
 
   // 10. Post or update comment idempotently
