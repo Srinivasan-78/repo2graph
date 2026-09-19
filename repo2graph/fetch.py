@@ -143,6 +143,26 @@ def clone(
     # ISS-21: detect an existing checkout and reuse it
     if target.is_dir() and (target / ".git").exists():
         if ref:
+            # ISS-149: a shallow cached clone may not carry `ref`. Fetch it
+            # first so checkout is not a pathspec miss.
+            try:
+                fetch_proc = subprocess.run(
+                    ["git", "-C", str(target), "fetch", "--depth", "1", "origin", ref],
+                    capture_output=True,
+                    encoding="utf8",
+                    errors="replace",
+                    timeout=GIT_TIMEOUT,
+                    env=_auth_env(token),
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("git fetch timed out") from None
+            except (OSError, subprocess.SubprocessError) as e:
+                raise RuntimeError(f"git fetch failed: {e}") from None
+            if fetch_proc.returncode != 0:
+                raise RuntimeError(
+                    f"git fetch {ref!r} in existing clone failed: "
+                    f"{_redact((fetch_proc.stderr or '').strip(), token)}"
+                )
             try:
                 proc = subprocess.run(
                     ["git", "-C", str(target), "checkout", ref],
@@ -152,6 +172,18 @@ def clone(
                     timeout=GIT_TIMEOUT,
                     env=_auth_env(token),
                 )
+                if proc.returncode != 0:
+                    # `git fetch origin <ref>` writes FETCH_HEAD without
+                    # creating a local branch or tag, so named checkout
+                    # still pathspec-misses. Detach onto the fetched commit.
+                    proc = subprocess.run(
+                        ["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
+                        capture_output=True,
+                        encoding="utf8",
+                        errors="replace",
+                        timeout=GIT_TIMEOUT,
+                        env=_auth_env(token),
+                    )
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git checkout timed out") from None
             except (OSError, subprocess.SubprocessError) as e:

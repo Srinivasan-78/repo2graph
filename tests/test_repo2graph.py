@@ -2236,14 +2236,171 @@ def test_clone_reuse_raises_when_checkout_of_ref_fails(tmp_path, monkeypatch):
     target = tmp_path / "repo"
     (target / ".git").mkdir(parents=True)
 
+    class _Ok:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
     class _FailedCheckout:
         returncode = 1
         stdout = ""
         stderr = "error: pathspec 'v9.9.9' did not match any file(s) known to git"
 
-    monkeypatch.setattr(fetch.subprocess, "run", lambda *a, **k: _FailedCheckout())
+    def fake_run(cmd, *a, **k):
+        # ISS-149 fetch must succeed so this still exercises the checkout error.
+        if "fetch" in cmd:
+            return _Ok()
+        return _FailedCheckout()
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
     with pytest.raises(RuntimeError, match="git checkout"):
         fetch.clone("owner/repo", tmp_path, ref="v9.9.9")
+
+
+def test_iss149_clone_fetches_ref_before_checkout_on_existing(tmp_path, monkeypatch):
+    """ISS-149: reuse + ref must fetch --depth 1 origin <ref> before checkout."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+    rec = _RunRecorder()
+    monkeypatch.setattr(fetch.subprocess, "run", rec)
+    token = "s3cr3t-FETCH-token-value"
+    res = fetch.clone("owner/repo", tmp_path, ref="feature-x", token=token)
+    assert res == target
+
+    git_cmds = [cmd for cmd, _a, _k in rec.calls if cmd and cmd[0] == "git" and cmd[1] != "--version"]
+    assert git_cmds[0] == ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "feature-x"]
+    assert git_cmds[1] == ["git", "-C", str(target), "checkout", "feature-x"]
+    for cmd, _a, kwargs in rec.calls:
+        assert "timeout" in kwargs, cmd
+        assert kwargs.get("encoding") == "utf8", cmd
+        assert kwargs.get("errors") == "replace", cmd
+        env = kwargs.get("env") or {}
+        assert env.get("GIT_TERMINAL_PROMPT") == "0"
+        for part in cmd:
+            assert token not in str(part), cmd
+
+
+def test_iss149_clone_reuse_fetch_failure_is_surfaced_and_redacted(tmp_path, monkeypatch):
+    """ISS-149: fetch failure on an existing clone is raised with the token redacted."""
+    import base64
+
+    from repo2graph import fetch
+
+    token = "secrettoken123"
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    class _Version:
+        returncode = 0
+        stdout = "git version 2.40.0\n"
+        stderr = ""
+
+    class _FailFetch:
+        returncode = 128
+        stdout = ""
+        stderr = f"fatal: could not read Username for 'https://github.com': {token} {basic}"
+
+    def fake_run(cmd, *a, **k):
+        if list(cmd)[:2] == ["git", "--version"]:
+            return _Version()
+        return _FailFetch()
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError) as exc:
+        fetch.clone("owner/repo", tmp_path, ref="feature-x", token=token)
+    msg = str(exc.value)
+    assert "git fetch" in msg
+    assert token not in msg
+    assert basic not in msg
+    assert "***" in msg
+
+
+def test_iss149_clone_reuse_fetch_timeout(tmp_path, monkeypatch):
+    """ISS-149: a hung fetch on an existing clone is the same class of error as checkout."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    def boom(cmd, *a, **k):
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
+
+    monkeypatch.setattr(fetch.subprocess, "run", boom)
+    with pytest.raises(RuntimeError, match="git fetch timed out"):
+        fetch.clone("owner/repo", tmp_path, ref="feature-x")
+
+
+def test_iss149_clone_reuses_shallow_clone_missing_ref(tmp_path):
+    """ISS-149: a real shallow clone missing `ref` fetches then checks it out.
+
+    Detector: drop the fetch / FETCH_HEAD fallback and this fails with the
+    pathspec error; `test_clone_reuse_raises_when_checkout_of_ref_fails` stays green.
+    """
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    from repo2graph import fetch
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "app.py").write_text("MAIN = 1\n", encoding="utf8")
+
+    def g(*args, cwd=origin):
+        subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+
+    subprocess.run(["git", "init", "-q", str(origin)], check=True, capture_output=True)
+    g("config", "user.email", "t@e.com")
+    g("config", "user.name", "t")
+    g("add", "-A")
+    g("commit", "-qm", "init")
+    default = subprocess.run(
+        ["git", "-C", str(origin), "rev-parse", "--abbrev-ref", "HEAD"],
+        check=True,
+        capture_output=True,
+        encoding="utf8",
+        errors="replace",
+    ).stdout.strip()
+    g("checkout", "-qb", "feature")
+    (origin / "app.py").write_text("FEATURE = 1\n", encoding="utf8")
+    g("add", "-A")
+    g("commit", "-qm", "feature")
+    # Return to the default branch so a depth-1 clone does not include feature.
+    g("checkout", "-q", default)
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    target = dest / "repo"
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1", origin.as_uri(), str(target)],
+        check=True,
+        capture_output=True,
+    )
+    missing = subprocess.run(
+        ["git", "-C", str(target), "checkout", "feature"],
+        capture_output=True,
+    )
+    assert missing.returncode != 0, "precondition: shallow clone must lack feature"
+
+    res = fetch.clone("owner/repo", dest, ref="feature")
+    assert res == target
+    assert (target / "app.py").read_text(encoding="utf8") == "FEATURE = 1\n"
+    got = subprocess.run(
+        ["git", "-C", str(target), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        encoding="utf8",
+        errors="replace",
+    ).stdout.strip()
+    want = subprocess.run(
+        ["git", "-C", str(origin), "rev-parse", "feature"],
+        check=True,
+        capture_output=True,
+        encoding="utf8",
+        errors="replace",
+    ).stdout.strip()
+    assert got == want
 
 
 def test_index_build_survives_a_null_qualname_in_chunks(tmp_path, sample_repo):
