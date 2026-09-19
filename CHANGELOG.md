@@ -13,6 +13,11 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- Audit-log `high_entropy` redaction no longer treats ordinary snake_case
+  identifier queries (`test_iss25_…`, `resolve_import_python3_relative`) as
+  credentials. Vendor shapes (`ghp_…`, `AKIA…`, JWTs, …) are unchanged.
 ### Security
 
 - `prod-igy` no longer starts privileged triage from an outsider `issue_comment`.
