@@ -746,9 +746,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)
                             if cpp_errors < errors:
-                                tree = cpp_tree
-                                source = cpp_bytes
-                                errors = cpp_errors
+                                # ISS-126 (approach a): do not adopt cpp_bytes
+                                # or cpp_tree. cpp is invoked with -P, which
+                                # strips `# <linenum> "<file>"` markers, so
+                                # preprocessed row numbers cannot be mapped
+                                # back to the on-disk file. chunks.py always
+                                # slices the original, and storing cpp rows
+                                # desyncs every citation. used_cpp still
+                                # records that a macro-aware retry produced
+                                # fewer ERROR nodes.
                                 used_cpp = True
                         else:
                             import logging
