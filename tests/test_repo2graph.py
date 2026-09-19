@@ -2826,3 +2826,155 @@ def test_pack_context_exclude_secrets(tmp_path):
     assert ".env" not in paths_clean
     assert "secret.json" not in paths_clean
     assert "main.py" in paths_clean
+
+
+def test_iss75_ext_lang_mts_cts(tmp_path):
+    """Issue 75: EXT_LANG recognizes .mts and .cts as TypeScript."""
+    from repo2graph.parse import EXT_LANG, parse_source
+
+    assert EXT_LANG.get(".mts") == "typescript"
+    assert EXT_LANG.get(".cts") == "typescript"
+
+    src = b"export function greet(name: string): string {\n    return `Hello, ${name}`;\n}\n"
+    pf_mts = parse_source(src, EXT_LANG[".mts"])
+    assert any(s.name == "greet" for s in pf_mts.symbols)
+
+    pf_cts = parse_source(src, EXT_LANG[".cts"])
+    assert any(s.name == "greet" for s in pf_cts.symbols)
+
+
+def test_iss135_overview_human_respects_custom_max_file_mb(tmp_path):
+    """Issue 135: write_overview_human dynamically labels the skipped_too_large
+    threshold based on config.max_file_mb rather than hardcoding 1.5 MB."""
+    from repo2graph.export import write_overview_human
+    from repo2graph.graph import Graph
+    from repo2graph.parse import BuildConfig
+
+    g = Graph(tmp_path, "test")
+    g.config = BuildConfig(max_file_bytes=10_000_000)
+    g.stats["skipped_too_large"] = 3
+
+    out_file = tmp_path / "overview.md"
+    write_overview_human(g, out_file)
+    text = out_file.read_text(encoding="utf8")
+    assert "- files over 10 MB: 3" in text
+    assert "1.5 MB" not in text
+
+
+def test_iss140_fetch_subprocess_passes_stdin_devnull(tmp_path, monkeypatch):
+    """Issue 140: fetch.py subprocess invocations must specify stdin=subprocess.DEVNULL."""
+    from repo2graph import fetch
+
+    recorded_calls = []
+
+    class _FakeResult:
+        returncode = 0
+        stdout = "git version 2.40.0\n"
+        stderr = ""
+
+    def fake_run(*args, **kwargs):
+        recorded_calls.append((args, kwargs))
+        res = _FakeResult()
+        if "rev-parse" in args[0]:
+            res.stdout = "0123456789abcdef\n"
+        return res
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+    # Test _git_version
+    fetch._git_version_cache = None
+    fetch._git_version()
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+    # Test head_sha
+    fetch.head_sha(tmp_path)
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+    # Test clone (new)
+    fetch.clone("owner/repo", tmp_path)
+    assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
+
+
+def test_iss149_clone_fetches_ref_on_existing_clone(tmp_path, monkeypatch):
+    """Issue 149: clone() fetches target ref before checkout when reusing existing clone."""
+    from repo2graph import fetch
+
+    target = tmp_path / "repo"
+    (target / ".git").mkdir(parents=True)
+
+    recorded_cmds = []
+
+    class _FakeResult:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, *args, **kwargs):
+        recorded_cmds.append((cmd, kwargs.get("stdin")))
+        return _FakeResult()
+
+    monkeypatch.setattr(fetch.subprocess, "run", fake_run)
+    res = fetch.clone("owner/repo", tmp_path, ref="feature-x")
+    assert res == target
+
+    # Assert fetch origin feature-x was called before checkout
+    cmds = [c[0] for c in recorded_cmds]
+    assert any("fetch" in cmd and "feature-x" in cmd and "--depth" in cmd for cmd in cmds)
+    assert any("checkout" in cmd and "feature-x" in cmd for cmd in cmds)
+
+    fetch_idx = next(i for i, cmd in enumerate(cmds) if "fetch" in cmd and "feature-x" in cmd)
+    checkout_idx = next(i for i, cmd in enumerate(cmds) if "checkout" in cmd and "feature-x" in cmd)
+    assert fetch_idx < checkout_idx
+
+    # All commands must pass stdin=subprocess.DEVNULL
+    for cmd, stdin_val in recorded_cmds:
+        assert stdin_val == subprocess.DEVNULL, f"{cmd} missing stdin=DEVNULL"
+
+
+def test_iss143_expand_respects_per_hop(tmp_path):
+    """Issue 143: expand(per_hop=...) allows expansion beyond 60 nodes."""
+    from repo2graph.query import Index
+
+    agent = tmp_path / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    (agent / "chunks.jsonl").write_text("", encoding="utf8")
+    nodes = [{"id": "seed", "type": "symbol", "name": "seed", "path": "s.py"}]
+    edges = []
+    for i in range(80):
+        nid = f"dst_{i}"
+        nodes.append({"id": nid, "type": "symbol", "name": nid, "path": "s.py"})
+        edges.append({"src": "seed", "dst": nid, "type": "CALLS", "confidence": 1.0})
+
+    (agent / "nodes.jsonl").write_text(
+        "".join(json.dumps(n) + "\n" for n in nodes), encoding="utf8"
+    )
+    (agent / "edges.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in edges), encoding="utf8"
+    )
+
+    idx = Index(tmp_path)
+    # With per_hop=70, should expand exactly 70 nodes (previously capped at 60)
+    exp70 = idx.expand(["seed"], hops=1, per_hop=70)
+    assert len(exp70) == 70
+
+    # With per_hop=40, should expand exactly 40 nodes
+    exp40 = idx.expand(["seed"], hops=1, per_hop=40)
+    assert len(exp40) == 40
+
+
+def test_iss147_load_parse_cache_does_not_create_directories(tmp_path, monkeypatch):
+    """Issue 147: load_parse_cache does not call make_paths or mkdir on nonexistent/read-only directories."""
+    from repo2graph.export import load_parse_cache
+
+    nonexistent = tmp_path / "nonexistent_index"
+    # Calling load_parse_cache on nonexistent path must not create directories
+    res = load_parse_cache(nonexistent)
+    assert res == {}
+    assert not nonexistent.exists()
+
+    # Also verify that if mkdir raises PermissionError, load_parse_cache succeeds without invoking mkdir
+    def forbid_mkdir(*args, **kwargs):
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(Path, "mkdir", forbid_mkdir)
+    res = load_parse_cache(tmp_path)
+    assert res == {}

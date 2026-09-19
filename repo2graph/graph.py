@@ -35,6 +35,7 @@ class Graph:
     def __init__(self, root: Path, name: str, max_files: int = 0):
         self.root, self.name = root, name
         self.max_files = max_files
+        self.config = None
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
@@ -581,6 +582,7 @@ def build(
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
     g = Graph(root, root.name, max_files=max_files)
+    g.config = config
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
