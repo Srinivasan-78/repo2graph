@@ -135,7 +135,9 @@ Being explicit about the boundary, per §53 of the brief:
 - [ ] `repo2graph` version pinned in every environment that runs it (see above).
 - [ ] If using `--http-port`: TLS-terminating proxy in front, `--auth-token` or
       `--auth-oidc-issuer` configured (the server refuses an unsafe bind otherwise, but verify your
-      proxy doesn't accidentally expose the unauthenticated loopback port).
+      proxy doesn't accidentally expose the unauthenticated loopback port). The built-in
+      `ThreadingHTTPServer` has no connection-count cap — `REQUEST_TIMEOUT` bounds a slow body,
+      not concurrent sockets — so the proxy should also cap connections.
 - [ ] Container runs `--read-only --cap-drop=ALL --security-opt=no-new-privileges`, non-root,
       with only the index-output directory writable.
 - [ ] `--network=none` unless `--answer` or `--auth-oidc-issuer` is in use; if either is, egress is
