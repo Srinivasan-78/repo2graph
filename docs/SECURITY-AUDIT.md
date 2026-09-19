@@ -137,8 +137,11 @@ compromised host OS (no application-layer control defends against that — see
 8. **Package manager → installed package.** SHA-pinned Actions, `uv.lock` committed, OIDC Trusted
    Publishing to PyPI (no long-lived token).
 9. **Forked PR → CI secrets.** GitHub withholds repository secrets from `pull_request`-triggered
-   (not `pull_request_target`) workflow runs whose head is a fork; `claude-code-review.yml` now
-   makes that boundary explicit rather than implicit (fixed in this audit, see P1).
+   workflow runs whose head is a fork; `claude-code-review.yml` makes that boundary explicit rather
+   than implicit (fixed in this audit, see P1). The sole workflow using `pull_request_target`,
+   `prod-igy.yml`, is verified safe: its checkout step uses `sparse-checkout` without a `ref:`,
+   ensuring it only executes the trusted base-branch copy of `.github/scripts/prod-igy.js` and
+   never untrusted PR code with elevated tokens.
 
 ## Data flow
 
@@ -216,36 +219,30 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    false-positive truncated parses on legitimately large generated files (which repositories do
    have) with no fixture to prove the timeout is well-calibrated. Tracked in `docs/BACKLOG.md`.
 
-4. **No SBOM generated in CI.** Confirmed absent (grepped all workflow files for `sbom`,
-   `cyclonedx`, `syft` — zero hits). `dependency-audit.yml` runs `pip-audit --strict`, which is a
+4. **No SBOM generated in CI.** `dependency-audit.yml` runs `pip-audit --strict`, which is a
    vulnerability gate, not a bill-of-materials artifact a downstream consumer can ingest.
    `uv.lock` is committed and reproducible, which is adjacent but not equivalent.
-   **Not fixed in this pass** — adding a CycloneDX export step is straightforward but changes a
-   release-facing CI artifact, which the audit scope treats as a deliberate, separately-reviewed
-   change rather than a drive-by edit. Tracked in `docs/BACKLOG.md`.
+   **Fixed:** `dependency-audit.yml` now generates a CycloneDX SBOM (`pip-audit --format cyclonedx-json`)
+   and uploads `sbom.cyclonedx.json` as a CI artifact.
 
 ### P3
 
 1. **TOCTOU symlink race on file read.** `parse.py:249-253` (`discover()`) correctly excludes
    symlinks using `lstat()` + `S_ISREG` at discovery time, but the later read
-   (`graph.py::_read_and_parse`) opens the path again without `O_NOFOLLOW`. A local attacker who can
-   race the indexing process on the same machine — replacing a regular file with a symlink to
-   `~/.ssh/id_rsa` between discovery and read — could have its target indexed. Remote/repo-content
-   attackers cannot trigger this; it requires local code execution on the same host, which is
-   already a stronger position than anything repo2graph could additionally protect against.
-   `O_NOFOLLOW` is POSIX-only and unavailable on Windows, so this cannot be fully closed
-   cross-platform. **Documented as a known limitation** (see `docs/SECURITY-AUDIT.md`'s "what this
-   does not protect against" below and `docs/ENTERPRISE_DEPLOYMENT.md`) rather than partially fixed
-   with a platform-conditional guard that would need its own test matrix to trust.
+   (`graph.py::_read_and_parse`) opened the path again without `O_NOFOLLOW`.
+   **Mitigated:** `_safe_read_bytes(path)` now opens file descriptors using `O_NOFOLLOW` where
+   supported by the platform/OS (`hasattr(os, "O_NOFOLLOW")`), raising `OSError` if the file
+   was replaced by a symlink before read.
 2. **`git log --name-only` cochange output has no independent byte-size cap.**
    `graph.py:563-566` is bounded by `MAX_COCHANGE_COMMITS` and a 120s timeout, not by output size —
    a repo with pathologically long commit messages across the commit window has no explicit ceiling
    before decode. Low risk (a local repo's own history, not attacker-controlled network input).
    Tracked in `docs/BACKLOG.md`.
 3. **Secret-path denylist is not user-configurable.** `query.py:56-98`'s `SECRET_KEYWORDS`/
-   `SECRET_DIR_NAMES` is a solid, independent-of-`.gitignore` denylist, but it's a hardcoded
-   module-level `frozenset` with no CLI flag or config file to extend it for an org's nonstandard
-   secret-file naming. Tracked in `docs/BACKLOG.md`.
+   `SECRET_DIR_NAMES` is a solid, independent-of-`.gitignore` denylist, but was a hardcoded
+   module-level `frozenset`.
+   **Fixed:** `pack_context()` supports `extra_secret_keywords` and `extra_secret_dirs`, exposed via
+   CLI flags `--secret-keyword` and `--secret-dir` (and `--exclude-secrets`).
 4. **HTTP transport returns `str(exc)` verbatim to the client.** `http_server.py:247,332,338`.
    Not a confirmed secret-leak path today, but internal exception text (occasionally a local path)
    reaches an untrusted network caller in the JSON-RPC error body. Tracked in `docs/BACKLOG.md`.
@@ -253,7 +250,8 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    opt-in and defaults to unbounded. A sufficiently large/adversarial tree (millions of generated
    files) has no built-in memory ceiling; `Graph.nodes`/`edges` are fully in-memory. Chunk emission
    is already streamed (`chunks.py:69-76`), so this is specifically a graph-construction-phase risk.
-   Tracked in `docs/BACKLOG.md`.
+   **Fixed:** `BuildConfig` and CLI (`--max-nodes`) now support an enforced node limit; `Graph.add_node()`
+   raises `GraphLimitExceeded` if the limit is exceeded during build.
 6. **No `docs/PERFORMANCE.md` prior to this audit.** Fixed — see that file, now with real
    measurements rather than claims.
 7. **Release tag `@v1` is a moving pointer, not an integrity pin.** `publish.yml`'s release
@@ -262,8 +260,9 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    integrity guarantee the way a SHA pin does. `SECURITY.md` now says so explicitly.
 8. **No explicit `attestations:` flag on the PyPI publish step.** OIDC Trusted Publishing is
    correctly configured (no long-lived token), but whether `pypa/gh-action-pypi-publish` emits PEP
-   740 attestations by default at the pinned SHA wasn't verified from the YAML alone. Tracked in
-   `docs/BACKLOG.md` as worth an explicit flag once confirmed safe to set.
+   740 attestations by default at the pinned SHA wasn't verified from the YAML alone.
+   **Fixed:** `publish.yml` now explicitly sets `attestations: true` on the `pypa/gh-action-pypi-publish`
+   step to guarantee PEP 740 digital attestations.
 
 ### Already handled — verified with evidence, not re-derived
 
@@ -297,7 +296,9 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
 **CI/CD / supply chain:**
 - Every third-party `uses:` across all 10 workflows is pinned to a full 40-char commit SHA.
 - Least-privilege `permissions:` blocks, scoped per job, in every workflow.
-- No `pull_request_target` anywhere in the repo.
+- `pull_request_target` restricted to `prod-igy.yml` only, which is verified safe: checkout uses
+  `sparse-checkout` without a `ref:` to checkout only the trusted base-branch copy of
+  `.github/scripts/prod-igy.js`, preventing fork PRs from executing untrusted code with elevated tokens.
 - No shell injection via unindirected `${{ }}` in `run:` blocks — inputs are routed through `env:`.
 - PyPI publish uses OIDC Trusted Publishing, not a static token; `pip-audit --strict` genuinely
   fails CI (not advisory); Dependabot covers `pip` and `github-actions`; REUSE/SPDX compliance is a

@@ -2620,6 +2620,81 @@ def test_iss145_index_github_options(tmp_path, monkeypatch):
     assert not artifact_path(out2, "chunks.jsonl").exists()
 
 
+def test_iss85_iss156_graph_max_nodes_limit(tmp_path):
+    """Issues 85 & 156: Graph node accumulation is bounded by max_nodes limit."""
+    from repo2graph.graph import GraphLimitExceeded, build
+    from repo2graph.parse import BuildConfig
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "f1.py").write_text("def a(): pass\ndef b(): pass\n")
+    (repo / "f2.py").write_text("def c(): pass\ndef d(): pass\n")
+
+    # Building with max_nodes=2 on a repo with file+symbol nodes (>2) raises GraphLimitExceeded
+    cfg = BuildConfig(max_nodes=2)
+    with pytest.raises(GraphLimitExceeded) as exc_info:
+        build(repo, config=cfg)
+    assert "Graph node limit exceeded" in str(exc_info.value)
+    assert "max_nodes=2" in str(exc_info.value)
+
+    # Building with max_nodes=0 (default) succeeds
+    g = build(repo, config=BuildConfig(max_nodes=0))
+    assert len(g.nodes) > 2
+
+
+def test_iss87_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
+    """Issue 87: _safe_read_bytes uses O_NOFOLLOW where supported to avoid symlink TOCTOU races."""
+    import os
+    from repo2graph.graph import _safe_read_bytes
+
+    f = tmp_path / "test.txt"
+    f.write_bytes(b"hello security")
+
+    # Regular reading works
+    assert _safe_read_bytes(f) == b"hello security"
+
+    # Verify that O_NOFOLLOW is incorporated into flags passed to os.open when present
+    opened_flags = []
+    real_open = os.open
+
+    def fake_open(path, flags, *args, **kwargs):
+        opened_flags.append(flags)
+        # Strip synthetic O_NOFOLLOW bit before calling real_open if on Windows
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+
+    data = _safe_read_bytes(f)
+    assert data == b"hello security"
+    assert len(opened_flags) == 1
+    assert opened_flags[0] & 0x20000 == 0x20000
+
+
+def test_iss147_make_path_avoids_mkdir_when_parent_exists(tmp_path, monkeypatch):
+    """Issue 147: make_path and make_paths avoid mkdir on existing parent directories (read-only safe)."""
+    from repo2graph.export import make_path, make_paths
+
+    out = tmp_path / "out"
+    # Pre-create the directory hierarchy (simulating existing/read-only volume)
+    (out / "agent").mkdir(parents=True)
+    (out / "human").mkdir(parents=True)
+
+    # Monkeypatch mkdir to raise PermissionError if called
+    def exploding_mkdir(*args, **kwargs):
+        raise PermissionError("Read-only file system")
+
+    monkeypatch.setattr(Path, "mkdir", exploding_mkdir)
+
+    # Neither make_path nor make_paths should call mkdir when the parent exists
+    p1 = make_path(out, "nodes.jsonl")
+    assert p1.parent == out / "agent"
+
+    p2 = make_paths(out, "overview.md")
+    assert len(p2) == 2
+
+
 def test_docstring_raw_and_unicode_prefixes():
     """Verify raw/unicode Python docstrings have their quotes and prefixes cleanly stripped."""
     src = b'def f():\n    r"""raw doc with \\backslash"""\n    pass\ndef g():\n    u"""unicode doc"""\n    pass\n'

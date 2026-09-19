@@ -1352,6 +1352,57 @@ def test_pack_context_exclude_secrets(rag_index):
     assert not any(c.get("path") in (".env", "secret_key.pem") for c in res_excluded["neighbors"])
 
 
+def test_iss83_configurable_secret_denylist(rag_index):
+    """Issue 83: pack_context supports user-configurable secret keywords and directories."""
+    chunk1 = [c for c in rag_index.chunks if c.get("name") == "authenticate"][0]
+    chunk1["path"] = "custom_vault/config.json"
+    chunk2 = [c for c in rag_index.chunks if c.get("name") == "normalize_provider"][0]
+    chunk2["path"] = "corp_internal_secret.py"
+
+    # Default exclude_secrets=True does not know about custom_vault or corp_internal_secret
+    res_default = rag_index.pack_context("authenticate", exclude_secrets=True)
+    paths_default = {c.get("path") for c in res_default["chunks"]}
+    assert "custom_vault/config.json" in paths_default
+    assert "corp_internal_secret.py" in paths_default
+
+    # With extra_secret_dirs and extra_secret_keywords specified
+    res_custom = rag_index.pack_context(
+        "authenticate",
+        exclude_secrets=True,
+        extra_secret_dirs=["custom_vault"],
+        extra_secret_keywords=["corp_internal_secret"],
+    )
+    paths_custom = {c.get("path") for c in res_custom["chunks"]}
+    assert "custom_vault/config.json" not in paths_custom
+    assert "corp_internal_secret.py" not in paths_custom
+    assert "custom_vault/config.json" not in res_custom["markdown"]
+    assert "corp_internal_secret.py" not in res_custom["markdown"]
+
+
+def test_iss83_cli_flags(monkeypatch):
+    """Issue 83: CLI supports --secret-keyword, --secret-dir, and --exclude-secrets flags."""
+    from repo2graph import cli
+
+    seen = {}
+    monkeypatch.setattr(cli, "cmd_rag", lambda args: seen.update(vars(args)))
+    cli.main(
+        [
+            "rag",
+            "question",
+            "--secret-keyword",
+            "foo",
+            "--secret-keyword",
+            "bar",
+            "--secret-dir",
+            "baz",
+            "--exclude-secrets",
+        ]
+    )
+    assert seen["extra_secret_keywords"] == ["foo", "bar"]
+    assert seen["extra_secret_dirs"] == ["baz"]
+    assert seen["exclude_secrets"] is True
+
+
 def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
     """N-11: BrokenPipeError from stream writer propagates directly, not wrapped in SystemExit."""
     import repo2graph.answer as answer

@@ -94,6 +94,7 @@ def cmd_build(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        max_nodes=getattr(args, "max_nodes", 0),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -145,6 +146,7 @@ def cmd_github(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        max_nodes=getattr(args, "max_nodes", 0),
     )
     meta = index_github(
         args.repo,
@@ -481,10 +483,16 @@ def cmd_rag(args):
         budget_chars=args.budget,
         min_confidence=args.min_conf,
         expand_graph=not args.no_expand,
-        exclude_secrets=args.answer,
+        exclude_secrets=args.answer
+        or getattr(args, "exclude_secrets", False)
+        or bool(
+            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
+        ),
         vectors=vectors,
         embedder=embedder,
         budget_tokens=getattr(args, "budget_tokens", None),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
     )
     if args.answer:
         from .answer import stream_answer
@@ -708,6 +716,12 @@ def main(argv=None):
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
     )
+    b.add_argument(
+        "--max-nodes",
+        type=_nonneg,
+        default=0,
+        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
+    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
@@ -762,6 +776,12 @@ def main(argv=None):
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
+    gh.add_argument(
+        "--max-nodes",
+        type=_nonneg,
+        default=0,
+        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
     gh.set_defaults(func=cmd_github)
 
@@ -824,6 +844,28 @@ def main(argv=None):
         choices=("gemini", "openai", "anthropic", "ollama"),
         default=None,
         help="force a specific LLM provider for --answer",
+    )
+    r.add_argument(
+        "--exclude-secrets",
+        action="store_true",
+        default=False,
+        help="exclude secret files from pack even when --answer is not set",
+    )
+    r.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to exclude as secret file/path (repeatable)",
+    )
+    r.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to exclude as secret path (repeatable)",
     )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)
