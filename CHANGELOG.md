@@ -13,6 +13,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- The GitHub Action's `version` input now reaches `pip install`. A non-empty
+  spec is installed as given; a blank value (the default) still installs the
+  action checkout. Previously a `pyproject.toml` gate that is always true for
+  this composite action made the input inert.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed

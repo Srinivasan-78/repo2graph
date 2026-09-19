@@ -90,8 +90,8 @@
     "required": "false"
   },
   "version": {
-    "default": "git+https://github.com/Srinivasan-78/repo2graph@v1",
-    "description": "repo2graph version spec passed to pip",
+    "default": "",
+    "description": "pip install spec (e.g. repo2graph==1.5.0). Blank installs the action checkout.",
     "required": "false"
   }
 }

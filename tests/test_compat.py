@@ -650,3 +650,68 @@ def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path)
     for call in calls:
         assert not any("x-access-token" in word for word in call), call
         assert not any(word.startswith("https://") and "@" in word for word in call), call
+
+
+# ==========================================================================
+# Issue #204: the Install step gated on $GITHUB_ACTION_PATH/pyproject.toml,
+# which sits next to action.yml for a composite action, so the `else` that
+# ran `pip install "$R2G_VERSION"` was unreachable. `version: repo2graph==1.5.0`
+# silently installed the action ref. These execute the real `run:` body with
+# `pip` stubbed, the same way R-6 / #165 execute theirs — a string search on
+# the YAML would stay green through any gate that still mentions R2G_VERSION.
+# ==========================================================================
+
+
+def _resolved_install_pip_calls(
+    tmp_path: Path, version: str, *, with_pyproject: bool
+) -> tuple[str, list]:
+    """Every `pip ...` invocation the Install step's real body makes.
+
+    `pip` is overridden with a shell function so the step body under test is
+    exactly what's in action.yml, unmodified. `GITHUB_ACTION_PATH` is a
+    throwaway directory; `with_pyproject` plants the file the old gate
+    treated as decisive.
+    """
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
+    )
+    log = tmp_path / "pip-calls.log"
+    action_path = tmp_path / "action"
+    action_path.mkdir()
+    if with_pyproject:
+        (action_path / "pyproject.toml").write_text("[project]\nname = 'probe'\n", encoding="utf8")
+    script = 'pip() { printf "%s\\x1f" "$@" >> "$PIP_LOG"; printf "\\n" >> "$PIP_LOG"; }\n' + body
+    env = dict(os.environ)
+    env.update(
+        R2G_VERSION=version,
+        GITHUB_ACTION_PATH=str(action_path),
+        PIP_LOG=str(log),
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    calls = []
+    for line in log.read_text(encoding="utf8").split("\n"):
+        if line:
+            calls.append(line.split("\x1f")[:-1])
+    return str(action_path), calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+@pytest.mark.parametrize("with_pyproject", [True, False])
+def test_iss204_nonempty_version_reaches_pip(tmp_path, with_pyproject):
+    """Non-empty `version` is the pip spec. pyproject.toml next to action.yml
+    (the always-true composite-action case) must not steal the install."""
+    spec = "repo2graph==1.5.0"
+    _, calls = _resolved_install_pip_calls(tmp_path, spec, with_pyproject=with_pyproject)
+    assert calls == [["install", "-q", spec]], calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+@pytest.mark.parametrize("with_pyproject", [True, False])
+def test_iss204_blank_version_installs_the_action_checkout(tmp_path, with_pyproject):
+    """Blank `version` (the default, and `uses: ./` in this repo) still
+    installs the action path editable, whether or not pyproject.toml is there."""
+    action_path, calls = _resolved_install_pip_calls(tmp_path, "", with_pyproject=with_pyproject)
+    assert calls == [["install", "-q", "-e", action_path]], calls
