@@ -726,4 +726,3 @@ def test_crlf_injection_in_cors_headers_is_sanitized(make_server):
         assert not line.startswith("X-Injected:"), (
             f"CRLF injection succeeded: server reflected injected header: {line!r}"
         )
-

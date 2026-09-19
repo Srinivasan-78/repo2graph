@@ -141,11 +141,17 @@ def _is_secret_path(
     # (e.g. "configs/secrets") are matched via prefix check below so we don't
     # inadvertently treat "configs" itself as a secret directory.
     single_segment_extra = (
-        {d.replace("\\", "/").strip("/").lower() for d in extra_dirs
-         if d and d.strip() and "/" not in d.replace("\\", "/").strip("/")}
-        if extra_dirs else set()
+        {
+            d.replace("\\", "/").strip("/").lower()
+            for d in extra_dirs
+            if d and d.strip() and "/" not in d.replace("\\", "/").strip("/")
+        }
+        if extra_dirs
+        else set()
     )
-    dir_names = SECRET_DIR_NAMES | single_segment_extra if single_segment_extra else SECRET_DIR_NAMES
+    dir_names = (
+        SECRET_DIR_NAMES | single_segment_extra if single_segment_extra else SECRET_DIR_NAMES
+    )
     if any(part in dir_names for part in parts[:-1]):
         return True
     # Multi-segment extra_dirs: match when any extra_dir is a prefix of the
