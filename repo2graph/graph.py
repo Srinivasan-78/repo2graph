@@ -716,12 +716,84 @@ def resolve_jobs(jobs: int) -> int:
     return max(1, min(os.cpu_count() or 1, 8))
 
 
+# Win32 GetStdHandle/SetStdHandle slot numbers. os.dup2 rewrites the CRT's fd
+# table, which is what `print`, `sys.stdout` and any C extension writing to the
+# CRT `stdout` go through -- but it does *not* touch the process-wide Win32
+# standard handles, so a library that calls `WriteFile(GetStdHandle(...))`
+# directly would still reach the handle the worker inherited. These are the two
+# slots `silence_worker_io` repoints for that last route.
+_STD_INPUT_HANDLE = 0xFFFFFFF6  # (DWORD)-10
+_STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
+
+
+def silence_worker_io() -> None:
+    """Detach a parse worker from the stdin/stdout it inherited (#90).
+
+    Runs as the `ProcessPoolExecutor` initializer, i.e. *inside* the worker and
+    once per worker. It exists because of who the parent may be: when the pool
+    is started from `repo2graph-mcp`, fd 0 and fd 1 are the client's JSON-RPC
+    pipes. Measured on Windows (spawn), a worker inherits both for real --
+    `os.write(1, ...)` lands in the parent's stdout pipe, and `os.read(0, 1)`
+    *consumes a byte of the client's request stream*, which is a request the
+    server then waits for forever. Parsing writes to neither today; this makes
+    that a property of the pool rather than of the current worker body.
+
+    Redirection is done with `os.dup2` onto `os.devnull`, not by rebinding
+    `sys.stdout`, because a Python-only swap leaves fd 1 -- and therefore every
+    C-level write and anything that cached `fileno()` -- pointing at the pipe.
+    `sys.stdin`/`sys.stdout` are rebound afterwards so their buffers are not
+    holding anything from before the swap; on Windows the Win32 std handles are
+    repointed too (see above).
+
+    Every step is best effort: a worker that cannot open devnull must still
+    parse files. Nothing here raises, because an initializer that raises breaks
+    the pool for every task.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_RDWR)
+    except OSError:
+        return
+    try:
+        for fd in (0, 1):
+            try:
+                os.dup2(devnull, fd)
+            except OSError:
+                pass
+    finally:
+        if devnull > 2:
+            try:
+                os.close(devnull)
+            except OSError:
+                pass
+    for name, fd, mode in (("stdin", 0, "r"), ("stdout", 1, "w")):
+        try:
+            setattr(sys, name, open(fd, mode, closefd=False))
+        except OSError:
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            import msvcrt
+
+            kernel32 = getattr(ctypes, "windll").kernel32
+            kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+            kernel32.SetStdHandle.restype = ctypes.c_int
+            kernel32.SetStdHandle(_STD_INPUT_HANDLE, msvcrt.get_osfhandle(0))
+            kernel32.SetStdHandle(_STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(1))
+        except Exception:
+            pass
+
+
 def parse_all(files, jobs: int, config=None):
     """Read and parse every file, in discovery order, across `jobs` processes.
 
     tree-sitter parsing is CPU bound and dominates a large build, so this is
     the difference between one core and all of them. Order is preserved, which
     keeps node ids and edge order identical to a serial run.
+
+    Every worker runs `silence_worker_io` first, so the pool is safe to start
+    from a process whose stdin/stdout are a protocol stream rather than a
+    terminal -- which is what `repo2graph-mcp`'s auto-build is (#90).
     """
     jobs = resolve_jobs(jobs)
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
@@ -731,7 +803,9 @@ def parse_all(files, jobs: int, config=None):
 
     try:
         # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
-        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=jobs, initializer=silence_worker_io
+        ) as pool:
             return list(
                 pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
             )

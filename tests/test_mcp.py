@@ -9,6 +9,7 @@ assert the error message a user without the extra actually sees.
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,25 @@ def _has_mcp():
 
 
 HAS_REAL_MCP = _has_mcp()
+
+
+def _has_any_mcp():
+    """An SDK `serve()` can actually drive, on either major.
+
+    `_has_mcp` above is narrower on purpose -- the tests it gates are written
+    against the 1.x decorator API. `serve()` itself handles both, so a test
+    that only drives it over the wire must not be skipped on a 2.x install.
+    """
+    try:
+        from mcp.server import Server  # noqa: F401
+        from mcp.server.stdio import stdio_server  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+HAS_ANY_MCP = _has_any_mcp()
 
 
 def mcp_module():
@@ -1156,29 +1176,205 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
     )
 
 
-def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
-    """`build()` reaches for a ProcessPoolExecutor above PARALLEL_MIN_FILES
-    files, and spawning one from inside the running stdio server hangs: the
-    workers inherit the parent's stdin/stdout, which are the client's pipes,
-    and the tool call never returns.
+# ==========================================================================
+# #90 -- the auto-build's process pool, and the transport it must not touch
+# ==========================================================================
+#
+# `_build_index` used to pin `jobs=1` because a pool started from inside the
+# running stdio server put the client's JSON-RPC pipes in the hands of every
+# worker. The pin is gone; `graph.silence_worker_io` is what replaced it.
+#
+# Every test below carries its own hard timeout. The failure this guards is an
+# indefinite hang, so a regression has to *fail* rather than wedge a CI job --
+# which is also why the old test asserted `jobs == 1` instead of proving
+# anything end to end.
 
-    Asserted on the argument rather than end to end on purpose -- the failure
-    mode is an indefinite hang, and a test that reproduces it would wedge CI
-    rather than fail it. The fixtures elsewhere in this file are all under the
-    threshold, which is exactly why this went unnoticed until a 65-file repo.
+POOL_STDIO_PROBE = Path(__file__).resolve().parent / "_pool_stdio_probe.py"
+MCP_POOL_SERVER = Path(__file__).resolve().parent / "_mcp_pool_server.py"
+
+# Bounds on the two child processes below. Generous next to the ~2s each costs
+# locally, because a cold 9-cell CI matrix is slower -- but finite, which is
+# the whole point.
+POOL_PROBE_TIMEOUT = 180
+SERVE_TIMEOUT = 240
+
+
+def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
+    wide_repo, tmp_path, monkeypatch
+):
+    """The pin is gone: above PARALLEL_MIN_FILES the auto-build really forks
+    out, and the pool it builds carries the stdio initializer.
+
+    `wide_repo` is the fixture #67 asks for -- every other fixture in the
+    suite is under the threshold, so before it existed this branch could not
+    be reached from a test at all.
     """
+    import concurrent.futures
+
+    from repo2graph import graph
+
     mcp = mcp_module()
-    seen = {}
+    real = concurrent.futures.ProcessPoolExecutor
+    seen = []
 
-    def spy(repo, **kwargs):
-        seen.update(kwargs)
-        raise RuntimeError("stop here; the kwargs are the whole assertion")
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+            super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr("repo2graph.graph.build", spy)
-    with pytest.raises(RuntimeError):
-        mcp._build_index(tmp_path, tmp_path / "idx")
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    out = tmp_path / "wide_idx"
+    mcp._build_index(Path(wide_repo), out)
 
-    assert seen.get("jobs") == 1, f"auto-build must stay single-process inside the server: {seen}"
+    assert seen, "auto-build stayed serial: the jobs=1 pin is back"
+    assert seen[0].get("initializer") is graph.silence_worker_io, (
+        f"the pool workers would inherit the transport: {seen[0]}"
+    )
+    # The build is real, not just attempted: a node hand-derived from the
+    # fixture source has to be in the index it wrote.
+    idx = Index(out)
+    assert "sym:widepkg/mod0.py::dispatch_0" in idx.nodes
+
+
+def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
+    """The mechanism itself, in a child process whose stdio is a pipe.
+
+    `_pool_stdio_probe.py` starts a pool with the exact kwargs `parse_all`
+    passes, and has one worker write a sentinel to fd 1 and read a byte from
+    fd 0. Measured on Windows (spawn) before the fix, a worker did both for
+    real: the sentinel landed in the parent's stdout pipe and the worker
+    consumed the byte the parent had queued -- which under `repo2graph-mcp`
+    is a frame of the client's request stream the server then waits for
+    forever.
+
+    `timeout=` is the hard bound: a regression that hangs a worker on fd 0
+    fails this test instead of wedging the run.
+    """
+    from _pool_stdio_probe import REPORT_PREFIX, SENTINEL
+
+    proc = subprocess.run(
+        [sys.executable, str(POOL_STDIO_PROBE)],
+        input=b"S",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(REPO_ROOT),
+        timeout=POOL_PROBE_TIMEOUT,
+    )
+    stderr = proc.stderr.decode("utf8", "replace")
+    assert proc.returncode == 0, f"probe failed: {stderr}"
+    line = next(
+        (ln for ln in stderr.splitlines() if ln.startswith(REPORT_PREFIX)),
+        None,
+    )
+    assert line is not None, f"probe wrote no report: {stderr}"
+    report = json.loads(line[len(REPORT_PREFIX) :])
+
+    assert SENTINEL not in proc.stdout, (
+        "a pool worker wrote to the parent's stdout -- under the MCP stdio "
+        f"server that is the JSON-RPC stream: {proc.stdout!r}"
+    )
+    assert report["workers"][0]["read_fd0"] == "", (
+        f"a pool worker read the parent's stdin: {report}"
+    )
+    assert report["stdin_left"] == "S", (
+        f"the byte on the parent's stdin was consumed by a worker: {report}"
+    )
+
+
+@pytest.mark.skipif(not HAS_ANY_MCP, reason="needs the mcp extra (either SDK major)")
+def test_iss90_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
+    """AC-2, end to end: a real `serve()` over real pipes against a repo above
+    PARALLEL_MIN_FILES answers its first tool call.
+
+    The marker file is what makes this about the *parallel* path: the launcher
+    records every ProcessPoolExecutor the server process builds, so a silent
+    fall back to serial fails here rather than passing quietly.
+
+    Timeouts everywhere -- a queue-fed reader thread, not a bare readline --
+    because the bug being guarded is a hang, and a test that reproduces it
+    with `proc.stdout.readline()` would never return.
+    """
+    import queue
+    import threading
+
+    marker = tmp_path / "pools.txt"
+    out = tmp_path / "wide_idx"
+    proc = subprocess.Popen(
+        [sys.executable, str(MCP_POOL_SERVER), str(marker), str(wide_repo), str(out)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(REPO_ROOT),
+    )
+    lines: "queue.Queue" = queue.Queue()
+
+    def pump():
+        try:
+            for line in proc.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
+
+    def send(payload):
+        proc.stdin.write((json.dumps(payload) + "\n").encode("utf8"))
+        proc.stdin.flush()
+
+    def recv(timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, f"no JSON-RPC response within {timeout}s (the #90 hang)"
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"no JSON-RPC response within {timeout}s (the #90 hang)")
+            assert line is not None, "the server closed stdout"
+            try:
+                return json.loads(line.decode("utf8"))
+            except ValueError:
+                continue  # a non-JSON line on stdout is caught by its own test
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                    "capabilities": {},
+                },
+            }
+        )
+        assert "result" in recv(SERVE_TIMEOUT)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "repo_neighbours",
+                    "arguments": {"node_id": "sym:widepkg/mod0.py::dispatch_0"},
+                },
+            }
+        )
+        resp = recv(SERVE_TIMEOUT)
+    finally:
+        proc.kill()
+        proc.wait(timeout=30)
+        if proc.stdin:
+            proc.stdin.close()
+
+    assert "result" in resp, resp
+    text = resp["result"]["content"][0]["text"]
+    # Hand-derived from the fixture source: dispatch_N calls handle_N.
+    assert "handle_0" in text, text
+    assert marker.is_file(), "the auto-build never started a process pool"
+    assert "initializer=silence_worker_io" in marker.read_text(encoding="utf8")
 
 
 # ==========================================================================

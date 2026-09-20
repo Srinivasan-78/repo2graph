@@ -1488,6 +1488,41 @@ def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
     assert digest(got) == digest(serial)
 
 
+def test_iss67_build_takes_the_pool_path_above_parallel_min_files(wide_repo, monkeypatch):
+    """#67: every other fixture is under PARALLEL_MIN_FILES, so nothing in the
+    suite ever entered `parse_all`'s ProcessPoolExecutor branch -- which is how
+    the MCP auto-build hang (#90) survived a green run.
+
+    `wide_repo` crosses the threshold, and this asserts the branch is taken
+    *and* that the pool is built with the initializer that keeps its workers
+    off whatever stdin/stdout the parent had.
+    """
+    import concurrent.futures
+
+    from repo2graph.graph import PARALLEL_MIN_FILES, silence_worker_io
+
+    real = concurrent.futures.ProcessPoolExecutor
+    seen = []
+
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    g = build(wide_repo)
+
+    assert len(g.file_hashes) > PARALLEL_MIN_FILES, (
+        f"the fixture no longer crosses the threshold: {len(g.file_hashes)} files"
+    )
+    assert seen, "build() stayed serial above PARALLEL_MIN_FILES"
+    assert seen[0].get("initializer") is silence_worker_io, seen[0]
+    # Hand-derived from the fixture source, so this proves the pool's results
+    # were actually used rather than merely produced.
+    assert "sym:widepkg/mod0.py::dispatch_0" in g.nodes
+    assert "sym:widepkg/mod0.py::handle_0" in g.nodes
+
+
 def test_iss01_iss02_dead_dataclass_fields_are_gone():
     """AC-11 (ISS-01/ISS-02): Symbol has no start_byte/end_byte and ParsedFile
     has no file_calls. At HEAD all three fields are present."""

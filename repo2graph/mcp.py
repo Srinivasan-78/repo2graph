@@ -310,27 +310,27 @@ def _has_index(out_path: Path) -> bool:
 
 
 def _build_index(repo: Path, out: Path) -> None:
-    """Index `repo` into `out`, in-process, single-process, silent on stdout.
+    """Index `repo` into `out`, in-process, silent on stdout.
 
-    Two constraints, both of them about the transport rather than about graphs:
+    One constraint, and it is about the transport rather than about graphs:
+    nothing may reach stdout. It carries the JSON-RPC stream, and one stray
+    `print` ends the session. `graph.build` and `export.dump_all` write no
+    console output of their own -- the CLI's `cmd_build` is what emits the JSON
+    report -- so calling them directly is what keeps the wire clean.
 
-    * Nothing may reach stdout. It carries the JSON-RPC stream, and one stray
-      `print` ends the session. `graph.build` and `export.dump_all` write no
-      console output of their own -- the CLI's `cmd_build` is what emits the
-      JSON report -- so calling them directly is what keeps the wire clean.
-    * `jobs=1`, always. `build()` reaches for a process pool above
-      PARALLEL_MIN_FILES files, and spawning one from inside the running stdio
-      server hangs: the workers inherit the parent's stdin and stdout, which are
-      the client's pipes, and the first call never returns. It is not a
-      throughput loss worth mourning -- at the threshold the pool costs more to
-      start than it saves -- but on a large repo this build is slower than the
-      CLI's. `repo2graph build` is still the way to index one quickly.
+    That constraint used to be met with `jobs=1`, because `build()` reaches for
+    a process pool above PARALLEL_MIN_FILES files and the workers inherit the
+    parent's fd 0 and fd 1, which here are the client's pipes. The pin is gone:
+    `graph.silence_worker_io` now runs in every worker and dup2s both onto
+    devnull, so the pool no longer has a route to the transport (#90). Default
+    `jobs` (one worker per core) therefore applies, and a large repo's first
+    tool call costs what `repo2graph build` costs rather than several times it.
     """
     from .chunks import iter_chunks
     from .export import dump_all
     from .graph import build
 
-    graph = build(repo, jobs=1)
+    graph = build(repo)
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 
 
