@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-09-20
+
 ### Changed
 
 - `publish.yml` takes a `branch` input, defaulting to `main`, and every stage
