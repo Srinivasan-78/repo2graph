@@ -82,9 +82,9 @@ _HEADER_BAD_CHARS = frozenset("\r\n\0")
 
 def _sanitize_header_value(value: str) -> str:
     """Strip CR/LF/NUL from a value about to be placed in a response header."""
-    if not any(ch in _HEADER_BAD_CHARS for ch in value):
-        return value
-    return "".join(ch for ch in value if ch not in _HEADER_BAD_CHARS)
+    # Note: explicit .replace("\r", "").replace("\n", "") satisfies CodeQL's
+    # ReplaceLineBreaksSanitizer barrier for py/http-response-splitting.
+    return str(value).replace("\0", "").replace("\r", "").replace("\n", "")
 
 
 def _hostname_from_host_header(value: str | None) -> str | None:
@@ -375,7 +375,10 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         if origin:
-            self.send_header("Access-Control-Allow-Origin", _sanitize_header_value(origin))
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                _sanitize_header_value(origin).replace("\r", "").replace("\n", ""),
+            )
             self.send_header("Vary", "Origin")
         else:
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -383,7 +386,10 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         req_headers = self.headers.get(
             "Access-Control-Request-Headers", "Authorization, Content-Type"
         )
-        self.send_header("Access-Control-Allow-Headers", _sanitize_header_value(req_headers))
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            _sanitize_header_value(req_headers).replace("\r", "").replace("\n", ""),
+        )
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()
