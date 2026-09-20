@@ -1138,12 +1138,17 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
     if call == "ls_files":
         from repo2graph import parse as mod
 
-        target, run = mod, lambda: mod._git_files(tmp_path)
+        target, attr = mod, "run"
+        run = lambda: mod._git_files(tmp_path)
     else:
+        # Popen, not run: since ISS-236 add_cochange streams the log so the byte
+        # cap can bind during the read. The stdin=DEVNULL requirement is the
+        # same either way -- capture_output was never what redirected it.
         from repo2graph import graph as mod
 
-        target, run = mod, lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
-    monkeypatch.setattr(target.subprocess, "run", spy)
+        target, attr = mod, "Popen"
+        run = lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
+    monkeypatch.setattr(target.subprocess, attr, spy)
     run()  # the OSError is caught by the caller; we only want the kwargs
 
     assert seen["kwargs"].get("stdin") is sp.DEVNULL, (
@@ -1341,3 +1346,145 @@ def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
     assert "CONTAINS" in out_file
     assert "route_request" in out_file
     assert "- (none)" not in out_file
+
+
+# ==========================================================================
+# Issue 235 -- open_index is reached from several HTTP worker threads at once
+# ==========================================================================
+
+
+def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
+    mini_index, mini_repo, tmp_path, monkeypatch
+):
+    """Two simultaneous first calls must cost one build and share one Index.
+
+    The HTTP transport is a `ThreadingHTTPServer` with `daemon_threads = True`,
+    so two clients pointed at a server whose index does not exist yet both
+    reach `open_index` before either has written anything. Unlocked, both pass
+    the `not _has_index(...)` test, both parse the whole repository and then
+    race each other through `atomic_write`, so the loser's work is discarded.
+    The invocation count below is the detector: it reads 2 without the
+    per-directory lock and 1 with it.
+
+    `_build_index` is replaced by a slow copy of an already-built index rather
+    than a real parse, both to keep the test quick and to make the overlap
+    deterministic -- the barrier puts both threads inside `open_index` and the
+    sleep is far wider than the window an unsynchronised second caller needs to
+    make its own `_has_index` decision.
+    """
+    import shutil
+    import threading
+    import time
+
+    mcp = mcp_module()
+    mcp._INDEXES.clear()
+    mcp._INDEX_MTIMES.clear()
+
+    out = tmp_path / "raced_idx"
+    builds = []
+    at_the_door = threading.Barrier(2, timeout=30)
+
+    def slow_build(repo, target):
+        builds.append(str(repo))
+        time.sleep(0.3)
+        shutil.copytree(mini_index, target)
+
+    monkeypatch.setattr(mcp, "_build_index", slow_build)
+
+    results: dict[int, object] = {}
+    failures: dict[int, BaseException] = {}
+
+    def call(slot):
+        try:
+            at_the_door.wait()
+            results[slot] = mcp.open_index(out, repo=mini_repo)
+        except BaseException as exc:  # recorded, then re-raised in the main thread
+            failures[slot] = exc
+
+    threads = [threading.Thread(target=call, args=(slot,)) for slot in (0, 1)]
+    for thread in threads:
+        thread.start()
+    # Each join is bounded so a lock that deadlocks fails the test instead of
+    # hanging the suite until the runner's own timeout (or forever, locally).
+    for thread in threads:
+        thread.join(timeout=60)
+    alive = [thread for thread in threads if thread.is_alive()]
+    assert not alive, "open_index did not return within 60s -- deadlock?"
+
+    assert not failures, failures
+    assert len(builds) == 1, f"_build_index ran {len(builds)} times, expected 1"
+    assert results[0] is results[1], "each caller loaded its own Index of the same directory"
+
+
+# ==========================================================================
+# Issue 203 -- --http-only must imply an HTTP transport, and tear down once
+# ==========================================================================
+
+
+def test_iss203_http_only_without_a_port_refuses_instead_of_serving_stdio(mini_repo, monkeypatch):
+    """The flag names what to omit, so alone it asks for no transport at all.
+
+    The test used to live inside the block that builds the HTTP transport, so
+    with no --http-port that block never ran, the flag was never read, and main
+    fell through to the stdio `serve()` -- precisely the transport --http-only
+    exists to suppress, and with no diagnostic.
+    """
+    mcp = mcp_module()
+    monkeypatch.setattr(
+        mcp,
+        "serve",
+        lambda *a, **kw: pytest.fail("--http-only fell through to the stdio transport"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        mcp.main([str(mini_repo), "--http-only"])
+
+    message = str(exc.value)
+    assert "--http-only" in message, message
+    assert "--http-port" in message, message
+
+
+def test_iss203_http_only_closes_the_audit_logger_on_the_way_out(mini_repo, monkeypatch):
+    """The long-lived path is the one that must not leak the audit fd.
+
+    `audit.close()` used to sit only in the `finally:` of the `serve()` call,
+    which the --http-only branch's own `return 0` jumped straight over. Both
+    exit paths now share one teardown; this pins that the HTTP-only one runs it.
+    """
+    from repo2graph import audit as audit_mod
+    from repo2graph import http_server as http_mod
+
+    mcp = mcp_module()
+    closed = []
+    stopped = []
+
+    class RecordingAudit:
+        def __init__(self, config):
+            self.config = config
+
+        def close(self):
+            closed.append("closed")
+
+    class FakeTransport:
+        # No thread to join, so the --http-only branch runs straight to its
+        # return and the teardown is the only thing left to observe.
+        _thread = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            stopped.append("stopped")
+
+    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(
+        mcp, "serve", lambda *a, **kw: pytest.fail("--http-only served stdio anyway")
+    )
+
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert closed == ["closed"], "audit.close() must run on the --http-only exit path"
+    assert stopped == ["stopped"], "the transport must still be stopped"
