@@ -40,6 +40,12 @@ _COCHANGE_REAP_TIMEOUT = 10
 # nodes or edges a build just tells the operator on stderr, once, that memory
 # use is growing unbounded and how to bound it.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
+# How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
+# confidence. Overridable per build (`build(max_call_candidates=)`, the
+# `--max-call-candidates` flag), so it is a property of a *particular* index,
+# not of repo2graph -- which is why the Graph carries the value it was built
+# with and manifest.json reports that value rather than this default (#245).
+DEFAULT_MAX_CALL_CANDIDATES = 5
 
 
 class GraphLimitExceeded(RuntimeError):
@@ -49,9 +55,22 @@ class GraphLimitExceeded(RuntimeError):
 
 
 class Graph:
-    def __init__(self, root: Path, name: str, max_files: int = 0):
+    def __init__(
+        self,
+        root: Path,
+        name: str,
+        max_files: int = 0,
+        max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
+    ):
         self.root, self.name = root, name
         self.max_files = max_files
+        # The ambiguous-call fan-out limit this graph was resolved under.
+        # Carried on the Graph purely so the writers can report it: export's
+        # manifest.json describes the artifacts it ships beside, and a manifest
+        # claiming the default 5 for an index built with 2 is a wrong answer to
+        # the one question the manifest exists to answer (#245). A Graph built
+        # by hand keeps the default, which is what build() would have used.
+        self.max_call_candidates = max_call_candidates
         self.config = None
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
@@ -733,7 +752,7 @@ def build(
     max_files: int = 0,
     jobs: int = 0,
     cache: dict | None = None,
-    max_call_candidates: int = 5,
+    max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
     config=None,
 ) -> Graph:
     """Parse `root` into a Graph.
@@ -749,6 +768,10 @@ def build(
             files whose sha256 and language both still match are not re-parsed.
             Resolution is recomputed in full either way, so the resulting Graph
             is identical to one built with `cache=None`.
+        max_call_candidates: An ambiguous call name fans out to at most this
+            many CALLS edges, each at 1/n confidence. Clamped to >= 1, and the
+            clamped value is recorded on the returned Graph so the writers can
+            state the limit this build actually used.
         config: BuildConfig
 
     Returns:
@@ -757,7 +780,7 @@ def build(
     """
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name, max_files=max_files)
+    g = Graph(root, root.name, max_files=max_files, max_call_candidates=max_call_candidates)
     g.config = config
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")

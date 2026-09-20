@@ -698,6 +698,58 @@ def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
     assert "prefix 'sym:'" in node_id_format
 
 
+@pytest.mark.parametrize("limit", [2, 7])
+def test_iss245_manifest_states_the_fan_out_this_build_used(tmp_path, sample_repo, limit):
+    """#245: the fan-out limit is per build (`--max-call-candidates`), but the
+    manifest's prose used to hardcode "up to 5" -- so an index built with 2
+    shipped an artifact asserting 5, to an agent that was told the manifest is
+    authoritative. Both limits here are non-default literals on purpose: at the
+    default the buggy text and the correct text are the same string, so a test
+    run only at 5 detects nothing."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--max-call-candidates", str(limit)])
+    m = json.loads(artifact_path(out, "manifest.json").read_text(encoding="utf8"))
+
+    # The number as a number: a consumer calibrating a confidence filter should
+    # not have to parse it back out of English.
+    assert m["max_call_candidates"] == limit
+    assert f"fan out to up to {limit} edges at 1/n confidence" in "\n".join(m["approximations"])
+    assert (
+        f"fanned out to up to {limit} CALLS edges"
+        in m["usage_hints"]["confidence_semantics"]["lt_1.0"]
+    )
+    assert f"emits up to {limit} candidate edges" in "\n".join(m["how_to_read"])
+    # Nothing anywhere in the file still claims the default, and no template
+    # reached disk with its placeholder unsubstituted.
+    whole = json.dumps(m)
+    assert "up to 5 " not in whole
+    assert "{n}" not in whole
+
+
+def test_iss245_manifest_defaults_when_the_graph_never_went_through_build(tmp_path):
+    """write_manifest has only ever duck-typed `g`, and a Graph assembled by
+    hand has no build to inherit a fan-out limit from. It must still write a
+    manifest stating the default rather than raising: a wrong number is the
+    #245 bug, but no manifest at all is worse than one carrying the default."""
+    from collections import Counter
+
+    from repo2graph.export import write_manifest
+    from repo2graph.graph import Graph
+
+    class BareGraph:  # only what write_manifest has ever required of `g`
+        name = "x"
+        nodes: dict = {}
+        stats = Counter()
+
+    for g in (Graph(tmp_path, "x"), BareGraph()):
+        p = tmp_path / "manifest.json"
+        write_manifest(g, p, [])
+        m = json.loads(p.read_text(encoding="utf8"))
+        assert m["max_call_candidates"] == 5, type(g).__name__
+        assert "up to 5 edges at 1/n confidence" in "\n".join(m["approximations"])
+        assert "{n}" not in json.dumps(m)
+
+
 def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
