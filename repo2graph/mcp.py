@@ -955,7 +955,13 @@ def main(argv=None):
 
     from .audit import AuditConfig, AuditLogger
 
-    audit = AuditLogger(AuditConfig(level=args.audit_log_level, path=args.audit_log))
+    audit = AuditLogger(
+        AuditConfig(
+            level=args.audit_log_level,
+            path=args.audit_log,
+            fsync=args.audit_log_fsync,
+        )
+    )
 
     tasks = None
     if args.async_build:
@@ -1112,6 +1118,13 @@ def _add_auth_args(p) -> None:
         choices=("none", "errors", "all"),
         default="all",
         help="which tool calls produce an audit record (default: all)",
+    )
+    log.add_argument(
+        "--audit-log-fsync",
+        action="store_true",
+        help="sync each audit record to disk before returning (slower; stderr "
+        "already carries every record, so this only hardens the file copy "
+        "against a crash)",
     )
 
 

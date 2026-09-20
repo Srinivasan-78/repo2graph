@@ -1488,3 +1488,55 @@ def test_iss203_http_only_closes_the_audit_logger_on_the_way_out(mini_repo, monk
     assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
     assert closed == ["closed"], "audit.close() must run on the --http-only exit path"
     assert stopped == ["stopped"], "the transport must still be stopped"
+
+
+@pytest.mark.parametrize(
+    ("argv_extra", "expected"),
+    [([], False), (["--audit-log-fsync"], True)],
+)
+def test_iss244_audit_log_fsync_is_opt_in_from_the_command_line(
+    mini_repo, monkeypatch, argv_extra, expected
+):
+    """The per-record disk sync is a flag, and it is off unless asked for.
+
+    ISS-244 made `_LockedAppender.write` flush rather than fsync, because the
+    sync was taken while holding both the thread lock and the OS-level file
+    lock -- on the threaded HTTP transport that serialised every request behind
+    a disk sync, and stderr already carries every record. Durability for the
+    file copy is still available; it just has to be chosen. The default is the
+    half worth pinning: a config that quietly went back to syncing would
+    reintroduce the throughput ceiling with nothing failing.
+    """
+    from repo2graph import audit as audit_mod
+    from repo2graph import http_server as http_mod
+
+    mcp = mcp_module()
+    seen = []
+
+    class RecordingAudit:
+        def __init__(self, config):
+            seen.append(config)
+
+        def close(self):
+            pass
+
+    class FakeTransport:
+        _thread = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
+
+    argv = [str(mini_repo), "--http-port", "0", "--http-only", *argv_extra]
+    assert mcp.main(argv) == 0
+    assert len(seen) == 1
+    assert seen[0].fsync is expected
