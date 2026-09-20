@@ -656,6 +656,123 @@ def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path)
         assert not any(word.startswith("https://") and "@" in word for word in call), call
 
 
+# ==========================================================================
+# Issue #204: the `version` input was inert
+# ==========================================================================
+#
+# The install step gated on `[ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]`. For
+# a composite action $GITHUB_ACTION_PATH is the checked-out action repository
+# and pyproject.toml sits beside action.yml at its root, so that test was true
+# on every run -- `uses: ./` and `uses: owner/repo@ref` alike -- the else
+# branch was unreachable, and `version: repo2graph==1.5.0` silently installed
+# whatever the action ref resolved to. It also meant the Action never used the
+# signed PyPI artifact, so publish.yml's provenance covered nothing consumers
+# actually install.
+#
+# These assert the *resolved pip argv*, not an exit code: the old body exits 0
+# for both inputs, so a test that only checked exit status would have stayed
+# green through the whole bug.
+
+
+def _resolved_pip_calls(tmp_path: Path, version: str, *, pyproject: bool = True):
+    """(returncode, [argv, ...]) for the "Install repo2graph" step's real body.
+
+    `pip` is overridden by a shell function that logs its argv, so nothing is
+    installed and the script under test is byte-for-byte the one in action.yml
+    -- not a transcription of it.
+    """
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
+    )
+    action_path = tmp_path / "action_checkout"
+    action_path.mkdir()
+    if pyproject:
+        (action_path / "pyproject.toml").write_text(
+            '[project]\nname = "repo2graph"\n', encoding="utf8"
+        )
+    log = tmp_path / "pip-calls.log"
+    script = 'pip() { printf "%s\\x1f" "$@" >> "$PIP_LOG"; printf "\\n" >> "$PIP_LOG"; }\n' + body
+    env = dict(os.environ)
+    env.update(
+        GITHUB_ACTION_PATH=action_path.as_posix(),
+        R2G_VERSION=version,
+        PIP_LOG=str(log),
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    calls = []
+    if log.exists():
+        for line in log.read_text(encoding="utf8").split("\n"):
+            if line:
+                calls.append(line.split("\x1f")[:-1])
+    return proc.returncode, calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss204_a_blank_version_installs_the_action_checkout(tmp_path):
+    """#204 (a): the default path is unchanged -- `uses: ./` and every workflow
+    that never sets `version` still gets an editable install of the checkout."""
+    action_path = (tmp_path / "action_checkout").as_posix()
+    rc, calls = _resolved_pip_calls(tmp_path, "")
+    assert rc == 0, calls
+    assert calls == [["install", "-q", "-e", action_path]], calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+@pytest.mark.parametrize(
+    "version",
+    [
+        "repo2graph==1.5.0",
+        "repo2graph>=1.4,<2",
+        "git+https://github.com/Srinivasan-78/repo2graph@v1",
+    ],
+)
+def test_iss204_a_non_blank_version_is_the_spec_pip_receives(tmp_path, version):
+    """#204 (b): the reported bug. The fixture writes a pyproject.toml into
+    the action checkout -- the precondition the bug lived on, and the normal
+    case for a composite action -- and a pinned spec must still reach pip
+    verbatim rather than the checkout being installed instead of it."""
+    action_path = (tmp_path / "action_checkout").as_posix()
+    rc, calls = _resolved_pip_calls(tmp_path, version)
+    assert rc == 0, calls
+    assert calls == [["install", "-q", version]], calls
+    for call in calls:
+        assert "-e" not in call, call
+        assert not any(action_path in word for word in call), call
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss204_a_blank_version_with_no_checkout_source_fails_loudly(tmp_path):
+    """#204 (c): blank + nothing to install from is a hard error naming the
+    input, not a silent `pip install ''` or a stale hardcoded fallback."""
+    rc, calls = _resolved_pip_calls(tmp_path, "", pyproject=False)
+    assert rc != 0, calls
+    assert calls == [], calls
+
+
+def test_iss204_the_version_input_defaults_to_blank():
+    """#204 (d): the default must stay blank. A non-empty default would flip
+    every existing workflow -- CI's own `uses: ./` included -- from installing
+    the checkout to installing a published spec."""
+    with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
+        inputs = parse_action_block(fh.read(), "inputs")
+    assert inputs["version"].get("default") == "", inputs["version"]
+
+
+def test_iss204_the_install_step_gates_on_the_version_input():
+    """#204 (e): a source-level guard on the shape of the gate, so the file
+    test cannot come back as the *first* branch. `-n`/`-z` on the input is
+    also the form GitHub expressions and bash agree on for every casing
+    (AGENTS.md), which is why no `inputs.version ==` gate is needed."""
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
+    )
+    first_test = re.search(r"^\s*if \[ (.+) \]; then\s*$", body, re.M)
+    assert first_test, body
+    assert first_test.group(1) == '-n "$R2G_VERSION"', first_test.group(1)
+
+
 def test_iss108_examples_workflow_routes_inputs_through_env():
     """Issue 108: examples.yml must route ${{ inputs.repo }} via env:, not direct run: interpolation."""
     workflow_path = REPO_ROOT / ".github" / "workflows" / "examples.yml"
