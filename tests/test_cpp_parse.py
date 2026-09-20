@@ -1,13 +1,26 @@
 import logging
 import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 import pytest
 
+from repo2graph import parse as parse_mod
 from repo2graph.chunks import _lines, build_chunks
 from repo2graph.graph import build
 from repo2graph.parse import parse_source
+
+
+@pytest.fixture(autouse=True)
+def _reset_cpp_probe_cache():
+    """`_cpp_available()` memoizes a successful probe for the life of the
+    process (issue #239), so a test that let the real probe through would
+    otherwise decide how many times the *next* test sees `cpp --version`.
+    Every test in this file starts from an unprobed state."""
+    parse_mod._cpp_available_cache = None
+    yield
+    parse_mod._cpp_available_cache = None
 
 
 def test_cpp_parse_pass_1():
@@ -158,3 +171,93 @@ def test_iss126_cpp_fallback_line_numbers_match_original(tmp_path):
     assert chunk["end_line"] == node["end_line"]
     assert "int real_fn" in chunk["text"]
     assert "0x126" in chunk["text"]
+
+
+# ==========================================================================
+# Issues #239 / #240 -- the cost and the stdin handle of the cpp fallback
+# ==========================================================================
+
+# Pass 1 leaves an ERROR node on this, which is what arms the macro-aware
+# retry. Every file below is a copy of it, so each one reaches the probe.
+_ERRORING_C = b"#define MACRO { error \nint main() MACRO }"
+
+
+def _cpp_calls(mock_run):
+    """(version-probe argv list, preprocess argv list) out of a patched run."""
+    argvs = [call.args[0] for call in mock_run.call_args_list]
+    return (
+        [a for a in argvs if "--version" in a],
+        [a for a in argvs if "--version" not in a],
+    )
+
+
+@patch("subprocess.run")
+def test_iss239_the_cpp_version_probe_runs_once_across_many_erroring_files(mock_run):
+    """#239: `cpp --version` answers the same thing for the life of the
+    process, so a macro-heavy tree must not pay a second spawn per file. The
+    count asserted is a hand-derived literal -- one probe, one preprocess per
+    file -- not a number the parser computed."""
+
+    def mock_run_impl(cmd, **kwargs):
+        if "--version" in cmd:
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout=b"int main() { return 0; }")
+
+    mock_run.side_effect = mock_run_impl
+
+    for name in ("a.c", "b.c", "c.cpp", "d.h"):
+        parse_source(_ERRORING_C, "c", filepath=name)
+
+    probes, preprocesses = _cpp_calls(mock_run)
+    assert len(probes) == 1, probes
+    assert len(preprocesses) == 4, preprocesses
+
+
+@patch("subprocess.run")
+def test_iss239_a_failed_probe_is_retried_rather_than_cached(mock_run):
+    """#239: only a *successful* probe is memoized, exactly as
+    fetch._git_version does it. A transient fd-exhaustion or fork failure must
+    not disable the cpp fallback for the rest of the process's life -- which is
+    precisely what functools.lru_cache would do here."""
+    attempts = []
+
+    def mock_run_impl(cmd, **kwargs):
+        if "--version" in cmd:
+            attempts.append(cmd)
+            if len(attempts) == 1:
+                raise OSError("fork: Resource temporarily unavailable")
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout=b"int main() { return 0; }")
+
+    mock_run.side_effect = mock_run_impl
+
+    first = parse_source(_ERRORING_C, "c", filepath="a.c")
+    assert not first.used_cpp  # the probe failed, so no preprocess was run
+    assert _cpp_calls(mock_run)[1] == []
+
+    second = parse_source(_ERRORING_C, "c", filepath="b.c")
+    assert second.used_cpp
+    probes, preprocesses = _cpp_calls(mock_run)
+    assert len(probes) == 2, probes
+    assert len(preprocesses) == 1, preprocesses
+
+
+@patch("subprocess.run")
+def test_iss240_both_cpp_invocations_close_stdin(mock_run):
+    """#240: capture_output redirects the child's stdout and stderr only, so
+    without stdin=DEVNULL cpp inherits ours -- under repo2graph-mcp on stdio
+    that handle is the client's JSON-RPC pipe. Asserted at the call site as
+    well as in test_compat's whole-package AST sweep."""
+
+    def mock_run_impl(cmd, **kwargs):
+        if "--version" in cmd:
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout=b"int main() { return 0; }")
+
+    mock_run.side_effect = mock_run_impl
+
+    parse_source(_ERRORING_C, "c", filepath="a.c")
+
+    assert mock_run.call_args_list, "the cpp fallback never ran"
+    for call in mock_run.call_args_list:
+        assert call.kwargs.get("stdin") is subprocess.DEVNULL, call

@@ -778,3 +778,60 @@ def test_iss146_commit_release_api_path_posix(monkeypatch):
     # Path must be POSIX normalized (no backslashes)
     assert "\\" not in tree_entries_sent[0]["path"]
     assert tree_entries_sent[0]["path"] == "dist/sub/release.txt"
+
+
+# ==========================================================================
+# Issue #240: every subprocess in the package must close its stdin
+# ==========================================================================
+#
+# `capture_output` redirects the child's stdout and stderr only, so a child
+# spawned without `stdin=` inherits ours. Under `repo2graph-mcp` on stdio that
+# handle is the client's JSON-RPC pipe: the child blocks reading it until its
+# timeout fires, and while it holds the pipe it can swallow frames meant for
+# us (the reasoning is spelled out at parse.py's _git_files). Every call site
+# followed the rule except the two `cpp` invocations in parse.py.
+#
+# This is a source-level invariant rather than a behavioural one -- the two
+# cpp calls were latent, not actively breaking, and a runtime test can only
+# reach the sites it happens to exercise. Walking the AST of the whole package
+# means the *next* call site added cannot skip it either, the same way the
+# action.yml checks above pin a gate no Python test can see.
+
+
+def _subprocess_spawn_calls(path: Path):
+    """(lineno, dotted-name, has-stdin-keyword) for every subprocess spawn."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("run", "Popen", "call"):
+            continue
+        if not isinstance(func.value, ast.Name) or func.value.id != "subprocess":
+            continue
+        kwnames = {kw.arg for kw in node.keywords}
+        # `subprocess.run(**kwargs)` would carry stdin invisibly; None means a
+        # `**` unpacking, so treat it as unverifiable-but-not-a-violation.
+        ok = "stdin" in kwnames or None in kwnames
+        found.append((node.lineno, f"subprocess.{func.attr}", ok))
+    return found
+
+
+def test_iss240_every_subprocess_spawn_in_the_package_closes_stdin():
+    """#240: no `subprocess.run`/`Popen`/`call` in repo2graph/ may inherit our
+    stdin. Anything new that does fails here, naming the file and line."""
+    package = REPO_ROOT / "repo2graph"
+    offenders = []
+    total = 0
+    for path in sorted(package.rglob("*.py")):
+        for lineno, name, ok in _subprocess_spawn_calls(path):
+            total += 1
+            if not ok:
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno} {name}")
+    # A sweep that found nothing would pass vacuously; the package has had at
+    # least a dozen spawn sites since fetch.py landed.
+    assert total >= 10, total
+    assert offenders == [], offenders
