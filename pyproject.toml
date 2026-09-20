@@ -1,6 +1,6 @@
 [project]
 name = "repo2graph"
-version = "1.5.4"
+version = "1.6.0"
 description = "Turn any repository into a code graph + graph-aware RAG chunks"
 requires-python = ">=3.10"
 license = "MIT"
