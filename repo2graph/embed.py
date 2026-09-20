@@ -228,6 +228,20 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
         meta = json.load(fh)
     if not isinstance(meta, dict):
         raise ValueError(f"{meta_path(path)}: expected a JSON object")
+    # The format marker is checked before anything is read out of the pair, and
+    # an absent marker counts as a mismatch: every vectors.meta.json this
+    # package has ever written carries it, so the only files without one are
+    # hand-made or from a future layout, and neither is a file whose fields can
+    # be trusted to still mean what this reader assumes. A later format could
+    # keep the same key names while changing what they denote -- and because
+    # query.Index turns every exception from here into "no vectors" instead of
+    # an error, reusing a pair we do not understand would not fail loudly, it
+    # would produce plausible, wrong rankings that nothing downstream can
+    # detect. Refusing an unrecognised marker is the only safe answer; BM25 is
+    # always the floor underneath it.
+    fmt = meta.get("format")
+    if fmt != VECTORS_FORMAT:
+        raise ValueError(f"{meta_path(path)}: format is {fmt!r}, expected {VECTORS_FORMAT!r}")
     ids = meta.get("chunk_ids")
     if not isinstance(ids, list):
         raise ValueError(f"{meta_path(path)}: chunk_ids is missing")

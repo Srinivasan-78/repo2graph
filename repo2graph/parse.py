@@ -418,13 +418,19 @@ def discover(
             st = abspath.lstat()
         except OSError:
             continue
-        if not statmod.S_ISREG(st.st_mode) or st.st_size > config.max_file_bytes:
-            if st.st_size > config.max_file_bytes and config.chunk_large_files:
-                pass
-            else:
-                if stats is not None and st.st_size > config.max_file_bytes:
-                    stats["skipped_too_large"] += 1
-                continue
+        # Two independent rejections, deliberately not one branch. When they
+        # shared a condition the `chunk_large_files` escape hatch dropped out of
+        # *both*, so an entry that was non-regular AND over max_file_bytes
+        # skipped the S_ISREG check and was yielded into _chunk_and_parse ->
+        # _safe_open -> a blocking read() on a FIFO or device. A size flag must
+        # never be able to waive the file-type check; splitting them also ties
+        # skipped_too_large to the reason the path was actually skipped.
+        if not statmod.S_ISREG(st.st_mode):
+            continue
+        if st.st_size > config.max_file_bytes and not config.chunk_large_files:
+            if stats is not None:
+                stats["skipped_too_large"] += 1
+            continue
         rp = rel.as_posix()
         if include_globs and not matches_any(rp, include_globs):
             continue
@@ -706,6 +712,46 @@ def _bases(src: bytes, node, lang: str) -> list[str]:
     return uniq[:8]
 
 
+_cpp_available_cache: bool | None = None
+
+
+def _cpp_available() -> bool:
+    """Is a usable `cpp` on PATH? Memoizing only a successful probe.
+
+    `cpp --version` answers the same thing for the life of the process, but it
+    used to be re-run per erroring C/C++ file -- two spawns per file instead of
+    one, which dominates the macro-aware retry's cost on a large C tree and on
+    Windows, where spawn is expensive and parse_all may be fanning this out
+    across a ProcessPoolExecutor.
+
+    Same shape as fetch._git_version, for the same reason: a transient failure
+    (fd exhaustion, fork failure, ...) must not be cached forever, or one bad
+    moment disables the cpp fallback for the rest of the process's life.
+    functools.lru_cache would cache exactly that, so this is a module global
+    with an explicit None sentinel -- only a successful probe is memoized, a
+    failed probe is retried on the next call.
+
+    stdin=DEVNULL for the reason spelled out at _git_files above: capture_output
+    redirects the child's stdout and stderr only, so cpp would otherwise inherit
+    our stdin, which under the MCP server is the client's JSON-RPC pipe.
+    """
+    global _cpp_available_cache
+    if _cpp_available_cache:
+        return True
+    try:
+        subprocess.run(
+            ["cpp", "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    _cpp_available_cache = True
+    return True
+
+
 def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
@@ -728,11 +774,13 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
 
     if errors > 0 and lang in ("c", "cpp") and filepath is not None:
         try:
-            if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp"):
+            if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp") and (
+                _cpp_available()
+            ):
                 try:
-                    subprocess.run(["cpp", "--version"], capture_output=True, timeout=5, check=True)
                     out = subprocess.run(
                         ["cpp", "-w", "-P", "-undef", str(filepath)],
+                        stdin=subprocess.DEVNULL,
                         capture_output=True,
                         timeout=10,
                     )

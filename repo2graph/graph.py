@@ -6,29 +6,46 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from collections import Counter, defaultdict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover, parse_source
 
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
-# `git log --name-only` output is captured whole; a request for millions of
-# commits would buffer gigabytes. Co-change signal saturates long before this,
-# so cap the window and record when we did.
+# A request for millions of commits makes git walk the whole history and emit
+# every path in it. Co-change signal saturates long before this, so cap the
+# window and record when we did.
 MAX_COCHANGE_COMMITS = 5000
 # Independent of MAX_COCHANGE_COMMITS (ISS-82): that bounds how many commits
 # are requested, but a single pathological commit -- a vendor import touching
 # hundreds of thousands of files -- can still emit an unbounded blob of paths
 # within that commit count. Enforced during the read, not after a full
-# capture_output() buffer has already grown past it.
+# capture_output() buffer has already grown past it: `add_cochange` streams the
+# pipe and stops at this many bytes, then kills git (ISS-236).
 MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
+# Wall clock for the whole `git log` read. `subprocess.run(timeout=...)` used to
+# provide this; a streamed read has to enforce it itself.
+COCHANGE_TIMEOUT = 120
+# One read() per block. Big enough that a 10 MB cap is ~160 reads, small enough
+# that the buffer never jumps far past the cap.
+_COCHANGE_READ_BLOCK = 64 * 1024
+# How long to wait for a killed child (and the thread reading it) to go away.
+# Only a kernel in trouble takes this long; the build carries on regardless.
+_COCHANGE_REAP_TIMEOUT = 10
 # max_files bounds file count and is opt-in; nobody has to remember to pass
 # it. This is not a hard cap (ISS-85 asks for a soft one) -- past this many
 # nodes or edges a build just tells the operator on stderr, once, that memory
 # use is growing unbounded and how to bound it.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
+# How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
+# confidence. Overridable per build (`build(max_call_candidates=)`, the
+# `--max-call-candidates` flag), so it is a property of a *particular* index,
+# not of repo2graph -- which is why the Graph carries the value it was built
+# with and manifest.json reports that value rather than this default (#245).
+DEFAULT_MAX_CALL_CANDIDATES = 5
 
 
 class GraphLimitExceeded(RuntimeError):
@@ -38,9 +55,22 @@ class GraphLimitExceeded(RuntimeError):
 
 
 class Graph:
-    def __init__(self, root: Path, name: str, max_files: int = 0):
+    def __init__(
+        self,
+        root: Path,
+        name: str,
+        max_files: int = 0,
+        max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
+    ):
         self.root, self.name = root, name
         self.max_files = max_files
+        # The ambiguous-call fan-out limit this graph was resolved under.
+        # Carried on the Graph purely so the writers can report it: export's
+        # manifest.json describes the artifacts it ships beside, and a manifest
+        # claiming the default 5 for an index built with 2 is a wrong answer to
+        # the one question the manifest exists to answer (#245). A Graph built
+        # by hand keeps the default, which is what build() would have used.
+        self.max_call_candidates = max_call_candidates
         self.config = None
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
@@ -287,31 +317,111 @@ def repo_context(root: Path) -> dict:
 
 
 # ---------- parsing ----------
+@dataclass
+class ChunkedParsedFile(ParsedFile):
+    """What `_chunk_and_parse` produces: a `ParsedFile` plus what it could not read.
+
+    `undecodable_slices` does not belong on `ParsedFile` itself -- it is
+    meaningless for the whole-file reader, which either decodes a file or does
+    not. Every reader of the field uses `getattr(pf, ..., 0)`, the same way
+    `build()` already reads `is_chunked` and `used_cpp`.
+    """
+
+    undecodable_slices: int = 0
+
+
+# The longest UTF-8 sequence is four bytes, so at most three bytes of one can be
+# left dangling at the end of a slice cut at an arbitrary byte offset.
+_UTF8_MAX_SEQ = 4
+
+
+def _incomplete_utf8_tail(buf: bytes) -> int:
+    """Length of the *truncated* UTF-8 sequence at the end of `buf`, else 0.
+
+    ISS-196: slices are taken at raw byte offsets, so a multi-byte character can
+    straddle a boundary -- its lead byte ends slice N and its continuation bytes
+    begin slice N+1. Both then fail to decode and *both* were dropped, losing up
+    to 2 x max_file_bytes of source with nothing recording it. Reporting the
+    length of the dangling prefix lets the caller carry those bytes into the next
+    slice so the boundary lands on a character boundary instead.
+
+    Only a genuinely truncated sequence counts. A complete character, a stray
+    continuation byte with no lead, and a byte that can never start a sequence
+    (0xF8..0xFF) all return 0, so invalid bytes are still reported as invalid
+    rather than carried forward forever.
+    """
+    for back in range(1, _UTF8_MAX_SEQ):
+        if back > len(buf):
+            return 0
+        b = buf[-back]
+        if b < 0x80:
+            return 0  # ASCII: nothing is dangling
+        if b < 0xC0:
+            continue  # continuation byte: its lead byte is further back
+        need = 2 if b < 0xE0 else 3 if b < 0xF0 else 4 if b < 0xF8 else 0
+        return back if need > back else 0
+    return 0
+
+
 def _chunk_and_parse(rel, abspath, lang, config, size):
     chunk_size = config.max_file_bytes
     all_symbols = []
     all_imports = []
     total_parse_errors = 0
     used_cpp = False
+    undecodable_slices = 0
 
     line_offset = 0
-    raw_content = bytearray()
+    # Streamed, not accumulated: `raw_content = bytearray()` held the entire
+    # file for the digest and the line count, so the one path max_file_bytes
+    # exists to bound had no memory bound at all (ISS-196). sha256 over the raw
+    # bytes in file order and a running newline count are exactly the values the
+    # buffered version produced, byte for byte.
+    hasher = hashlib.sha256()
+    total_bytes = 0
+    newlines = 0
+    # Bytes of a character whose sequence ran off the end of the previous slice.
+    # Never more than three, and never a newline (a newline is ASCII and cannot
+    # be part of a multi-byte sequence), so `line_offset` accounting is unaffected.
+    carry = b""
+    eof = False
 
     with _safe_open(abspath) as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            raw_content.extend(chunk)
-            try:
-                chunk.decode("utf-8")
-            except UnicodeDecodeError:
-                line_offset += chunk.count(b"\n")
+        while not eof:
+            # Read a slice short by whatever is carried, so each parsed slice is
+            # still exactly chunk_size bytes. max(1, ...) only matters for a
+            # chunk_size of three or less: it keeps the loop making progress
+            # instead of reading zero bytes forever.
+            chunk = f.read(max(1, chunk_size - len(carry)))
+            if chunk:
+                hasher.update(chunk)
+                total_bytes += len(chunk)
+                newlines += chunk.count(b"\n")
+            else:
+                eof = True
+            buf, carry = carry + chunk, b""
+            if not eof:
+                tail = _incomplete_utf8_tail(buf)
+                if tail:
+                    buf, carry = buf[:-tail], buf[-tail:]
+            # At EOF a dangling sequence is genuinely truncated rather than
+            # straddling, so it stays in `buf` and is reported below, once.
+            if not buf:
                 continue
 
-            pf = parse_source(chunk, lang, filepath=None)
+            try:
+                buf.decode("utf-8")
+            except UnicodeDecodeError:
+                # Not a boundary artefact -- these bytes are not UTF-8 at all.
+                # Count them so a file that quietly loses most of itself is
+                # visible in stats.json instead of looking healthy.
+                undecodable_slices += 1
+                line_offset += buf.count(b"\n")
+                continue
+
+            pf = parse_source(buf, lang, filepath=None)
             if pf is None:
-                line_offset += chunk.count(b"\n")
+                line_offset += buf.count(b"\n")
                 continue
 
             for sym in pf.symbols:
@@ -324,7 +434,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             if pf.used_cpp:
                 used_cpp = True
 
-            line_offset += chunk.count(b"\n")
+            line_offset += buf.count(b"\n")
 
     seen = set()
     deduped_symbols = []
@@ -344,18 +454,17 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
 
         deduped_symbols.append(sym)
 
-    pf = ParsedFile(
+    pf = ChunkedParsedFile(
         lang=lang,
         symbols=deduped_symbols,
         imports=list(set(all_imports)),
         parse_errors=total_parse_errors,
         used_cpp=used_cpp,
         is_chunked=True,
+        undecodable_slices=undecodable_slices,
     )
 
-    digest = hashlib.sha256(raw_content).hexdigest()
-    lines = raw_content.count(b"\n") + 1
-    return rel, lang, (len(raw_content), lines, pf, digest)
+    return rel, lang, (total_bytes, newlines + 1, pf, hasher.hexdigest())
 
 
 _ORIGINAL_READ_BYTES = Path.read_bytes
@@ -452,7 +561,11 @@ def _read_and_parse(item):
 # a field would otherwise reconstruct with a silently wrong default, and a wrong
 # symbol is exactly the "wrong in a way nothing detects" failure this feature
 # was cut for in the first place.
-PARSE_CACHE_FORMAT = 1
+# 2: chunked entries gained "undecodable_slices" (ISS-196). A cache written by
+# format 1 has no way to report it, and an incremental build restoring one would
+# report a 0 where a full build reports the real count -- the one thing an
+# incremental build is not allowed to do.
+PARSE_CACHE_FORMAT = 2
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -481,6 +594,8 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             "parse_errors": pf.parse_errors,
             "used_cpp": pf.used_cpp,
             "is_chunked": getattr(pf, "is_chunked", False),
+            # Only the chunked reader can lose a slice, and only it sets this.
+            "undecodable_slices": getattr(pf, "undecodable_slices", 0),
             "imports": list(pf.imports),
             "symbols": [asdict(s) for s in pf.symbols],
         },
@@ -506,14 +621,30 @@ def entry_read(entry: dict) -> tuple | None:
         if raw is None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
-        pf = ParsedFile(
-            lang=str(raw["lang"]),
-            symbols=symbols,
-            imports=[str(i) for i in raw["imports"]],
-            parse_errors=int(raw.get("parse_errors") or 0),
-            used_cpp=bool(raw.get("used_cpp") or False),
-            is_chunked=bool(raw.get("is_chunked") or False),
-        )
+        pf: ParsedFile
+        # A chunked entry restores as the same class a fresh chunked read
+        # produces, so a cached file and a re-parsed one are indistinguishable
+        # -- including to `==`, which a dataclass only answers true for within
+        # one class.
+        if raw.get("is_chunked"):
+            pf = ChunkedParsedFile(
+                lang=str(raw["lang"]),
+                symbols=symbols,
+                imports=[str(i) for i in raw["imports"]],
+                parse_errors=int(raw.get("parse_errors") or 0),
+                used_cpp=bool(raw.get("used_cpp") or False),
+                is_chunked=True,
+                undecodable_slices=int(raw.get("undecodable_slices") or 0),
+            )
+        else:
+            pf = ParsedFile(
+                lang=str(raw["lang"]),
+                symbols=symbols,
+                imports=[str(i) for i in raw["imports"]],
+                parse_errors=int(raw.get("parse_errors") or 0),
+                used_cpp=bool(raw.get("used_cpp") or False),
+                is_chunked=False,
+            )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
         return None
@@ -585,12 +716,84 @@ def resolve_jobs(jobs: int) -> int:
     return max(1, min(os.cpu_count() or 1, 8))
 
 
+# Win32 GetStdHandle/SetStdHandle slot numbers. os.dup2 rewrites the CRT's fd
+# table, which is what `print`, `sys.stdout` and any C extension writing to the
+# CRT `stdout` go through -- but it does *not* touch the process-wide Win32
+# standard handles, so a library that calls `WriteFile(GetStdHandle(...))`
+# directly would still reach the handle the worker inherited. These are the two
+# slots `silence_worker_io` repoints for that last route.
+_STD_INPUT_HANDLE = 0xFFFFFFF6  # (DWORD)-10
+_STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
+
+
+def silence_worker_io() -> None:
+    """Detach a parse worker from the stdin/stdout it inherited (#90).
+
+    Runs as the `ProcessPoolExecutor` initializer, i.e. *inside* the worker and
+    once per worker. It exists because of who the parent may be: when the pool
+    is started from `repo2graph-mcp`, fd 0 and fd 1 are the client's JSON-RPC
+    pipes. Measured on Windows (spawn), a worker inherits both for real --
+    `os.write(1, ...)` lands in the parent's stdout pipe, and `os.read(0, 1)`
+    *consumes a byte of the client's request stream*, which is a request the
+    server then waits for forever. Parsing writes to neither today; this makes
+    that a property of the pool rather than of the current worker body.
+
+    Redirection is done with `os.dup2` onto `os.devnull`, not by rebinding
+    `sys.stdout`, because a Python-only swap leaves fd 1 -- and therefore every
+    C-level write and anything that cached `fileno()` -- pointing at the pipe.
+    `sys.stdin`/`sys.stdout` are rebound afterwards so their buffers are not
+    holding anything from before the swap; on Windows the Win32 std handles are
+    repointed too (see above).
+
+    Every step is best effort: a worker that cannot open devnull must still
+    parse files. Nothing here raises, because an initializer that raises breaks
+    the pool for every task.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_RDWR)
+    except OSError:
+        return
+    try:
+        for fd in (0, 1):
+            try:
+                os.dup2(devnull, fd)
+            except OSError:
+                pass
+    finally:
+        if devnull > 2:
+            try:
+                os.close(devnull)
+            except OSError:
+                pass
+    for name, fd, mode in (("stdin", 0, "r"), ("stdout", 1, "w")):
+        try:
+            setattr(sys, name, open(fd, mode, closefd=False))
+        except OSError:
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            import msvcrt
+
+            kernel32 = getattr(ctypes, "windll").kernel32
+            kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+            kernel32.SetStdHandle.restype = ctypes.c_int
+            kernel32.SetStdHandle(_STD_INPUT_HANDLE, msvcrt.get_osfhandle(0))
+            kernel32.SetStdHandle(_STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(1))
+        except Exception:
+            pass
+
+
 def parse_all(files, jobs: int, config=None):
     """Read and parse every file, in discovery order, across `jobs` processes.
 
     tree-sitter parsing is CPU bound and dominates a large build, so this is
     the difference between one core and all of them. Order is preserved, which
     keeps node ids and edge order identical to a serial run.
+
+    Every worker runs `silence_worker_io` first, so the pool is safe to start
+    from a process whose stdin/stdout are a protocol stream rather than a
+    terminal -- which is what `repo2graph-mcp`'s auto-build is (#90).
     """
     jobs = resolve_jobs(jobs)
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
@@ -600,7 +803,9 @@ def parse_all(files, jobs: int, config=None):
 
     try:
         # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
-        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+        with concurrent.futures.ProcessPoolExecutor(
+            max_workers=jobs, initializer=silence_worker_io
+        ) as pool:
             return list(
                 pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
             )
@@ -621,7 +826,7 @@ def build(
     max_files: int = 0,
     jobs: int = 0,
     cache: dict | None = None,
-    max_call_candidates: int = 5,
+    max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
     config=None,
 ) -> Graph:
     """Parse `root` into a Graph.
@@ -637,6 +842,10 @@ def build(
             files whose sha256 and language both still match are not re-parsed.
             Resolution is recomputed in full either way, so the resulting Graph
             is identical to one built with `cache=None`.
+        max_call_candidates: An ambiguous call name fans out to at most this
+            many CALLS edges, each at 1/n confidence. Clamped to >= 1, and the
+            clamped value is recorded on the returned Graph so the writers can
+            state the limit this build actually used.
         config: BuildConfig
 
     Returns:
@@ -645,7 +854,7 @@ def build(
     """
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name, max_files=max_files)
+    g = Graph(root, root.name, max_files=max_files, max_call_candidates=max_call_candidates)
     g.config = config
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
@@ -715,6 +924,14 @@ def build(
             g.stats["files_with_parse_errors"] += 1
         if getattr(pf, "used_cpp", False):
             g.stats["cpp_fallback_files"] += 1
+        # ISS-196: a chunked file whose slices do not decode still gets a node,
+        # a `chunked: true` flag and a correct line count, so the index looks
+        # healthy while the file is simply unqueryable. This is the only signal
+        # that any of it was lost.
+        undecodable = getattr(pf, "undecodable_slices", 0)
+        if undecodable:
+            g.stats["chunk_slices_undecodable"] += undecodable
+            g.stats["files_with_undecodable_chunks"] += 1
 
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
@@ -903,21 +1120,70 @@ def _reach(start: str, out: dict) -> int:
     return len(seen) - 1
 
 
+def _read_capped(stream, limit: int) -> tuple[bytes, bool]:
+    """Read at most `limit` bytes from `stream`, and report whether there were more.
+
+    Reads one byte past the cap deliberately: that byte is the only way to tell
+    "the output was exactly `limit` bytes" from "the output was larger and we
+    stopped early" without reading the rest of it -- and not reading the rest of
+    it is the entire point (ISS-236).
+    """
+    buf = bytearray()
+    while len(buf) <= limit:
+        block = stream.read(min(_COCHANGE_READ_BLOCK, limit + 1 - len(buf)))
+        if not block:
+            return bytes(buf), False
+        buf.extend(block)
+    return bytes(buf[:limit]), True
+
+
+def _reap_child(proc, reader=None) -> None:
+    """Kill a child, let go of its pipe and collect its exit status.
+
+    Order matters. The child is killed *first*: a reader parked in read() only
+    comes back when the write end disappears, and closing the read end out from
+    under it is unsafe on both platforms. Every step is best-effort -- a build
+    must not fail because a doomed `git log` was slow to die.
+    """
+    try:
+        if proc.poll() is None:
+            proc.kill()
+    except OSError:
+        pass
+    if reader is not None:
+        reader.join(_COCHANGE_REAP_TIMEOUT)
+    if proc.stdout is not None:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+    try:
+        proc.wait(timeout=_COCHANGE_REAP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
     """CO_CHANGE edges from files edited together in the last N commits."""
     if commits > MAX_COCHANGE_COMMITS:
         g.stats["cochange_history_capped"] = commits
         commits = MAX_COCHANGE_COMMITS
     try:
+        # Popen, not run(capture_output=True): run() reads the child's stdout to
+        # EOF before it returns, so a byte cap applied to its result bounds only
+        # the decode and the pair counting -- the blob is already resident by
+        # then (ISS-236). Streaming the pipe is what makes MAX_COCHANGE_BYTES a
+        # memory bound rather than a post-hoc trim.
+        #
         # -c core.quotepath=false: without it git backslash-escapes any
         # non-ASCII path ("caf\303\251.py"), which never matches file_index and
         # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
         # as UTF-8 ourselves, exactly as walker._git_files does, so a non-ASCII
         # path cannot raise UnicodeDecodeError under a cp1252 locale.
-        # stdin=DEVNULL for the same reason as parse._git_files: capture_output
-        # leaves stdin inherited, and a git that blocks on the MCP server's
+        # stdin=DEVNULL for the same reason as parse._git_files: without it git
+        # inherits *our* stdin, and a git that blocks on the MCP server's
         # JSON-RPC pipe stalls until the timeout and can eat client frames.
-        out = subprocess.run(
+        proc = subprocess.Popen(
             [
                 "git",
                 "-c",
@@ -930,28 +1196,55 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
                 "--pretty=format:%H",
                 "--no-merges",
             ],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
-            timeout=120,
         )
-        if out.returncode != 0:
-            return
     except (OSError, subprocess.SubprocessError):
         return
-    stdout = out.stdout
+
+    # The read runs in a thread so the timeout can be enforced on a blocking
+    # read(): select() does not work on pipes on Windows, and this is how
+    # Popen.communicate(timeout=...) does it there too.
+    read: list[tuple[bytes, bool]] = []
+
+    def _drain() -> None:
+        try:
+            read.append(_read_capped(proc.stdout, MAX_COCHANGE_BYTES))
+        except (OSError, ValueError):
+            pass  # pipe torn down mid-read: same outcome as no output at all
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+    reader.join(COCHANGE_TIMEOUT)
+    timed_out = reader.is_alive()
+    try:
+        _reap_child(proc, reader)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # A timeout is silent, exactly as the TimeoutExpired from the old
+    # run(timeout=120) was: no co-change edges, no error, the build goes on.
+    if timed_out or not read:
+        return
+    stdout, capped = read[0]
+    # Capping kills git mid-write, so its exit status then says "killed" and
+    # means nothing. Only a read that reached EOF can report a real git failure.
+    if not capped and proc.returncode not in (0, None):
+        return
     # ISS-82: MAX_COCHANGE_COMMITS bounds how many commits are requested, not
     # how many bytes a single pathological commit's file list can still emit
-    # within that count. Bound what gets decoded and processed independently
-    # of the commit count, and record it -- same "cap and record when we did"
-    # idiom as MAX_COCHANGE_COMMITS above.
-    if len(stdout) > MAX_COCHANGE_BYTES:
+    # within that count. Record that the cap bound -- same "cap and record when
+    # we did" idiom as MAX_COCHANGE_COMMITS above. The value is the number of
+    # bytes read, i.e. the cap itself: how large the output would have been is
+    # exactly the thing we no longer pay to find out.
+    if capped:
         g.stats["cochange_output_capped"] = len(stdout)
         # Drop the trailing partial commit: git log delimits commits with a blank
-        # line ("\n\n" or "\r\n\r\n"). Truncating at an arbitrary byte count cuts into the oldest
+        # line ("\n\n" or "\r\n\r\n"). Stopping at an arbitrary byte count cuts into the oldest
         # commit block, and flushing whatever is in current at end-of-input can turn
         # a >25 file noise commit into a small (<25) co-change signal.
         m = None
-        for m in re.finditer(rb"(\r?\n){2}", stdout[:MAX_COCHANGE_BYTES]):
+        for m in re.finditer(rb"(\r?\n){2}", stdout):
             pass
         stdout = stdout[: m.end()] if m else b""
     pairs: Counter = Counter()

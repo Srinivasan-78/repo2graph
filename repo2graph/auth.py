@@ -25,6 +25,10 @@ Security properties this module is responsible for, none of them optional:
   `{"alg": "none"}` or `{"alg": "HS256"}` against an RSA JWKS is the classic
   JWT forgery, and the only defence is refusing to let the attacker pick the
   algorithm.
+* A key's declared purpose is honoured. RFC 7517 §4.2/§4.3 make `use` and
+  `key_ops` the issuer's own statement of what a key is for, and a JWKS
+  routinely publishes encryption keys alongside signing ones. A key marked
+  for encryption must never be accepted as a signature verifier.
 * `iss`, `aud` and `exp` are all enforced. A signature check alone proves the
   issuer minted *a* token, not that it minted one for this server.
 * An unknown `kid` is remembered as a miss for a bounded window, and
@@ -458,15 +462,39 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     key = jwks.key_for(str(kid))
     if key.get("kty") != "RSA":
         raise AuthError(f"unsupported key type {key.get('kty')!r}")
+    # RFC 7517 §4.2/§4.3: `use` and `key_ops` are the issuer's declaration of
+    # what the key is for, and a JWKS legitimately carries encryption keys next
+    # to signing ones. A key stamped {"use": "enc"} or {"key_ops": ["encrypt"]}
+    # is one its issuer says must not verify a signature, so honour that rather
+    # than reaching for the maths anyway. Absent means *unconstrained* in both
+    # cases, per the same sections -- the common entry declares neither field,
+    # and refusing it would reject every ordinary issuer.
+    use = key.get("use")
+    if use is not None and use != "sig":
+        raise AuthError(f"signing key declares use {use!r}, not 'sig'")
+    ops = key.get("key_ops")
+    if isinstance(ops, list) and "verify" not in ops:
+        raise AuthError("signing key does not permit the verify operation")
     # The algorithm is taken from the key when the key declares one, never from
     # the token: the attacker controls the token and must not choose the maths.
     if key.get("alg") and ALGORITHMS.get(str(key["alg"])) != hash_name:
         raise AuthError("token algorithm does not match the signing key")
 
+    # `.get`, not `key["n"]`: a key set advertising {"kty": "RSA"} with no
+    # modulus raises KeyError here, and a KeyError is not an AuthError -- it
+    # surfaces as a 500 on the tool path and kills the handler thread on the
+    # refusal path, which only catches AuthError. The isinstance check carries
+    # as much weight as the presence one: `str()` of a JSON number or list
+    # yields text that b64url_decode silently mangles into some unrelated
+    # integer instead of refusing it.
+    n_b64, e_b64 = key.get("n"), key.get("e")
+    if not isinstance(n_b64, str) or not isinstance(e_b64, str):
+        raise AuthError("signing key is missing its RSA parameters")
+
     signing_input = f"{head_b64}.{payload_b64}".encode("ascii", "strict")
     if not rsa_verify(
-        _int_from_b64url(str(key["n"])),
-        _int_from_b64url(str(key["e"])),
+        _int_from_b64url(n_b64),
+        _int_from_b64url(e_b64),
         b64url_decode(sig_b64),
         signing_input,
         hash_name,
@@ -588,7 +616,28 @@ class Authenticator:
         if self.config.token:
             # compare_digest, not ==: an equality test on a secret leaks its
             # length and matching prefix through response timing.
-            if hmac.compare_digest(credential, self.config.token):
+            #
+            # Both sides are encoded to ASCII bytes first. `compare_digest`
+            # *raises TypeError* -- it does not report a mismatch -- as soon as
+            # either str operand carries a non-ASCII character, and the
+            # credential arrives straight off an attacker-controlled
+            # Authorization header. A TypeError is not an AuthError, so it
+            # escapes the transport's refusal path and kills the handler thread
+            # before authentication has resolved; the caller gets no response at
+            # all, not even a 401. Comparing the encoded forms keeps the
+            # constant-time property intact. The configured token is
+            # operator-supplied and may itself be non-ASCII, so it is encoded
+            # inside the same guard -- otherwise the TypeError just moves one
+            # operand across. Nothing admissible is lost either way: RFC 7235
+            # confines a header value to the ASCII range, so a non-ASCII secret
+            # was already unmatchable.
+            try:
+                matched = hmac.compare_digest(
+                    credential.encode("ascii"), self.config.token.encode("ascii")
+                )
+            except UnicodeEncodeError:
+                matched = False
+            if matched:
                 return Identity(subject="bearer", mode="bearer")
             # Fall through rather than refusing: both modes may be configured,
             # and a token that is not the static one may still be a valid JWT.

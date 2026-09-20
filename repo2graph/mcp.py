@@ -30,6 +30,7 @@ other call worth serving first. It happens once per process, and once on disk.
 import argparse
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -263,6 +264,36 @@ EMPTY_RESULT = (
 _INDEXES: dict[str, Index] = {}
 _INDEX_MTIMES: dict[str, float] = {}
 
+# One lock per index directory, and one lock over the dict that holds them.
+#
+# stdio serves one request at a time, but the HTTP transport is a
+# `ThreadingHTTPServer` with `daemon_threads = True`, so every tool call arrives
+# on its own thread and they all funnel into `open_index`. Its check-then-act --
+# `if not _has_index(...)` then `_build_index(...)` -- is therefore racy in
+# exactly the way `TaskManager` already documents for the `--async-build` path:
+# two first calls both find no index, both parse the whole repository, and then
+# race each other through `atomic_write` so the loser's work is silently
+# discarded. `--async-build` is off by default and `open_index_or_task` returns
+# straight to `open_index` when it is, so the default path had none of that
+# protection.
+#
+# Per directory rather than one global lock, because a build is the one
+# unbounded piece of work this server does: serialising it against a *different*
+# index's cached read would turn a minute of parsing into a minute of stall for
+# every client. The small global lock exists only to hand out the per-directory
+# ones; it is never held across a build.
+_INDEX_LOCKS_GUARD = threading.Lock()
+_INDEX_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _index_lock(key: str) -> threading.Lock:
+    """The lock covering one index directory, created on first use."""
+    with _INDEX_LOCKS_GUARD:
+        lock = _INDEX_LOCKS.get(key)
+        if lock is None:
+            lock = _INDEX_LOCKS[key] = threading.Lock()
+        return lock
+
 
 def _index_mtime(out_path: Path) -> float:
     manifest = artifact_path(out_path, "manifest.json")
@@ -279,27 +310,27 @@ def _has_index(out_path: Path) -> bool:
 
 
 def _build_index(repo: Path, out: Path) -> None:
-    """Index `repo` into `out`, in-process, single-process, silent on stdout.
+    """Index `repo` into `out`, in-process, silent on stdout.
 
-    Two constraints, both of them about the transport rather than about graphs:
+    One constraint, and it is about the transport rather than about graphs:
+    nothing may reach stdout. It carries the JSON-RPC stream, and one stray
+    `print` ends the session. `graph.build` and `export.dump_all` write no
+    console output of their own -- the CLI's `cmd_build` is what emits the JSON
+    report -- so calling them directly is what keeps the wire clean.
 
-    * Nothing may reach stdout. It carries the JSON-RPC stream, and one stray
-      `print` ends the session. `graph.build` and `export.dump_all` write no
-      console output of their own -- the CLI's `cmd_build` is what emits the
-      JSON report -- so calling them directly is what keeps the wire clean.
-    * `jobs=1`, always. `build()` reaches for a process pool above
-      PARALLEL_MIN_FILES files, and spawning one from inside the running stdio
-      server hangs: the workers inherit the parent's stdin and stdout, which are
-      the client's pipes, and the first call never returns. It is not a
-      throughput loss worth mourning -- at the threshold the pool costs more to
-      start than it saves -- but on a large repo this build is slower than the
-      CLI's. `repo2graph build` is still the way to index one quickly.
+    That constraint used to be met with `jobs=1`, because `build()` reaches for
+    a process pool above PARALLEL_MIN_FILES files and the workers inherit the
+    parent's fd 0 and fd 1, which here are the client's pipes. The pin is gone:
+    `graph.silence_worker_io` now runs in every worker and dup2s both onto
+    devnull, so the pool no longer has a route to the transport (#90). Default
+    `jobs` (one worker per core) therefore applies, and a large repo's first
+    tool call costs what `repo2graph build` costs rather than several times it.
     """
     from .chunks import iter_chunks
     from .export import dump_all
     from .graph import build
 
-    graph = build(repo, jobs=1)
+    graph = build(repo)
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 
 
@@ -315,43 +346,55 @@ def open_index(out, repo=None, cache=None) -> Index:
     pointed at a repo gets an answer instead of an error it cannot act on. It
     stays opt-in because inferring a repo to index from an output path alone is
     a guess, and the cost of guessing wrong is parsing the wrong tree.
+
+    The whole body runs under this directory's lock -- the mtime read, the
+    `_has_index` test, the build, the `Index(...)` load and both cache stores --
+    because every one of those is half of a check-then-act that a second HTTP
+    worker thread can land in the middle of. Holding it across the build is the
+    point: the second caller waits and then finds the index the first one just
+    made, rather than starting a duplicate parse of the same tree. An exception
+    from `_build_index` propagates with the lock released by the `with` and
+    nothing written to `_INDEXES`/`_INDEX_MTIMES`, so a failed build leaves no
+    half-state behind for the next call to trust.
     """
     out_path = Path(out)
     key = str(out_path.resolve())
-    current_mtime = _index_mtime(out_path)
 
-    index = _INDEXES.get(key)
-    if index is not None and key in _INDEX_MTIMES and current_mtime <= _INDEX_MTIMES[key]:
-        return index
+    with _index_lock(key):
+        current_mtime = _index_mtime(out_path)
 
-    # If the index is already loaded but its on-disk artifacts have been updated,
-    # reload the Index and invalidate the result cache.
-    if index is not None and _has_index(out_path):
-        if cache is not None:
-            cache.clear()
+        index = _INDEXES.get(key)
+        if index is not None and key in _INDEX_MTIMES and current_mtime <= _INDEX_MTIMES[key]:
+            return index
+
+        # If the index is already loaded but its on-disk artifacts have been
+        # updated, reload the Index and invalidate the result cache.
+        if index is not None and _has_index(out_path):
+            if cache is not None:
+                cache.clear()
+            index = _INDEXES[key] = Index(out_path)
+            _INDEX_MTIMES[key] = current_mtime
+            return index
+
+        if index is not None:
+            return index
+
+        if not _has_index(out_path):
+            if repo is None:
+                raise SystemExit(
+                    f"error: no repo2graph index found at '{out}'. "
+                    f"Build one first with: repo2graph build <path> -o {out}"
+                )
+            _build_index(Path(repo), out_path)
+            # A freshly built index invalidates everything computed from
+            # whatever was there before. Dropping the cache here rather than at
+            # the call sites means no path can rebuild and forget to.
+            if cache is not None:
+                cache.clear()
+            current_mtime = _index_mtime(out_path)
         index = _INDEXES[key] = Index(out_path)
         _INDEX_MTIMES[key] = current_mtime
         return index
-
-    if index is not None:
-        return index
-
-    if not _has_index(out_path):
-        if repo is None:
-            raise SystemExit(
-                f"error: no repo2graph index found at '{out}'. "
-                f"Build one first with: repo2graph build <path> -o {out}"
-            )
-        _build_index(Path(repo), out_path)
-        # A freshly built index invalidates everything computed from whatever
-        # was there before. Dropping the cache here rather than at the call
-        # sites means no path can rebuild and forget to.
-        if cache is not None:
-            cache.clear()
-        current_mtime = _index_mtime(out_path)
-    index = _INDEXES[key] = Index(out_path)
-    _INDEX_MTIMES[key] = current_mtime
-    return index
 
 
 def open_index_or_task(out, repo=None, cache=None, tasks=None):
@@ -896,9 +939,29 @@ def main(argv=None):
     if args.http_port is None and args.well_known_port is not None:
         args.http_port = args.well_known_port
 
+    # --http-only names what to leave out, not what to serve, so on its own it
+    # asks for no transport at all. It used to be tested *inside* the block that
+    # builds the HTTP transport, which meant that with no --http-port the block
+    # never ran, the flag was never read, and execution fell through to the
+    # stdio serve() -- the exact transport the flag says to omit, with no
+    # diagnostic. Refusing here beats silently doing the opposite: the operator
+    # asked for HTTP and there is no port to put it on.
+    if args.http_only and args.http_port is None and not args.auth_cimd:
+        raise SystemExit(
+            "error: --http-only needs --http-port. It suppresses the stdio "
+            "transport, so without a port there would be nothing left to serve "
+            "on. Add --http-port PORT (or --well-known-port/--auth-cimd)."
+        )
+
     from .audit import AuditConfig, AuditLogger
 
-    audit = AuditLogger(AuditConfig(level=args.audit_log_level, path=args.audit_log))
+    audit = AuditLogger(
+        AuditConfig(
+            level=args.audit_log_level,
+            path=args.audit_log,
+            fsync=args.audit_log_fsync,
+        )
+    )
 
     tasks = None
     if args.async_build:
@@ -908,45 +971,48 @@ def main(argv=None):
 
     auth_config = _auth_config(args)
     transport = None
-    if args.http_port is not None or args.auth_cimd:
-        from .http_server import HTTPTransport
-
-        transport = HTTPTransport(
-            index_dir,
-            build_from,
-            host=args.http_host,
-            port=args.http_port if args.http_port is not None else 8719,
-            auth_config=auth_config,
-            audit=audit,
-            cache=cache,
-            publish_cimd=args.auth_cimd,
-            tasks=tasks,
-            allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
-        )
-        transport.start()
-        if args.http_only:
-            # No stdio peer: block on the HTTP thread instead of returning,
-            # which would tear the daemon thread down on the way out.
-            try:
-                thread = transport._thread
-                if thread is not None:
-                    thread.join()
-            except KeyboardInterrupt:
-                pass
-            finally:
-                transport.stop()
-            return 0
-    elif auth_config.enabled:
-        # Credentials with nowhere to be presented. Refusing beats starting a
-        # server the operator believes is protected and is not: stdio has no
-        # headers, so every one of these flags would be inert.
-        raise SystemExit(
-            "error: --auth-token/--auth-oidc-issuer need a transport that "
-            "carries headers. stdio has none, so the credential could never be "
-            "checked. Add --http-port to serve over HTTP as well."
-        )
-
+    # One `try`/`finally` over both exit paths. The --http-only branch used to
+    # carry its own `finally: transport.stop()` and then `return 0`, which
+    # jumped clean over the `audit.close()` that only the serve() teardown had
+    # -- leaking the audit file descriptor on the one path that runs for days.
+    # A single teardown cannot be skipped by adding another early return.
     try:
+        if args.http_port is not None or args.auth_cimd:
+            from .http_server import HTTPTransport
+
+            transport = HTTPTransport(
+                index_dir,
+                build_from,
+                host=args.http_host,
+                port=args.http_port if args.http_port is not None else 8719,
+                auth_config=auth_config,
+                audit=audit,
+                cache=cache,
+                publish_cimd=args.auth_cimd,
+                tasks=tasks,
+                allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
+            )
+            transport.start()
+            if args.http_only:
+                # No stdio peer: block on the HTTP thread instead of returning,
+                # which would tear the daemon thread down on the way out.
+                try:
+                    thread = transport._thread
+                    if thread is not None:
+                        thread.join()
+                except KeyboardInterrupt:
+                    pass
+                return 0
+        elif auth_config.enabled:
+            # Credentials with nowhere to be presented. Refusing beats starting
+            # a server the operator believes is protected and is not: stdio has
+            # no headers, so every one of these flags would be inert.
+            raise SystemExit(
+                "error: --auth-token/--auth-oidc-issuer need a transport that "
+                "carries headers. stdio has none, so the credential could never be "
+                "checked. Add --http-port to serve over HTTP as well."
+            )
+
         serve(index_dir, build_from, cache=cache, tasks=tasks)
     finally:
         if transport is not None:
@@ -1052,6 +1118,13 @@ def _add_auth_args(p) -> None:
         choices=("none", "errors", "all"),
         default="all",
         help="which tool calls produce an audit record (default: all)",
+    )
+    log.add_argument(
+        "--audit-log-fsync",
+        action="store_true",
+        help="sync each audit record to disk before returning (slower; stderr "
+        "already carries every record, so this only hardens the file copy "
+        "against a crash)",
     )
 
 

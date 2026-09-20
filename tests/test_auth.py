@@ -105,6 +105,28 @@ def jwks_doc(kid=KID, key=KEY, alg="RS256"):
     }
 
 
+_ABSENT = object()
+
+
+def jwks_with(**over):
+    """A one-key JWKS built from the test key, with fields overridden or dropped.
+
+    `_ABSENT` as a value removes the field outright, which is how a JWK that
+    never declares `n`, `e`, `use` or `key_ops` gets expressed. `jwks_doc()`
+    above is the same document; this one exists so a test can name the single
+    field it is interested in and leave every other one correct.
+    """
+    entry = {
+        "kty": "RSA",
+        "kid": KID,
+        "alg": "RS256",
+        "n": int_b64u(KEY["n"]),
+        "e": int_b64u(KEY["e"]),
+    }
+    entry.update(over)
+    return {"keys": [{k: v for k, v in entry.items() if v is not _ABSENT}]}
+
+
 def sign(claims, kid=KID, key=KEY, alg="RS256", hash_name="sha256"):
     """Produce a real RS256 JWT, signing with the private exponent."""
     header = b64u(json.dumps({"alg": alg, "kid": kid, "typ": "JWT"}).encode())
@@ -352,6 +374,76 @@ def test_a_tampered_payload_is_refused():
     jwks, _ = cache()
     with pytest.raises(AuthError, match="signature is invalid"):
         decode_jwt(f"{head}.{forged}.{sig}", jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_with_no_modulus_is_refused():
+    """Issue 238: kty RSA and no `n` indexed straight into the dict.
+
+    `key["n"]` on a key set that never published one is a KeyError, and a
+    KeyError is not an AuthError -- it becomes a 500 on the tool path and a
+    dead handler thread on the refusal path, which catches AuthError only.
+    """
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(n=_ABSENT)))
+    with pytest.raises(AuthError, match="missing its RSA parameters"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_with_no_exponent_is_refused():
+    """The same hole, one field over: `e` is read unguarded too."""
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(e=_ABSENT)))
+    with pytest.raises(AuthError, match="missing its RSA parameters"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_whose_modulus_is_a_json_number_is_refused():
+    """Presence is not enough: the parameter has to be the base64url string.
+
+    `str()` of a JSON integer is a run of decimal digits, which base64url
+    either decodes to some unrelated modulus or rejects as bad padding. Either
+    way the key is silently reinterpreted rather than refused, so the type
+    check matters as much as the presence check.
+    """
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(n=KEY["n"])))
+    with pytest.raises(AuthError, match="missing its RSA parameters"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_declaring_use_enc_is_refused():
+    """RFC 7517 §4.2: `{"use": "enc"}` is the issuer saying "not for signatures".
+
+    A JWKS publishes encryption and signing keys side by side, so this is a
+    real shape, not a hypothetical one.
+    """
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(use="enc")))
+    with pytest.raises(AuthError, match="declares use 'enc'"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_whose_key_ops_excludes_verify_is_refused():
+    """RFC 7517 §4.3: an explicit op list that omits "verify" forbids verifying."""
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(key_ops=["encrypt", "decrypt"])))
+    with pytest.raises(AuthError, match="does not permit the verify operation"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_jwk_declaring_neither_use_nor_key_ops_still_verifies():
+    """Absent means unconstrained, per RFC 7517 §4.2/§4.3.
+
+    This is the ordinary JWKS entry that every real issuer serves, and a
+    purpose check that reads "absent" as "forbidden" would lock out all of
+    them. Pinned as its own case because the two rejections above pass just as
+    happily under a check that rejects everything.
+    """
+    entry = jwks_with()["keys"][0]
+    assert "use" not in entry and "key_ops" not in entry
+    jwks, _ = cache(issuer=FakeIssuer(jwks={"keys": [entry]}))
+    assert decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)["sub"] == "user-42"
+
+
+def test_a_jwk_declaring_use_sig_and_a_verify_op_is_accepted():
+    """The positive declaration is honoured, not merely tolerated."""
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(use="sig", key_ops=["verify"])))
+    assert decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)["sub"] == "user-42"
 
 
 # ---------------------------------------------------------------- jwks ----
@@ -654,6 +746,43 @@ def test_the_right_static_token_is_admitted():
 def test_a_bad_static_token_is_refused(header):
     with pytest.raises(AuthError):
         Authenticator(AuthConfig(token="s3cret")).authenticate(header)
+
+
+def test_a_non_ascii_credential_is_refused_rather_than_raising_typeerror():
+    """Issue 232: `hmac.compare_digest` raises on a non-ASCII str operand.
+
+    The credential is the raw Authorization header, so any client can trigger
+    it. A TypeError is not an AuthError, so the transport's refusal path never
+    sees it: the handler thread dies and the caller gets no response at all,
+    not a 401 and not a 500. Only AuthError is an acceptable outcome here.
+    """
+    with pytest.raises(AuthError):
+        Authenticator(AuthConfig(token="s3cret")).authenticate("Bearer p\xe4ssw\xf6rd")
+
+
+def test_a_non_ascii_credential_is_refused_with_oidc_also_configured():
+    """Same header, the other configuration: the static branch runs first and
+    falls through to OIDC, so both wirings have to survive it."""
+    who = Authenticator(
+        AuthConfig(token="s3cret", oidc_issuer=ISSUER, audience=AUDIENCE),
+        opener=FakeIssuer(),
+    )
+    with pytest.raises(AuthError):
+        who.authenticate("Bearer p\xe4ssw\xf6rd")
+
+
+def test_a_non_ascii_configured_token_refuses_rather_than_raising():
+    """The operator's own token may be non-ASCII too.
+
+    Encoding only the credential would move the TypeError one operand across
+    and leave the dead thread exactly where it was -- reachable, this time, by
+    any request at all rather than only a non-ASCII one.
+    """
+    who = Authenticator(AuthConfig(token="p\xe4ssw\xf6rd"))
+    with pytest.raises(AuthError):
+        who.authenticate("Bearer p\xe4ssw\xf6rd")
+    with pytest.raises(AuthError):
+        who.authenticate("Bearer s3cret")
 
 
 def test_the_static_token_comparison_is_constant_time():

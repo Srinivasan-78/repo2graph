@@ -1,5 +1,6 @@
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 
+import io
 import re
 import json
 import shutil
@@ -697,6 +698,58 @@ def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
     assert "prefix 'sym:'" in node_id_format
 
 
+@pytest.mark.parametrize("limit", [2, 7])
+def test_iss245_manifest_states_the_fan_out_this_build_used(tmp_path, sample_repo, limit):
+    """#245: the fan-out limit is per build (`--max-call-candidates`), but the
+    manifest's prose used to hardcode "up to 5" -- so an index built with 2
+    shipped an artifact asserting 5, to an agent that was told the manifest is
+    authoritative. Both limits here are non-default literals on purpose: at the
+    default the buggy text and the correct text are the same string, so a test
+    run only at 5 detects nothing."""
+    out = tmp_path / "idx"
+    main(["build", str(sample_repo), "-o", str(out), "--max-call-candidates", str(limit)])
+    m = json.loads(artifact_path(out, "manifest.json").read_text(encoding="utf8"))
+
+    # The number as a number: a consumer calibrating a confidence filter should
+    # not have to parse it back out of English.
+    assert m["max_call_candidates"] == limit
+    assert f"fan out to up to {limit} edges at 1/n confidence" in "\n".join(m["approximations"])
+    assert (
+        f"fanned out to up to {limit} CALLS edges"
+        in m["usage_hints"]["confidence_semantics"]["lt_1.0"]
+    )
+    assert f"emits up to {limit} candidate edges" in "\n".join(m["how_to_read"])
+    # Nothing anywhere in the file still claims the default, and no template
+    # reached disk with its placeholder unsubstituted.
+    whole = json.dumps(m)
+    assert "up to 5 " not in whole
+    assert "{n}" not in whole
+
+
+def test_iss245_manifest_defaults_when_the_graph_never_went_through_build(tmp_path):
+    """write_manifest has only ever duck-typed `g`, and a Graph assembled by
+    hand has no build to inherit a fan-out limit from. It must still write a
+    manifest stating the default rather than raising: a wrong number is the
+    #245 bug, but no manifest at all is worse than one carrying the default."""
+    from collections import Counter
+
+    from repo2graph.export import write_manifest
+    from repo2graph.graph import Graph
+
+    class BareGraph:  # only what write_manifest has ever required of `g`
+        name = "x"
+        nodes: dict = {}
+        stats = Counter()
+
+    for g in (Graph(tmp_path, "x"), BareGraph()):
+        p = tmp_path / "manifest.json"
+        write_manifest(g, p, [])
+        m = json.loads(p.read_text(encoding="utf8"))
+        assert m["max_call_candidates"] == 5, type(g).__name__
+        assert "up to 5 edges at 1/n confidence" in "\n".join(m["approximations"])
+        assert "{n}" not in json.dumps(m)
+
+
 def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     out = tmp_path / "idx"
     main(["build", str(sample_repo), "-o", str(out), "--formats", "jsonl"])
@@ -1205,6 +1258,44 @@ def test_iss06_cochange_survives_non_ascii_filenames(tmp_path):
     assert (f"file:{a}", f"file:{b}") in edges_of(g, "CO_CHANGE")
 
 
+class FakeGitProc:
+    """Stand-in for the `git log` child `add_cochange` streams (ISS-236).
+
+    add_cochange no longer calls run(capture_output=True), which handed back a
+    CompletedProcess with the whole blob attached; it opens a Popen and reads
+    the pipe in blocks, stopping at MAX_COCHANGE_BYTES. A fake therefore has to
+    behave like a process -- a readable stdout, plus the kill/poll/wait trio the
+    reaping path uses.
+    """
+
+    def __init__(self, stdout: bytes, returncode: int = 0):
+        self.stdout = io.BytesIO(stdout)
+        self._exit = returncode
+        self.returncode = None
+        self.killed = False
+
+    def poll(self):
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+
+    def wait(self, timeout=None):
+        self.returncode = self._exit
+        return self.returncode
+
+
+def fake_git_popen(stdout: bytes, returncode: int = 0, seen=None):
+    """A Popen replacement that always yields `stdout`, recording the argv."""
+
+    def _popen(cmd, **kwargs):
+        if seen is not None:
+            seen.append(cmd)
+        return FakeGitProc(stdout, returncode)
+
+    return _popen
+
+
 def test_sh1_add_cochange_splits_git_log_on_newline_only(monkeypatch):
     """REVIEW SH-1 (ISS-22 bug class, graph.py:380): add_cochange must split
     `git log` output on "\\n" only. With core.quotepath=false git emits a path
@@ -1215,8 +1306,7 @@ def test_sh1_add_cochange_splits_git_log_on_newline_only(monkeypatch):
     sep = "\u2028"  # U+2028 LINE SEPARATOR, as a source escape not a raw code point
     a, b = f"pkg/a{sep}x.py", "pkg/b.py"
     log = "".join(f"{h}\n{a}\n{b}\n\n" for h in ("H1", "H2", "H3"))
-    fake = subprocess.CompletedProcess([], 0, stdout=log.encode("utf8"), stderr=b"")
-    monkeypatch.setattr("repo2graph.graph.subprocess.run", lambda *a, **k: fake)
+    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 10, {a, b}, min_pairs=3)
@@ -1396,6 +1486,41 @@ def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
         ]
 
     assert digest(got) == digest(serial)
+
+
+def test_iss67_build_takes_the_pool_path_above_parallel_min_files(wide_repo, monkeypatch):
+    """#67: every other fixture is under PARALLEL_MIN_FILES, so nothing in the
+    suite ever entered `parse_all`'s ProcessPoolExecutor branch -- which is how
+    the MCP auto-build hang (#90) survived a green run.
+
+    `wide_repo` crosses the threshold, and this asserts the branch is taken
+    *and* that the pool is built with the initializer that keeps its workers
+    off whatever stdin/stdout the parent had.
+    """
+    import concurrent.futures
+
+    from repo2graph.graph import PARALLEL_MIN_FILES, silence_worker_io
+
+    real = concurrent.futures.ProcessPoolExecutor
+    seen = []
+
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    g = build(wide_repo)
+
+    assert len(g.file_hashes) > PARALLEL_MIN_FILES, (
+        f"the fixture no longer crosses the threshold: {len(g.file_hashes)} files"
+    )
+    assert seen, "build() stayed serial above PARALLEL_MIN_FILES"
+    assert seen[0].get("initializer") is silence_worker_io, seen[0]
+    # Hand-derived from the fixture source, so this proves the pool's results
+    # were actually used rather than merely produced.
+    assert "sym:widepkg/mod0.py::dispatch_0" in g.nodes
+    assert "sym:widepkg/mod0.py::handle_0" in g.nodes
 
 
 def test_iss01_iss02_dead_dataclass_fields_are_gone():
@@ -2081,8 +2206,7 @@ def test_iss21_cochange_commits_skipped_counter(monkeypatch):
     # 26 files in one commit
     files = [f"f{i}.py" for i in range(26)]
     log = "H1\n" + "\n".join(files) + "\n\n"
-    fake = subprocess.CompletedProcess([], 0, stdout=log.encode("utf8"), stderr=b"")
-    monkeypatch.setattr("repo2graph.graph.subprocess.run", lambda *a, **k: fake)
+    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 1, set(files))
@@ -2518,28 +2642,19 @@ def test_cli_rejects_negative_numeric_flags(args):
 
 
 def test_add_cochange_caps_the_history_window(monkeypatch):
-    """`git log --name-only` output is captured whole; an absurd --git-history
-    must be clamped so it cannot buffer gigabytes."""
+    """An absurd --git-history makes git walk the whole history and emit every
+    path in it; it must be clamped before the command is built."""
     from collections import Counter
 
     import repo2graph.graph as graphmod
     from repo2graph.graph import MAX_COCHANGE_COMMITS, Graph, add_cochange
 
-    seen = {}
-
-    class _Res:
-        returncode = 1
-        stdout = b""
-
-    def fake_run(cmd, **kw):
-        seen["n"] = next(a for a in cmd if a.startswith("-n"))
-        return _Res()
-
-    monkeypatch.setattr(graphmod.subprocess, "run", fake_run)
+    seen: list = []
+    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"", 1, seen))
     g = Graph(Path("."), "x")
     g.stats = Counter()
     add_cochange(g, Path("."), 10**9, set())
-    assert seen["n"] == f"-n{MAX_COCHANGE_COMMITS}"
+    assert next(a for a in seen[0] if a.startswith("-n")) == f"-n{MAX_COCHANGE_COMMITS}"
     assert g.stats["cochange_history_capped"] == 10**9
 
 
@@ -2554,25 +2669,19 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
     huge = b"H1\n" + b"\n".join(f"f{i}.py".encode() for i in range(3)) + b"\n\n"
     huge += b"pad " * (MAX_COCHANGE_BYTES // 4 + 1024)  # push stdout past the cap
 
-    class _Res:
-        returncode = 0
-        stdout = huge
-
-    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(huge))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
-    assert g.stats["cochange_output_capped"] == len(huge)
+    # The stat is the number of bytes read, which is the cap: since ISS-236 the
+    # read stops there, so how much more git had to say is never learned.
+    assert g.stats["cochange_output_capped"] == MAX_COCHANGE_BYTES
 
 
 def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
     import repo2graph.graph as graphmod
     from repo2graph.graph import Graph, add_cochange
 
-    class _Res:
-        returncode = 0
-        stdout = b"H1\nf0.py\nf1.py\n\n" * 3
-
-    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"H1\nf0.py\nf1.py\n\n" * 3))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py"})
     assert "cochange_output_capped" not in g.stats
@@ -2591,12 +2700,7 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
     c2 = b"H2\n" + b"\n".join(f.encode() for f in noise_files) + b"\n\n"
     cap = len(c1) + 40
     monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-
-    class _Res:
-        returncode = 0
-        stdout = c1 + c2
-
-    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 
@@ -2616,12 +2720,7 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
     c2 = b"H2\r\n" + b"\r\n".join(f.encode() for f in noise_files) + b"\r\n\r\n"
     cap = len(c1) + 40
     monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-
-    class _Res:
-        returncode = 0
-        stdout = c1 + c2
-
-    monkeypatch.setattr(graphmod.subprocess, "run", lambda *a, **k: _Res())
+    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 

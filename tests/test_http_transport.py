@@ -726,3 +726,309 @@ def test_crlf_injection_in_cors_headers_is_sanitized(make_server):
         assert not line.startswith("X-Injected:"), (
             f"CRLF injection succeeded: server reflected injected header: {line!r}"
         )
+
+
+# ----------------------------------------------------- transport framing ----
+#
+# The tests below drive the socket directly. Everything above speaks through
+# urllib, which is a well-behaved client by construction -- it always sends the
+# body it announced, never sends a header containing CRLF, and hangs up only
+# when it is finished. Each bug here is a *misbehaving* client, so none of them
+# is reachable through a client that refuses to misbehave.
+
+
+def raw_exchange(server, request_bytes, timeout=20):
+    """Send raw bytes at the server and read the whole response back.
+
+    Returned as latin-1 so the bytes survive byte-for-byte: these tests inspect
+    header framing, and a decode that repairs anything would repair exactly the
+    damage they are looking for.
+    """
+    sock = socket.create_connection(("127.0.0.1", server.port), timeout=timeout)
+    try:
+        sock.sendall(request_bytes)
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        sock.close()
+    return b"".join(chunks).decode("latin-1")
+
+
+def head_and_body(response):
+    """Split a raw response into its header lines and its body."""
+    head, _, body = response.partition("\r\n\r\n")
+    return head.split("\r\n"), body
+
+
+def status_of(response):
+    """The numeric status of a raw response, as an int."""
+    return int(response.split("\r\n", 1)[0].split(" ")[1])
+
+
+def post_headers(server, extra="", version="HTTP/1.0"):
+    return (
+        f"POST /mcp {version}\r\n"
+        f"Host: 127.0.0.1:{server.port}\r\n"
+        f"Content-Type: application/json\r\n"
+        f"{extra}"
+        f"\r\n"
+    ).encode("ascii")
+
+
+def test_iss197_a_withheld_request_body_is_answered_rather_than_waited_on(make_server, monkeypatch):
+    """Issue 197: headers promising a megabyte, then silence.
+
+    Without a handler `timeout`, socketserver never arms settimeout() and
+    `rfile.read(Content-Length)` blocks for as long as the client cares to hold
+    the socket -- one pinned thread per connection, on a server that caps
+    neither. The shipped 30s is far too long to sit through here, so the test
+    pins the attribute's existence separately and then shrinks it to prove the
+    second half: that the read failing becomes a 408 rather than a handler
+    thread dying with the client still waiting.
+    """
+    from repo2graph.http_server import MCPRequestHandler
+
+    assert MCPRequestHandler.timeout is not None, "socketserver only arms settimeout() when set"
+    assert 0 < MCPRequestHandler.timeout <= 60
+
+    server = make_server()
+    monkeypatch.setattr(server.transport._handler, "timeout", 1.0)
+
+    started = time.monotonic()
+    response = raw_exchange(server, post_headers(server, "Content-Length: 1000000\r\n"))
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 15, "the server sat on a half-sent request instead of timing it out"
+    assert status_of(response) == 408
+
+    # The thread came back: the server still serves the next caller.
+    assert server.rpc("initialize")[0] == 200
+
+
+def test_iss197_a_body_shorter_than_content_length_is_408_not_a_hang(make_server, monkeypatch):
+    """The polite version of the same thing: the client closes early.
+
+    `rfile.read(length)` returns short at EOF rather than raising, so this path
+    never reaches the timeout at all -- it has to be noticed by comparing what
+    arrived against what was promised.
+    """
+    server = make_server()
+    monkeypatch.setattr(server.transport._handler, "timeout", 1.0)
+
+    sock = socket.create_connection(("127.0.0.1", server.port), timeout=20)
+    try:
+        sock.sendall(post_headers(server, "Content-Length: 500\r\n") + b'{"jsonrpc":')
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        sock.close()
+
+    assert status_of(b"".join(chunks).decode("latin-1")) == 408
+
+
+class AbortingWriter:
+    """A `wfile` that raises ConnectionAbortedError from the nth write on.
+
+    The real shape is a client that hangs up mid-response, which Windows
+    reports as ConnectionAbortedError -- the sibling of BrokenPipeError and
+    ConnectionResetError that the old guard did not name. Forcing it beats
+    racing a real socket close, which lands on a different write every run.
+
+    Write 1 is the header flush from `end_headers()`; write 2 is the body.
+    """
+
+    def __init__(self, inner, fail_from):
+        self._inner = inner
+        self._fail_from = fail_from
+        self._writes = 0
+
+    def write(self, data):
+        self._writes += 1
+        if self._writes >= self._fail_from:
+            raise ConnectionAbortedError(10053, "simulated client abort")
+        return self._inner.write(data)
+
+    def flush(self):
+        return None
+
+    @property
+    def closed(self):
+        return self._inner.closed
+
+    def close(self):
+        return self._inner.close()
+
+
+def abort_writes_from(monkeypatch, server, fail_from):
+    handler_cls = server.transport._handler
+    base_setup = handler_cls.setup
+
+    def setup(self):
+        base_setup(self)
+        self.wfile = AbortingWriter(self.wfile, fail_from)
+
+    monkeypatch.setattr(handler_cls, "setup", setup)
+
+
+@pytest.mark.parametrize(
+    "fail_from,what",
+    [(1, "the end_headers() flush"), (2, "the body write")],
+)
+def test_iss199_a_disconnect_during_a_response_reaches_no_error_reporter(
+    make_server, monkeypatch, capsys, fail_from, what
+):
+    """Issue 199: a client that hangs up mid-response is not an error.
+
+    `_send_json` guarded only the body write and only two of ConnectionError's
+    three subclasses, so a disconnect at `end_headers()` (every platform) or a
+    ConnectionAbortedError at the body write (Windows) escaped into the
+    server's error reporter. Either way the operator gets a record for
+    something that is not a fault, and before this package owned that reporter
+    the record was a multi-line traceback in a stream promised to be JSON-lines.
+    """
+    server = make_server()
+    abort_writes_from(monkeypatch, server, fail_from)
+    capsys.readouterr()
+
+    # Reading to EOF is the synchronisation point: socketserver closes the
+    # connection only after its error hook has run, so whatever stderr holds
+    # once recv() returns empty is the complete record for this request.
+    frame = b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    raw_exchange(server, post_headers(server, f"Content-Length: {len(frame)}\r\n") + frame)
+    err = capsys.readouterr().err
+
+    assert "Traceback (most recent call last)" not in err, f"a disconnect at {what} raised"
+    assert "http_handler_error" not in err, f"a disconnect at {what} escaped _send_json"
+
+    monkeypatch.undo()
+    assert server.rpc("initialize")[0] == 200
+
+
+def test_iss199_an_escaping_handler_error_is_one_json_line(make_server, monkeypatch, capsys):
+    """Issue 199, second half: whatever does escape stays machine-readable.
+
+    socketserver's default `handle_error` prints a dashed banner plus a full
+    traceback to stderr, which `events.py` promises is one JSON object per
+    line. A SIEM parsing it line by line gets a dozen lines that parse as none,
+    at exactly the moment the record matters most.
+    """
+    server = make_server()
+
+    def exploding_get(self, send_body=True):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(server.transport._handler, "do_GET", exploding_get)
+    capsys.readouterr()
+
+    raw_exchange(
+        server,
+        f"GET /healthz HTTP/1.0\r\nHost: 127.0.0.1:{server.port}\r\n\r\n".encode("ascii"),
+    )
+    err = capsys.readouterr().err
+
+    assert "Traceback (most recent call last)" not in err
+    lines = [line for line in err.split("\n") if line.strip()]
+    assert len(lines) == 1, f"expected exactly one stderr line, got {lines!r}"
+    record = json.loads(lines[0])
+    assert record["event"] == "http_handler_error"
+    assert "RuntimeError" in record["error"]
+
+
+def test_iss233_a_deeply_nested_json_body_is_a_clean_400(make_server):
+    """Issue 233: `json.loads` raises RecursionError, which is not a ValueError.
+
+    ~40 KB of nesting is well inside MAX_BODY_BYTES, and this runs before
+    `authenticate()`, so any caller that can reach POST /mcp could kill a
+    handler thread outright on a server that is otherwise fully locked down.
+    """
+    server = make_server()
+    depth = 20_000
+    body = b"[" * depth + b"]" * depth
+    assert len(body) < 1 << 20, "the point is that the size cap does not stand in the way"
+
+    request = urllib.request.Request(
+        server.url(), data=body, method="POST", headers={"Content-Type": "application/json"}
+    )
+    try:
+        urllib.request.urlopen(request, timeout=20)
+        raise AssertionError("expected a 400")
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 400
+        assert json.loads(exc.read())["error"]["code"] == -32700
+
+    # The handler thread survived: a fresh connection is still served.
+    assert server.rpc("initialize")[0] == 200
+
+
+def test_iss243_a_crlf_in_the_oidc_issuer_cannot_inject_a_response_header(make_server):
+    """Issue 243: `_challenge()` interpolates oidc_issuer into WWW-Authenticate.
+
+    Operator-supplied, so not remotely exploitable -- but the module states a
+    rule for header values and this path did not follow it. The fix is
+    structural: `_send_json` sanitises every extra header, so the rule holds
+    for call sites nobody has written yet.
+    """
+    poisoned = "https://issuer.example.com/\r\nX-Injected: evil"
+    server = make_server(AuthConfig(oidc_issuer=poisoned), opener=FakeIssuer())
+
+    body = b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    request = post_headers(server, f"Content-Length: {len(body)}\r\n") + body
+    response = raw_exchange(server, request)
+    lines, _body = head_and_body(response)
+
+    assert status_of(response) == 401
+    challenges = [line for line in lines if line.startswith("WWW-Authenticate:")]
+    assert len(challenges) == 1, f"no challenge to sanitise: {lines!r}"
+    # Flattened into the one header rather than split into two: the value is
+    # still reported, it just cannot be a header of its own any more.
+    assert "X-Injected: evil" in challenges[0]
+    for line in lines:
+        assert not line.startswith("X-Injected:"), f"response splitting succeeded: {line!r}"
+
+
+def test_iss249_a_chunked_request_body_is_refused_with_411(make_server):
+    """Issue 249: Content-Length is the only framing `_read_body` understands.
+
+    A chunked body measured as zero bytes was never read, so a spec-legal
+    client got "expected a JSON-RPC object" and a socket still holding its
+    request. Refusing the encoding by name says what is actually wrong.
+    """
+    server = make_server()
+    frame = b'{"jsonrpc":"2.0","id":1,"method":"initialize"}'
+    request = (
+        post_headers(server, "Transfer-Encoding: chunked\r\n", version="HTTP/1.1")
+        + f"{len(frame):x}\r\n".encode("ascii")
+        + frame
+        + b"\r\n0\r\n\r\n"
+    )
+    response = raw_exchange(server, request)
+    lines, body = head_and_body(response)
+
+    assert status_of(response) == 411
+    assert "chunked" in json.loads(body)["error"]["message"]
+    # The precondition that keeps protocol_version a free choice.
+    assert any(line.lower().startswith("content-length:") for line in lines)
+
+
+def test_iss249_the_handler_pins_its_protocol_version_deliberately():
+    """Issue 249: HTTP/1.0 here is a decision, not an inheritance.
+
+    It is also the base class's default, so only the presence of the attribute
+    on this class distinguishes "chosen" from "never thought about" -- and the
+    choice is what keeps an unread request body (a refused Transfer-Encoding, a
+    413'd Content-Length, a read that timed out part-way) from being left in a
+    socket that the next request would be parsed out of.
+    """
+    from repo2graph.http_server import MCPRequestHandler
+
+    assert "protocol_version" in MCPRequestHandler.__dict__
+    assert MCPRequestHandler.protocol_version == "HTTP/1.0"
