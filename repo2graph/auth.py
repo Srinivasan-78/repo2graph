@@ -25,11 +25,17 @@ Security properties this module is responsible for, none of them optional:
   `{"alg": "none"}` or `{"alg": "HS256"}` against an RSA JWKS is the classic
   JWT forgery, and the only defence is refusing to let the attacker pick the
   algorithm.
+* A key's declared purpose is honoured. RFC 7517 §4.2/§4.3 make `use` and
+  `key_ops` the issuer's own statement of what a key is for, and a JWKS
+  routinely publishes encryption keys alongside signing ones. A key marked
+  for encryption must never be accepted as a signature verifier.
 * `iss`, `aud` and `exp` are all enforced. A signature check alone proves the
   issuer minted *a* token, not that it minted one for this server.
-* A `kid` miss triggers at most one JWKS refetch, then fails. Without the cap,
-  a stream of tokens carrying random `kid`s is a free amplification attack
-  against the issuer.
+* An unknown `kid` is remembered as a miss for a bounded window, and
+  unknown-kid JWKS refetches share a minimum interval independent of `ttl`.
+  A stream of tokens carrying random `kid`s therefore cannot amplify
+  one-for-one against the issuer. The fetch itself runs outside the cache
+  lock so a slow issuer cannot serialise unrelated authentications.
 """
 
 import hashlib
@@ -42,10 +48,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 # How long a fetched JWKS is trusted before it is re-read.
 DEFAULT_JWKS_TTL = 300.0
+# Floor between unknown-kid JWKS refetches. Independent of `ttl`: a long-lived
+# cache still cannot be forced to fetch once per distinct attacker-chosen kid.
+DEFAULT_MIN_REFRESH_INTERVAL = 5.0
+# Bound on remembered unknown kids so a flood cannot grow the miss cache
+# without limit. Oldest entries are evicted first.
+MAX_NEGATIVE_KIDS = 256
 # Network timeout for discovery and JWKS fetches, in seconds.
 HTTP_TIMEOUT = 10.0
 # A JWKS is a small JSON document; anything larger is not one, and reading it
@@ -182,6 +194,9 @@ class JWKSCache:
             without sleeping. `ResultCache` takes one for the same reason: a
             test that waits for real time to pass is a test that fails on
             somebody else's machine.
+        min_refresh_interval: Seconds that must elapse between unknown-kid
+            refetches. Independent of `ttl`; a long-lived cache still cannot
+            be forced to fetch once per distinct attacker-chosen kid.
     """
 
     def __init__(
@@ -190,15 +205,21 @@ class JWKSCache:
         ttl: float = DEFAULT_JWKS_TTL,
         opener: Callable[[str], Any] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        *,
+        min_refresh_interval: float = DEFAULT_MIN_REFRESH_INTERVAL,
     ) -> None:
         self.issuer = issuer.rstrip("/")
         self.ttl = ttl
+        self.min_refresh_interval = min_refresh_interval
         self._open = opener or _fetch_json
         self._clock = clock
         self._lock = threading.Lock()
         self._keys: dict[str, dict[str, Any]] = {}
         self._fetched_at = 0.0
         self._jwks_uri: str | None = None
+        self._misses: dict[str, float] = {}
+        self._unknown_refresh_at: float | None = None
+        self._in_flight: threading.Event | None = None
 
     def discovery_url(self) -> str:
         """The OIDC discovery document URL for this issuer."""
@@ -221,16 +242,52 @@ class JWKSCache:
         self._jwks_uri = uri
         return uri
 
-    def _refresh(self) -> None:
-        doc = self._open(self._resolve_jwks_uri())
+    def _fetch_key_set(self) -> tuple[dict[str, dict[str, Any]], str]:
+        """GET the JWKS. Must not run while `_lock` is held."""
+        uri = self._resolve_jwks_uri()
+        doc = self._open(uri)
         keys = doc.get("keys") if isinstance(doc, dict) else None
         if not isinstance(keys, list):
             raise AuthError("issuer JWKS has no key list")
-        self._keys = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
-        self._fetched_at = self._clock()
+        parsed = {str(k.get("kid")): k for k in keys if isinstance(k, dict) and k.get("kid")}
+        return parsed, uri
+
+    def _install(self, keys: dict[str, dict[str, Any]], uri: str, now: float) -> None:
+        self._keys = keys
+        self._jwks_uri = uri
+        self._fetched_at = now
+        for seen in list(self._misses):
+            if seen in keys:
+                del self._misses[seen]
+
+    def _is_negative(self, kid: str, now: float) -> bool:
+        seen = self._misses.get(kid)
+        if seen is None:
+            return False
+        if (now - seen) >= self.min_refresh_interval:
+            del self._misses[kid]
+            return False
+        return True
+
+    def _unknown_refresh_ok(self, now: float) -> bool:
+        if self._unknown_refresh_at is None:
+            return True
+        return (now - self._unknown_refresh_at) >= self.min_refresh_interval
+
+    def _remember_miss(self, kid: str, now: float) -> None:
+        self._misses[kid] = now
+        extra = len(self._misses) - MAX_NEGATIVE_KIDS
+        if extra <= 0:
+            return
+        doomed = sorted(self._misses, key=self._misses.__getitem__)[:extra]
+        for old in doomed:
+            del self._misses[old]
+
+    def _refuse_unknown(self, kid: str) -> NoReturn:
+        raise AuthError(f"unknown signing key {kid!r}")
 
     def key_for(self, kid: str) -> dict[str, Any]:
-        """Return the JWK with this `kid`, refetching at most once on a miss.
+        """Return the JWK with this `kid`, refetching under a per-window cap.
 
         Args:
             kid: The key id from the token header.
@@ -239,8 +296,10 @@ class JWKSCache:
             The matching JWK as a dict.
 
         Raises:
-            AuthError: If the key is unknown even after one refetch.
+            AuthError: If the key is unknown after any allowed refetch.
         """
+        waiter: threading.Event | None = None
+
         with self._lock:
             # >=, not >: `ttl=0` means "do not cache this at all", and with a
             # strict > that promise depends on the clock's resolution rather
@@ -248,20 +307,88 @@ class JWKSCache:
             # monotonic clock -- Windows can fall back to GetTickCount64, at
             # ~15.6ms -- read an elapsed time of exactly 0.0 and would keep
             # serving keys a ttl of 0 said to discard.
-            stale = (self._clock() - self._fetched_at) >= self.ttl
-            if not self._keys or stale:
-                self._refresh()
+            now = self._clock()
+            stale = (not self._keys) or (now - self._fetched_at) >= self.ttl
             key = self._keys.get(kid)
-            if key is None:
-                # A kid we have never seen is the signal for key rotation. One
-                # refetch, then a refusal: without the cap, tokens carrying
-                # random kids would turn this server into a traffic amplifier
-                # pointed at the issuer.
-                self._refresh()
-                key = self._keys.get(kid)
-            if key is None:
-                raise AuthError(f"unknown signing key {kid!r}")
-            return key
+            if key is not None and not stale:
+                return key
+
+            if not stale:
+                # Fresh cache, unknown kid: rotation signal, but not a per-
+                # request fetch. A repeat miss or a burst of distinct kids
+                # must not turn this server into an amplifier pointed at the
+                # issuer, and must not wait on an in-flight fetch either —
+                # that would serialise every junk token behind one slow RTT.
+                if self._is_negative(kid, now) or not self._unknown_refresh_ok(now):
+                    self._refuse_unknown(kid)
+                if self._in_flight is not None:
+                    self._refuse_unknown(kid)
+                self._unknown_refresh_at = now
+                self._in_flight = threading.Event()
+            else:
+                # Stale. Honour ttl for keys we already have. An unknown kid
+                # against a populated cache still obeys the negative /
+                # min-interval cap — otherwise `ttl=0` is a free amplifier.
+                if (
+                    key is None
+                    and self._keys
+                    and (self._is_negative(kid, now) or not self._unknown_refresh_ok(now))
+                ):
+                    self._refuse_unknown(kid)
+                if self._in_flight is not None:
+                    if key is not None:
+                        return key
+                    if self._keys:
+                        self._refuse_unknown(kid)
+                    waiter = self._in_flight
+                else:
+                    if key is None and self._keys:
+                        # Stale miss against a populated cache: reserve the
+                        # unknown-kid slot so a follow-up distinct kid cannot
+                        # immediately force a second trip after this one lands.
+                        # A cold start (`_keys` empty) is not an unknown-kid
+                        # refresh — the kid is missing because we have no
+                        # JWKS yet, and the first populate must not consume
+                        # the rotation-check slot.
+                        self._unknown_refresh_at = now
+                    self._in_flight = threading.Event()
+
+        if waiter is not None:
+            waiter.wait()
+            with self._lock:
+                waited = self._keys.get(kid)
+                if waited is None:
+                    self._remember_miss(kid, self._clock())
+                    self._refuse_unknown(kid)
+                return waited
+
+        fetch_error: Exception | None = None
+        keys: dict[str, dict[str, Any]] | None = None
+        uri: str | None = None
+        try:
+            keys, uri = self._fetch_key_set()
+        except Exception as exc:
+            fetch_error = exc
+        found: dict[str, Any] | None = None
+        with self._lock:
+            ev = self._in_flight
+            self._in_flight = None
+            if fetch_error is None and keys is not None and uri is not None:
+                now = self._clock()
+                self._install(keys, uri, now)
+                found = self._keys.get(kid)
+                if found is None:
+                    self._remember_miss(kid, now)
+                    self._unknown_refresh_at = now
+                else:
+                    self._misses.pop(kid, None)
+            if ev is not None:
+                ev.set()
+        if fetch_error is not None:
+            raise fetch_error
+        if found is None:
+            self._refuse_unknown(kid)
+        return found
 
 
 def _fetch_json(url: str) -> Any:
@@ -335,15 +462,39 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     key = jwks.key_for(str(kid))
     if key.get("kty") != "RSA":
         raise AuthError(f"unsupported key type {key.get('kty')!r}")
+    # RFC 7517 §4.2/§4.3: `use` and `key_ops` are the issuer's declaration of
+    # what the key is for, and a JWKS legitimately carries encryption keys next
+    # to signing ones. A key stamped {"use": "enc"} or {"key_ops": ["encrypt"]}
+    # is one its issuer says must not verify a signature, so honour that rather
+    # than reaching for the maths anyway. Absent means *unconstrained* in both
+    # cases, per the same sections -- the common entry declares neither field,
+    # and refusing it would reject every ordinary issuer.
+    use = key.get("use")
+    if use is not None and use != "sig":
+        raise AuthError(f"signing key declares use {use!r}, not 'sig'")
+    ops = key.get("key_ops")
+    if isinstance(ops, list) and "verify" not in ops:
+        raise AuthError("signing key does not permit the verify operation")
     # The algorithm is taken from the key when the key declares one, never from
     # the token: the attacker controls the token and must not choose the maths.
     if key.get("alg") and ALGORITHMS.get(str(key["alg"])) != hash_name:
         raise AuthError("token algorithm does not match the signing key")
 
+    # `.get`, not `key["n"]`: a key set advertising {"kty": "RSA"} with no
+    # modulus raises KeyError here, and a KeyError is not an AuthError -- it
+    # surfaces as a 500 on the tool path and kills the handler thread on the
+    # refusal path, which only catches AuthError. The isinstance check carries
+    # as much weight as the presence one: `str()` of a JSON number or list
+    # yields text that b64url_decode silently mangles into some unrelated
+    # integer instead of refusing it.
+    n_b64, e_b64 = key.get("n"), key.get("e")
+    if not isinstance(n_b64, str) or not isinstance(e_b64, str):
+        raise AuthError("signing key is missing its RSA parameters")
+
     signing_input = f"{head_b64}.{payload_b64}".encode("ascii", "strict")
     if not rsa_verify(
-        _int_from_b64url(str(key["n"])),
-        _int_from_b64url(str(key["e"])),
+        _int_from_b64url(n_b64),
+        _int_from_b64url(e_b64),
         b64url_decode(sig_b64),
         signing_input,
         hash_name,
@@ -465,7 +616,28 @@ class Authenticator:
         if self.config.token:
             # compare_digest, not ==: an equality test on a secret leaks its
             # length and matching prefix through response timing.
-            if hmac.compare_digest(credential, self.config.token):
+            #
+            # Both sides are encoded to ASCII bytes first. `compare_digest`
+            # *raises TypeError* -- it does not report a mismatch -- as soon as
+            # either str operand carries a non-ASCII character, and the
+            # credential arrives straight off an attacker-controlled
+            # Authorization header. A TypeError is not an AuthError, so it
+            # escapes the transport's refusal path and kills the handler thread
+            # before authentication has resolved; the caller gets no response at
+            # all, not even a 401. Comparing the encoded forms keeps the
+            # constant-time property intact. The configured token is
+            # operator-supplied and may itself be non-ASCII, so it is encoded
+            # inside the same guard -- otherwise the TypeError just moves one
+            # operand across. Nothing admissible is lost either way: RFC 7235
+            # confines a header value to the ASCII range, so a non-ASCII secret
+            # was already unmatchable.
+            try:
+                matched = hmac.compare_digest(
+                    credential.encode("ascii"), self.config.token.encode("ascii")
+                )
+            except UnicodeEncodeError:
+                matched = False
+            if matched:
                 return Identity(subject="bearer", mode="bearer")
             # Fall through rather than refusing: both modes may be configured,
             # and a token that is not the static one may still be a valid JWT.

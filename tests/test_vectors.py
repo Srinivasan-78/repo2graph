@@ -321,6 +321,105 @@ def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_emb
 
 
 # ==========================================================================
+# ISS-242 -- the on-disk format marker is read back
+# ==========================================================================
+#
+# `write_vectors` has stamped `"format": "repo2graph/vectors-1"` since the
+# commit that introduced embed.py, but `load_vectors` only ever validated
+# chunk_ids, the row count and the width. A future layout that kept those key
+# names while changing what they denote would therefore load clean, and
+# because `query.Index._load_vectors` swallows every exception in favour of
+# BM25, the damage would surface as plausible, wrong rankings rather than an
+# error. These pin the marker check itself, and the degradation it produces.
+#
+# The expected marker is written out as a literal here on purpose: asserting
+# against `embed.VECTORS_FORMAT` would compare the implementation with itself
+# and stay green through a silent rename of the on-disk value.
+
+VECTORS_FORMAT_ON_DISK = "repo2graph/vectors-1"
+
+
+def rewrite_meta(meta_file: Path, mutate) -> None:
+    """Load a vectors.meta.json, hand it to `mutate`, write it back."""
+    with open(meta_file, encoding="utf8", newline="\n") as fh:
+        meta = json.load(fh)
+    mutate(meta)
+    with open(meta_file, "w", encoding="utf8", newline="\n") as fh:
+        json.dump(meta, fh)
+
+
+def test_iss242_write_vectors_stamps_the_literal_format_marker(tmp_path):
+    """ISS-242 (a): the value on disk is the one this suite checks against."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    embed.write_vectors(target, SAMPLE_VECTORS, "stub/mini-v1", 4, SAMPLE_IDS)
+    with open(tmp_path / VEC_META, encoding="utf8", newline="\n") as fh:
+        assert json.load(fh)["format"] == VECTORS_FORMAT_ON_DISK
+
+
+def test_iss242_load_vectors_accepts_a_correctly_stamped_pair(tmp_path):
+    """ISS-242 (b), neutrality: the good case must still load, or the gate is
+    just 'vectors are off'."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    embed.write_vectors(target, SAMPLE_VECTORS, "stub/mini-v1", 4, SAMPLE_IDS)
+
+    loaded, meta = embed.load_vectors(target)
+    assert set(loaded) == set(SAMPLE_VECTORS)
+    assert meta["format"] == VECTORS_FORMAT_ON_DISK
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda m: m.__setitem__("format", "repo2graph/vectors-2"),
+        lambda m: m.__setitem__("format", "repo2graph/vectors-1 "),
+        lambda m: m.__setitem__("format", VECTORS_FORMAT_ON_DISK.upper()),
+        lambda m: m.__setitem__("format", None),
+        lambda m: m.__setitem__("format", 1),
+        lambda m: m.pop("format"),
+    ],
+    ids=["later", "trailing_space", "upper", "null", "int", "absent"],
+)
+def test_iss242_load_vectors_refuses_an_unrecognised_format(tmp_path, mutate):
+    """ISS-242 (c): anything but the exact marker -- including no marker at all
+    -- is a ValueError, the same shape as the chunk_ids and row-count checks."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    embed.write_vectors(target, SAMPLE_VECTORS, "stub/mini-v1", 4, SAMPLE_IDS)
+    rewrite_meta(tmp_path / VEC_META, mutate)
+
+    with pytest.raises(ValueError):
+        embed.load_vectors(target)
+
+
+def test_iss242_a_bad_format_degrades_to_bm25_end_to_end(mini_index, use_stub_embedder, capsys):
+    """ISS-242 (d): through query.Index, a format bump is indistinguishable
+    from having no vectors -- nothing raises, and the pack still answers.
+
+    The correctly-stamped load is asserted first so this cannot pass by
+    fusion being dead in the fixture for some unrelated reason.
+    """
+    run_embed(mini_index, capsys)
+    _npy, meta_file = vec_paths(mini_index)
+    assert Index(mini_index).vectors, "the fixture must load vectors before it is broken"
+
+    rewrite_meta(meta_file, lambda m: m.__setitem__("format", "repo2graph/vectors-2"))
+    idx = Index(mini_index)
+    assert idx.vectors is None
+    assert idx.vector_meta in (None, {})
+    assert "### [cite:" in idx.pack_context(MINI_QUERY)["markdown"]
+
+    rewrite_meta(meta_file, lambda m: m.pop("format"))
+    idx = Index(mini_index)
+    assert idx.vectors is None
+    assert "### [cite:" in idx.pack_context(MINI_QUERY)["markdown"]
+
+
+# ==========================================================================
 # AC-17 / AC-18 / AC-19 / AC-20 -- the mismatch guard
 # ==========================================================================
 

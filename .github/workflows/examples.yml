@@ -15,12 +15,19 @@ on:
         required: true
         default: "django"
 
+concurrency:
+  # Manual, long (five upstream clones), and writes an artifact: queue a second
+  # dispatch behind the first rather than cancelling work already paid for.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
   regenerate:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -33,12 +40,14 @@ jobs:
 
       - name: Generate
         shell: bash
+        env:
+          INPUT_REPO: ${{ inputs.repo }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.repo }}" = "all" ]; then
+          if [ "$INPUT_REPO" = "all" ]; then
             python scripts/generate_examples.py --all
           else
-            python scripts/generate_examples.py --repo "${{ inputs.repo }}"
+            python scripts/generate_examples.py --repo "$INPUT_REPO"
           fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1

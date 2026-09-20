@@ -258,9 +258,10 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
         if defines:
             header.append(f"# defines: {', '.join(defines)}")
+        # ISS-141: same id rule as symbols — chunk 0 is unsuffixed `nid`.
         for i, part in enumerate(_split(body)):
             yield {
-                "id": f"{nid}#{i}",
+                "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
                 "type": label_kind,
                 "kind": n.get("file_type", "other"),

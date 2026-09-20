@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from repo2graph.cli import main
+from repo2graph.graph import PARALLEL_MIN_FILES
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
@@ -162,6 +163,69 @@ def big_index(tmp_path_factory):
     out = root / "big_idx"
     build_mini_index(repo, out)
     return out
+
+
+# --------------------------------------------------------------------------
+# A repo *wide* rather than large: more files than PARALLEL_MIN_FILES, so a
+# build over it takes `graph.parse_all`'s ProcessPoolExecutor branch (#67).
+# Every other fixture here is under the threshold -- `mini_repo` at 5 files,
+# `big_repo` at 21 -- which is why the pool branch, and the MCP auto-build
+# hang it caused (#90), went unexercised by a green suite.
+#
+# Sized off the constant rather than hardcoded, so the fixture stays above the
+# threshold if the threshold moves. Kept deliberately cheap: ~350 bytes a
+# module, no long docstrings, because this generates on a 9-cell CI matrix.
+# Each module still carries a module-level table so its *file* node has a
+# chunk -- a file that is nothing but `def`s falls under the file_residual
+# floor and emits none (see AGENTS.md).
+# --------------------------------------------------------------------------
+
+WIDE_MODULES = PARALLEL_MIN_FILES + 6
+
+
+def _wide_module(n: int) -> str:
+    return f'''"""Module {n} of the wide fixture."""
+
+ROUTE_TABLE_{n} = {{
+    "name": "module {n}",
+    "kind": "inbound request handler dispatch table",
+    "note": "every payload goes through the ledger before it is acknowledged",
+}}
+
+
+def dispatch_{n}(request):
+    """Inbound request handler dispatch, variant {n}."""
+    return handle_{n}(request)
+
+
+def handle_{n}(request):
+    """Record one handled request in module {n}'s ledger."""
+    return {{"module": {n}, "request": request}}
+'''
+
+
+def write_wide_repo(root: Path) -> Path:
+    """Materialise a repo of WIDE_MODULES + 1 files; returns the repo directory."""
+    repo = Path(root) / "wide_src"
+    pkg = repo / "widepkg"
+    pkg.mkdir(parents=True, exist_ok=True)
+    with open(pkg / "__init__.py", "w", encoding="utf8", newline="\n") as fh:
+        fh.write('"""The wide fixture package."""\n\nVERSION = "1.0"\n')
+    for n in range(WIDE_MODULES):
+        with open(pkg / f"mod{n}.py", "w", encoding="utf8", newline="\n") as fh:
+            fh.write(_wide_module(n))
+    return repo
+
+
+@pytest.fixture(scope="session")
+def wide_repo(tmp_path_factory):
+    """Read-only source tree above PARALLEL_MIN_FILES; no index is built here.
+
+    Session scoped and never indexed in place: a test that wants an index
+    points `-o` at its own `tmp_path`, so nothing written by one test can be
+    discovered as a source file by the next.
+    """
+    return write_wide_repo(tmp_path_factory.mktemp("wide"))
 
 
 # --------------------------------------------------------------------------

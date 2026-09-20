@@ -177,7 +177,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--format` | `markdown` | `markdown` for the pack, `json` for the pack plus its parts. |
 | `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#-answer-sends-your-code-to-someone-elses-computer). |
-| `--model` | provider default | Model name, only with `--answer`. |
+| `--model` | provider default | Override the best-effort default model, only with `--answer`. |
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
@@ -298,5 +298,5 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   `urllib`. Nothing extra to install, and nothing extra with an opinion about your
   credentials.
 
-Default models are `gemini-2.0-flash`, `gpt-4o-mini`, `claude-3-5-haiku-latest`
-and `llama3.1`; override with `--model`.
+Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
+`claude-haiku-4-5` and `llama3.1`); pass `--model` to override.

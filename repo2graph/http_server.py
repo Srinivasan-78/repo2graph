@@ -18,8 +18,11 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 * **Refuses to serve unauthenticated on a non-loopback bind.** Binding publicly
   with no credential configured is refused at startup rather than served, since
   that combination has no correct use.
-* **Bounded request bodies.** A JSON-RPC frame is small; an unbounded read is a
-  memory exhaustion primitive.
+* **Bounded request bodies, in bytes *and* in seconds.** A JSON-RPC frame is
+  small; an unbounded read is a memory exhaustion primitive, and an unbounded
+  *wait* is the cheaper one -- it costs a client nothing to announce a
+  `Content-Length` and then hold the socket open. `MAX_BODY_BYTES` caps the
+  first, `MCPRequestHandler.timeout` the second.
 * **`.well-known` documents are public, tool calls are not.** Discovery that
   requires the credential it describes how to obtain is useless, so those two
   paths skip auth -- and therefore disclose nothing but the server's shape.
@@ -32,6 +35,7 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 """
 
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Literal
@@ -47,6 +51,15 @@ from .events import emit
 # bytes; a megabyte is already absurd and anything unbounded is a DoS primitive.
 MAX_BODY_BYTES = 1 << 20
 
+# How long one connection may take to deliver its request, in seconds.
+# `socketserver.StreamRequestHandler.setup()` calls `settimeout()` only when the
+# handler's `timeout` is not None, and the base class leaves it None -- so
+# without this a client that announces a Content-Length and then sends nothing
+# blocks its handler thread forever, and `ThreadingHTTPServer` caps neither
+# threads nor connections. Thirty seconds is orders of magnitude longer than a
+# JSON-RPC frame needs on loopback, and finite.
+REQUEST_TIMEOUT_SECONDS = 30.0
+
 # Loopback addresses, where serving without a credential is defensible.
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -57,6 +70,21 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 # --http-allow-hosts allowlist; anything else is refused before the body is
 # even read.
 DEFAULT_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# ------------- header value sanitisation (ISS-84 / CodeQL alerts 8,9) --------
+# User-controlled values reflected into HTTP response headers must never contain
+# CR (\r), LF (\n) or NUL (\0) — otherwise an attacker can inject arbitrary
+# headers or body content ("HTTP Response Splitting").  The helper below is
+# applied to the values do_OPTIONS reflects, and -- structurally, so no future
+# call site has to remember -- to every extra header `_send_json` is handed.
+_HEADER_BAD_CHARS = frozenset("\r\n\0")
+
+
+def _sanitize_header_value(value: str) -> str:
+    """Strip CR/LF/NUL from a value about to be placed in a response header."""
+    # Note: explicit .replace("\r", "").replace("\n", "") satisfies CodeQL's
+    # ReplaceLineBreaksSanitizer barrier for py/http-response-splitting.
+    return str(value).replace("\0", "").replace("\r", "").replace("\n", "")
 
 
 def _hostname_from_host_header(value: str | None) -> str | None:
@@ -212,6 +240,20 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
     """
 
     server_version = f"repo2graph/{__version__}"
+    # Applied to the connection by StreamRequestHandler.setup(); see
+    # REQUEST_TIMEOUT_SECONDS for why it must not be left at None.
+    timeout = REQUEST_TIMEOUT_SECONDS
+    # HTTP/1.0 is chosen here, not inherited by omission. The base class also
+    # defaults to it, but the choice carries weight: HTTP/1.0 makes
+    # `close_connection` true after every response, so one connection carries
+    # exactly one request and a body this server declined to read -- an
+    # oversized Content-Length, a refused Transfer-Encoding, a read that timed
+    # out part-way -- cannot be left in the socket for the *next* request to be
+    # parsed out of. Moving to HTTP/1.1 would be safe on framing grounds (every
+    # response below sets Content-Length, including the 204 from do_OPTIONS),
+    # but it would buy keep-alive for clients that send one small frame and go
+    # away, at the price of making that desync reachable again.
+    protocol_version = "HTTP/1.0"
     # Set by make_handler.
     open_index_fn: Any = None
     dispatch_fn: Any = None
@@ -237,37 +279,122 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         return
 
     def _send_json(
-        self, status: int, payload: dict[str, Any], extra_headers: dict[str, str] | None = None
+        self,
+        status: int,
+        payload: dict[str, Any],
+        extra_headers: dict[str, str] | None = None,
+        send_body: bool = True,
     ) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        # This server answers tools, not browsers: no page should be able to
-        # frame it, sniff it, or reach it cross-origin by default.
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Cache-Control", "no-store")
-        for key, value in (extra_headers or {}).items():
-            self.send_header(key, value)
-        self.end_headers()
+        # The whole send is guarded, not just the body write. `end_headers()`
+        # flushes the header block down the same socket, so a client that has
+        # already hung up raises there just as readily as at the write -- and
+        # on Windows it raises ConnectionAbortedError, a third sibling beside
+        # BrokenPipeError and ConnectionResetError. Anything that escapes here
+        # reaches socketserver, which answers a routine disconnect with a
+        # multi-line Python traceback on stderr -- the stream `events.py`
+        # promises is strict JSON-lines, one record per line, to whatever SIEM
+        # is tailing it. A client that went away is not worth that.
         try:
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            # This server answers tools, not browsers: no page should be able to
+            # frame it, sniff it, or reach it cross-origin by default.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            # Sanitised here rather than at each call site. Response splitting
+            # is prevented by an invariant over *every* extra header this
+            # server ever sends, and an invariant each caller has to remember
+            # is one the next caller will not -- which is exactly how
+            # `_challenge()`'s oidc_issuer came to be interpolated raw.
+            for key, value in (extra_headers or {}).items():
+                self.send_header(key, _sanitize_header_value(value))
+            self.end_headers()
+            if send_body:
+                self.wfile.write(body)
+        except (ConnectionError, OSError):
             return
 
     def _read_body(self) -> bytes:
-        """Read the request body, refusing anything implausibly large."""
+        """Read the request body, refusing anything this server will not read.
+
+        Raises:
+            AuthError: Carrying the status to refuse with -- 411 for a framing
+                this server does not speak, 400 for an unparseable
+                Content-Length, 413 for an oversized one, 408 for a body that
+                never fully arrived.
+        """
+        # Content-Length is the only framing accepted. A chunked body would be
+        # measured as zero bytes and left sitting unread in the socket, so a
+        # spec-legal client gets a baffling "expected a JSON-RPC object" and a
+        # connection whose remaining bytes are somebody's idea of the next
+        # request. A JSON-RPC frame is small and known-length, so refusing the
+        # encoding in words costs nothing and says what is wrong.
+        if (self.headers.get("Transfer-Encoding") or "").strip():
+            raise AuthError("chunked request bodies are not supported", status=411)
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise AuthError("invalid Content-Length", status=400) from None
         if length < 0 or length > MAX_BODY_BYTES:
             raise AuthError(f"request body must be at most {MAX_BODY_BYTES} bytes", status=413)
-        return self.rfile.read(length) if length else b""
+        if not length:
+            return b""
+        # The handler `timeout` turns a withheld body from a hang into an
+        # exception -- but an exception out of do_POST is a handler thread that
+        # dies with the client still waiting, so it has to become an answer
+        # here. A short read is the same situation arriving politely: the
+        # client promised `length` bytes and closed before sending them. Both
+        # are 408. (TimeoutError is what `socket.timeout` has been since 3.10;
+        # both it and the disconnect errors are OSError subclasses, named here
+        # so a reader can see which cases are meant.)
+        try:
+            data = self.rfile.read(length)
+        except (TimeoutError, ConnectionError, OSError):
+            raise AuthError("timed out reading the request body", status=408) from None
+        if len(data) != length:
+            raise AuthError("request body ended before Content-Length", status=408)
+        return data
 
     # ------------------------------------------------------------- routes --
 
-    def do_GET(self) -> None:
+    def do_HEAD(self) -> None:
+        """Serve headers for GET paths without sending response body."""
+        self.do_GET(send_body=False)
+
+    def do_OPTIONS(self) -> None:
+        """Handle CORS preflight requests."""
+        # DNS-rebinding: validate Host before doing anything, same as do_POST.
+        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
+            return
+        origin = self.headers.get("Origin")
+        if not _origin_header_allowed(origin, self.allowed_hostnames):
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
+            return
+        self.send_response(204)
+        if origin:
+            self.send_header(
+                "Access-Control-Allow-Origin",
+                _sanitize_header_value(origin).replace("\r", "").replace("\n", ""),
+            )
+            self.send_header("Vary", "Origin")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS")
+        req_headers = self.headers.get(
+            "Access-Control-Request-Headers", "Authorization, Content-Type"
+        )
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            _sanitize_header_value(req_headers).replace("\r", "").replace("\n", ""),
+        )
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_GET(self, send_body: bool = True) -> None:
         """Serve the unauthenticated discovery documents, and nothing else."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == WELL_KNOWN_METADATA.rstrip("/"):
@@ -280,6 +407,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     self.authenticator.config.modes,
                     index_built_at(self.index_dir),
                 ),
+                send_body=send_body,
             )
             return
         if path == WELL_KNOWN_CLIENT.rstrip("/"):
@@ -290,14 +418,15 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                         "error": "client metadata is not published; "
                         "start the server with --auth-cimd"
                     },
+                    send_body=send_body,
                 )
                 return
-            self._send_json(200, client_metadata_document(self.base_url))
+            self._send_json(200, client_metadata_document(self.base_url), send_body=send_body)
             return
         if path == "/healthz":
-            self._send_json(200, {"status": "ok", "version": __version__})
+            self._send_json(200, {"status": "ok", "version": __version__}, send_body=send_body)
             return
-        self._send_json(404, {"error": f"no such path: {path}"})
+        self._send_json(404, {"error": f"no such path: {path}"}, send_body=send_body)
 
     def _index_present(self) -> bool:
         from .mcp import _has_index
@@ -332,7 +461,14 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
         try:
             request = json.loads(raw.decode("utf8", "replace")) if raw else None
-        except ValueError:
+        except (ValueError, RecursionError):
+            # RecursionError, not just ValueError: `json.loads` blows the stack
+            # rather than raising JSONDecodeError on a deeply nested document,
+            # and `b"[" * 20000 + b"]" * 20000` is ~40 KB -- comfortably inside
+            # MAX_BODY_BYTES, and reachable here by an unauthenticated caller,
+            # since authenticate() is still several lines away. A body Python
+            # cannot parse is invalid JSON as far as this server is concerned,
+            # whatever the reason it could not parse it.
             self._send_json(400, _rpc_error(None, PARSE_ERROR, "invalid JSON"))
             return
         if not isinstance(request, dict):
@@ -361,7 +497,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 outcome="error",
                 error=str(exc),
             )
-            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+            self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
 
     def _reject(self, rpc_id: Any, method: str, params: Any, exc: AuthError) -> None:
         """Refuse a call, record it, and execute nothing."""
@@ -489,7 +625,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     duration_ms=elapsed.ms,
                     error=str(exc),
                 )
-                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+                self._send_json(500, _rpc_error(rpc_id, INTERNAL_ERROR, "Internal server error"))
                 return
         self.audit.record(
             tool=name,
@@ -566,6 +702,33 @@ def make_handler(
     _Handler.publish_cimd = publish_cimd
     _Handler.allowed_hostnames = allowed_hostnames or DEFAULT_ALLOWED_HOSTNAMES
     return _Handler
+
+
+class MCPHTTPServer(ThreadingHTTPServer):
+    """`ThreadingHTTPServer` whose error reporting stays on one line.
+
+    socketserver's `handle_error` answers any exception that escapes a request
+    with a dashed banner and a full Python traceback on stderr. stderr is the
+    stream `repo2graph.events` promises is strict JSON-lines -- a SIEM tailing
+    it parses one record per line -- so the default printer turns every
+    escaping error into a dozen lines that parse as none. A handler failure is
+    precisely when an operator most needs the record to be machine-readable.
+
+    This lives on the server and not on the handler because socketserver calls
+    `handle_error` on the server object: `ThreadingMixIn.process_request_thread`
+    catches the handler's exception and has only the server to report it to.
+    There is no per-handler hook to override.
+    """
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """Report one escaping handler exception as a single JSON event."""
+        exc = sys.exc_info()[1]
+        emit(
+            "http_handler_error",
+            level="error",
+            remote=client_address[0] if client_address else None,
+            error=f"{type(exc).__name__}: {exc}",
+        )
 
 
 class HTTPTransport:
@@ -650,7 +813,7 @@ class HTTPTransport:
             The port actually bound, which differs from the requested one when
             port 0 asked the OS to choose.
         """
-        self._httpd = ThreadingHTTPServer((self.host, self.port), self._handler)
+        self._httpd = MCPHTTPServer((self.host, self.port), self._handler)
         self._httpd.daemon_threads = True
         self.port = self._httpd.server_address[1]
         self._handler.base_url = f"http://{self.host}:{self.port}"

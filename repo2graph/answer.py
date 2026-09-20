@@ -11,10 +11,24 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator
 
 HTTP_TIMEOUT = 300
 ERROR_SNIFF_LINES = 8  # unparsable lines kept, to explain an empty answer
 ERROR_SNIPPET = 400  # chars of a provider error body echoed to the user
+# An answer is a few thousand tokens of prose; a stream past this ceiling is not
+# one, and reading it unbounded would let the endpoint exhaust memory. MAX_TOKENS
+# is only *asked* of the provider and HTTP_TIMEOUT is a socket timeout, not a
+# transfer bound -- a host that trickles bytes resets it forever -- so neither
+# caps the body. OLLAMA_HOST is operator-supplied and _ollama_base accepts any
+# http(s) host:port, which makes this endpoint attacker-choosable rather than
+# merely misbehaving. Generous on purpose: per-token SSE envelopes cost far more
+# bytes than the text they carry, and a real answer must never hit this.
+MAX_ANSWER_BYTES = 8 << 20
+# Size of one read() off the socket. The block read is what bounds the *per-line*
+# axis: iterating the response reads until "\n", so a body that never sends one
+# is buffered whole before any code of ours sees a byte.
+READ_BLOCK = 1 << 16
 PROVIDER_MAP = {
     "gemini": "GEMINI_API_KEY",
     "openai": "OPENAI_API_KEY",
@@ -22,10 +36,11 @@ PROVIDER_MAP = {
     "ollama": "OLLAMA_HOST",
 }
 PROVIDER_ENV = tuple(PROVIDER_MAP.values())
+# Best-effort cheap/fast ids; `rag --answer --model` overrides.
 DEFAULT_MODELS = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.6-flash",
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-3-5-haiku-latest",
+    "anthropic": "claude-haiku-4-5",
     "ollama": "llama3.1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
@@ -200,6 +215,88 @@ def _delta(name: str, raw: bytes) -> str:
         return ""
 
 
+def _blocks(resp) -> Iterator[bytes]:
+    """Yield the response body in READ_BLOCK-sized pieces.
+
+    `http.client.HTTPResponse.read(n)` is the real path here, and the sized read
+    is the whole point: `for raw in resp` reads until a newline, so a body that
+    never sends one is already a single unbounded `bytes` by the time the caller
+    is handed it. Some response-like objects only support iteration (a test
+    stand-in, a pre-split body); those keep their own framing, and the byte
+    ceiling in `_BoundedLines` still applies to what they yield.
+    """
+    read = getattr(resp, "read", None)
+    if callable(read):
+        try:
+            block = read(READ_BLOCK)
+        except TypeError:
+            block = None  # a read() that accepts no size argument
+        if block is not None:
+            while block:
+                yield block
+                block = read(READ_BLOCK)
+            return
+    yield from resp
+
+
+class _BoundedLines:
+    """Newline framing over a response body, with a hard byte ceiling.
+
+    Both unbounded reads close here: the body arrives in fixed blocks, so no
+    single newline-less line can grow without limit, and the running total stops
+    the stream once `limit` bytes have been taken, so a trickle of well-formed
+    small deltas cannot either. `truncated` records that the ceiling bound, so
+    the caller can say so instead of returning a cut-off answer that reads as
+    complete.
+    """
+
+    def __init__(self, resp, limit: int):
+        self._resp = resp
+        self._limit = limit
+        self.read_bytes = 0
+        self.truncated = False
+
+    def __iter__(self) -> Iterator[bytes]:
+        buf = b""
+        for block in _blocks(self._resp):
+            room = self._limit - self.read_bytes
+            if len(block) > room:
+                # Strictly greater, never >=: a body that ends exactly at the
+                # ceiling lost nothing and must not be reported as truncated.
+                # Same shape as auth._fetch_json reading MAX_JWKS_BYTES + 1.
+                block = block[:room]
+                self.truncated = True
+            self.read_bytes += len(block)
+            buf += block
+            start = 0
+            while (nl := buf.find(b"\n", start)) >= 0:
+                yield buf[start:nl]
+                start = nl + 1
+            buf = buf[start:]
+            if self.truncated:
+                break
+        if buf:
+            yield buf
+
+
+def _note_truncated(name: str, limit: int) -> None:
+    """Say on stderr that the answer was cut off at the byte ceiling.
+
+    A ceiling that silently drops the tail turns a partial answer into one that
+    looks whole, which is the failure mode `_empty_answer` exists to avoid for
+    the no-text case. stderr, not stdout, for the same reason `_disclose` uses
+    it: stdout is the answer and has to stay pipeable.
+    """
+    from .events import write_safe
+
+    write_safe(
+        sys.stderr,
+        f"repo2graph: answer truncated -- {name} sent more than {limit} bytes; "
+        f"the rest was discarded and the answer above is incomplete",
+    )
+    _flush(sys.stderr)
+
+
 def _writer(out=None):
     """A write callable that cannot raise UnicodeEncodeError.
 
@@ -325,10 +422,12 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     write = _writer(out)
     parts: list[str] = []
     raw_tail: list[bytes] = []
+    lines: _BoundedLines | None = None
     # urlopen is looked up on the module at call time, so a test can swap it.
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            for raw in resp:
+            lines = _BoundedLines(resp, MAX_ANSWER_BYTES)
+            for raw in lines:
                 piece = _delta(spec["name"], raw)
                 if piece:
                     parts.append(piece)
@@ -346,6 +445,10 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
         raise SystemExit(f"{spec['name']} request failed: {exc}") from None
     except KeyboardInterrupt:
         raise SystemExit(130)
+    # Before the empty-answer check: a stream that hit the ceiling without ever
+    # carrying decodable text is two separate facts, and both are worth saying.
+    if lines is not None and lines.truncated:
+        _note_truncated(str(spec["name"]), MAX_ANSWER_BYTES)
     if not parts:
         raise SystemExit(_empty_answer(spec, raw_tail))
     try:

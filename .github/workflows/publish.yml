@@ -15,9 +15,39 @@ name: Publish
 # this pipeline already does the tag push and the release creation itself in
 # the same run, so there is no separate "release already tagged, now publish"
 # case to support.
+#
+# The release branch is an explicit input, defaulting to `main`, and every
+# stage reads it rather than assuming the dispatch ref. That matters because
+# workflow_dispatch runs against whatever ref the operator picked in the UI:
+# before this input existed, dispatching from `develop` bumped *develop's*
+# content but opened the release PR against a hardcoded `main` base, so the
+# tag and the published artifact could disagree about what was in them.
+# Checking out `inputs.branch` explicitly removes that mismatch -- the branch
+# named here is the one that is bumped, merged, tagged and published, whatever
+# ref the run was launched from.
 
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: >-
+          Branch to release from. The version bump is committed against this
+          branch, merged into it, and the tag is cut from the merge commit.
+          Leave as `main` unless you are deliberately publishing from elsewhere.
+        required: false
+        default: main
+        type: string
+
+concurrency:
+  # One release at a time, and NEVER cancelled. Concurrency groups are already
+  # scoped to the repository, so a constant group name serialises every run of
+  # this workflow -- deliberately not keyed on the branch input, because two
+  # dispatches for two different branches are exactly the collision to prevent:
+  # each runs bump_version.py, then they race on the tag push and on the PyPI
+  # upload. Queueing the second is correct; cancelling a release part-way
+  # through an upload is not.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -49,6 +79,8 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          # The release branch, not the dispatch ref: see the header comment.
+          ref: ${{ inputs.branch }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
 
@@ -59,12 +91,47 @@ jobs:
       - name: Install uv and tooling
         run: pip install uv
 
+      # Fail before anything is bumped, committed or tagged.
+      #
+      # A branch that does not exist is already caught by the checkout above,
+      # which is why that is not the case worth guarding. An *empty* input is:
+      # `required: false` lets the operator clear the field, `ref: ''` makes
+      # actions/checkout silently fall back to the dispatch ref, and the run
+      # would then release whatever branch it happened to be launched from
+      # while every later step interpolated an empty "$RELEASE_BASE".
+      - name: Check the release branch is usable
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          RELEASE_BASE: ${{ inputs.branch }}
+          DISPATCH_REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_BASE" ]; then
+            echo "::error::branch input is empty"
+            exit 1
+          fi
+          if ! git rev-parse -q --verify "refs/remotes/origin/$RELEASE_BASE" >/dev/null; then
+            echo "::error::no such branch on origin: $RELEASE_BASE"
+            exit 1
+          fi
+          if [ "$RELEASE_BASE" != "$DISPATCH_REF" ]; then
+            # Not fatal: Actions always loads the workflow *file* from the
+            # dispatch ref, so running a fixed publish.yml from one branch
+            # against another is legitimate. It is worth saying out loud.
+            echo "::warning::workflow file came from '$DISPATCH_REF' but releasing '$RELEASE_BASE'"
+          fi
+          echo "Releasing from branch: $RELEASE_BASE" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Prepare release version and tag
         id: prepare
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
           APP_ID: ${{ secrets.PRODIGY_APP_ID }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          # Routed through env:, never interpolated into the shell body --
+          # the `${{ inputs.X }}`-straight-into-`run:` pattern issue #108
+          # closed on examples.yml.
+          RELEASE_BASE: ${{ inputs.branch }}
         run: |
           set -euo pipefail
 
@@ -85,32 +152,33 @@ jobs:
 
           # Create the release commit via the GitHub API instead of `git commit` +
           # push: a runner-made commit is never marked Verified even when pushed
-          # with an authenticated App token, and main requires signed commits.
-          # An unsigned bump commit here blocks every auto-merge attempt below
-          # until someone with branch-protection bypass merges it by hand.
+          # with an authenticated App token, and the release branch requires
+          # signed commits. An unsigned bump commit here blocks every auto-merge
+          # attempt below until someone with branch-protection bypass merges it
+          # by hand.
           commit_sha=$(python scripts/commit_release_via_api.py \
             --repo "$GITHUB_REPOSITORY" \
             --branch "$branch" \
-            --base main \
+            --base "$RELEASE_BASE" \
             --message "chore(release): bump version to $version" \
             --files pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock)
           echo "Created verified commit $commit_sha on $branch"
 
           # bump_version.py's edits are already captured in the commit created
           # above via the API; discard them from the local worktree so the
-          # `git pull origin main` after merge below (which re-fetches the
-          # bumped content properly, via the merge) doesn't fail with "local
+          # `git pull origin "$RELEASE_BASE"` after merge below (which re-fetches
+          # the bumped content properly, via the merge) doesn't fail with "local
           # changes would be overwritten".
           git checkout -- pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock
 
           # Create PR if not already existing
-          pr_url=$(gh pr list --head "$branch" --base main --json url -q '.[0].url' || true)
+          pr_url=$(gh pr list --head "$branch" --base "$RELEASE_BASE" --json url -q '.[0].url' || true)
           if [ -z "$pr_url" ]; then
             pr_url=$(gh pr create \
               --title "chore(release): bump version to $version" \
               --body "Automated release PR for version **$version**." \
               --head "$branch" \
-              --base main)
+              --base "$RELEASE_BASE")
             echo "Created Release PR: $pr_url"
           else
             echo "Existing Release PR found: $pr_url"
@@ -156,10 +224,10 @@ jobs:
             exit 1
           fi
 
-          # Fetch the merged, signed commit from main and tag it
-          git fetch origin main
-          git checkout main
-          git pull origin main
+          # Fetch the merged, signed commit from the release branch and tag it
+          git fetch origin "$RELEASE_BASE"
+          git checkout "$RELEASE_BASE"
+          git pull origin "$RELEASE_BASE"
 
           if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
             git tag -a "$tag" -m "Release $tag"
@@ -185,6 +253,7 @@ jobs:
   pypi:
     needs: prepare-release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     environment:
       name: pypi
       url: https://pypi.org/p/repo2graph
@@ -229,10 +298,12 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
         with:
           skip-existing: true
+          attestations: true
 
   mcp-registry:
     needs: [prepare-release, pypi]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       id-token: write        # mcp-publisher login github-oidc needs this
       contents: read
@@ -278,6 +349,7 @@ jobs:
   release:
     needs: [prepare-release, pypi, mcp-registry]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -356,10 +428,12 @@ jobs:
       - name: Release summary
         env:
           VERSION: ${{ needs.prepare-release.outputs.version }}
+          RELEASE_BASE: ${{ inputs.branch }}
         run: |
           {
             echo "### Published and Released repo2graph $VERSION"
             echo
+            echo "- **Released from branch**: \`$RELEASE_BASE\`"
             echo "- **PyPI**: https://pypi.org/project/repo2graph/$VERSION/"
             echo "- **MCP Registry**: \`io.github.Srinivasan-78/repo2graph\`"
             echo "- **GitHub Release**: https://github.com/Srinivasan-78/repo2graph/releases/tag/v$VERSION"

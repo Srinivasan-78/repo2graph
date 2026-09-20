@@ -18,6 +18,7 @@ Usage:
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -98,68 +99,71 @@ def main(argv: list[str]) -> int:
     repo = sample_repo()
     print(f"executable: {executable}\nrepo: {repo}")
 
-    session = Session(executable, repo)
     try:
-        reply = session.send(
-            "initialize",
-            {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "roundtrip", "version": "1"},
-            },
-        )
-        info = reply["result"]["serverInfo"]
-        print("serverInfo:", info)
-        if info["name"] != "repo2graph":
-            print(f"::error::serverInfo.name is {info['name']!r}")
-            return 1
-
-        # The server must report *its* version. Left unset, the MCP SDK fills
-        # this in from its own package, so clients are told repo2graph is
-        # whatever release of `mcp` happens to be installed.
-        from importlib.metadata import version
-
-        installed = version("repo2graph")
-        if info.get("version") != installed:
-            print(
-                f"::error::serverInfo.version is {info.get('version')!r} but "
-                f"the installed package is {installed!r} -- the SDK version "
-                f"is leaking through"
+        session = Session(executable, repo)
+        try:
+            reply = session.send(
+                "initialize",
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "roundtrip", "version": "1"},
+                },
             )
-            return 1
+            info = reply["result"]["serverInfo"]
+            print("serverInfo:", info)
+            if info["name"] != "repo2graph":
+                print(f"::error::serverInfo.name is {info['name']!r}")
+                return 1
 
-        session.send("notifications/initialized", notify=True)
+            # The server must report *its* version. Left unset, the MCP SDK fills
+            # this in from its own package, so clients are told repo2graph is
+            # whatever release of `mcp` happens to be installed.
+            from importlib.metadata import version
 
-        names = [t["name"] for t in session.send("tools/list")["result"]["tools"]]
-        print("tools:", names)
-        missing = {"repo_map", "repo_search", "repo_neighbours"} - set(names)
-        if missing:
-            print(f"::error::tools/list is missing {sorted(missing)}")
-            return 1
+            installed = version("repo2graph")
+            if info.get("version") != installed:
+                print(
+                    f"::error::serverInfo.version is {info.get('version')!r} but "
+                    f"the installed package is {installed!r} -- the SDK version "
+                    f"is leaking through"
+                )
+                return 1
 
-        # repo_map triggers the on-demand build, so this covers the one slow
-        # path a host's first call actually takes.
-        text = session.send("tools/call", {"name": "repo_map", "arguments": {}})["result"][
-            "content"
-        ][0]["text"]
-        if not text.strip():
-            print("::error::repo_map returned nothing")
-            return 1
-        print("repo_map:", text.splitlines()[0][:70])
+            session.send("notifications/initialized", notify=True)
 
-        found = session.send(
-            "tools/call",
-            {
-                "name": "repo_search",
-                "arguments": {"query": "how is a request handled"},
-            },
-        )["result"]["content"][0]["text"]
-        if not found.strip():
-            print("::error::repo_search returned nothing")
-            return 1
-        print("repo_search: ok")
+            names = [t["name"] for t in session.send("tools/list")["result"]["tools"]]
+            print("tools:", names)
+            missing = {"repo_map", "repo_search", "repo_neighbours"} - set(names)
+            if missing:
+                print(f"::error::tools/list is missing {sorted(missing)}")
+                return 1
+
+            # repo_map triggers the on-demand build, so this covers the one slow
+            # path a host's first call actually takes.
+            text = session.send("tools/call", {"name": "repo_map", "arguments": {}})["result"][
+                "content"
+            ][0]["text"]
+            if not text.strip():
+                print("::error::repo_map returned nothing")
+                return 1
+            print("repo_map:", text.splitlines()[0][:70])
+
+            found = session.send(
+                "tools/call",
+                {
+                    "name": "repo_search",
+                    "arguments": {"query": "how is a request handled"},
+                },
+            )["result"]["content"][0]["text"]
+            if not found.strip():
+                print("::error::repo_search returned nothing")
+                return 1
+            print("repo_search: ok")
+        finally:
+            session.close()
     finally:
-        session.close()
+        shutil.rmtree(repo, ignore_errors=True)
 
     print("stdio round trip ok")
     return 0

@@ -6,7 +6,8 @@ build overwrote them. Human-facing only -- this module is never imported by
 `query.py`, `mcp.py` or any other retrieval path, and CHANGELOG.md is not
 listed in `chunk_fields`/`FILE_NOTES` as something an agent should read.
 
-Call order from `cli.cmd_build`:
+Call order from `cli.cmd_build` when `"overview"` is in `--formats` (otherwise
+`previous_state` is not called and no CHANGELOG.md is written):
 
 1. `previous_state(outdir)` -- BEFORE `dump_all` runs, while the previous
    build's `agent/nodes.jsonl`/`agent/edges.jsonl` are still the files on disk.

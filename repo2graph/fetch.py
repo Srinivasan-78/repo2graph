@@ -47,6 +47,22 @@ GITHUB_SPEC = re.compile(
 )
 
 
+# A refname is one or more "/"-separated components. Each component must open
+# with an alphanumeric or "_", which is what makes the pattern a security check
+# and not just a spelling check: it forbids a leading "-" on the whole value (so
+# git cannot read the ref as an option), a leading "." on any component (so the
+# value can never be "." or a dotted traversal segment), and a leading/trailing
+# "/" or an empty component. Inside a component "-", "." and "_" are ordinary
+# refname characters ("v1.2.3", "feature/foo-bar", "release/1.0"), and the
+# alphanumeric run alone already covers the 40-hex SHA people pass instead of a
+# name. Everything git treats as magic — " ", "~", "^", ":", "?", "*", "[", "\",
+# "@{", control bytes — is simply absent from the class, so no shell- or
+# refspec-metacharacter can reach the argv.
+# The anchor is \Z, not $: "$" also matches immediately before a trailing
+# newline, so "main\n" would pass a "$"-anchored pattern and reach the argv.
+GIT_REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*(?:/[A-Za-z0-9_][A-Za-z0-9._-]*)*\Z")
+
+
 _git_version_cache: tuple[int, ...] | None = None
 
 
@@ -63,7 +79,12 @@ def _git_version() -> tuple[int, ...]:
         return _git_version_cache
     try:
         out = subprocess.run(
-            ["git", "--version"], capture_output=True, encoding="utf8", errors="replace", timeout=10
+            ["git", "--version"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            encoding="utf8",
+            errors="replace",
+            timeout=10,
         )
         if out.returncode == 0 and out.stdout:
             m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", out.stdout)
@@ -88,6 +109,23 @@ def parse_spec(spec: str) -> tuple[str, str]:
         if not part or part in (".", "..") or part.startswith("-"):
             raise ValueError(f"not a GitHub repo spec: {spec!r}")
     return owner, repo
+
+
+def parse_ref(ref: str) -> str:
+    """Validate a refname that will be interpolated into a git argv."""
+    # Same reasoning as parse_spec's component check, for the same reason: `ref`
+    # reaches git as a bare argv element (`git fetch ... origin <ref>`, `git
+    # checkout <ref>`), so a value beginning with "-" is read by git's parser as
+    # an option rather than a refname — "--upload-pack=..." would make git run a
+    # command of the caller's choosing. "." and ".." are rejected for the
+    # traversal reason too: `git clone --branch` is safe from the option problem
+    # but a dotted ref is never a real ref, and letting it through only defers
+    # the failure. The allowlist is deliberately narrower than git's own rules
+    # (see GIT_REF) — `git check-ref-format` would be authoritative but costs a
+    # subprocess on every clone.
+    if not GIT_REF.match(ref) or ".." in ref:
+        raise ValueError(f"not a valid git ref: {ref!r}")
+    return ref
 
 
 def _redact(msg: str, token: str | None) -> str:
@@ -136,6 +174,11 @@ def clone(
 ) -> Path:
     """Clone a GitHub repo into dest/<repo>. depth=0 means full history."""
     owner, repo = parse_spec(spec)
+    # Validate before anything else runs: the acceptance condition for ISS-237 is
+    # that a hostile ref is refused without git ever being spawned, and _auth_env
+    # below can itself shell out to `git --version`.
+    if ref:
+        parse_ref(ref)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     url = f"https://github.com/{owner}/{repo}.git"
     target = Path(dest) / repo
@@ -143,15 +186,58 @@ def clone(
     # ISS-21: detect an existing checkout and reuse it
     if target.is_dir() and (target / ".git").exists():
         if ref:
+            # ISS-149: fetch ref before checkout in case existing checkout is shallow or missing ref
+            fetch_ok = False
             try:
-                proc = subprocess.run(
-                    ["git", "-C", str(target), "checkout", ref],
+                # The "--" is belt-and-braces over parse_ref: git fetch treats
+                # everything after it as a refspec, so even if GIT_REF is ever
+                # loosened an option-shaped ref lands as `fatal: invalid refspec`
+                # instead of being honoured as a flag. `git checkout` below gets
+                # no "--" on purpose — there it means "what follows is a
+                # pathspec", so `git checkout -- main` tries to restore a *file*
+                # named main and never switches ref. Only parse_ref guards that
+                # call.
+                fetch_proc = subprocess.run(
+                    ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref],
+                    stdin=subprocess.DEVNULL,
                     capture_output=True,
                     encoding="utf8",
                     errors="replace",
                     timeout=GIT_TIMEOUT,
                     env=_auth_env(token),
                 )
+                fetch_ok = fetch_proc.returncode == 0
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("git fetch timed out") from None
+            except (OSError, subprocess.SubprocessError) as e:
+                raise RuntimeError(f"git fetch failed: {e}") from None
+
+            try:
+                proc = subprocess.run(
+                    ["git", "-C", str(target), "checkout", ref],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    encoding="utf8",
+                    errors="replace",
+                    timeout=GIT_TIMEOUT,
+                    env=_auth_env(token),
+                )
+                if proc.returncode != 0 and fetch_ok:
+                    # In a shallow clone, git fetch origin <ref> puts commit in FETCH_HEAD
+                    # without creating a local branch or remote tracking ref. Try checking
+                    # out FETCH_HEAD — but only when we know the fetch just succeeded,
+                    # otherwise FETCH_HEAD may be stale from a prior run on a different ref.
+                    proc_detach = subprocess.run(
+                        ["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
+                        stdin=subprocess.DEVNULL,
+                        capture_output=True,
+                        encoding="utf8",
+                        errors="replace",
+                        timeout=GIT_TIMEOUT,
+                        env=_auth_env(token),
+                    )
+                    if proc_detach.returncode == 0:
+                        proc = proc_detach
             except subprocess.TimeoutExpired:
                 raise RuntimeError("git checkout timed out") from None
             except (OSError, subprocess.SubprocessError) as e:
@@ -179,6 +265,7 @@ def clone(
     try:
         proc = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf8",
             errors="replace",
@@ -199,6 +286,7 @@ def head_sha(path: Path) -> str:
     try:
         out = subprocess.run(
             ["git", "-C", str(path), "rev-parse", "HEAD"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf8",
             errors="replace",
@@ -223,6 +311,9 @@ def index_github(
     token: str | None = None,
     viz_nodes: int = 300,
     jobs: int = 0,
+    config=None,
+    max_call_candidates: int = 5,
+    no_chunks: bool = False,
 ) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
@@ -242,9 +333,11 @@ def index_github(
             git_history=git_history,
             max_files=max_files,
             jobs=jobs,
+            config=config,
+            max_call_candidates=max_call_candidates,
         )
         g.name = f"{owner}/{repo}"
-        chunks = iter_chunks(g)  # a generator, streamed to disk by dump_all
+        chunks = None if no_chunks else iter_chunks(g)  # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
         # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,
         # empty items) so a format the caller asked for is not silently dropped.

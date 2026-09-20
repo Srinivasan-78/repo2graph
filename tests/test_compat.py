@@ -11,6 +11,10 @@ golden, never how you make a red test go green: a characterization test that
 fails means either the golden was captured against a dirty tree or the
 implementation broke something it promised not to touch.
 
+Score fields in query_json.json / rag_json.json / pack_context.json were
+refreshed for #142 (corpus BM25 avgdl). Ranking and pack membership are
+unchanged; do not treat that refresh as a license to regen other goldens.
+
 Every test names the acceptance criterion it encodes as `# AC-n`.
 """
 
@@ -650,3 +654,301 @@ def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path)
     for call in calls:
         assert not any("x-access-token" in word for word in call), call
         assert not any(word.startswith("https://") and "@" in word for word in call), call
+
+
+# ==========================================================================
+# Issue #204: the `version` input was inert
+# ==========================================================================
+#
+# The install step gated on `[ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]`. For
+# a composite action $GITHUB_ACTION_PATH is the checked-out action repository
+# and pyproject.toml sits beside action.yml at its root, so that test was true
+# on every run -- `uses: ./` and `uses: owner/repo@ref` alike -- the else
+# branch was unreachable, and `version: repo2graph==1.5.0` silently installed
+# whatever the action ref resolved to. It also meant the Action never used the
+# signed PyPI artifact, so publish.yml's provenance covered nothing consumers
+# actually install.
+#
+# These assert the *resolved pip argv*, not an exit code: the old body exits 0
+# for both inputs, so a test that only checked exit status would have stayed
+# green through the whole bug.
+
+
+def _resolved_pip_calls(tmp_path: Path, version: str, *, pyproject: bool = True):
+    """(returncode, [argv, ...]) for the "Install repo2graph" step's real body.
+
+    `pip` is overridden by a shell function that logs its argv, so nothing is
+    installed and the script under test is byte-for-byte the one in action.yml
+    -- not a transcription of it.
+    """
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
+    )
+    action_path = tmp_path / "action_checkout"
+    action_path.mkdir()
+    if pyproject:
+        (action_path / "pyproject.toml").write_text(
+            '[project]\nname = "repo2graph"\n', encoding="utf8"
+        )
+    log = tmp_path / "pip-calls.log"
+    script = 'pip() { printf "%s\\x1f" "$@" >> "$PIP_LOG"; printf "\\n" >> "$PIP_LOG"; }\n' + body
+    env = dict(os.environ)
+    env.update(
+        GITHUB_ACTION_PATH=action_path.as_posix(),
+        R2G_VERSION=version,
+        PIP_LOG=str(log),
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    calls = []
+    if log.exists():
+        for line in log.read_text(encoding="utf8").split("\n"):
+            if line:
+                calls.append(line.split("\x1f")[:-1])
+    return proc.returncode, calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss204_a_blank_version_installs_the_action_checkout(tmp_path):
+    """#204 (a): the default path is unchanged -- `uses: ./` and every workflow
+    that never sets `version` still gets an editable install of the checkout."""
+    action_path = (tmp_path / "action_checkout").as_posix()
+    rc, calls = _resolved_pip_calls(tmp_path, "")
+    assert rc == 0, calls
+    assert calls == [["install", "-q", "-e", action_path]], calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+@pytest.mark.parametrize(
+    "version",
+    [
+        "repo2graph==1.5.0",
+        "repo2graph>=1.4,<2",
+        "git+https://github.com/Srinivasan-78/repo2graph@v1",
+    ],
+)
+def test_iss204_a_non_blank_version_is_the_spec_pip_receives(tmp_path, version):
+    """#204 (b): the reported bug. The fixture writes a pyproject.toml into
+    the action checkout -- the precondition the bug lived on, and the normal
+    case for a composite action -- and a pinned spec must still reach pip
+    verbatim rather than the checkout being installed instead of it."""
+    action_path = (tmp_path / "action_checkout").as_posix()
+    rc, calls = _resolved_pip_calls(tmp_path, version)
+    assert rc == 0, calls
+    assert calls == [["install", "-q", version]], calls
+    for call in calls:
+        assert "-e" not in call, call
+        assert not any(action_path in word for word in call), call
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_iss204_a_blank_version_with_no_checkout_source_fails_loudly(tmp_path):
+    """#204 (c): blank + nothing to install from is a hard error naming the
+    input, not a silent `pip install ''` or a stale hardcoded fallback."""
+    rc, calls = _resolved_pip_calls(tmp_path, "", pyproject=False)
+    assert rc != 0, calls
+    assert calls == [], calls
+
+
+def test_iss204_the_version_input_defaults_to_blank():
+    """#204 (d): the default must stay blank. A non-empty default would flip
+    every existing workflow -- CI's own `uses: ./` included -- from installing
+    the checkout to installing a published spec."""
+    with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
+        inputs = parse_action_block(fh.read(), "inputs")
+    assert inputs["version"].get("default") == "", inputs["version"]
+
+
+def test_iss204_the_install_step_gates_on_the_version_input():
+    """#204 (e): a source-level guard on the shape of the gate, so the file
+    test cannot come back as the *first* branch. `-n`/`-z` on the input is
+    also the form GitHub expressions and bash agree on for every casing
+    (AGENTS.md), which is why no `inputs.version ==` gate is needed."""
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
+    )
+    first_test = re.search(r"^\s*if \[ (.+) \]; then\s*$", body, re.M)
+    assert first_test, body
+    assert first_test.group(1) == '-n "$R2G_VERSION"', first_test.group(1)
+
+
+def test_iss108_examples_workflow_routes_inputs_through_env():
+    """Issue 108: examples.yml must route ${{ inputs.repo }} via env:, not direct run: interpolation."""
+    workflow_path = REPO_ROOT / ".github" / "workflows" / "examples.yml"
+    assert workflow_path.exists()
+    content = workflow_path.read_text(encoding="utf8")
+    generate_block = content.split("- name: Generate")[1]
+    run_part = generate_block.split("run:")[1].split("- uses:")[0]
+    assert "${{ inputs.repo }}" not in run_part
+    assert "INPUT_REPO: ${{ inputs.repo }}" in generate_block
+    assert '"$INPUT_REPO"' in run_part
+
+
+def test_iss137_generate_examples_split_rule(tmp_path):
+    """Issue 137: generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
+    import gzip
+    import importlib.util
+
+    script_path = REPO_ROOT / "scripts" / "generate_examples.py"
+    spec = importlib.util.spec_from_file_location("generate_examples", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    _read_jsonl_maybe_gz = mod._read_jsonl_maybe_gz
+
+    # A JSON record containing embedded U+2028 (line separator) in string
+    record = '{"id": "chunk-1", "text": "hello\u2028world"}'
+    jsonl_path = tmp_path / "test.jsonl.gz"
+    with gzip.open(jsonl_path, "wt", encoding="utf8") as fh:
+        fh.write(record + "\n")
+
+    lines = _read_jsonl_maybe_gz(jsonl_path)
+    assert len(lines) == 1
+    assert lines[0] == record
+
+
+def test_iss139_commit_release_api_timeout(monkeypatch):
+    """Issue 139: api() in commit_release_via_api.py must pass timeout to urlopen."""
+    import importlib.util
+    import io
+
+    script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
+    spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    recorded_timeouts = []
+
+    class DummyResponse:
+        def __enter__(self):
+            return io.BytesIO(b'{"status": "ok"}')
+
+        def __exit__(self, *args):
+            pass
+
+    def dummy_urlopen(req, timeout=None):
+        recorded_timeouts.append(timeout)
+        return DummyResponse()
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", dummy_urlopen)
+    res = mod.api("GET", "/test", "dummy-token")
+    assert res == {"status": "ok"}
+    assert recorded_timeouts == [30.0]
+
+
+def test_iss146_commit_release_api_path_posix(monkeypatch):
+    """Issue 146: commit_release_via_api.py must normalize Windows paths in git tree entries."""
+    import importlib.util
+    import io
+
+    script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
+    spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    tree_entries_sent = []
+
+    def dummy_api(method, path, token, payload=None, timeout=30.0):
+        if method == "GET" and "ref/heads" in path:
+            return {"object": {"sha": "basesha"}}
+        if method == "GET" and "commits" in path:
+            return {"tree": {"sha": "treesha"}}
+        if method == "POST" and "blobs" in path:
+            return {"sha": "blobsha"}
+        if method == "POST" and "trees" in path:
+            tree_entries_sent.extend(payload["tree"])
+            return {"sha": "newtreesha"}
+        if method == "POST" and "commits" in path:
+            return {"sha": "newcommitsha"}
+        if method == "POST" and "refs" in path:
+            return {}
+        return {}
+
+    monkeypatch.setattr(mod, "api", dummy_api)
+    monkeypatch.setattr(mod, "open", lambda *a, **k: io.BytesIO(b"v1.0.0"), raising=False)
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    win_style_path = "dist\\sub\\release.txt"
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "commit_release_via_api.py",
+            "--repo",
+            "test/repo",
+            "--branch",
+            "release-branch",
+            "--base",
+            "main",
+            "--message",
+            "Release commit",
+            "--files",
+            win_style_path,
+        ],
+    )
+    mod.main()
+
+    assert len(tree_entries_sent) == 1
+    # Path must be POSIX normalized (no backslashes)
+    assert "\\" not in tree_entries_sent[0]["path"]
+    assert tree_entries_sent[0]["path"] == "dist/sub/release.txt"
+
+
+# ==========================================================================
+# Issue #240: every subprocess in the package must close its stdin
+# ==========================================================================
+#
+# `capture_output` redirects the child's stdout and stderr only, so a child
+# spawned without `stdin=` inherits ours. Under `repo2graph-mcp` on stdio that
+# handle is the client's JSON-RPC pipe: the child blocks reading it until its
+# timeout fires, and while it holds the pipe it can swallow frames meant for
+# us (the reasoning is spelled out at parse.py's _git_files). Every call site
+# followed the rule except the two `cpp` invocations in parse.py.
+#
+# This is a source-level invariant rather than a behavioural one -- the two
+# cpp calls were latent, not actively breaking, and a runtime test can only
+# reach the sites it happens to exercise. Walking the AST of the whole package
+# means the *next* call site added cannot skip it either, the same way the
+# action.yml checks above pin a gate no Python test can see.
+
+
+def _subprocess_spawn_calls(path: Path):
+    """(lineno, dotted-name, has-stdin-keyword) for every subprocess spawn."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("run", "Popen", "call"):
+            continue
+        if not isinstance(func.value, ast.Name) or func.value.id != "subprocess":
+            continue
+        kwnames = {kw.arg for kw in node.keywords}
+        # `subprocess.run(**kwargs)` would carry stdin invisibly; None means a
+        # `**` unpacking, so treat it as unverifiable-but-not-a-violation.
+        ok = "stdin" in kwnames or None in kwnames
+        found.append((node.lineno, f"subprocess.{func.attr}", ok))
+    return found
+
+
+def test_iss240_every_subprocess_spawn_in_the_package_closes_stdin():
+    """#240: no `subprocess.run`/`Popen`/`call` in repo2graph/ may inherit our
+    stdin. Anything new that does fails here, naming the file and line."""
+    package = REPO_ROOT / "repo2graph"
+    offenders = []
+    total = 0
+    for path in sorted(package.rglob("*.py")):
+        for lineno, name, ok in _subprocess_spawn_calls(path):
+            total += 1
+            if not ok:
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno} {name}")
+    # A sweep that found nothing would pass vacuously; the package has had at
+    # least a dozen spawn sites since fetch.py landed.
+    assert total >= 10, total
+    assert offenders == [], offenders

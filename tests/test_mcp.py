@@ -9,11 +9,20 @@ assert the error message a user without the extra actually sees.
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from conftest import MINI_QUERY, REPO_ROOT, SECRET_QUERY, SYM_AUDIT, SYM_ROUTE
+from conftest import (
+    MINI_QUERY,
+    REPO_ROOT,
+    SECRET_QUERY,
+    SYM_AUDIT,
+    SYM_ROUTE,
+    build_mini_index,
+    write_mini_repo,
+)
 from repo2graph.query import Index, _is_secret_path
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -30,6 +39,25 @@ def _has_mcp():
 
 
 HAS_REAL_MCP = _has_mcp()
+
+
+def _has_any_mcp():
+    """An SDK `serve()` can actually drive, on either major.
+
+    `_has_mcp` above is narrower on purpose -- the tests it gates are written
+    against the 1.x decorator API. `serve()` itself handles both, so a test
+    that only drives it over the wire must not be skipped on a 2.x install.
+    """
+    try:
+        from mcp.server import Server  # noqa: F401
+        from mcp.server.stdio import stdio_server  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+HAS_ANY_MCP = _has_any_mcp()
 
 
 def mcp_module():
@@ -1130,12 +1158,17 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
     if call == "ls_files":
         from repo2graph import parse as mod
 
-        target, run = mod, lambda: mod._git_files(tmp_path)
+        target, attr = mod, "run"
+        run = lambda: mod._git_files(tmp_path)
     else:
+        # Popen, not run: since ISS-236 add_cochange streams the log so the byte
+        # cap can bind during the read. The stdin=DEVNULL requirement is the
+        # same either way -- capture_output was never what redirected it.
         from repo2graph import graph as mod
 
-        target, run = mod, lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
-    monkeypatch.setattr(target.subprocess, "run", spy)
+        target, attr = mod, "Popen"
+        run = lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
+    monkeypatch.setattr(target.subprocess, attr, spy)
     run()  # the OSError is caught by the caller; we only want the kwargs
 
     assert seen["kwargs"].get("stdin") is sp.DEVNULL, (
@@ -1143,29 +1176,205 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
     )
 
 
-def test_auto_build_never_spawns_a_process_pool(monkeypatch, tmp_path):
-    """`build()` reaches for a ProcessPoolExecutor above PARALLEL_MIN_FILES
-    files, and spawning one from inside the running stdio server hangs: the
-    workers inherit the parent's stdin/stdout, which are the client's pipes,
-    and the tool call never returns.
+# ==========================================================================
+# #90 -- the auto-build's process pool, and the transport it must not touch
+# ==========================================================================
+#
+# `_build_index` used to pin `jobs=1` because a pool started from inside the
+# running stdio server put the client's JSON-RPC pipes in the hands of every
+# worker. The pin is gone; `graph.silence_worker_io` is what replaced it.
+#
+# Every test below carries its own hard timeout. The failure this guards is an
+# indefinite hang, so a regression has to *fail* rather than wedge a CI job --
+# which is also why the old test asserted `jobs == 1` instead of proving
+# anything end to end.
 
-    Asserted on the argument rather than end to end on purpose -- the failure
-    mode is an indefinite hang, and a test that reproduces it would wedge CI
-    rather than fail it. The fixtures elsewhere in this file are all under the
-    threshold, which is exactly why this went unnoticed until a 65-file repo.
+POOL_STDIO_PROBE = Path(__file__).resolve().parent / "_pool_stdio_probe.py"
+MCP_POOL_SERVER = Path(__file__).resolve().parent / "_mcp_pool_server.py"
+
+# Bounds on the two child processes below. Generous next to the ~2s each costs
+# locally, because a cold 9-cell CI matrix is slower -- but finite, which is
+# the whole point.
+POOL_PROBE_TIMEOUT = 180
+SERVE_TIMEOUT = 240
+
+
+def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
+    wide_repo, tmp_path, monkeypatch
+):
+    """The pin is gone: above PARALLEL_MIN_FILES the auto-build really forks
+    out, and the pool it builds carries the stdio initializer.
+
+    `wide_repo` is the fixture #67 asks for -- every other fixture in the
+    suite is under the threshold, so before it existed this branch could not
+    be reached from a test at all.
     """
+    import concurrent.futures
+
+    from repo2graph import graph
+
     mcp = mcp_module()
-    seen = {}
+    real = concurrent.futures.ProcessPoolExecutor
+    seen = []
 
-    def spy(repo, **kwargs):
-        seen.update(kwargs)
-        raise RuntimeError("stop here; the kwargs are the whole assertion")
+    class Recording(real):
+        def __init__(self, *args, **kwargs):
+            seen.append(kwargs)
+            super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr("repo2graph.graph.build", spy)
-    with pytest.raises(RuntimeError):
-        mcp._build_index(tmp_path, tmp_path / "idx")
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Recording)
+    out = tmp_path / "wide_idx"
+    mcp._build_index(Path(wide_repo), out)
 
-    assert seen.get("jobs") == 1, f"auto-build must stay single-process inside the server: {seen}"
+    assert seen, "auto-build stayed serial: the jobs=1 pin is back"
+    assert seen[0].get("initializer") is graph.silence_worker_io, (
+        f"the pool workers would inherit the transport: {seen[0]}"
+    )
+    # The build is real, not just attempted: a node hand-derived from the
+    # fixture source has to be in the index it wrote.
+    idx = Index(out)
+    assert "sym:widepkg/mod0.py::dispatch_0" in idx.nodes
+
+
+def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
+    """The mechanism itself, in a child process whose stdio is a pipe.
+
+    `_pool_stdio_probe.py` starts a pool with the exact kwargs `parse_all`
+    passes, and has one worker write a sentinel to fd 1 and read a byte from
+    fd 0. Measured on Windows (spawn) before the fix, a worker did both for
+    real: the sentinel landed in the parent's stdout pipe and the worker
+    consumed the byte the parent had queued -- which under `repo2graph-mcp`
+    is a frame of the client's request stream the server then waits for
+    forever.
+
+    `timeout=` is the hard bound: a regression that hangs a worker on fd 0
+    fails this test instead of wedging the run.
+    """
+    from _pool_stdio_probe import REPORT_PREFIX, SENTINEL
+
+    proc = subprocess.run(
+        [sys.executable, str(POOL_STDIO_PROBE)],
+        input=b"S",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(REPO_ROOT),
+        timeout=POOL_PROBE_TIMEOUT,
+    )
+    stderr = proc.stderr.decode("utf8", "replace")
+    assert proc.returncode == 0, f"probe failed: {stderr}"
+    line = next(
+        (ln for ln in stderr.splitlines() if ln.startswith(REPORT_PREFIX)),
+        None,
+    )
+    assert line is not None, f"probe wrote no report: {stderr}"
+    report = json.loads(line[len(REPORT_PREFIX) :])
+
+    assert SENTINEL not in proc.stdout, (
+        "a pool worker wrote to the parent's stdout -- under the MCP stdio "
+        f"server that is the JSON-RPC stream: {proc.stdout!r}"
+    )
+    assert report["workers"][0]["read_fd0"] == "", (
+        f"a pool worker read the parent's stdin: {report}"
+    )
+    assert report["stdin_left"] == "S", (
+        f"the byte on the parent's stdin was consumed by a worker: {report}"
+    )
+
+
+@pytest.mark.skipif(not HAS_ANY_MCP, reason="needs the mcp extra (either SDK major)")
+def test_iss90_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
+    """AC-2, end to end: a real `serve()` over real pipes against a repo above
+    PARALLEL_MIN_FILES answers its first tool call.
+
+    The marker file is what makes this about the *parallel* path: the launcher
+    records every ProcessPoolExecutor the server process builds, so a silent
+    fall back to serial fails here rather than passing quietly.
+
+    Timeouts everywhere -- a queue-fed reader thread, not a bare readline --
+    because the bug being guarded is a hang, and a test that reproduces it
+    with `proc.stdout.readline()` would never return.
+    """
+    import queue
+    import threading
+
+    marker = tmp_path / "pools.txt"
+    out = tmp_path / "wide_idx"
+    proc = subprocess.Popen(
+        [sys.executable, str(MCP_POOL_SERVER), str(marker), str(wide_repo), str(out)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(REPO_ROOT),
+    )
+    lines: "queue.Queue" = queue.Queue()
+
+    def pump():
+        try:
+            for line in proc.stdout:
+                lines.put(line)
+        finally:
+            lines.put(None)
+
+    threading.Thread(target=pump, daemon=True).start()
+
+    def send(payload):
+        proc.stdin.write((json.dumps(payload) + "\n").encode("utf8"))
+        proc.stdin.flush()
+
+    def recv(timeout):
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, f"no JSON-RPC response within {timeout}s (the #90 hang)"
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty:
+                raise AssertionError(f"no JSON-RPC response within {timeout}s (the #90 hang)")
+            assert line is not None, "the server closed stdout"
+            try:
+                return json.loads(line.decode("utf8"))
+            except ValueError:
+                continue  # a non-JSON line on stdout is caught by its own test
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "clientInfo": {"name": "test", "version": "1.0"},
+                    "capabilities": {},
+                },
+            }
+        )
+        assert "result" in recv(SERVE_TIMEOUT)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "repo_neighbours",
+                    "arguments": {"node_id": "sym:widepkg/mod0.py::dispatch_0"},
+                },
+            }
+        )
+        resp = recv(SERVE_TIMEOUT)
+    finally:
+        proc.kill()
+        proc.wait(timeout=30)
+        if proc.stdin:
+            proc.stdin.close()
+
+    assert "result" in resp, resp
+    text = resp["result"]["content"][0]["text"]
+    # Hand-derived from the fixture source: dispatch_N calls handle_N.
+    assert "handle_0" in text, text
+    assert marker.is_file(), "the auto-build never started a process pool"
+    assert "initializer=silence_worker_io" in marker.read_text(encoding="utf8")
 
 
 # ==========================================================================
@@ -1278,3 +1487,252 @@ def test_r9_sane_string_arguments_are_left_alone(mini_index):
     idx.pack_context = spy
     mcp.tool_repo_search(idx, MINI_QUERY)
     assert seen["query"] == MINI_QUERY
+
+
+def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
+    """Issue 125: open_index detects when index was rebuilt externally and reloads."""
+    import os
+    import time
+    from repo2graph.export import path as artifact_path
+    from repo2graph.cache import ResultCache
+
+    mcp = mcp_module()
+    repo = write_mini_repo(tmp_path)
+    out = tmp_path / "idx"
+    build_mini_index(repo, out)
+
+    cache = ResultCache()
+    idx1 = mcp.open_index(out, cache=cache)
+    assert idx1 is not None
+    assert mcp.open_index(out, cache=cache) is idx1
+
+    cache.put("test_key", "cached_val")
+    assert cache.get("test_key") == "cached_val"
+
+    time.sleep(0.05)
+    manifest = artifact_path(out, "manifest.json")
+    if manifest.exists():
+        new_mtime = manifest.stat().st_mtime + 10.0
+        os.utime(manifest, (new_mtime, new_mtime))
+    chunks = artifact_path(out, "chunks.jsonl")
+    if chunks.exists():
+        new_mtime = chunks.stat().st_mtime + 10.0
+        os.utime(chunks, (new_mtime, new_mtime))
+
+    idx2 = mcp.open_index(out, cache=cache)
+    assert idx2 is not idx1
+    assert cache.get("test_key") is None
+
+
+def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
+    """Issue 124: repo_neighbours explores CONTAINS edges for dirs and files, and includes low-confidence calls."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+
+    # For dir: node, CONTAINS edges should return contained files
+    dir_id = "dir:pkg"
+    out_dir = mcp.tool_repo_neighbours(idx, dir_id)
+    assert "CONTAINS" in out_dir
+    assert "pkg/gateway.py" in out_dir or "gateway.py" in out_dir
+    assert "- (none)" not in out_dir
+
+    # For file: node, CONTAINS edges should return contained symbols
+    file_id = "file:pkg/gateway.py"
+    out_file = mcp.tool_repo_neighbours(idx, file_id)
+    assert "CONTAINS" in out_file
+    assert "route_request" in out_file
+    assert "- (none)" not in out_file
+
+
+# ==========================================================================
+# Issue 235 -- open_index is reached from several HTTP worker threads at once
+# ==========================================================================
+
+
+def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
+    mini_index, mini_repo, tmp_path, monkeypatch
+):
+    """Two simultaneous first calls must cost one build and share one Index.
+
+    The HTTP transport is a `ThreadingHTTPServer` with `daemon_threads = True`,
+    so two clients pointed at a server whose index does not exist yet both
+    reach `open_index` before either has written anything. Unlocked, both pass
+    the `not _has_index(...)` test, both parse the whole repository and then
+    race each other through `atomic_write`, so the loser's work is discarded.
+    The invocation count below is the detector: it reads 2 without the
+    per-directory lock and 1 with it.
+
+    `_build_index` is replaced by a slow copy of an already-built index rather
+    than a real parse, both to keep the test quick and to make the overlap
+    deterministic -- the barrier puts both threads inside `open_index` and the
+    sleep is far wider than the window an unsynchronised second caller needs to
+    make its own `_has_index` decision.
+    """
+    import shutil
+    import threading
+    import time
+
+    mcp = mcp_module()
+    mcp._INDEXES.clear()
+    mcp._INDEX_MTIMES.clear()
+
+    out = tmp_path / "raced_idx"
+    builds = []
+    at_the_door = threading.Barrier(2, timeout=30)
+
+    def slow_build(repo, target):
+        builds.append(str(repo))
+        time.sleep(0.3)
+        shutil.copytree(mini_index, target)
+
+    monkeypatch.setattr(mcp, "_build_index", slow_build)
+
+    results: dict[int, object] = {}
+    failures: dict[int, BaseException] = {}
+
+    def call(slot):
+        try:
+            at_the_door.wait()
+            results[slot] = mcp.open_index(out, repo=mini_repo)
+        except BaseException as exc:  # recorded, then re-raised in the main thread
+            failures[slot] = exc
+
+    threads = [threading.Thread(target=call, args=(slot,)) for slot in (0, 1)]
+    for thread in threads:
+        thread.start()
+    # Each join is bounded so a lock that deadlocks fails the test instead of
+    # hanging the suite until the runner's own timeout (or forever, locally).
+    for thread in threads:
+        thread.join(timeout=60)
+    alive = [thread for thread in threads if thread.is_alive()]
+    assert not alive, "open_index did not return within 60s -- deadlock?"
+
+    assert not failures, failures
+    assert len(builds) == 1, f"_build_index ran {len(builds)} times, expected 1"
+    assert results[0] is results[1], "each caller loaded its own Index of the same directory"
+
+
+# ==========================================================================
+# Issue 203 -- --http-only must imply an HTTP transport, and tear down once
+# ==========================================================================
+
+
+def test_iss203_http_only_without_a_port_refuses_instead_of_serving_stdio(mini_repo, monkeypatch):
+    """The flag names what to omit, so alone it asks for no transport at all.
+
+    The test used to live inside the block that builds the HTTP transport, so
+    with no --http-port that block never ran, the flag was never read, and main
+    fell through to the stdio `serve()` -- precisely the transport --http-only
+    exists to suppress, and with no diagnostic.
+    """
+    mcp = mcp_module()
+    monkeypatch.setattr(
+        mcp,
+        "serve",
+        lambda *a, **kw: pytest.fail("--http-only fell through to the stdio transport"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        mcp.main([str(mini_repo), "--http-only"])
+
+    message = str(exc.value)
+    assert "--http-only" in message, message
+    assert "--http-port" in message, message
+
+
+def test_iss203_http_only_closes_the_audit_logger_on_the_way_out(mini_repo, monkeypatch):
+    """The long-lived path is the one that must not leak the audit fd.
+
+    `audit.close()` used to sit only in the `finally:` of the `serve()` call,
+    which the --http-only branch's own `return 0` jumped straight over. Both
+    exit paths now share one teardown; this pins that the HTTP-only one runs it.
+    """
+    from repo2graph import audit as audit_mod
+    from repo2graph import http_server as http_mod
+
+    mcp = mcp_module()
+    closed = []
+    stopped = []
+
+    class RecordingAudit:
+        def __init__(self, config):
+            self.config = config
+
+        def close(self):
+            closed.append("closed")
+
+    class FakeTransport:
+        # No thread to join, so the --http-only branch runs straight to its
+        # return and the teardown is the only thing left to observe.
+        _thread = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            stopped.append("stopped")
+
+    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(
+        mcp, "serve", lambda *a, **kw: pytest.fail("--http-only served stdio anyway")
+    )
+
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert closed == ["closed"], "audit.close() must run on the --http-only exit path"
+    assert stopped == ["stopped"], "the transport must still be stopped"
+
+
+@pytest.mark.parametrize(
+    ("argv_extra", "expected"),
+    [([], False), (["--audit-log-fsync"], True)],
+)
+def test_iss244_audit_log_fsync_is_opt_in_from_the_command_line(
+    mini_repo, monkeypatch, argv_extra, expected
+):
+    """The per-record disk sync is a flag, and it is off unless asked for.
+
+    ISS-244 made `_LockedAppender.write` flush rather than fsync, because the
+    sync was taken while holding both the thread lock and the OS-level file
+    lock -- on the threaded HTTP transport that serialised every request behind
+    a disk sync, and stderr already carries every record. Durability for the
+    file copy is still available; it just has to be chosen. The default is the
+    half worth pinning: a config that quietly went back to syncing would
+    reintroduce the throughput ceiling with nothing failing.
+    """
+    from repo2graph import audit as audit_mod
+    from repo2graph import http_server as http_mod
+
+    mcp = mcp_module()
+    seen = []
+
+    class RecordingAudit:
+        def __init__(self, config):
+            seen.append(config)
+
+        def close(self):
+            pass
+
+    class FakeTransport:
+        _thread = None
+
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
+
+    argv = [str(mini_repo), "--http-port", "0", "--http-only", *argv_extra]
+    assert mcp.main(argv) == 0
+    assert len(seen) == 1
+    assert seen[0].fsync is expected

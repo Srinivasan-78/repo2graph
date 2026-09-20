@@ -81,14 +81,16 @@ def paths(outdir, name) -> list[Path]:
 def make_path(outdir, name) -> Path:
     """Like path(), but creates the section directory first."""
     p = path(outdir, name)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    if not p.parent.is_dir():
+        p.parent.mkdir(parents=True, exist_ok=True)
     return p
 
 
 def make_paths(outdir, name) -> list[Path]:
     out = paths(outdir, name)
     for p in out:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        if not p.parent.is_dir():
+            p.parent.mkdir(parents=True, exist_ok=True)
     return out
 
 
@@ -331,6 +333,17 @@ def write_graphml(g, path: Path):
     ET.register_namespace("y", Y_NS)
     root = ET.Element(f"{{{GRAPHML_NS}}}graphml")
 
+    ET.SubElement(
+        root,
+        f"{{{GRAPHML_NS}}}key",
+        {"id": "d_nodegraphics", "for": "node", "yfiles.type": "nodegraphics"},
+    )
+    ET.SubElement(
+        root,
+        f"{{{GRAPHML_NS}}}key",
+        {"id": "d_edgegraphics", "for": "edge", "yfiles.type": "edgegraphics"},
+    )
+
     # One data key per attribute name, typed from the values it carries.
     keys: dict[tuple[str, str], str] = {}
 
@@ -376,9 +389,7 @@ def write_graphml(g, path: Path):
         label = labels[nid]
         x, y = pos.get(nid, (0.0, 0.0))
         width, height = sizes[nid]
-        gfx = ET.SubElement(
-            node, f"{{{GRAPHML_NS}}}data", {"key": key_for("node", "nodegraphics", "")}
-        )
+        gfx = ET.SubElement(node, f"{{{GRAPHML_NS}}}data", {"key": "d_nodegraphics"})
         shape = ET.SubElement(gfx, f"{{{Y_NS}}}ShapeNode")
         ET.SubElement(
             shape,
@@ -420,24 +431,13 @@ def write_graphml(g, path: Path):
             graph, f"{{{GRAPHML_NS}}}edge", {"source": _xml_safe(src), "target": _xml_safe(dst)}
         )
         add_data(edge, "edge", attrs)
-        gfx = ET.SubElement(
-            edge, f"{{{GRAPHML_NS}}}data", {"key": key_for("edge", "edgegraphics", "")}
-        )
+        gfx = ET.SubElement(edge, f"{{{GRAPHML_NS}}}data", {"key": "d_edgegraphics"})
         poly = ET.SubElement(gfx, f"{{{Y_NS}}}PolyLineEdge")
         ET.SubElement(
             poly, f"{{{Y_NS}}}LineStyle", {"color": "#a5adba", "type": "line", "width": "1.0"}
         )
         ET.SubElement(poly, f"{{{Y_NS}}}Arrows", {"source": "none", "target": "standard"})
         ET.SubElement(poly, f"{{{Y_NS}}}BendStyle", {"smoothed": "false"})
-
-    # yFiles keys carry graphics, not data, and take yfiles.type instead of
-    # attr.name/attr.type; fix them up now that every key exists.
-    for element in root.findall(f"{{{GRAPHML_NS}}}key"):
-        name = element.get("attr.name")
-        if name in ("nodegraphics", "edgegraphics"):
-            del element.attrib["attr.name"]
-            del element.attrib["attr.type"]
-            element.set("yfiles.type", name)
 
     root.append(graph)
     ET.indent(root, space="  ")
@@ -636,9 +636,13 @@ def write_overview_human(g, path: Path, top: int = 25):
         out.append("No edges were recorded.")
     out.append("")
 
-    skip_bullets = [
-        f"- {label}: {g.stats[key]}" for key, label in _SKIP_STAT_LABELS if g.stats.get(key)
+    max_bytes = getattr(getattr(g, "config", None), "max_file_bytes", 1_500_000)
+    mb = max_bytes / 1_000_000
+    skip_labels = [
+        (k, f"files over {mb:g} MB" if k == "skipped_too_large" else lbl)
+        for k, lbl in _SKIP_STAT_LABELS
     ]
+    skip_bullets = [f"- {label}: {g.stats[key]}" for key, label in skip_labels if g.stats.get(key)]
     if skip_bullets:
         out.append("## What was skipped")
         out.append("")
@@ -703,12 +707,18 @@ FILE_NOTES = {
     "graph.graphml": "the graph with a layout and yFiles node graphics, for yEd, Gephi, NetworkX or igraph",
 }
 
+# Manifest prose templates. `{n}` stands for the ambiguous-call fan-out limit
+# this build used (`graph.build(max_call_candidates=)`, `--max-call-candidates`)
+# and is substituted by _fanout() in write_manifest -- the number is a per-index
+# choice, and stating a constant 5 made the manifest contradict the very index
+# it ships with (#245). Read these module constants as templates, not as copy;
+# the resolved text is what reaches manifest.json.
 HOW_TO_READ = [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true — nothing in the repo calls it — and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
     "To answer a question about code, score chunks.jsonl lexically or by embedding, then walk one hop out over CALLS/DEFINES/IMPORTS to pull in the neighbours. repo2graph.query.Index does both.",
     "Chunk `callees` holds in-repo targets as path::qualname; `callees_external` holds bare stdlib and third-party names that were never resolved.",
-    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to 5 candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
+    "CALLS resolution is name-based, not type-based: an overloaded or shadowed name emits up to {n} candidate edges, each with confidence 1/n. Filter on confidence == 1.0 when a wrong edge would be costly.",
     "GraphRAG retrieval protocol: score chunks.jsonl for the question, then expand one hop from each seed over CALLS out (callees), CALLS in (callers), DEFINES in (the defining file) and INHERITS out (base classes), keeping only CALLS edges whose confidence >= 1.0; pack the seeds first and the neighbours after, under a character budget, and cite every chunk as path:start-end from its start_line/end_line.",
     'repo2graph.query.Index.pack_context implements that protocol and returns the packed markdown; `repo2graph rag "<question>" -o <outdir>` is the same thing from the command line (--min-conf sets the confidence filter, --no-expand turns the graph hop off).',
 ]
@@ -741,11 +751,17 @@ CONFIDENCE_SEMANTICS = {
     "1.0": "Certain: the call name resolved to exactly one definition.",
     "lt_1.0": (
         "Ambiguous: the name matched multiple candidates, fanned out to up "
-        "to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 "
+        "to {n} CALLS edges at 1/n confidence each. Filter to confidence == 1.0 "
         "when correctness matters more than recall. IMPORTS, DEFINES and "
         "INHERITS edges carry no confidence key -- they are never ambiguous."
     ),
 }
+
+APPROXIMATIONS = [
+    "Call resolution is name-based; ambiguous names fan out to up to {n} edges at 1/n confidence.",
+    "Dynamic dispatch, reflection and generated code are invisible to a parser.",
+    "Absence of an edge is not proof of absence of a call.",
+]
 
 DYNAMIC_CALLS_NOTE = (
     "No CALLS edge does not prove no call happens at runtime. Dynamic "
@@ -754,8 +770,34 @@ DYNAMIC_CALLS_NOTE = (
 )
 
 
+def _fanout(text: str, max_call_candidates: int) -> str:
+    """Substitute a build's fan-out limit into one manifest prose template.
+
+    `str.replace`, not `str.format`: these are prose strings that an editor may
+    well one day want a literal brace in (a JSON snippet, a dict example), and
+    `format` would raise KeyError on it here -- turning a typo in documentation
+    copy into a failed build. A template that loses its `{n}` degrades to a
+    sentence with no number, which the top-level `max_call_candidates` key
+    still answers.
+    """
+    return text.replace("{n}", str(max_call_candidates))
+
+
 def write_manifest(g, path: Path, written: list[str]):
     """Describe the agent-facing output so a reader needs no other docs."""
+    # Imported here, not at module scope, for the same reason PARSE_CACHE_FORMAT
+    # is below: export is the lower layer of the two and query.py imports it.
+    from .graph import DEFAULT_MAX_CALL_CANDIDATES
+
+    # build() records the fan-out limit it resolved under on the Graph. Anything
+    # else that reaches write_manifest -- a Graph assembled by hand in a test, or
+    # any object that merely quacks like one, which is all this function has ever
+    # asked of `g` -- gets the same default build() would have applied. A wrong
+    # number is the bug being fixed, but a manifest that raises instead of being
+    # written is strictly worse than one carrying the default.
+    mcc = getattr(g, "max_call_candidates", DEFAULT_MAX_CALL_CANDIDATES)
+    if not isinstance(mcc, int) or isinstance(mcc, bool) or mcc < 1:
+        mcc = DEFAULT_MAX_CALL_CANDIDATES
     entry = sorted(
         (n for n in g.nodes.values() if n.get("entrypoint")),
         key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
@@ -810,15 +852,15 @@ def write_manifest(g, path: Path, written: list[str]):
             "a function or method that no CALLS edge points at and that is "
             "not nested inside another function"
         ),
-        "how_to_read": HOW_TO_READ,
-        "approximations": [
-            "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
-            "Dynamic dispatch, reflection and generated code are invisible to a parser.",
-            "Absence of an edge is not proof of absence of a call.",
-        ],
+        # The fan-out limit as a number, so a consumer calibrating a confidence
+        # filter can read it instead of parsing it back out of the prose below.
+        # It is recorded in no other artifact.
+        "max_call_candidates": mcc,
+        "how_to_read": [_fanout(s, mcc) for s in HOW_TO_READ],
+        "approximations": [_fanout(s, mcc) for s in APPROXIMATIONS],
         "usage_hints": {
             "tool_decision_tree": TOOL_DECISION_TREE,
-            "confidence_semantics": CONFIDENCE_SEMANTICS,
+            "confidence_semantics": {k: _fanout(v, mcc) for k, v in CONFIDENCE_SEMANTICS.items()},
             # Same EDGE_TYPES dict manifest.json's top-level "edge_types" key
             # already carries -- one authored copy, not a second one to drift.
             "edge_type_meanings": EDGE_TYPES,
@@ -992,8 +1034,8 @@ def load_parse_cache(outdir: Path) -> dict:
     from .graph import PARSE_CACHE_FORMAT
 
     try:
-        path = make_paths(Path(outdir), "parse.cache.json")[0]
-        data = json.loads(path.read_text(encoding="utf8"))
+        cache_path = path(Path(outdir), "parse.cache.json")
+        data = json.loads(cache_path.read_text(encoding="utf8"))
     except (OSError, ValueError, KeyError):
         return {}
     if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:

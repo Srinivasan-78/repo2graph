@@ -88,9 +88,9 @@ inputs:
     required: false
     default: ""
   version:
-    description: "repo2graph version spec passed to pip"
+    description: "pip spec to install repo2graph from (blank = install the action checkout itself)"
     required: false
-    default: "git+https://github.com/Srinivasan-78/repo2graph@v1"
+    default: ""
   token:
     description: "Token used to clone a private target repo"
     required: false
@@ -125,14 +125,32 @@ runs:
 
     - name: Install repo2graph
       shell: bash
+      # The `version` input decides where the package comes from, and nothing
+      # else does. This used to gate on `[ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]`,
+      # but for a composite action $GITHUB_ACTION_PATH *is* the checked-out
+      # action repository and pyproject.toml sits beside this file at its root
+      # -- so that test was true on every run, the else branch was unreachable
+      # and `version` never reached pip (#204). Gating on the input instead
+      # also puts a consumer who pins a release onto the signed PyPI artifact
+      # that publish.yml produces, which `pip install -e <checkout>` bypassed.
+      #
+      # Non-emptiness is the one test GitHub expressions and bash agree on for
+      # every casing (AGENTS.md), so this needs no `inputs.version ==` gate and
+      # no case-folding. The default is blank on purpose: a workflow that never
+      # sets `version` installs the checkout it is pinned to, exactly as every
+      # run did before, so nothing that works today changes.
       env:
         R2G_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        if [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
+        if [ -n "$R2G_VERSION" ]; then
+          pip install -q "$R2G_VERSION"
+        elif [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
           pip install -q -e "$GITHUB_ACTION_PATH"
         else
-          pip install -q "$R2G_VERSION"
+          echo "repo2graph: no pyproject.toml in \$GITHUB_ACTION_PATH and no \`version\`" >&2
+          echo "input set -- pass e.g. version: repo2graph==<x.y.z> to install from PyPI." >&2
+          exit 1
         fi
 
     - name: Build the graph

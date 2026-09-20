@@ -65,7 +65,29 @@ the step.
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
-| `version` | `git+…@v1` | Version spec passed to pip. Only used if the action folder has no source next to it. |
+| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.5.4`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+
+### Pinning the package instead of the checkout
+
+By default the action installs itself — the source that came with the `uses:`
+ref — so the action and the package can never disagree. Set `version` to install
+from PyPI instead, which is the artifact `publish.yml` builds under Trusted
+Publishing with attested provenance:
+
+```yaml
+- uses: Srinivasan-78/repo2graph@v1
+  with:
+    version: repo2graph==1.5.4
+```
+
+Any pip spec works (`repo2graph>=1.4,<2`, a `git+https://…@<ref>` URL, a local
+wheel path). It is passed to `pip install` verbatim, so a bad spec fails the step
+loudly rather than falling back to the checkout.
+
+This input used to be accepted and ignored: the install always gated on a
+`pyproject.toml` that a composite action always has, so the editable install of
+the checkout won every time. If you were already setting `version`, you were
+getting the checkout — you now get what you asked for.
 
 ## Outputs
 

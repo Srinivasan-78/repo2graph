@@ -13,6 +13,123 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Changed
+
+- `publish.yml` takes a `branch` input, defaulting to `main`, and every stage
+  reads it instead of assuming the dispatch ref. `workflow_dispatch` runs
+  against whatever ref the operator picks, so dispatching from `develop`
+  previously bumped *develop's* content while opening the release PR against a
+  hardcoded `main` base. The checkout is now pinned to the named branch, and
+  the four hardcoded `main` references (`--base`, `gh pr list`, `gh pr create`,
+  and the fetch/checkout/pull that tags the merge) follow it.
+
+- Every workflow job now carries `timeout-minutes`, and every workflow a
+  `concurrency` group. All 19 jobs previously inherited GitHub's 6-hour
+  default, so the worst-case ceiling across the fleet drops from 6,840 minutes
+  to 510. Bounds are set well above measured run times — CI completes in
+  ~4 minutes — because the point is to catch a hang, not to police a slow run.
+  `cancel-in-progress` is decided per workflow rather than uniformly: releases,
+  the two bots that answer humans, and the long dispatch-only jobs are never
+  cancelled; pure checks on a pull request are.
+
+### Fixed
+
+- **Bug sweep: every open `bug`-labelled issue.** Twenty-six issues, grouped
+  below by the module they land in. Each carries a regression test proven to
+  fail against the unfixed code.
+
+- Indexing correctness. `_chunk_and_parse` sliced a large file at raw byte
+  offsets, so a multi-byte character straddling a boundary lost **two** slices
+  — up to 3 MB of source — with `parse_errors` still `0` and the file node
+  still written as healthy, which is why only non-ASCII trees were affected
+  and no test noticed. Slices are now carried to a character boundary and
+  genuinely undecodable ones are counted into `stats`. The same function
+  buffered the whole file for its digest and line count, so the path
+  `max_file_bytes` exists to bound had no bound at all; both are now streamed.
+  `PARSE_CACHE_FORMAT` goes 1 → 2 for the entry-shape change. `discover()`'s
+  `S_ISREG` guard could be waived by `--chunk-large-files`, letting a
+  non-regular file reach a blocking `read()`. (#196, #248)
+
+- MCP server robustness. `open_index` did a check-then-act on module-level
+  caches with no lock while the HTTP transport serves on `ThreadingHTTPServer`,
+  so two concurrent first tool calls both ran the whole build and raced through
+  `atomic_write`; a per-directory lock now spans the check-build-cache
+  sequence. `--http-only` without `--http-port` fell through to the stdio
+  transport — the exact thing the flag disables — and its early return jumped
+  over `audit.close()`. (#235, #203)
+
+- MCP auto-build no longer pins `jobs=1`. Workers inherited fd 0 and fd 1,
+  which under the stdio server are the client's JSON-RPC pipes, so a repo above
+  64 files hung on its first tool call. Pool workers are now detached onto
+  devnull at the fd level, so a large repo's first call costs what
+  `repo2graph build` costs. Also adds the >64-file fixture whose absence let
+  the parallel path go untested. (#90, #67)
+
+- HTTP transport hardening. No socket timeout, so a client that sent
+  `Content-Length` and withheld the body pinned a handler thread forever. A
+  deeply nested JSON body raised `RecursionError` past `except ValueError` and
+  killed the handler thread **before** authentication. A non-ASCII bearer
+  credential raised `TypeError` out of `authenticate()` the same way, and a JWK
+  with `kty: RSA` but no `n`/`e` raised `KeyError`. Nested tool arguments took
+  the thread down through the audit logger's unbounded recursion. A
+  `Transfer-Encoding: chunked` body was never read, leaving bytes in the socket
+  to desync the next request. An ordinary client disconnect injected a
+  multi-line Python traceback into the stderr stream this package promises is
+  strict JSON-lines. (#197, #232, #233, #234, #238, #249, #199)
+
+- Audit sink survivability. A typo'd `--audit-log` killed the server with a
+  traceback before it started, and `flock` failing on NFS/FUSE/overlay silently
+  dropped every record to the file sink on POSIX while the Windows branch
+  handled it — the "no lock available: still write" fallthrough was
+  unreachable. The per-record `os.fsync`, taken while holding both the thread
+  lock and the file lock, is now opt-in via `--audit-log-fsync`. (#201, #200,
+  #244)
+
+- Input validation and bounds. `--ref` reached the git argv without the
+  leading-dash check `parse_spec` applies to owner/repo, so a value like
+  `--upload-pack=…` was parsed as a flag. `decode_jwt` ignored a JWK's RFC 7517
+  `use`/`key_ops`, accepting an encryption-only key for signature
+  verification. `_challenge()` interpolated `oidc_issuer` into
+  `WWW-Authenticate` without the module's own header sanitiser — now applied
+  structurally to every `extra_headers` value. The `rag --answer` provider
+  response was read unbounded on both axes, per line and in total. (#237,
+  #246, #243, #241)
+
+- Artifact and packaging truthfulness. `manifest.json` hardcoded "up to 5"
+  CALLS edges, so an index built with `--max-call-candidates 2` shipped a
+  manifest telling an agent to calibrate against a number the build never used;
+  the effective value is now formatted into the prose and emitted as a
+  top-level key. `load_vectors` never checked the `format` marker
+  `write_vectors` has always stamped, so an unrecognised pair would have
+  produced plausible, wrong rankings rather than degrading to BM25. (#245,
+  #242)
+
+- Build cost and subprocess hygiene. `cpp --version` was re-probed for every
+  C/C++ file with a parse error — two spawns per file on a macro-heavy tree —
+  and neither `cpp` invocation passed `stdin=subprocess.DEVNULL`, so under the
+  stdio server they inherited the client's pipe. `MAX_COCHANGE_BYTES` promised
+  in its own comment to be enforced during the read and was applied after
+  `capture_output()` had already buffered the whole git log. (#239, #240, #236)
+
+- The composite action's `version` input reached pip for the first time. It
+  gated on `[ -f $GITHUB_ACTION_PATH/pyproject.toml ]`, which is always true
+  for a composite action, so the input was accepted and ignored and the Action
+  never installed the signed PyPI artifact `publish.yml` produces. (#204)
+
+- Audit-log `high_entropy` redaction no longer treats ordinary snake_case
+  identifier queries (`test_iss25_…`, `resolve_import_python3_relative`) as
+  credentials. Vendor shapes (`ghp_…`, `AKIA…`, JWTs, …) are unchanged.
+
+- `dependency-review.yml` ends with a newline, which the repo's own
+  `end-of-file-fixer` pre-commit hook requires.
+
+### Security
+
+- `prod-igy` no longer starts privileged triage from an outsider `issue_comment`.
+  The workflow `if:` and the script both require `author_association` in
+  (`OWNER`, `MEMBER`, `COLLABORATOR`). Bot comments also strip backticks from
+  `headRef` / `baseRef` so a fork branch name cannot break a markdown code span.
+
 ## [1.5.4] — 2026-09-17
 
 ### Changed
