@@ -47,6 +47,22 @@ GITHUB_SPEC = re.compile(
 )
 
 
+# A refname is one or more "/"-separated components. Each component must open
+# with an alphanumeric or "_", which is what makes the pattern a security check
+# and not just a spelling check: it forbids a leading "-" on the whole value (so
+# git cannot read the ref as an option), a leading "." on any component (so the
+# value can never be "." or a dotted traversal segment), and a leading/trailing
+# "/" or an empty component. Inside a component "-", "." and "_" are ordinary
+# refname characters ("v1.2.3", "feature/foo-bar", "release/1.0"), and the
+# alphanumeric run alone already covers the 40-hex SHA people pass instead of a
+# name. Everything git treats as magic — " ", "~", "^", ":", "?", "*", "[", "\",
+# "@{", control bytes — is simply absent from the class, so no shell- or
+# refspec-metacharacter can reach the argv.
+# The anchor is \Z, not $: "$" also matches immediately before a trailing
+# newline, so "main\n" would pass a "$"-anchored pattern and reach the argv.
+GIT_REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*(?:/[A-Za-z0-9_][A-Za-z0-9._-]*)*\Z")
+
+
 _git_version_cache: tuple[int, ...] | None = None
 
 
@@ -95,6 +111,23 @@ def parse_spec(spec: str) -> tuple[str, str]:
     return owner, repo
 
 
+def parse_ref(ref: str) -> str:
+    """Validate a refname that will be interpolated into a git argv."""
+    # Same reasoning as parse_spec's component check, for the same reason: `ref`
+    # reaches git as a bare argv element (`git fetch ... origin <ref>`, `git
+    # checkout <ref>`), so a value beginning with "-" is read by git's parser as
+    # an option rather than a refname — "--upload-pack=..." would make git run a
+    # command of the caller's choosing. "." and ".." are rejected for the
+    # traversal reason too: `git clone --branch` is safe from the option problem
+    # but a dotted ref is never a real ref, and letting it through only defers
+    # the failure. The allowlist is deliberately narrower than git's own rules
+    # (see GIT_REF) — `git check-ref-format` would be authoritative but costs a
+    # subprocess on every clone.
+    if not GIT_REF.match(ref) or ".." in ref:
+        raise ValueError(f"not a valid git ref: {ref!r}")
+    return ref
+
+
 def _redact(msg: str, token: str | None) -> str:
     """Strip the token, its base64 'basic' form, and URL-encoded form from user-facing text (SH-3)."""
     if not token:
@@ -141,6 +174,11 @@ def clone(
 ) -> Path:
     """Clone a GitHub repo into dest/<repo>. depth=0 means full history."""
     owner, repo = parse_spec(spec)
+    # Validate before anything else runs: the acceptance condition for ISS-237 is
+    # that a hostile ref is refused without git ever being spawned, and _auth_env
+    # below can itself shell out to `git --version`.
+    if ref:
+        parse_ref(ref)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     url = f"https://github.com/{owner}/{repo}.git"
     target = Path(dest) / repo
@@ -151,8 +189,16 @@ def clone(
             # ISS-149: fetch ref before checkout in case existing checkout is shallow or missing ref
             fetch_ok = False
             try:
+                # The "--" is belt-and-braces over parse_ref: git fetch treats
+                # everything after it as a refspec, so even if GIT_REF is ever
+                # loosened an option-shaped ref lands as `fatal: invalid refspec`
+                # instead of being honoured as a flag. `git checkout` below gets
+                # no "--" on purpose — there it means "what follows is a
+                # pathspec", so `git checkout -- main` tries to restore a *file*
+                # named main and never switches ref. Only parse_ref guards that
+                # call.
                 fetch_proc = subprocess.run(
-                    ["git", "-C", str(target), "fetch", "--depth", "1", "origin", ref],
+                    ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     encoding="utf8",
