@@ -15,6 +15,7 @@ from .parse import (
     CONFIG_EXT,
     DOC_EXT,
     EXT_LANG,
+    ImportDetail,
     ParseError,
     ParsedFile,
     Symbol,
@@ -55,6 +56,27 @@ LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # not of repo2graph -- which is why the Graph carries the value it was built
 # with and manifest.json reports that value rather than this default (#245).
 DEFAULT_MAX_CALL_CANDIDATES = 5
+# Base types common enough across languages (object/Exception/Error/...) that a
+# same-named class anywhere in the repo would false-link unrelated hierarchies
+# together. A same-file or imported definition still wins over this filter --
+# it only blocks the repo-wide fallback tier from matching one of these names.
+COMMON_STDLIB_BASES = frozenset(
+    {
+        "object",
+        "Object",
+        "Exception",
+        "BaseException",
+        "Error",
+        "StandardError",
+        "Throwable",
+        "Record",
+        "Any",
+        "Interface",
+        "Model",
+        "Component",
+        "Base",
+    }
+)
 
 
 class GraphLimitExceeded(RuntimeError):
@@ -588,7 +610,14 @@ def _read_and_parse(item):
 # format 1 has no way to report it, and an incremental build restoring one would
 # report a 0 where a full build reports the real count -- the one thing an
 # incremental build is not allowed to do.
-PARSE_CACHE_FORMAT = 2
+# 3: `Symbol` gained "call_details"/"base_details" and `ParsedFile` gained
+# "import_details". A format-2 entry has none of the three: every cached call
+# would silently reconstruct as call_kind='static' even where the original was
+# a decorator/dynamic call, every cached base would reconstruct with
+# subtype='INHERITS' regardless of what it actually was, and every cached
+# file's import aliases would come back as [] -- an aliased call that should
+# resolve `import_alias` would instead fall through to unresolved_external.
+PARSE_CACHE_FORMAT = 3
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -621,6 +650,11 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             "undecodable_slices": getattr(pf, "undecodable_slices", 0),
             "imports": list(pf.imports),
             "symbols": [asdict(s) for s in pf.symbols],
+            # Without this, entry_read() rebuilds import_details as [] and an
+            # incremental cache hit loses every import alias -- an aliased call
+            # that a full build resolves as `import_alias` falls back to
+            # unresolved_external on the next incremental build instead.
+            "import_details": [asdict(d) for d in getattr(pf, "import_details", [])],
         },
     }
 
@@ -644,6 +678,7 @@ def entry_read(entry: dict) -> tuple | None:
         if raw is None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
+        import_details = [ImportDetail(**d) for d in raw.get("import_details", [])]
         pf: ParsedFile
         # A chunked entry restores as the same class a fresh chunked read
         # produces, so a cached file and a re-parsed one are indistinguishable
@@ -658,6 +693,7 @@ def entry_read(entry: dict) -> tuple | None:
                 used_cpp=bool(raw.get("used_cpp") or False),
                 is_chunked=True,
                 undecodable_slices=int(raw.get("undecodable_slices") or 0),
+                import_details=import_details,
             )
         else:
             pf = ParsedFile(
@@ -667,6 +703,7 @@ def entry_read(entry: dict) -> tuple | None:
                 parse_errors=int(raw.get("parse_errors") or 0),
                 used_cpp=bool(raw.get("used_cpp") or False),
                 is_chunked=False,
+                import_details=import_details,
             )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
@@ -832,6 +869,11 @@ def parse_all(files, jobs: int, config=None):
             return list(
                 pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
             )
+    except ParseError:
+        # A strict-policy failure is the worker doing its job, not a broken
+        # pool -- falling through to the serial fallback below would just
+        # re-parse every file a second time and raise this same error again.
+        raise
     except Exception:
         # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
         # worker ImportError, or a pickling failure on the call or its result:
@@ -995,41 +1037,38 @@ def build(
             callee_rel = e["dst"].split(":", 1)[1]
             imported_files[caller_rel].add(callee_rel)
 
-    # Import aliases and imported symbol mappings per file
+    # Import aliases per file: alias -> (module, original name).
     import_aliases: dict[str, dict[str, tuple[str, str | None]]] = defaultdict(dict)
-    imported_symbol_names: dict[str, set[str]] = defaultdict(set)
     for rel, pf in parsed.items():
         for imp in getattr(pf, "import_details", []):
             if imp.alias:
                 import_aliases[rel][imp.alias] = (imp.module, imp.name)
-            if imp.name and imp.name != "*":
-                imported_symbol_names[rel].add(imp.name)
 
     by_name: dict[str, list[str]] = defaultdict(list)
+    # node id -> its file's directory. Tier 4 below used to rebuild
+    # `Path(...).parent` once per candidate per callee inside the build's hot
+    # loop; precomputing it here turns that into a dict lookup.
+    sym_dir: dict[str, str] = {}
     for nid, n in g.nodes.items():
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
+            sym_dir[nid] = n.get("path", "").rpartition("/")[0]
 
-    # Common stdlib base types to protect against false global links
-    COMMON_STDLIB_BASES = frozenset(
-        {
-            "object",
-            "Object",
-            "Exception",
-            "BaseException",
-            "Error",
-            "StandardError",
-            "Throwable",
-            "Record",
-            "Any",
-            "Interface",
-            "Model",
-            "Component",
-            "Base",
-        }
-    )
+    def tier3_imported(rel: str, callee: str, all_cands: list[str]) -> tuple[list[str], str]:
+        """Candidates reachable through `rel`'s own imports, and how they matched."""
+        imported = imported_files.get(rel)
+        if not imported:
+            return [], ""
+        alias = import_aliases.get(rel, {}).get(callee)
+        if alias is not None:
+            target_name = alias[1] or callee
+            cands = [c for c in by_name.get(target_name, []) if g.nodes[c].get("path") in imported]
+            return (cands, "import_alias") if cands else ([], "")
+        cands = [c for c in all_cands if g.nodes[c].get("path") in imported]
+        return (cands, "imported_symbol") if cands else ([], "")
 
     for rel, pf in parsed.items():
+        rel_dir = rel.rpartition("/")[0]
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
             call_kinds: dict[str, str] = {}
@@ -1040,89 +1079,53 @@ def build(
                 call_kind = call_kinds.get(callee, "static")
                 all_cands = by_name.get(callee, [])
 
-                # Tier 1: Same class / enclosing scope
-                tier1_cands: list[str] = []
-                if sym.parent:
-                    candidate_id = f"sym:{rel}::{sym.parent}.{callee}"
-                    if candidate_id in g.nodes and candidate_id != sid:
-                        tier1_cands = [candidate_id]
-                    else:
-                        tier1_cands = [
-                            c
-                            for c in all_cands
-                            if g.nodes[c].get("path") == rel
-                            and g.nodes[c].get("parent") == sym.parent
-                            and c != sid
-                        ]
-
-                # Tier 2: Same file
-                tier2_cands = [c for c in all_cands if g.nodes[c].get("path") == rel and c != sid]
-
-                # Tier 3: Import alias or explicitly imported symbol
-                tier3_cands: list[str] = []
-                res_kind_override = None
-                if callee in import_aliases.get(rel, {}):
-                    mod, orig_name = import_aliases[rel][callee]
-                    target_name = orig_name or callee
-                    tier3_cands = [
-                        c
-                        for c in by_name.get(target_name, [])
-                        if g.nodes[c].get("path") in imported_files.get(rel, set())
-                    ]
-                    if tier3_cands:
-                        res_kind_override = "import_alias"
-                elif callee in imported_symbol_names.get(rel, set()):
-                    tier3_cands = [
-                        c
-                        for c in all_cands
-                        if g.nodes[c].get("path") in imported_files.get(rel, set())
-                    ]
-                    if tier3_cands:
-                        res_kind_override = "imported_symbol"
-                elif imported_files.get(rel):
-                    tier3_cands = [
-                        c for c in all_cands if g.nodes[c].get("path") in imported_files[rel]
-                    ]
-                    if tier3_cands:
-                        res_kind_override = "imported_symbol"
-
-                # Tier 4: Same directory / package
-                rel_dir = Path(rel).parent
-                tier4_cands = [
-                    c
-                    for c in all_cands
-                    if Path(g.nodes[c].get("path", "")).parent == rel_dir and c != sid
-                ]
-
-                # Tier selection: pick the most specific tier that found candidates
                 chosen_cands: list[str] = []
-                res_kind = "unique_global_name"
+                res_kind = ""
                 scope_dist = 0
 
-                if tier1_cands:
-                    chosen_cands = tier1_cands
-                    res_kind = "same_class"
-                    scope_dist = 0
-                elif tier2_cands:
-                    chosen_cands = tier2_cands
-                    res_kind = "same_file"
-                    scope_dist = 1
-                elif tier3_cands:
-                    chosen_cands = tier3_cands
-                    res_kind = res_kind_override or "imported_symbol"
-                    scope_dist = 2
-                elif tier4_cands:
-                    chosen_cands = tier4_cands
-                    res_kind = "same_module"
-                    scope_dist = 3
+                if not sym.parent and sid in all_cands:
+                    # Tier 0: direct recursion. `sid` is in `all_cands` only when
+                    # the callee is this symbol's own name, and for a top-level
+                    # function that is unambiguously a self-call. Without it the
+                    # tiers below hand the call to a same-named method elsewhere
+                    # in the file at confidence 1.0 and the recursion edge is lost.
+                    chosen_cands, res_kind, scope_dist = [sid], "self_recursive", 0
+                elif (
+                    sym.parent
+                    and (tier1 := f"sym:{rel}::{sym.parent}.{callee}") in g.nodes
+                    and tier1 != sid
+                ):
+                    # Tier 1: same class / enclosing scope. A symbol's id is
+                    # f"sym:{path}::{parent}.{name}" by construction -- parse.py
+                    # builds qualname as parent + "." + name -- so this exact
+                    # lookup already finds every same-file same-parent candidate;
+                    # the scan it replaces could only rediscover this same id, and
+                    # tested a `parent` attribute symbol nodes never carry.
+                    #
+                    # `tier1 != sid` is not the self-exclusion this rewrite
+                    # removed from the tiers below. `_callee_name` drops the
+                    # receiver, so inside `DoctorReport.to_dict` the calls
+                    # `self.to_dict()` and `c.to_dict()` are the same string
+                    # "to_dict" here -- self-recursion and a call to a sibling
+                    # class's identically-named method are indistinguishable.
+                    # Binding that to `sid` at confidence 1.0 gets doctor.py:61
+                    # (`[c.to_dict() for c in self.checks]`) confidently wrong,
+                    # so a self-target falls through to tier 2 instead, which
+                    # *includes* the caller: whichever reading is right, the
+                    # true target is in the candidate set and the ambiguity is
+                    # priced at 1/n rather than hidden.
+                    chosen_cands = [tier1]
+                    res_kind, scope_dist = "same_class", 0
+                elif tier2 := [c for c in all_cands if g.nodes[c].get("path") == rel]:
+                    chosen_cands, res_kind, scope_dist = tier2, "same_file", 1
+                elif (tier3 := tier3_imported(rel, callee, all_cands))[0]:
+                    chosen_cands, res_kind, scope_dist = tier3[0], tier3[1], 2
+                elif tier4 := [c for c in all_cands if sym_dir[c] == rel_dir]:
+                    chosen_cands, res_kind, scope_dist = tier4, "same_module", 3
                 elif len(all_cands) == 1:
-                    chosen_cands = all_cands
-                    res_kind = "unique_global_name"
-                    scope_dist = 4
+                    chosen_cands, res_kind, scope_dist = all_cands, "unique_global_name", 4
                 elif len(all_cands) > 1:
-                    chosen_cands = all_cands
-                    res_kind = "ambiguous_global_name"
-                    scope_dist = 5
+                    chosen_cands, res_kind, scope_dist = all_cands, "ambiguous_global_name", 5
 
                 # Add edges
                 if not chosen_cands:
@@ -1206,7 +1209,6 @@ def build(
                             "INHERITS",
                             subtype=subtype,
                             raw_base=raw_base,
-                            resolved_target=c,
                         )
                 else:
                     g.stats["unresolved_bases"] += 1

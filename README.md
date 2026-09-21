@@ -238,9 +238,9 @@ resolution limits).
 | `repo2graph rag "<question>" -o .r2g [--vectors] [--answer]` | Budget-bounded GraphRAG pack; `--answer` sends it to an LLM (opt-in, network). |
 | `repo2graph embed -o .r2g [--verify-rag]` | Compute/verify dense vectors for hybrid search. |
 | `repo2graph map -o .r2g [--viz-nodes N]` | Regenerate `graph.html` with a different node cap. |
-| `repo2graph stats -o .r2g` | Node/edge/function counts for an existing index. |
+| `repo2graph stats -o .r2g [--format text]` | Node/edge/function counts for an existing index; `--format text` for a quality summary. |
 | `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
-| `repo2graph explain-path <path>` | Explain file inclusion or exclusion against the 10-tier precedence rules. |
+| `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
 **Environment variables** (only read by `rag --answer`, in this precedence order):

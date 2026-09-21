@@ -404,3 +404,66 @@ def test_same_bytes_different_language_is_a_cache_miss(tmp_path, recorder):
     recorder.calls.clear()
     build(repo, out, incremental=True)
     assert recorder.calls == [body.encode("utf8")], recorder.calls
+
+
+# ------------------------------------------------------------------ (f) ----
+
+
+ALIAS_FILES = {
+    "pkg/__init__.py": "VERSION = '1.0'\n",
+    "pkg/alpha.py": (
+        "ALPHA_TABLE = {'a': 1, 'b': 2}\n\n\n"
+        "def perform(payload):\n"
+        "    return ALPHA_TABLE.get(payload)\n"
+    ),
+    "pkg/caller.py": (
+        "from pkg.alpha import perform as run\n\n"
+        "CALLER_TABLE = {'x': 1}\n\n\n"
+        "def entry(payload):\n"
+        "    return run(payload)\n"
+    ),
+}
+
+# Hand-derived from ALIAS_FILES: `entry` makes exactly one call, through the
+# alias `run`, which is `perform` in the module `caller.py` imports.
+ALIAS_CALL = (
+    "sym:pkg/caller.py::entry",
+    "sym:pkg/alpha.py::perform",
+    "CALLS",
+    "import_alias",
+)
+
+
+def entry_calls(out):
+    """The `(src, dst, type, resolution_kind)` tuples `entry` emits on disk."""
+    # split("\n"), never splitlines(): U+2028 and friends are legal in a JSONL
+    # payload and would split a record in half (AGENTS.md).
+    lines = artifact(out, "edges.jsonl").decode("utf8").split("\n")
+    edges = [json.loads(ln) for ln in lines if ln.strip()]
+    return {
+        (e["src"], e["dst"], e["type"], e.get("resolution_kind"))
+        for e in edges
+        if e["src"] == "sym:pkg/caller.py::entry"
+    }
+
+
+def test_incremental_preserves_import_alias_resolution(tmp_path):
+    """An aliased import resolves identically on a cached rebuild.
+
+    `import_details` was not persisted in the parse cache, so a cache hit lost
+    every alias and the full build's `import_alias` edge came back as
+    `CALLS_EXTERNAL` / `unresolved_external`.
+
+    The module's headline byte-equality test cannot see this: a *plain*
+    `from x import y` still resolves through the IMPORTS edges, which are
+    rebuilt from `pf.imports`, and only the alias branch reads `import_details`.
+    """
+    repo = write_repo(tmp_path, ALIAS_FILES)
+    out = tmp_path / "idx"
+    build(repo, out)
+    assert entry_calls(out) == {ALIAS_CALL}
+    first = snapshot(out)
+
+    build(repo, out, incremental=True)
+    assert entry_calls(out) == {ALIAS_CALL}
+    assert snapshot(out) == first

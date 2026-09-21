@@ -5,9 +5,17 @@ import json
 from pathlib import Path
 import pytest
 
+from repo2graph import graph as graph_mod
 from repo2graph.cli import main
-from repo2graph.graph import build
-from repo2graph.parse import BuildConfig, ParseError, explain_path
+from repo2graph.export import load_parse_cache, make_paths
+from repo2graph.graph import PARALLEL_MIN_FILES, build
+from repo2graph.parse import (
+    BuildConfig,
+    ParseError,
+    explain_path,
+    parse_import_details,
+    parse_source,
+)
 
 
 # ==============================================================================
@@ -214,25 +222,39 @@ def test_graph_quality_metrics_in_stats_and_manifest(tmp_path: Path):
 
 
 def test_cli_stats_command_human_readable_and_json(tmp_path: Path, capsys):
-    """`repo2graph stats` prints formatted summary by default and raw JSON with --json."""
+    """`repo2graph stats` still prints raw JSON by default; `--format text` summarises.
+
+    The default is asserted with no `--format` at all, because that is the half
+    nothing pinned: the original test passed `--format text` explicitly while
+    its own name claimed to be testing the default. Bare `stats` printing the
+    raw `stats.json` is the pre-PR contract -- there was no `--format` flag
+    before this feature -- and `test_ac27_existing_subcommands_are_untouched`
+    in tests/test_rag.py depends on it, as does any caller piping it to jq.
+    """
     (tmp_path / "a.py").write_text("def a(): return 1\n", encoding="utf8")
     out = tmp_path / "out"
     main(["build", str(tmp_path), "-o", str(out)])
     capsys.readouterr()
 
-    # Default: human-readable summary
+    # Default, no --format: unchanged from before the flag existed.
+    main(["stats", "-o", str(out)])
+    data = json.loads(capsys.readouterr().out)
+    assert "files" in data
+    assert "nodes" in data
+
+    # --format text is the opt-in the flag was added for.
     main(["stats", "-o", str(out), "--format", "text"])
     out_text = capsys.readouterr().out
     assert "repo2graph Index Quality & Coverage Summary" in out_text
     assert "Files Discovered:" in out_text
     assert "Call Resolution Quality:" in out_text
 
-    # JSON output
+    # Both JSON spellings agree.
     main(["stats", "-o", str(out), "--json"])
-    out_json = capsys.readouterr().out
-    data = json.loads(out_json)
-    assert "files" in data
-    assert "nodes" in data
+    assert "nodes" in json.loads(capsys.readouterr().out)
+
+    main(["stats", "-o", str(out), "--format", "json"])
+    assert "nodes" in json.loads(capsys.readouterr().out)
 
 
 # ==============================================================================
@@ -390,3 +412,381 @@ def test_cli_explain_path_command(tmp_path: Path, capsys):
     res = json.loads(out_json)
     assert res["included"] is True
     assert res["rule"] == "included"
+
+
+# ==============================================================================
+# Regression tests for the PR #325 review findings.
+#
+# Each of these was written against a reproduced failure, so each is a detector:
+# reverting its fix turns exactly this test red. Edge assertions are literal
+# `(src, dst, kind)` tuples hand-derived from the fixture above them -- never a
+# value the code under test computed (AGENTS.md).
+# ==============================================================================
+
+
+def test_self_recursive_call_resolves_to_itself(tmp_path: Path):
+    """A top-level function calling its own name recurses; it does not bind elsewhere.
+
+    Every tier filtered the calling symbol out with `c != sid`, so `helper`'s
+    recursive call was handed to the same-named *method* at confidence 1.0 and
+    the recursion edge disappeared: one edge, confidently wrong.
+    """
+    (tmp_path / "m.py").write_text(
+        "class X:\n"
+        "    def helper(self):\n"
+        "        return 0\n"
+        "\n"
+        "def helper(n):\n"
+        "    return helper(n - 1)\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    got = {
+        (e["src"], e["dst"], e["resolution_kind"])
+        for e in g.edges
+        if e["type"] == "CALLS" and e["src"] == "sym:m.py::helper"
+    }
+    assert got == {("sym:m.py::helper", "sym:m.py::helper", "self_recursive")}
+
+    edge = next(e for e in g.edges if e["type"] == "CALLS" and e["src"] == "sym:m.py::helper")
+    assert edge["confidence"] == 1.0
+    assert edge["scope_distance"] == 0
+
+
+def test_unambiguous_method_recursion_keeps_its_self_edge(tmp_path: Path):
+    """A method whose name is unique in its file recurses onto itself, confidently."""
+    (tmp_path / "p.py").write_text(
+        "class Z:\n    def only(self, n):\n        return self.only(n - 1)\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    got = {
+        (e["src"], e["dst"], e["resolution_kind"], e["confidence"])
+        for e in g.edges
+        if e["type"] == "CALLS" and e["src"] == "sym:p.py::Z.only"
+    }
+    assert got == {("sym:p.py::Z.only", "sym:p.py::Z.only", "same_file", 1.0)}
+
+
+def test_a_methods_own_name_is_never_bound_confidently(tmp_path: Path):
+    """`self.to_dict()` and `c.to_dict()` are the same string once the receiver is gone.
+
+    `_callee_name` keeps only the rightmost member-access segment, so inside
+    `Report.to_dict` a self-call and a call to a sibling class's identically
+    named method are indistinguishable. Neither reading may be asserted at
+    confidence 1.0: tier 1 declines a self-target and tier 2 -- which now
+    *includes* the caller -- prices both readings at 1/n.
+
+    This is the shape of repo2graph's own doctor.py:61,
+    `[c.to_dict() for c in self.checks]`, which an earlier version of this fix
+    resolved to `Report.to_dict` itself and got confidently wrong.
+    """
+    (tmp_path / "r.py").write_text(
+        "class Item:\n"
+        "    def to_dict(self):\n"
+        "        return {}\n"
+        "\n"
+        "\n"
+        "class Report:\n"
+        "    def to_dict(self):\n"
+        "        return {'items': [c.to_dict() for c in self.items]}\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    got = {
+        (e["dst"], e["resolution_kind"], e["confidence"])
+        for e in g.edges
+        if e["type"] == "CALLS" and e["src"] == "sym:r.py::Report.to_dict"
+    }
+    # Both readings are on the table, neither is claimed outright, and the true
+    # target is in the set whichever reading holds.
+    assert got == {
+        ("sym:r.py::Item.to_dict", "same_file", 0.5),
+        ("sym:r.py::Report.to_dict", "same_file", 0.5),
+    }
+
+
+def test_method_recursion_survives_a_same_named_sibling(tmp_path: Path):
+    """Recursion is never dropped, even when the name is ambiguous in the file.
+
+    The bug this guards: every tier excluded the caller with `c != sid`, so the
+    self-edge could not be emitted at all and the call was handed wholesale to
+    the sibling at confidence 1.0.
+    """
+    (tmp_path / "n.py").write_text(
+        "def work(n):\n"
+        "    return n\n"
+        "\n"
+        "\n"
+        "class Y:\n"
+        "    def work(self, n):\n"
+        "        return self.work(n - 1)\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    got = {
+        (e["dst"], e["confidence"])
+        for e in g.edges
+        if e["type"] == "CALLS" and e["src"] == "sym:n.py::Y.work"
+    }
+    assert ("sym:n.py::Y.work", 0.5) in got, "the recursion edge must survive"
+    assert got == {("sym:n.py::Y.work", 0.5), ("sym:n.py::work", 0.5)}
+
+
+def test_decorator_call_counted_once(tmp_path: Path):
+    """A Python decorator is one call, not two.
+
+    `decorated_definition` and `prev_sibling` both matched the same decorator
+    node -- in tree-sitter-python the function_definition's prev_sibling *is*
+    the decorator -- so `count` came out 2 on every decorated def in the repo.
+    """
+    (tmp_path / "app.py").write_text(
+        "def deco(f):\n    return f\n\n\n@deco\ndef target():\n    return 1\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    edges = [e for e in g.edges if e["type"] == "CALLS" and e["src"] == "sym:app.py::target"]
+    assert len(edges) == 1
+    assert edges[0]["dst"] == "sym:app.py::deco"
+    assert edges[0]["call_kind"] == "decorator"
+    assert edges[0]["count"] == 1
+
+
+def test_stacked_decorators_each_counted_once(tmp_path: Path):
+    """Two decorators produce two edges of one call each, not two of two."""
+    (tmp_path / "stack.py").write_text(
+        "def first(f):\n    return f\n\n\n"
+        "def second(f):\n    return f\n\n\n"
+        "@first\n@second\ndef target():\n    return 1\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    got = {
+        (e["dst"], e["count"])
+        for e in g.edges
+        if e["type"] == "CALLS" and e["src"] == "sym:stack.py::target"
+    }
+    assert got == {("sym:stack.py::first", 1), ("sym:stack.py::second", 1)}
+
+
+def test_dynamic_call_kind_is_language_scoped():
+    """`send` is an ordinary Python method name, not a dynamic invocation.
+
+    The heuristic matched a flat name list against the bare callee, so
+    `queue.send(msg)`, `channel.send(x)` and `fn.apply(...)` were all published
+    as `call_kind='dynamic'` evidence in every language.
+    """
+    pf = parse_source(
+        b"class Q:\n"
+        b"    def send(self, m):\n"
+        b"        return m\n"
+        b"\n"
+        b"def push(q, m):\n"
+        b"    q.send(m)\n"
+        b"    return getattr(q, 'send')\n",
+        "python",
+    )
+    push = next(s for s in pf.symbols if s.qualname == "push")
+    kinds = {d["name"]: d["kind"] for d in push.call_details}
+    assert kinds["send"] == "static"
+    assert kinds["getattr"] == "dynamic"
+
+    # ... while `apply` in JS, where it really is the dynamic-invocation idiom,
+    # still reports dynamic.
+    js = parse_source(b"function run(fn) {\n  return fn.apply(this, []);\n}\n", "javascript")
+    run = next(s for s in js.symbols if s.qualname == "run")
+    assert {d["name"]: d["kind"] for d in run.call_details}["apply"] == "dynamic"
+
+
+def test_csharp_and_php_import_alias_fields():
+    """C# writes `alias = target`; PHP writes `target as alias`. Both were inverted.
+
+    `using Foo = Bar.Baz;` parsed to `module='Foo', alias='Bar'`, so a call to
+    `Bar(...)` resolved at confidence 1.0 to a symbol named `Foo` while the real
+    alias resolved to nothing.
+    """
+    (cs_alias,) = parse_import_details("using Foo = Bar.Baz;", "csharp")
+    assert (cs_alias.module, cs_alias.name, cs_alias.alias) == ("Bar.Baz", "Baz", "Foo")
+
+    (cs_plain,) = parse_import_details("using System.Text;", "csharp")
+    assert (cs_plain.module, cs_plain.name, cs_plain.alias) == ("System.Text", "Text", None)
+
+    (cs_static,) = parse_import_details("using static System.Math;", "csharp")
+    assert (cs_static.module, cs_static.name, cs_static.alias) == ("System.Math", "Math", None)
+
+    (php_alias,) = parse_import_details("use Foo\\Bar as Baz;", "php")
+    assert (php_alias.module, php_alias.name, php_alias.alias) == ("Foo\\Bar", "Bar", "Baz")
+
+    (php_plain,) = parse_import_details("use Foo\\Bar;", "php")
+    assert (php_plain.module, php_plain.name, php_plain.alias) == ("Foo\\Bar", "Bar", None)
+
+
+def test_long_named_import_still_yields_details():
+    """Import details parse the full text, not the 300-char artifact cap.
+
+    `imports` is capped for artifact size and `parse_import_details` consumed
+    that capped string, so a barrel import lost its closing brace and its
+    `from "./mod"` and produced zero details -- every binding invisible to
+    tier-3 resolution, with nothing recording the loss.
+    """
+    names = ", ".join(f"name{i:03d}" for i in range(40))
+    src = f'import {{ {names} }} from "./mod";\n'
+    assert len(src) > 300, "fixture must exceed the truncation cap to be a detector"
+
+    pf = parse_source(src.encode("utf8"), "typescript")
+    got = {d.name for d in pf.import_details}
+    assert "name000" in got
+    assert "name039" in got
+    assert {d.module for d in pf.import_details} == {"./mod"}
+
+    # The artifact cap itself is deliberate and stays.
+    assert len(pf.imports[0]) == 300
+
+
+def test_inherits_edges_do_not_duplicate_their_own_dst(tmp_path: Path):
+    """`resolved_target` was a verbatim copy of the edge's `dst`, in every export."""
+    (tmp_path / "h.py").write_text(
+        "class Base:\n    pass\n\n\nclass Child(Base):\n    pass\n",
+        encoding="utf8",
+    )
+
+    g = build(tmp_path)
+    inherits = [e for e in g.edges if e["type"] == "INHERITS"]
+    assert inherits, "fixture must produce an INHERITS edge to be a detector"
+    assert all("resolved_target" not in e for e in inherits)
+    assert inherits[0]["dst"] == "sym:h.py::Base"
+    assert inherits[0]["raw_base"] == "Base"
+
+
+def test_explain_path_reports_a_symlink_as_non_regular(tmp_path: Path):
+    """`explain-path` must answer for the link, not its target.
+
+    It resolved the path before `lstat`, so a symlink stat'd as its regular-file
+    target and was reported INCLUDED -- for a path `discover()` drops, because
+    discovery lstats what it walks. Same class as commit 8ddd010.
+    """
+    target = tmp_path / "real.py"
+    target.write_text("REAL = 1\n", encoding="utf8")
+    link = tmp_path / "link.py"
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation is not permitted on this platform")
+
+    res = explain_path(tmp_path, link)
+    assert res["included"] is False
+    assert res["rule"] == "non_regular_file"
+
+    # ... and that verdict matches what the build actually indexes.
+    g = build(tmp_path)
+    assert "file:real.py" in g.nodes
+    assert "file:link.py" not in g.nodes
+
+
+def test_cache_entry_round_trip_keeps_resolution_evidence():
+    """A cache entry must carry every field call resolution reads back out of it.
+
+    `import_details`, `call_details` and `base_details` were all missing from the
+    serialised entry, so a cache hit reconstructed them empty: an aliased import
+    became an external call, and every decorator call came back `static`.
+    """
+    src = (
+        b"from lib import perform as run\n"
+        b"\n"
+        b"\n"
+        b"class Child(Base):\n"
+        b"    @deco\n"
+        b"    def go(self):\n"
+        b"        return run()\n"
+    )
+    pf = parse_source(src, "python")
+    assert [d.alias for d in pf.import_details] == ["run"], "fixture must carry an alias"
+
+    restored = graph_mod.entry_read(graph_mod.cache_entry("python", len(src), 7, pf, "d" * 64))
+    assert restored is not None
+    _, _, pf2, _ = restored
+    assert pf2 is not None
+    assert [(d.module, d.name, d.alias) for d in pf2.import_details] == [("lib", "perform", "run")]
+    assert pf2.symbols == pf.symbols
+    assert pf2 == pf
+
+
+def test_a_cache_without_resolution_evidence_is_refused(tmp_path: Path):
+    """A cache written before this PR must be rejected, not half-read.
+
+    Its entries carry no `import_details`, `call_details` or `base_details`, so
+    every cached symbol would come back with `call_kind='static'` and every
+    aliased import unresolved. `PARSE_CACHE_FORMAT` is the only thing standing
+    between such a cache and a silently wrong incremental build, which is why
+    the constant has to move whenever an entry's shape does.
+    """
+    (tmp_path / "a.py").write_text(
+        "TABLE = {'a': 1}\n\n\ndef f():\n    return TABLE\n", encoding="utf8"
+    )
+    out = tmp_path / "out"
+    assert main(["build", str(tmp_path), "-o", str(out), "--formats", "jsonl"]) == 0
+    assert load_parse_cache(out), "the cache this build just wrote must be usable"
+
+    cache_path = make_paths(out, "parse.cache.json")[0]
+    data = json.loads(cache_path.read_text(encoding="utf8"))
+    for entry in data["files"].values():
+        parsed = entry.get("parsed")
+        if parsed:
+            parsed.pop("import_details", None)
+            for sym in parsed.get("symbols", []):
+                sym.pop("call_details", None)
+                sym.pop("base_details", None)
+    # 2 is the format that shipped exactly this shape.
+    data["cache_format"] = 2
+    cache_path.write_text(json.dumps(data), encoding="utf8")
+    assert load_parse_cache(out) == {}
+
+
+def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch):
+    """A strict-policy ParseError out of the pool is not a broken pool.
+
+    `parse_all`'s blanket `except Exception` caught it and re-parsed every file
+    serially before raising the same error, doing the whole build's parse twice
+    on the way to failing.
+    """
+    import concurrent.futures
+
+    files = []
+    for i in range(PARALLEL_MIN_FILES):
+        p = tmp_path / f"f{i}.py"
+        p.write_text("X = 1\n", encoding="utf8")
+        files.append((f"f{i}.py", p))
+
+    serial_reads: list[str] = []
+    real_read = graph_mod._read_and_parse
+
+    def counting_read(item):
+        serial_reads.append(item[0])
+        return real_read(item)
+
+    monkeypatch.setattr(graph_mod, "_read_and_parse", counting_read)
+
+    class StrictFailurePool:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def map(self, fn, items, chunksize=1):
+            raise ParseError("f0.py: 3 syntax error(s) under --parse-policy strict")
+
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", StrictFailurePool)
+
+    with pytest.raises(ParseError):
+        graph_mod.parse_all(files, 2)
+    assert serial_reads == []

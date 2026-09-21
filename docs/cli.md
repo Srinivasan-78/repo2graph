@@ -239,18 +239,18 @@ Three things worth knowing:
 ## `map` and `stats`
 
 ```bash
-repo2graph map -o .r2g --viz-nodes 80   # redraw graph.html with fewer dots
-repo2graph stats -o .r2g                # dots, arrows, functions, errors
-repo2graph stats -o .r2g --format json  # structured JSON output
+repo2graph map -o .r2g --viz-nodes 80    # redraw graph.html with fewer dots
+repo2graph stats -o .r2g                 # raw stats.json, verbatim (default)
+repo2graph stats -o .r2g --format text   # human-readable quality summary
 ```
 
-`stats` reports high-level counts along with graph quality metrics:
+`stats` prints `agent/stats.json` verbatim by default — that has always been the
+default, and `--json` is just an explicit way to ask for it. Pass `--format text`
+for a formatted summary of the same counts, covering:
 - **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
 - **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
 - **Import resolution**: `imports_resolved` vs `imports_unresolved`.
 - **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.
-
-Use `--format json` or `--json` for machine-readable JSON output suitable for CI and automation.
 
 ## The two `--budget` flags count different things
 
@@ -346,24 +346,60 @@ Pass `--json` for machine-readable JSON output suitable for CI or automation. Ex
 ## `explain-path` — explain file inclusion or exclusion
 
 ```bash
-repo2graph explain-path <path> [-o .r2g] [--include GLOB] [--exclude GLOB]
+repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
+                         [--include-vendor] [--include-secrets] [--json]
 ```
 
-Explains why a given file or directory path is included or excluded from indexing based on the 10-tier precedence hierarchy. Returns the final decision (`INCLUDED` or `EXCLUDED`), the governing tier, and a step-by-step trace showing each tier evaluated.
+Evaluates one path against the same rules `build`'s discovery uses, and reports
+the single rule that decided it — not a trace of every rule that was checked.
+`<path>` is relative to `-r`/`--repo` (default: the current directory) or
+absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
+There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
+no size flags, so it cannot explain a build that used them: the size check
+below is always evaluated against the 1.5 MB `--max-file-mb` default with
+`--chunk-large-files` off, whatever the build was actually run with.
 
-### The 10-Tier Exclusion / Inclusion Precedence
+```bash
+$ repo2graph explain-path repo2graph/cli.py
+Path:            E:\Github\repo2graph\repo2graph\cli.py
+Relative Path:   repo2graph/cli.py
+Decision:        INCLUDED
+Precedence Step: 10
+Rule:            included
+Reason:          Path passed all exclusion checks and is eligible for indexing
 
-When discovering and filtering files to parse, `repo2graph` evaluates rules in the following order:
+$ repo2graph explain-path .git/config
+Path:            E:\Github\repo2graph\.git\config
+Relative Path:   .git/config
+Decision:        EXCLUDED
+Precedence Step: 2
+Rule:            skip_dir
+Reason:          Path component '.git' is in excluded dot-directory filter (DEFAULT_SKIP_DIRS/--exclude-dir)
+```
 
-1. **Explicit Include Flag (`--include`)**: If include globs are specified and the path matches, it is included unless matched by higher-priority exclusion rules. If include globs are given and the path does not match any, it is excluded.
-2. **Explicit Exclude Flag (`--exclude`)**: If the path matches any user-specified `--exclude` glob, it is immediately excluded.
-3. **Output Directory Reentrancy (`-o`, `--out`)**: The build output directory (default `.r2g`) is excluded to prevent indexing generated artifacts or circular build loops.
-4. **VCS Directory Boundary**: `.git` and other version-control internals are always excluded.
-5. **Dot-directories / Hidden Dirs**: Directories starting with `.` (e.g. `.venv`, `.idea`) are excluded by default unless explicitly included.
-6. **Default Tool & Cache Dirs**: Standard caches and package directories (`node_modules`, `__pycache__`, `.pytest_cache`, `.tox`, `dist`, `build`, etc.) defined in `DEFAULT_SKIP_DIRS` are excluded.
-7. **Vendor Directories (`vendor/`)**: Third-party vendored code in `vendor/` directories is skipped by default, unless `--include-vendor` is enabled.
-8. **Secret and Credential Files**: Known credential patterns (`.env*`, `*.pem`, `*.key`, `id_rsa`, etc.) are excluded by default, unless `--include-secrets` is enabled.
-9. **Binary & Non-Source File Extensions**: Non-text or compiled assets (`.png`, `.jpg`, `.pyc`, `.exe`, `.zip`, `.so`, etc.) defined in `BINARY_EXTS` are excluded.
-10. **File Size Ceilings (`--max-file-mb`)**: Files exceeding the configured size limit (default 1.5 MB) are skipped, unless `--chunk-large-files` is enabled to chunk them across character boundaries.
+`--json` returns the same facts as data: `path`, `relative_path`, `included`,
+`rule`, `reason`, `precedence_step`.
+
+### Precedence order
+
+`explain_path` (`repo2graph/parse.py`) checks rules in this order and stops at
+the first match:
+
+| Step | Rule | What it means |
+| --- | --- | --- |
+| 0 | `outside_root` | The path resolves outside `-r`/`--repo`. |
+| 1 | `not_found` | The path does not exist on disk. |
+| 2 | `skip_dir` | A path component is a dot-directory, or is in `DEFAULT_SKIP_DIRS` / `--exclude-dir` (`vendor/` only counts here when `--include-vendor` is off). |
+| 3 | `internal_lock` | The path is a sibling `.*.r2glock` build-lock file. |
+| 4 | `gitignore` | `.gitignore` excludes it, checked with `git check-ignore` — only when `-r` is a git checkout. |
+| 5 | `non_regular_file` (or `stat_error`) | Not a regular file — a directory, symlink, device or FIFO — or `lstat` itself failed. |
+| 6 | `too_large` | Bigger than `--max-file-mb` (default 1.5 MB) and `--chunk-large-files` is off. |
+| 7 | `secret_file` | Matches a secret/credential path pattern and `--include-secrets` is off. |
+| 8 | `not_included` | `--include` globs were given and the path matches none of them. |
+| 9 | `exclude_glob` | The path matches an `--exclude` glob. |
+| 10 | `binary` or `included` | A null byte in the first 4 KB marks it binary; otherwise every check passed. |
+
+Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `included`)
+tells them apart, `precedence_step` is `10` either way.
 
 

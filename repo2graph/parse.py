@@ -226,6 +226,19 @@ LANG_CFG["cpp"]["kind_map"] = dict(
     LANG_CFG["c"]["kind_map"], class_specifier="class", namespace_definition="namespace"
 )
 
+# Callee names that mean a dynamic/reflective call, scoped per language. A bare
+# "send", "call" or "apply" is an ordinary method name in most codebases
+# (queue.send, handler.call, ...), so this must never be one global set --
+# `_callee_name` reduces `queue.send(msg)` to "send" regardless of language.
+DYNAMIC_CALLEES: dict[str, frozenset[str]] = {
+    "python": frozenset({"getattr", "setattr", "eval", "exec", "__import__"}),
+    "javascript": frozenset({"eval", "apply", "call"}),
+    "typescript": frozenset({"eval", "apply", "call"}),
+    "tsx": frozenset({"eval", "apply", "call"}),
+    "ruby": frozenset({"send", "public_send", "instance_eval", "eval"}),
+    "php": frozenset({"call_user_func", "call_user_func_array", "eval"}),
+}
+
 DEFAULT_SKIP_DIRS = {
     ".git",
     ".hg",
@@ -804,10 +817,6 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
     return uniq_names[:8], uniq_details[:8]
 
 
-def _bases(src: bytes, node, lang: str) -> list[str]:
-    return _bases_with_details(src, node, lang)[0]
-
-
 _cpp_available_cache: bool | None = None
 
 
@@ -1009,10 +1018,19 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
             return details
 
     elif lang in ("csharp", "php"):
-        m_alias = re.search(r"(?:using|use)\s+(?:[\w\\]+\s*=\s*|.*?\s+as\s+)([\w\\]+)", raw_clean)
-        m = re.search(r"(?:using|use)\s+(?:function\s+|const\s+|static\s+)?([\w\.\\]+)", raw_clean)
-        module = m.group(1) if m else raw_clean
-        alias = m_alias.group(1) if m_alias else None
+        # C# writes `alias = target` (using Foo = Bar.Baz); PHP writes
+        # `target as alias` (use Foo\Bar as Baz) -- the alias sits on opposite
+        # sides of the statement, so each language needs its own pattern.
+        body = re.sub(r"^(?:using|use)\s+(?:function\s+|const\s+|static\s+)?", "", raw_clean)
+        body = body.rstrip(";").strip()
+        if lang == "csharp":
+            m_eq = re.match(r"^(\w+)\s*=\s*([\w.\\]+)$", body)
+            module = m_eq.group(2) if m_eq else body
+            alias = m_eq.group(1) if m_eq else None
+        else:
+            m_as = re.match(r"^([\w.\\]+)\s+as\s+(\w+)$", body)
+            module = m_as.group(1) if m_as else body
+            alias = m_as.group(2) if m_as else None
         details.append(
             ImportDetail(
                 raw=raw_clean,
@@ -1150,6 +1168,12 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
     imports: list[str] = []
+    # `imports` is capped per-entry below to bound the exported artifact size.
+    # parse_import_details needs the untruncated text -- a multi-binding import
+    # (`import { a, ..., z } from "mod"`) longer than the cap loses its closing
+    # brace and module path, so every regex in parse_import_details misses and
+    # import_details silently comes back empty for that statement.
+    imports_full: list[str] = []
     final_errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
@@ -1164,6 +1188,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             raw = _text(source, node).strip()
             if raw:
                 imports.append(raw[:300])
+                imports_full.append(raw)
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
@@ -1172,7 +1197,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 call_kind = "static"
                 if ntype in ("macro_invocation", "macro_call"):
                     call_kind = "possible"
-                elif callee in ("getattr", "setattr", "eval", "exec", "send", "call", "apply"):
+                elif callee in DYNAMIC_CALLEES.get(lang, frozenset()):
                     call_kind = "dynamic"
                 owner.calls.append(callee)
                 owner.call_details.append({"name": callee, "kind": call_kind})
@@ -1204,7 +1229,12 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     bases=bases_list,
                     base_details=base_details,
                 )
-                # Check for decorators on Python decorated_definition
+                # Check for decorators on Python decorated_definition. This and
+                # the prev-sibling branch below must stay mutually exclusive:
+                # in tree-sitter-python a decorated function_definition's
+                # prev_sibling IS its decorator node, so running both branches
+                # recorded every Python decorator twice -- Counter(sym.calls)
+                # then reported count=2 on a single decorator CALLS edge.
                 if node.parent is not None and node.parent.type == "decorated_definition":
                     for child in node.parent.children:
                         if child.type == "decorator":
@@ -1215,8 +1245,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                             if dec_text:
                                 sym.calls.append(dec_text)
                                 sym.call_details.append({"name": dec_text, "kind": "decorator"})
-                # Check for Java annotations or JS/TS decorators
-                for prev in (node.prev_sibling,):
+                else:
+                    # Java annotations or JS/TS decorators sit as the previous sibling.
+                    prev = node.prev_sibling
                     if prev is not None and prev.type in ("annotation", "decorator"):
                         ann_text = _text(source, prev).strip().lstrip("@").split("(")[0].strip()
                         if ann_text:
@@ -1231,9 +1262,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
 
-    # Parse import details
+    # Parse import details from the untruncated text -- see imports_full above.
     import_details: list[ImportDetail] = []
-    for raw in imports:
+    for raw in imports_full:
         import_details.extend(parse_import_details(raw, lang))
 
     return ParsedFile(
@@ -1268,9 +1299,16 @@ def explain_path(
     root_path = Path(root).resolve()
     target_path = Path(target)
     if not target_path.is_absolute():
-        target_path = (root_path / target_path).resolve()
-    else:
-        target_path = target_path.resolve()
+        target_path = root_path / target_path
+    # Resolve the parent only, not the leaf -- same fix as 8ddd010 ("check
+    # symlink before resolving output path"). discover() lstats the path as
+    # discovered (no resolution), so a symlink fails S_ISREG there and is
+    # dropped. Fully resolving here would follow the leaf symlink to its
+    # target before the lstat below ever runs, making that lstat see the
+    # target's stat (often a regular file) instead of the link's -- answering
+    # INCLUDED for a path discover() never indexes. ".."/"." still normalise
+    # and relative_to(root_path) still works because the parent is resolved.
+    target_path = target_path.parent.resolve() / target_path.name
 
     try:
         rel = target_path.relative_to(root_path)
