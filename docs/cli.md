@@ -12,6 +12,7 @@ repo2graph embed             add meaning-based search to an index
 repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
 repo2graph doctor    [path]  diagnose environment, permissions, and index
+repo2graph explain-path <path> explain file inclusion/exclusion precedence
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -32,6 +33,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--formats` | `jsonl,graphml,cypher,overview,html` | Which artifacts to write. Drop what you do not need to save time. |
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
+| `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
@@ -237,9 +239,18 @@ Three things worth knowing:
 ## `map` and `stats`
 
 ```bash
-repo2graph map -o .r2g --viz-nodes 80   # redraw graph.html with fewer dots
-repo2graph stats -o .r2g                # dots, arrows, functions, errors
+repo2graph map -o .r2g --viz-nodes 80    # redraw graph.html with fewer dots
+repo2graph stats -o .r2g                 # raw stats.json, verbatim (default)
+repo2graph stats -o .r2g --format text   # human-readable quality summary
 ```
+
+`stats` prints `agent/stats.json` verbatim by default — that has always been the
+default, and `--json` is just an explicit way to ask for it. Pass `--format text`
+for a formatted summary of the same counts, covering:
+- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
+- **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
+- **Import resolution**: `imports_resolved` vs `imports_unresolved`.
+- **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.
 
 ## The two `--budget` flags count different things
 
@@ -331,4 +342,64 @@ permission, dependency, or artifact integrity issues:
 - **Platform encoding**: checks console and filesystem encoding to detect potential charmap limitations.
 
 Pass `--json` for machine-readable JSON output suitable for CI or automation. Exits with code 0 if all checks pass, or 1 if any critical check fails.
+
+## `explain-path` — explain file inclusion or exclusion
+
+```bash
+repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
+                         [--include-vendor] [--include-secrets] [--json]
+```
+
+Evaluates one path against the same rules `build`'s discovery uses, and reports
+the single rule that decided it — not a trace of every rule that was checked.
+`<path>` is relative to `-r`/`--repo` (default: the current directory) or
+absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
+There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
+no size flags, so it cannot explain a build that used them: the size check
+below is always evaluated against the 1.5 MB `--max-file-mb` default with
+`--chunk-large-files` off, whatever the build was actually run with.
+
+```bash
+$ repo2graph explain-path repo2graph/cli.py
+Path:            E:\Github\repo2graph\repo2graph\cli.py
+Relative Path:   repo2graph/cli.py
+Decision:        INCLUDED
+Precedence Step: 10
+Rule:            included
+Reason:          Path passed all exclusion checks and is eligible for indexing
+
+$ repo2graph explain-path .git/config
+Path:            E:\Github\repo2graph\.git\config
+Relative Path:   .git/config
+Decision:        EXCLUDED
+Precedence Step: 2
+Rule:            skip_dir
+Reason:          Path component '.git' is in excluded dot-directory filter (DEFAULT_SKIP_DIRS/--exclude-dir)
+```
+
+`--json` returns the same facts as data: `path`, `relative_path`, `included`,
+`rule`, `reason`, `precedence_step`.
+
+### Precedence order
+
+`explain_path` (`repo2graph/parse.py`) checks rules in this order and stops at
+the first match:
+
+| Step | Rule | What it means |
+| --- | --- | --- |
+| 0 | `outside_root` | The path resolves outside `-r`/`--repo`. |
+| 1 | `not_found` | The path does not exist on disk. |
+| 2 | `skip_dir` | A path component is a dot-directory, or is in `DEFAULT_SKIP_DIRS` / `--exclude-dir` (`vendor/` only counts here when `--include-vendor` is off). |
+| 3 | `internal_lock` | The path is a sibling `.*.r2glock` build-lock file. |
+| 4 | `gitignore` | `.gitignore` excludes it, checked with `git check-ignore` — only when `-r` is a git checkout. |
+| 5 | `non_regular_file` (or `stat_error`) | Not a regular file — a directory, symlink, device or FIFO — or `lstat` itself failed. |
+| 6 | `too_large` | Bigger than `--max-file-mb` (default 1.5 MB) and `--chunk-large-files` is off. |
+| 7 | `secret_file` | Matches a secret/credential path pattern and `--include-secrets` is off. |
+| 8 | `not_included` | `--include` globs were given and the path matches none of them. |
+| 9 | `exclude_glob` | The path matches an `--exclude` glob. |
+| 10 | `binary` or `included` | A null byte in the first 4 KB marks it binary; otherwise every check passed. |
+
+Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `included`)
+tells them apart, `precedence_step` is `10` either way.
+
 

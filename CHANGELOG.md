@@ -24,6 +24,42 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Scoped call resolution and evidence transparency**: Call targets are resolved
+  through 8 lexical proximity tiers, most specific first (`self_recursive` ->
+  `same_class` -> `same_file` -> `import_alias`/`imported_symbol` -> `same_module`
+  -> `unique_global_name` -> `ambiguous_global_name` -> `unresolved_external`)
+  rather than blind global matching. `self_recursive` is a top-level function
+  calling its own name, the one self-call with no second reading. A method's own
+  name is never claimed outright -- the receiver is not recorded, so `self.f()`
+  and `other.f()` are the same input here -- and resolves through `same_file`
+  with the caller left in the candidate set.
+  Each `CALLS` edge records `resolution_kind`, `candidate_count`, `scope_distance`,
+  and `call_kind` (`static`, `dynamic`, `decorator`, `possible`); the
+  `CALLS_EXTERNAL` edge used for `unresolved_external` carries `resolution_kind`
+  and `candidate_count` but no `scope_distance`
+  (Issues #270, #271, #273).
+- **Import and alias resolution**: Multi-language AST import parsing extracts modules,
+  imported symbols, and local aliases (`ImportDetail`), mapping calls to their aliased
+  targets and tracking `imports_resolved` vs `imports_unresolved` in graph stats (Issue #272).
+- **Graph quality metrics & reporting**: Added `quality_metrics` to `manifest.json`
+  and enhanced `repo2graph stats` with a new `--format text` human-readable summary.
+  `repo2graph stats` still prints the raw `stats.json` by default, unchanged from
+  before this feature; `--format json` and `--json` are explicit spellings of that
+  same default (Issue #274).
+- **Parser strictness policies**: Added `--parse-policy best-effort|warn|strict` flag
+  to `build` and `github` commands. In `strict` mode, tree-sitter AST syntax errors
+  raise a typed `ParseError` and halt the build with clear diagnostics (Issue #275).
+- **Subtyped inheritance & interface extraction**: Extracted class bases carry
+  relationship subtypes (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) alongside
+  the primary `INHERITS` edge type for backwards compatibility. Built-in and framework
+  base types without repo-local definitions are guarded against false cross-project
+  linkages (Issue #276).
+- **Path precedence hierarchy & explain-path**: Documented the real discovery
+  precedence order `explain_path` evaluates (`outside_root` through
+  `binary`/`included`, steps 0-10) and introduced `repo2graph explain-path <path>`,
+  which checks one path against those rules and reports the single rule that
+  decided it — precedence step, rule id, decision and reason — not a
+  step-by-step trace (Issue #277).
 - `repo2graph doctor [path]` command diagnosing Python version, package version,
   tree-sitter & grammar availability, Git integration, directory permissions,
   existing artifact integrity, vector correspondence, MCP SDK compatibility,

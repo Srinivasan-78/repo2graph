@@ -36,19 +36,20 @@ repos:
         files: ^(pyproject\.toml|server\.json|repo2graph/__init__\.py)$
 
       - id: mypy-strict
-        # Strict, and green, on the modules that are annotated. The ten legacy
-        # modules carry 29 real type errors and ~223 missing annotations; a hook
-        # that is red on every commit gets disabled within a week, so it is
-        # scoped to what actually passes and the debt is tracked in DONE.md
-        # instead of being pretended away.
+        # Strict, and green, on the modules that are annotated. The legacy
+        # modules carry the remaining annotation debt; a hook that is red on
+        # every commit gets disabled within a week, so they are relaxed in
+        # pyproject and the debt is tracked in DONE.md instead of pretended away.
         #
-        # pyproject's [tool.mypy] is strict by default with the legacy modules
-        # relaxed *by name*, so a brand-new module is strict automatically and
-        # must be listed deliberately to escape. Add new modules to the regex
-        # below as they are written.
+        # The scope lives in pyproject's [[tool.mypy.overrides]] and nowhere
+        # else. This used to restate it as a regex of six module names, which
+        # inverted the stated intent: a brand-new module matched neither the
+        # override nor the regex, so it was strict "by default" and checked by
+        # nothing. Matching the whole package defers to pyproject, so removing a
+        # module from the override list is the single edit that tightens it.
         name: mypy --strict (annotated modules)
         entry: python -m mypy
         language: system
         types: [python]
-        files: ^repo2graph/(events|cache|auth|audit|tasks|http_server)\.py$
+        files: ^repo2graph/.*\.py$
         require_serial: true
