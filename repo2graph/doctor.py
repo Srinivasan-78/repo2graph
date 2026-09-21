@@ -408,79 +408,70 @@ def check_artifact_integrity(path: Path) -> CheckResult:
             details=[f"Target path: {path}"],
         )
 
-    agent_dir = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
-    manifest_file = agent_dir / "manifest.json"
-    chunks_file = agent_dir / "chunks.jsonl"
-    nodes_file = agent_dir / "nodes.jsonl"
-    edges_file = agent_dir / "edges.jsonl"
+    try:
+        from .integrity import verify_artifacts
 
-    details = [f"Index located at: {idx_dir}"]
-    issues: list[str] = []
-
-    # 1. Manifest
-    if manifest_file.exists():
-        try:
-            with open(manifest_file, "r", encoding="utf-8") as f:
-                manifest_data = json.load(f)
-            details.append(
-                f"Manifest format: {manifest_data.get('format', 'unknown')}, repo: {manifest_data.get('repo', 'unknown')}"
-            )
-        except Exception as exc:
-            issues.append(f"Corrupt manifest.json: {exc}")
-    else:
-        issues.append("Missing agent/manifest.json")
-
-    # 2. Chunks
-    chunk_count = 0
-    if chunks_file.exists():
-        try:
-            with open(chunks_file, "r", encoding="utf-8", errors="replace") as f:
-                for line_idx, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    chunk_count += 1
-                    chunk = json.loads(line)
-                    if "id" not in chunk or "text" not in chunk:
-                        issues.append(f"chunks.jsonl line {line_idx} missing 'id' or 'text'")
-                        break
-            details.append(f"Chunks verified: {chunk_count}")
-        except Exception as exc:
-            issues.append(f"Corrupt chunks.jsonl: {exc}")
-    else:
-        issues.append("Missing agent/chunks.jsonl")
-
-    # 3. Nodes & Edges
-    if nodes_file.exists():
-        try:
-            with open(nodes_file, "r", encoding="utf-8", errors="replace") as f:
-                node_count = sum(1 for line in f if line.strip())
-            details.append(f"Nodes verified: {node_count}")
-        except Exception as exc:
-            issues.append(f"Corrupt nodes.jsonl: {exc}")
-
-    if edges_file.exists():
-        try:
-            with open(edges_file, "r", encoding="utf-8", errors="replace") as f:
-                edge_count = sum(1 for line in f if line.strip())
-            details.append(f"Edges verified: {edge_count}")
-        except Exception as exc:
-            issues.append(f"Corrupt edges.jsonl: {exc}")
-
-    if issues:
+        report = verify_artifacts(idx_dir)
+    except Exception as exc:
+        # If integrity module itself fails, fall back gracefully
         return CheckResult(
             name="Artifact Integrity",
-            status="fail",
-            summary=f"Integrity check failed with {len(issues)} issue(s)",
-            details=details + issues,
-            remediation="Run a clean build to recreate corrupted artifacts: repo2graph build <repo> -o <out>",
+            status="warn",
+            summary=f"Integrity check could not complete: {exc}",
+            details=[f"Index located at: {idx_dir}"],
+            remediation="Verify the repo2graph installation is intact.",
         )
 
+    details: list[str] = [f"Index located at: {idx_dir}"]
+
+    # Build_id, version, and source revision fields (present in new-format manifests)
+    if report.build_id:
+        details.append(f"Build ID: {report.build_id}")
+    if report.tool_version:
+        details.append(f"Tool version: {report.tool_version}")
+    if report.source_revision:
+        rev = report.source_revision
+        commit_info = rev.get("short_commit") or rev.get("commit", "")
+        if commit_info:
+            tag = rev.get("tag", "")
+            branch = rev.get("branch", "")
+            dirty = " (dirty)" if rev.get("dirty") else ""
+            details.append(
+                f"Source: {commit_info}"
+                + (f" tag={tag}" if tag else "")
+                + (f" branch={branch}" if branch else "")
+                + dirty
+            )
+    if report.checked_files:
+        details.append(f"Checksum-verified files: {report.checked_files}")
+
+    if report.warnings:
+        details.extend(report.warnings)
+
+    if report.status == "valid":
+        return CheckResult(
+            name="Artifact Integrity",
+            status="ok",
+            summary="All index artifacts intact and valid",
+            details=details,
+        )
+
+    if report.status in ("stale",):
+        return CheckResult(
+            name="Artifact Integrity",
+            status="warn",
+            summary=f"Index may be stale: {'; '.join(report.warnings[:2])}",
+            details=details + report.errors,
+            remediation="Re-run `repo2graph build` and `repo2graph embed` to refresh the index.",
+        )
+
+    # corrupt, partial, incompatible
     return CheckResult(
         name="Artifact Integrity",
-        status="ok",
-        summary="All index artifacts intact and valid",
-        details=details,
+        status="fail",
+        summary=f"Integrity check failed ({report.status}): {'; '.join(report.errors[:2])}",
+        details=details + report.errors,
+        remediation="Run a clean build to recreate corrupted artifacts: repo2graph build <repo> -o <out>",
     )
 
 

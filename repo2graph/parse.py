@@ -418,6 +418,16 @@ def discover(
                 key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
                 stats[key] += 1
             continue
+        # BuildLock (lock.py) deliberately places its lock file as a *sibling*
+        # of the output directory, not inside it, so the file survives the
+        # transactional dir-swap in export.py's dump_all. That means a build
+        # whose outdir lives directly under the scanned root sees its own
+        # in-progress lock file on disk -- skip it like any other dotfile
+        # rather than indexing a "r2glock"-language node for it.
+        if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
+            if stats is not None:
+                stats["skipped_dotfile"] += 1
+            continue
         try:
             st = abspath.lstat()
         except OSError:

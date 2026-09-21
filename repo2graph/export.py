@@ -4,11 +4,14 @@ import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import threading
+import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
@@ -784,7 +787,7 @@ def _fanout(text: str, max_call_candidates: int) -> str:
     return text.replace("{n}", str(max_call_candidates))
 
 
-def write_manifest(g, path: Path, written: list[str]):
+def write_manifest(g, path: Path, written: list[str], *, checksums: dict | None = None):
     """Describe the agent-facing output so a reader needs no other docs."""
     # Imported here, not at module scope, for the same reason PARSE_CACHE_FORMAT
     # is below: export is the lower layer of the two and query.py imports it.
@@ -810,8 +813,31 @@ def write_manifest(g, path: Path, written: list[str]):
         secret_filter_policy = (
             getattr(cfg, "secret_policy", "redact-match") if cfg else "redact-match"
         )
+
+    # --- Provenance: build ID, tool version, and source revision ---
+    try:
+        from . import __version__ as _tool_ver
+    except Exception:
+        _tool_ver = "unknown"
+
+    source_revision: dict = {}
+    try:
+        from .integrity import get_source_provenance
+
+        root = getattr(g, "root", None)
+        if root is not None:
+            source_revision = get_source_provenance(root)
+    except Exception:
+        pass
+
     manifest = {
         "format": "repo2graph/1",
+        "build_id": str(_uuid_mod.uuid4()),
+        "tool_version": _tool_ver,
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_revision": source_revision,
+        "checksums": checksums or {},
         "repo": g.name,
         "written": written,
         "secret_filter_policy": secret_filter_policy,
@@ -963,7 +989,7 @@ def _mark_has_vectors(outdir) -> None:
 
 
 def register_written(outdir, names) -> bool:
-    """Merge `names` into an existing manifest's `written` and `files`.
+    """Merge `names` into an existing manifest's `written`, `files`, and `checksums`.
 
     `embed` runs after `build` as a separate command, so it must append to the
     manifest dump_all already wrote rather than rewrite it: every other key --
@@ -981,14 +1007,25 @@ def register_written(outdir, names) -> bool:
         return False
     written = [w for w in (manifest.get("written") or []) if isinstance(w, str)]
     files = dict(manifest.get("files") or {})
+    checksums = dict(manifest.get("checksums") or {})
     for name in names:
         if name not in written:
             written.append(name)
         base = name.split("/", 1)[-1]
         if base in FILE_NOTES:
             files[base] = FILE_NOTES[base]
+        # Compute checksum for the newly registered file if it exists
+        artifact_file = Path(outdir) / name
+        if artifact_file.exists():
+            try:
+                from .integrity import compute_file_checksum
+
+                checksums[name] = compute_file_checksum(artifact_file)
+            except Exception:
+                pass
     manifest["written"] = written
     manifest["files"] = files
+    manifest["checksums"] = checksums
     with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
     if any(name.split("/", 1)[-1] == "vectors.npy" for name in names):
@@ -1053,44 +1090,128 @@ def load_parse_cache(outdir: Path) -> dict:
     return files if isinstance(files, dict) else {}
 
 
+def _atomic_dir_swap(staging: Path, target: Path) -> None:
+    """Atomically replace target directory with staging directory.
+
+    On Windows, os.replace doesn't work for non-empty directories, so we use
+    a rename dance: target -> backup, staging -> target, then remove backup.
+    If the staging rename fails, we restore the backup.
+    """
+    if not target.exists():
+        staging.rename(target)
+        return
+
+    backup = target.parent / f".{target.name}.backup.{os.getpid()}"
+    # Ensure no stale backup from a prior crash
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    target.rename(backup)
+    try:
+        staging.rename(target)
+    except Exception:
+        # Rollback: restore the backup
+        try:
+            backup.rename(target)
+        except Exception:
+            pass
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
+# Files produced by commands OTHER than dump_all (embed, github) that must be
+# preserved when the staging dir is swapped in over the real outdir.
+_PRESERVE_ACROSS_BUILDS = (
+    "agent/vectors.npy",
+    "agent/vectors.meta.json",
+    "agent/index.json",
+)
+
+
 def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
     """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
-    build_chunks generator) or None. Returns (written_paths, chunk_count)."""
-    outdir = Path(outdir)
+    build_chunks generator) or None. Returns (written_paths, chunk_count).
+
+    Artifacts are staged in a sibling directory and atomically swapped into
+    outdir on success; a failed or interrupted build never leaves a partial
+    index behind.
+    """
+    outdir = Path(outdir).resolve()
     if outdir.exists() and not outdir.is_dir():
         raise ValueError(f"output path exists and is not a directory: {outdir}")
-    outdir.mkdir(parents=True, exist_ok=True)
-    written = []
+
+    # Create a sibling staging directory for atomic swap
+    staging_dir = outdir.parent / (
+        f".{outdir.name}.staging.{os.getpid()}.{_uuid_mod.uuid4().hex[:8]}"
+    )
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    # Preserve files written by other commands (embed, github) so they survive
+    # the directory swap.
+    if outdir.is_dir():
+        for rel in _PRESERVE_ACROSS_BUILDS:
+            src = outdir / rel
+            if src.exists():
+                dst = staging_dir / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+
+    written: list[str] = []
     n_chunks = 0
 
     def out(name: str) -> list[Path]:
         written.extend(rels(name))
-        return make_paths(outdir, name)
+        return make_paths(staging_dir, name)
 
-    if "jsonl" in formats:
-        write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
-        write_jsonl(out("edges.jsonl")[0], g.edges)
-    if chunks is not None:
-        # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
-        n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
-    if "graphml" in formats:
-        write_graphml(g, out("graph.graphml")[0])
-    if "cypher" in formats:
-        write_cypher(g, out("graph.cypher")[0])
-    if "overview" in formats:
-        # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
-        # structured, scannable map for a person; agent/ keeps the terse prose
-        # write_overview has always produced -- GraphRAG's repo-map protocol
-        # (query.Index.overview / pack_context) reads the agent copy and must
-        # not see the new tables.
-        human, agent = out("overview.md")
-        write_overview_human(g, human)
-        write_overview(g, agent)
-    if "html" in formats:
-        write_html(g, out("graph.html")[0], viz_nodes)
-    with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
-    write_state(g, out("index.state.json")[0], n_chunks)
-    write_parse_cache(g, out("parse.cache.json")[0])
-    write_manifest(g, out("manifest.json")[0], written)
+    try:
+        if "jsonl" in formats:
+            write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
+            write_jsonl(out("edges.jsonl")[0], g.edges)
+        if chunks is not None:
+            # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
+            n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
+        if "graphml" in formats:
+            write_graphml(g, out("graph.graphml")[0])
+        if "cypher" in formats:
+            write_cypher(g, out("graph.cypher")[0])
+        if "overview" in formats:
+            # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
+            # structured, scannable map for a person; agent/ keeps the terse prose
+            # write_overview has always produced -- GraphRAG's repo-map protocol
+            # (query.Index.overview / pack_context) reads the agent copy and must
+            # not see the new tables.
+            human, agent = out("overview.md")
+            write_overview_human(g, human)
+            write_overview(g, agent)
+        if "html" in formats:
+            write_html(g, out("graph.html")[0], viz_nodes)
+        with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
+            fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
+        write_state(g, out("index.state.json")[0], n_chunks)
+        write_parse_cache(g, out("parse.cache.json")[0])
+
+        # Compute checksums for all artifacts written so far (before manifest)
+        checksums: dict[str, str] = {}
+        try:
+            from .integrity import compute_file_checksum
+
+            for rel_path in written:
+                p = staging_dir / rel_path
+                if p.exists():
+                    try:
+                        checksums[rel_path] = compute_file_checksum(p)
+                    except OSError:
+                        pass
+        except Exception:
+            pass  # Checksum failure is non-fatal; manifest still gets written
+
+        write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
+
+        # All writes succeeded: swap staging -> outdir atomically
+        _atomic_dir_swap(staging_dir, outdir)
+
+    except BaseException:
+        # Clean up staging on any failure, leaving the previous build intact
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
     return written, n_chunks
