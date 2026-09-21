@@ -13,6 +13,44 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Removed
+
+- `claude-code-review.yml` and `claude.yml`, and with them all automated code
+  review. `claude.yml` had no author gate of any kind: any commenter, including
+  a first-time contributor, could start a 30-minute model run by typing
+  `@claude`. `claude-code-review.yml` excluded fork PRs entirely to keep its
+  token away from untrusted heads, so it never reviewed the contributions most
+  worth reviewing. prod-igy is now the only place a model is invoked.
+
+### Added
+
+- prod-igy reports check-run results for the PR head — counts, plus the names
+  of failing checks. Read from `checks.listForRef`, which needs the new
+  `checks: read` scope; a re-run supersedes the earlier result for that name,
+  and an in-flight run counts as running rather than failing.
+- prod-igy writes a plain-language description of the diff and, when the title
+  is not Conventional Commits, suggests one. The suggestion is displayed only;
+  prod-igy still calls `pulls.update` exactly once, to retarget the base branch,
+  and never rewrites a contributor's title or description.
+
+  Scope is deliberately narrow. The step is shown one diff and nothing else —
+  no repository contents, no `AGENTS.md`, no tools — so it cannot review the
+  change against code it has not seen. Labels remain entirely path- and
+  size-derived. Off by default (`PRODIGY_AI` repository variable); model,
+  token ceiling, effort, timeout, per-PR run and output caps are all
+  `vars.PRODIGY_AI_*`.
+
+  Contributors have no way to reach it: it fires only on `pull_request_target`,
+  `workflow_dispatch`, and a `@prod-igy` comment from an OWNER / MEMBER /
+  COLLABORATOR, and it takes no instruction from the pull request. Per-PR spend
+  is tracked in a hidden ledger inside prod-igy's own comment, so a force-push
+  loop cannot run it more than `PRODIGY_AI_MAX_RUNS_PER_PR` times.
+
+  Every failure — absent SDK, absent or revoked key, unreachable endpoint,
+  rate limit, timeout, unparseable response — omits the section and posts the
+  same comment prod-igy posted before this existed. The reason is recorded in
+  the run log, never in the comment.
+
 ## [1.6.0] — 2026-09-20
 
 ### Changed
