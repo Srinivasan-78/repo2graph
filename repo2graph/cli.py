@@ -535,6 +535,17 @@ def cmd_stats(args):
     _emit(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
 
 
+def cmd_doctor(args):
+    from .doctor import run_doctor
+
+    report = run_doctor(args.path)
+    if getattr(args, "json", False):
+        _emit(json.dumps(report.to_dict(), indent=2))
+    else:
+        _emit(report.format_text())
+    return 0 if report.ok else 1
+
+
 def _nonneg(value: str) -> int:
     """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
     numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
@@ -919,6 +930,19 @@ def main(argv=None):
     s = sub.add_parser("stats", help="print index stats")
     s.add_argument("-o", "--out", default=".r2g")
     s.set_defaults(func=cmd_stats)
+
+    d = sub.add_parser(
+        "doctor",
+        help="diagnose environment, dependencies, permissions, and index integrity",
+    )
+    d.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="repository or index path to diagnose (default: current directory)",
+    )
+    d.add_argument("--json", action="store_true", help="output report as JSON")
+    d.set_defaults(func=cmd_doctor)
 
     try:
         args = p.parse_args(argv)

@@ -24,6 +24,16 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- `repo2graph doctor [path]` command diagnosing Python version, package version,
+  tree-sitter & grammar availability, Git integration, directory permissions,
+  existing artifact integrity, vector correspondence, MCP SDK compatibility,
+  and platform encoding. Safely probes LLM provider configuration without ever
+  disclosing secret values or environment variables. Supports `--json` output
+  (Issue #308).
+- Automated documentation consistency test suite (`tests/test_doc_consistency.py`)
+  guaranteeing zero drift between code and documentation across CLI subcommands,
+  parser language configurations, GitHub Action inputs/outputs, and MCP registered
+  tools (Issue #319).
 - prod-igy reports check-run results for the PR head — counts, plus the names
   of failing checks. Read from `checks.listForRef`, which needs the new
   `checks: read` scope; a re-run supersedes the earlier result for that name,
