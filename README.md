@@ -93,6 +93,18 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 repo2graph query "how does routing match a path" -o .r2g
 ```
 
+<p align="center">
+  <img src="docs/images/demo-build.gif" alt="A terminal running repo2graph build on a repository; a JSON summary appears counting files, functions, classes, CALLS, IMPORTS and CO_CHANGE edges, nodes, edges and chunks" width="850" />
+</p>
+
+One pass over this repository — 185 files — takes about two seconds and needs no configuration
+file, no language server and no API key. Ask it something, and the answer comes back as source you
+can check, not a summary you have to trust:
+
+<p align="center">
+  <img src="docs/images/demo-rag.gif" alt="A terminal running repo2graph rag with a question; a repo map scrolls past and then cited code blocks appear, each headed with a cite marker naming the file and line range, listing the callers and callees of the function shown" width="850" />
+</p>
+
 ## 🔌 MCP client configuration
 
 `repo2graph-mcp` is a stdio MCP server. It builds its own index on the first call if one doesn't
@@ -120,6 +132,13 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 Any other stdio-based MCP client (Windsurf, Zed, generic clients) takes the same `command`/`args`
 pair — see **[docs/mcp.md](docs/mcp.md)** for config file locations per platform and client.
 
+<p align="center">
+  <img src="docs/images/demo-mcp.gif" alt="An MCP repo_neighbours call on one function id; the reply lists its defining class, its inner function, the two callers and the two callees, each with a file and line number" width="850" />
+</p>
+
+That is the hop grep cannot do: one symbol in, and its definer, its callers and its callees come
+back with file and line — the relationship, not a text match that happens to contain the name.
+
 ## ✨ Key features
 
 | | |
@@ -131,6 +150,31 @@ pair — see **[docs/mcp.md](docs/mcp.md)** for config file locations per platfo
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
 | **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
+
+## 🆚 How it compares
+
+Several tools build a graph out of a codebase. The thing that separates them is what comes *back*
+when you ask a question — a picture, a subgraph, or the code itself.
+
+| | repo2graph | [Graphify](https://github.com/Graphify-Labs/graphify) | [Code Graph](https://community.obsidian.md/plugins/code-graph) (Obsidian) | grep / embedding RAG |
+|---|---|---|---|---|
+| **What a query returns** | the source, packed — every block headed `[cite: path:start-end]` | a scoped subgraph, a path, or a concept explanation to traverse | a force-directed picture to read | matching lines, or nearest-neighbour chunks |
+| **How hits are ranked** | BM25 seeds, then k-hop graph expansion; optional dense fusion | graph traversal (explicitly not a vector index) | n/a — it is a view | lexical only, or vectors only |
+| **Token budget** | hard cap on the *whole* pack, re-measured before returning (12k ceiling over MCP) | not a packing layer | n/a | usually unbounded |
+| **Edges from git history** | `CO_CHANGE`, from `--git-history` | — | — | — |
+| **Runs with no assistant, no model, no account** | yes — CLI, MCP, or the GitHub Action | code pass is local; the docs/media pass uses a model | needs Obsidian desktop 1.7.2+ | varies |
+| **Corpus** | code in 15 parsed languages, every other file as text | code in ~40 languages, plus docs, PDFs, images, video | TS/TSX/JS/Python parsed, imports-only for 8 more | anything |
+
+**Reach for [Graphify](https://github.com/Graphify-Labs/graphify)** when the graph itself is the
+product: community detection, shortest path between two concepts, and your PDFs and design docs in
+the same graph as the code.
+**Reach for the [Obsidian plugin](https://community.obsidian.md/plugins/code-graph)** when a human
+wants to *read* the graph beside their notes.
+**Reach for repo2graph** when an agent needs cited source inside a fixed token budget, when it has
+to run in CI with no model and no account, or when "which files keep changing together" is part of
+the answer.
+
+Longer version, with the trade-offs each choice implies: **[docs/comparison.md](docs/comparison.md)**.
 
 ## 🛠️ MCP tools exposed
 
