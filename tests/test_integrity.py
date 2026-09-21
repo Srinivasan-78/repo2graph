@@ -84,7 +84,9 @@ class TestValidateOutdir:
         with pytest.raises(ValueError, match="not a directory"):
             validate_outdir(f)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="symlinks require elevated rights on Windows")
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="symlinks require elevated rights on Windows"
+    )
     def test_rejects_symlink_by_default(self, tmp_path):
         from repo2graph.integrity import validate_outdir
 
@@ -95,7 +97,9 @@ class TestValidateOutdir:
         with pytest.raises(ValueError, match="symlink"):
             validate_outdir(link)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="symlinks require elevated rights on Windows")
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="symlinks require elevated rights on Windows"
+    )
     def test_allows_symlink_when_flag_set(self, tmp_path):
         from repo2graph.integrity import validate_outdir
 
@@ -153,7 +157,7 @@ class TestBuildLock:
     def test_context_manager(self, tmp_path):
         from repo2graph.lock import BuildLock
 
-        lock_file = (tmp_path / ".idx.r2glock")
+        lock_file = tmp_path / ".idx.r2glock"
         with BuildLock(tmp_path / "idx"):
             # Lock file is created while held
             assert lock_file.exists() or True  # sibling file, not in idx itself
@@ -373,7 +377,10 @@ class TestTransactionalBuild:
         # Plant a fake vectors file (we don't need a real embedder)
         agent_dir = out / "agent"
         (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY fake")
-        (agent_dir / "vectors.meta.json").write_text('{"format": "repo2graph/vectors-1", "model_id": "x", "dim": 2, "count": 0, "chunk_ids": [], "text_hashes": []}', encoding="utf8")
+        (agent_dir / "vectors.meta.json").write_text(
+            '{"format": "repo2graph/vectors-1", "model_id": "x", "dim": 2, "count": 0, "chunk_ids": [], "text_hashes": []}',
+            encoding="utf8",
+        )
 
         # Rebuild (no embed)
         build_index(repo, out)
@@ -387,14 +394,14 @@ class TestTransactionalBuild:
         repo = write_simple_repo(tmp_path)
         out = tmp_path / "idx"
         build_index(repo, out)
-        build_id_1 = json.loads(
-            artifact_path(out, "manifest.json").read_text(encoding="utf8")
-        )["build_id"]
+        build_id_1 = json.loads(artifact_path(out, "manifest.json").read_text(encoding="utf8"))[
+            "build_id"
+        ]
 
         build_index(repo, out)
-        build_id_2 = json.loads(
-            artifact_path(out, "manifest.json").read_text(encoding="utf8")
-        )["build_id"]
+        build_id_2 = json.loads(artifact_path(out, "manifest.json").read_text(encoding="utf8"))[
+            "build_id"
+        ]
 
         assert build_id_1 != build_id_2
 

@@ -106,9 +106,10 @@ def validate_outdir(
 
     # 5. Foreign non-empty directory check
     if target.is_dir() and any(target.iterdir()) and not force:
-        has_marker = any((target / marker).exists() for marker in INDEX_MARKERS) or (
-            target / "agent" / "manifest.json"
-        ).exists()
+        has_marker = (
+            any((target / marker).exists() for marker in INDEX_MARKERS)
+            or (target / "agent" / "manifest.json").exists()
+        )
         if not has_marker:
             raise ValueError(
                 f"Output directory exists and contains non-repo2graph files: {target}. "
@@ -293,7 +294,9 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
                 v_hashes = vmeta.get("text_hashes") or []
                 if len(v_ids) != len(v_hashes):
                     report.status = "corrupt"
-                    report.errors.append("vectors.meta.json chunk_ids and text_hashes length mismatch")
+                    report.errors.append(
+                        "vectors.meta.json chunk_ids and text_hashes length mismatch"
+                    )
                 else:
                     mismatched_texts = 0
                     for cid, v_hash in zip(v_ids, v_hashes):

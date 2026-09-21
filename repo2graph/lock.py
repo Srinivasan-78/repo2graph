@@ -257,4 +257,3 @@ def acquire_build_lock(
         yield lock
     finally:
         lock.release()
-

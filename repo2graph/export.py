@@ -823,6 +823,7 @@ def write_manifest(g, path: Path, written: list[str], *, checksums: dict | None 
     source_revision: dict = {}
     try:
         from .integrity import get_source_provenance
+
         root = getattr(g, "root", None)
         if root is not None:
             source_revision = get_source_provenance(root)
@@ -1018,6 +1019,7 @@ def register_written(outdir, names) -> bool:
         if artifact_file.exists():
             try:
                 from .integrity import compute_file_checksum
+
                 checksums[name] = compute_file_checksum(artifact_file)
             except Exception:
                 pass
@@ -1191,6 +1193,7 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
         checksums: dict[str, str] = {}
         try:
             from .integrity import compute_file_checksum
+
             for rel_path in written:
                 p = staging_dir / rel_path
                 if p.exists():
@@ -1212,4 +1215,3 @@ def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NO
         raise
 
     return written, n_chunks
-

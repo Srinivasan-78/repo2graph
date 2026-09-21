@@ -353,7 +353,15 @@ def cmd_embed(args):
     except Exception:
         pass
 
-    n = write_vectors(npy, vectors, model_id, dim, chunk_ids, [hashes[cid] for cid in chunk_ids], build_id=build_id)
+    n = write_vectors(
+        npy,
+        vectors,
+        model_id,
+        dim,
+        chunk_ids,
+        [hashes[cid] for cid in chunk_ids],
+        build_id=build_id,
+    )
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
     _emit(
