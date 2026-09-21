@@ -48,7 +48,7 @@ include = ["repo2graph*"]
 dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5"]
 # Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
 # boost with zero extra dependencies when these are not installed.
-rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
+rag = ["sentence-transformers>=3.0"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # Bounded below 2 on purpose: `serve()` drives the 1.x decorator API
 # (`@server.list_tools()` / `@server.call_tool()`), which mcp 2.x removed. An
@@ -74,8 +74,13 @@ ignore_missing_imports = true
 # Legacy modules are not annotated yet. They are listed explicitly rather than
 # excluded by a wildcard so that a *new* module is strict-checked by default and
 # has to be added here deliberately to escape it -- the opposite of an allowlist,
-# which would silently let new untyped code in. 223 errors remain across these
-# ten; see DONE.md for the ranked plan.
+# which would silently let new untyped code in. The block currently covers
+# fourteen module names (eleven real modules plus the langs/layout/walker
+# shims). Measured against develop on 2026-09-19 with the override block
+# removed mypy reports 247 errors in 11 files, so the sweep is still early;
+# see DONE.md for the ranked plan. Regenerate this figure with
+# `mypy --strict repo2graph` after deleting the override block before you
+# update the numbers.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
