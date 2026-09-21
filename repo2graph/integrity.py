@@ -61,7 +61,17 @@ def validate_outdir(
     Returns:
         Resolved absolute Path.
     """
-    target = Path(outdir).resolve()
+    raw = Path(outdir)
+
+    # 4. Symlink check -- must run on the *unresolved* path. Path.resolve()
+    # dereferences symlinks (including the final path component), so checking
+    # is_symlink() after resolve() can never fire; check before resolving.
+    if raw.is_symlink() and not allow_symlink:
+        raise ValueError(
+            f"Output path is a symlink: {raw}. Pass --allow-symlink-out to explicitly allow writing through symlinks."
+        )
+
+    target = raw.resolve()
 
     # 1. Filesystem root check
     if target == target.parent or target == Path(target.anchor):
@@ -93,12 +103,6 @@ def validate_outdir(
     # 3. Existing file check
     if target.exists() and not target.is_dir():
         raise ValueError(f"Output path exists and is not a directory: {target}")
-
-    # 4. Symlink check
-    if target.is_symlink() and not allow_symlink:
-        raise ValueError(
-            f"Output path is a symlink: {target}. Pass --allow-symlink-out to explicitly allow writing through symlinks."
-        )
 
     # 5. Foreign non-empty directory check
     if target.is_dir() and any(target.iterdir()) and not force:
