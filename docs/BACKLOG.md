@@ -135,23 +135,14 @@ itself off inside `_vectors_for` with nothing printed either way. Wanted: carry 
 fraction out of `_vectors_for` and have `--vectors` say `fused 0/8 candidates — re-run
 repo2graph embed` rather than quietly answering a lexical question. Small.
 
-**Port the MCP server to the 2.x SDK API.** The `mcp` extra is bounded to `mcp>=1.0,<2` *on
-purpose*, not as an accident of pinning. `repo2graph/mcp.py::serve()` is written against the 1.x
-decorator API — `@server.list_tools()` and `@server.call_tool()` on `mcp.server.Server`, plus
-`mcp.server.stdio.stdio_server` and `mcp.types.{Tool,TextContent}` — and mcp 2.x removed both
-decorator methods from `Server`. Because `import mcp` still succeeds on 2.x, the failure landed as
-a raw `AttributeError: 'Server' object has no attribute 'list_tools'` from inside `serve()` on
-every fresh `pip install "repo2graph[mcp]"` while the extra was unbounded. `_require_sdk()` now
-checks `REQUIRED_SERVER_API` against the `Server` class and exits with an instruction naming the
-installed version and `pip install "mcp>=1.0,<2"`, so the unsupported case is a sentence rather
-than a traceback — but it is still unsupported.
-
-To pick this up: re-express `serve()` against the 2.x registration API, leaving `dispatch()` — the
-only place any logic lives — untouched, so the three handlers and every bounds test still apply
-unchanged. Then widen the extra (or branch the wiring on `_sdk_version()`), relax
-`REQUIRED_SERVER_API` to whatever 2.x actually needs, and update the README's pin note. Nothing
-outside `serve()`, `_require_sdk()`, the `pyproject.toml` extra and that one README paragraph is
-coupled to the SDK version, and no test imports the SDK, so the blast radius is small.
+**Port the MCP server to the 2.x SDK API, as shipped.** `repo2graph/mcp.py::serve()` now branches
+on `supports_decorators = hasattr(Server, "list_tools")`: the 1.x decorator API
+(`@server.list_tools()` / `@server.call_tool()`) when present, and the 2.x registration API
+(`list_tools_2x`/`call_tool_2x` handlers) otherwise. `dispatch()` — the only place any logic lives
+— is untouched, so the three handlers and every bounds test apply unchanged to both SDK
+generations. The `mcp` extra is `mcp>=1.0,<3.0` (`pyproject.toml`, `SDK_SPEC` in `mcp.py`), and
+`_require_sdk()` still exits with a clear instruction rather than a traceback when neither API
+shape is present.
 
 ## Shipped in batch 1
 

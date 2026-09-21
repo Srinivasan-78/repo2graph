@@ -546,14 +546,12 @@ class AuthConfig:
         oidc_issuer: An OIDC issuer URL, or None.
         audience: Expected `aud` for OIDC tokens, or None to skip the check.
         jwks_ttl: Seconds a fetched JWKS is trusted.
-        cimd: Whether to publish a Client ID Metadata Document.
     """
 
     token: str | None = None
     oidc_issuer: str | None = None
     audience: str | None = None
     jwks_ttl: float = DEFAULT_JWKS_TTL
-    cimd: bool = False
 
     @property
     def modes(self) -> list[str]:

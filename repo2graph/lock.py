@@ -11,10 +11,9 @@ import os
 import platform
 import sys
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Generator, TextIO
+from typing import Any, TextIO
 
 DEFAULT_LOCK_TIMEOUT = 60.0
 DEFAULT_STALE_THRESHOLD = 3600.0  # 1 hour
@@ -249,19 +248,3 @@ class BuildLock:
         except Exception:
             pass
         return False
-
-
-@contextmanager
-def acquire_build_lock(
-    outdir: str | Path,
-    *,
-    timeout: float = DEFAULT_LOCK_TIMEOUT,
-    stale_threshold: float = DEFAULT_STALE_THRESHOLD,
-) -> Generator[BuildLock, None, None]:
-    """Context manager acquiring an exclusive build lock."""
-    lock = BuildLock(outdir, timeout=timeout, stale_threshold=stale_threshold)
-    lock.acquire()
-    try:
-        yield lock
-    finally:
-        lock.release()
