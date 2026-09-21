@@ -267,9 +267,7 @@ def run(args: list[str], cwd: Path | None = None) -> list[str]:
     cp1252, which turns every em dash in the CLI's own output into `?`.
     """
     env = dict(os.environ, PYTHONIOENCODING="utf-8", NO_COLOR="1")
-    proc = subprocess.run(
-        args, cwd=cwd, capture_output=True, env=env, timeout=600, check=False
-    )
+    proc = subprocess.run(args, cwd=cwd, capture_output=True, env=env, timeout=600, check=False)
     text = proc.stdout.decode("utf8", "replace")
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr.decode("utf8", "replace"))
