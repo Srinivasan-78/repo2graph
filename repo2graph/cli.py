@@ -89,12 +89,26 @@ def cmd_build(args):
     outdir = Path(args.out)
     from .parse import BuildConfig
 
+    include_secrets = getattr(args, "include_secrets", False)
+    if include_secrets:
+        from .events import emit
+
+        emit("secrets_inclusion_enabled", level="warning")
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            )
+
     config = BuildConfig(
         max_file_bytes=int(args.max_file_mb * 1_000_000),
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        include_secrets=include_secrets,
+        secret_policy=getattr(args, "secret_policy", "redact-match"),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -145,12 +159,26 @@ def cmd_github(args):
     from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+    include_secrets = getattr(args, "include_secrets", False)
+    if include_secrets:
+        from .events import emit
+
+        emit("secrets_inclusion_enabled", level="warning")
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            )
+
     config = BuildConfig(
         max_file_bytes=int(args.max_file_mb * 1_000_000),
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        include_secrets=include_secrets,
+        secret_policy=getattr(args, "secret_policy", "redact-match"),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
     )
     meta = index_github(
         args.repo,
@@ -361,7 +389,15 @@ def _rag_index_dir(args) -> Path:
     if artifact_path(tpath, "manifest.json").exists():
         return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
-        g = build(tpath)
+        from .parse import BuildConfig
+
+        cfg = BuildConfig(
+            include_secrets=getattr(args, "include_secrets", False),
+            secret_policy=getattr(args, "secret_policy", "redact-match"),
+            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        )
+        g = build(tpath, config=cfg)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
         return out
     from .fetch import index_github, parse_spec
@@ -480,6 +516,21 @@ def cmd_rag(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args, out)
+    if getattr(args, "exclude_secrets", False):
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --exclude-secrets is deprecated; secret exclusion is now enabled by default\n"
+            )
+
+    include_secrets = getattr(args, "include_secrets", False)
+    exclude_secrets = (
+        args.answer
+        or getattr(args, "exclude_secrets", False)
+        or bool(
+            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
+        )
+    ) and not include_secrets
+
     pack = idx.pack_context(
         args.query,
         k=args.k,
@@ -487,11 +538,7 @@ def cmd_rag(args):
         budget_chars=args.budget,
         min_confidence=args.min_conf,
         expand_graph=not args.no_expand,
-        exclude_secrets=args.answer
-        or getattr(args, "exclude_secrets", False)
-        or bool(
-            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
-        ),
+        exclude_secrets=exclude_secrets,
         vectors=vectors,
         embedder=embedder,
         budget_tokens=getattr(args, "budget_tokens", None),
@@ -686,6 +733,34 @@ def main(argv=None):
         default=0,
         help="parser processes; 0 = one per core (capped at 8), 1 = serial",
     )
+    common.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="index sensitive secret/credential files (default: off)",
+    )
+    common.add_argument(
+        "--secret-policy",
+        choices=("redact-match", "exclude-file", "warn-only", "off"),
+        default="redact-match",
+        help="content-aware secret scanning policy for chunks (default: redact-match)",
+    )
+    common.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to exclude as secret file/path (repeatable)",
+    )
+    common.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to exclude as secret path (repeatable)",
+    )
 
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
@@ -814,6 +889,12 @@ def main(argv=None):
     )
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
+    q.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="include secret files in query results",
+    )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
@@ -859,6 +940,18 @@ def main(argv=None):
         choices=("gemini", "openai", "anthropic", "ollama"),
         default=None,
         help="force a specific LLM provider for --answer",
+    )
+    r.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="include sensitive secret/credential files (default: off)",
+    )
+    r.add_argument(
+        "--secret-policy",
+        choices=("redact-match", "exclude-file", "warn-only", "off"),
+        default="redact-match",
+        help="content-aware secret scanning policy for chunks (default: redact-match)",
     )
     r.add_argument(
         "--exclude-secrets",

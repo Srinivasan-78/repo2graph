@@ -10,7 +10,7 @@ This document tracks all 60 issues identified in the comprehensive hardening, co
 |---|---|---|---|
 | **Phase 0** | Baseline, Issue Publication, & Environment Probes | [#260](https://github.com/Srinivasan-78/repo2graph/issues/260)-[#319](https://github.com/Srinivasan-78/repo2graph/issues/319) | **Done** |
 | **PR 1** | Baseline, Diagnostics (`doctor`), & Doc Consistency | [#308](https://github.com/Srinivasan-78/repo2graph/issues/308), [#319](https://github.com/Srinivasan-78/repo2graph/issues/319) | **In Review** |
-| **PR 2** | Secure-by-Default Secrets & Redaction | [#260](https://github.com/Srinivasan-78/repo2graph/issues/260), [#261](https://github.com/Srinivasan-78/repo2graph/issues/261), [#262](https://github.com/Srinivasan-78/repo2graph/issues/262) | Pending |
+| **PR 2** | Secure-by-Default Secrets & Redaction | [#260](https://github.com/Srinivasan-78/repo2graph/issues/260), [#261](https://github.com/Srinivasan-78/repo2graph/issues/261), [#262](https://github.com/Srinivasan-78/repo2graph/issues/262) | **Ready for Review** |
 | **PR 3** | Artifact Integrity, Manifest Provenance, & Transactional Builds | [#268](https://github.com/Srinivasan-78/repo2graph/issues/268), [#269](https://github.com/Srinivasan-78/repo2graph/issues/269), [#300](https://github.com/Srinivasan-78/repo2graph/issues/300), [#301](https://github.com/Srinivasan-78/repo2graph/issues/301) | Pending |
 | **PR 4** | Graph Correctness: Scoped Call Resolution & Strictness Modes | [#270](https://github.com/Srinivasan-78/repo2graph/issues/270)-[#277](https://github.com/Srinivasan-78/repo2graph/issues/277) | Pending |
 | **PR 5** | Co-Change NUL Delimitation & Source Provenance | [#278](https://github.com/Srinivasan-78/repo2graph/issues/278)-[#281](https://github.com/Srinivasan-78/repo2graph/issues/281) | Pending |
@@ -26,9 +26,9 @@ This document tracks all 60 issues identified in the comprehensive hardening, co
 
 | ID | GitHub Issue | Priority | Title & Summary | Source Locations | Tests Added | Migration Impact | PR Track | Status |
 |---|---|---|---|---|---|---|---|---|
-| 1 | [#260](https://github.com/Srinivasan-78/repo2graph/issues/260) | P1 | Make secret exclusion secure-by-default across all artifact flows | `parse.py`, `query.py`, `cli.py`, `chunks.py` | `test_secrets_hardening.py` | Secrets excluded by default; `--include-secrets` required to opt in | PR 2 | Verified Defect |
-| 2 | [#261](https://github.com/Srinivasan-78/repo2graph/issues/261) | P1 | Content-aware secret detection (AWS, tokens, keys, URLs) | `secrets.py`, `chunks.py` | `test_secrets_hardening.py` | None (redacts or skips obvious credentials) | PR 2 | Planned |
-| 3 | [#262](https://github.com/Srinivasan-78/repo2graph/issues/262) | P1 | Prevent sensitive content leaking into audit logs & events | `audit.py`, `events.py` | `test_audit_hardening.py` | None | PR 2 | Planned |
+| 1 | [#260](https://github.com/Srinivasan-78/repo2graph/issues/260) | P1 | Make secret exclusion secure-by-default across all artifact flows | `parse.py`, `query.py`, `cli.py`, `chunks.py` | `test_secrets_hardening.py` | Secrets excluded by default; `--include-secrets` required to opt in | PR 2 | **Done** |
+| 2 | [#261](https://github.com/Srinivasan-78/repo2graph/issues/261) | P1 | Content-aware secret detection (AWS, tokens, keys, URLs) | `secrets.py`, `chunks.py` | `test_secrets_hardening.py` | None (redacts or skips obvious credentials) | PR 2 | **Done** |
+| 3 | [#262](https://github.com/Srinivasan-78/repo2graph/issues/262) | P1 | Prevent sensitive content leaking into audit logs & events | `audit.py`, `events.py` | `test_secrets_hardening.py`, `test_audit.py` | None | PR 2 | **Done** |
 | 4 | [#263](https://github.com/Srinivasan-78/repo2graph/issues/263) | P1 | Explicit threat model and deployment security guide | `docs/security-model.md` | Doc review | Documentation only | PR 8 | Planned |
 | 5 | [#264](https://github.com/Srinivasan-78/repo2graph/issues/264) | P1 | Rate limiting and concurrency quotas for HTTP MCP | `http_server.py`, `rate_limit.py` | `test_http_rate_limit.py` | Callers throttled if exceeding quota | PR 7 | Planned |
 | 6 | [#265](https://github.com/Srinivasan-78/repo2graph/issues/265) | P1 | HTTP MCP auto-build disabled by default | `http_server.py`, `cli.py` | `test_http_autobuild.py` | HTTP requires `--allow-auto-build` | PR 7 | Verified Defect |

@@ -556,6 +556,7 @@ _SKIP_STAT_LABELS = (
     ("skipped_vendor", "vendor/build folders"),
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
+    ("skipped_secret", "secret / credential files"),
 )
 
 
@@ -802,10 +803,18 @@ def write_manifest(g, path: Path, written: list[str]):
         (n for n in g.nodes.values() if n.get("entrypoint")),
         key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
     )
+    cfg = getattr(g, "config", None)
+    if cfg and getattr(cfg, "include_secrets", False):
+        secret_filter_policy = "include-secrets"
+    else:
+        secret_filter_policy = (
+            getattr(cfg, "secret_policy", "redact-match") if cfg else "redact-match"
+        )
     manifest = {
         "format": "repo2graph/1",
         "repo": g.name,
         "written": written,
+        "secret_filter_policy": secret_filter_policy,
         "sections": {
             HUMAN_DIR: "for people: prose map and drawings",
             AGENT_DIR: "for programs: the graph, the chunks, this manifest",

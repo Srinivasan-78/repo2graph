@@ -8,6 +8,29 @@ from pathlib import Path
 
 from .export import path as artifact_path
 from .export import paths as artifact_paths
+from .secrets import (
+    SECRET_CONFIG_EXTS,
+    SECRET_DIR_NAMES,
+    SECRET_EXACT_NAMES,
+    SECRET_EXTS,
+    SECRET_KEYWORDS,
+    SECRET_WORD_RE,
+    _is_secret_path,
+)
+
+__all__ = [
+    "Index",
+    "SECRET_CONFIG_EXTS",
+    "SECRET_DIR_NAMES",
+    "SECRET_EXACT_NAMES",
+    "SECRET_EXTS",
+    "SECRET_KEYWORDS",
+    "SECRET_WORD_RE",
+    "_is_secret_path",
+    "format_pack",
+    "read_jsonl",
+    "tokenize",
+]
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
@@ -55,148 +78,6 @@ CHARS_PER_TOKEN = 4
 MAP_BUDGET_FRAC = 0.2  # at most this share of the budget goes to the map
 MAP_ENTRYPOINTS = 10  # entry points listed in the map prepend
 PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
-
-# Sensitive file detection for pack_context(exclude_secrets=True)
-SECRET_EXTS = frozenset(
-    {
-        ".pem",
-        ".key",
-        ".p12",
-        ".pfx",
-        ".pkcs12",
-        ".p8",
-        ".asc",
-        ".gpg",
-        ".der",
-        ".cer",
-        ".crt",
-        ".ovpn",
-        ".kdbx",
-        ".keystore",
-        ".jks",
-    }
-)
-SECRET_CONFIG_EXTS = frozenset(
-    {
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".xml",
-        ".ini",
-        ".env",
-        ".properties",
-        ".conf",
-        ".cfg",
-        ".txt",
-    }
-)
-SECRET_KEYWORDS = (
-    "secret",
-    "credential",
-    "token",
-    "service-account",
-    "service_account",
-    "password",
-    "id_rsa",
-    "id_ed25519",
-    "id_ecdsa",
-    "id_dsa",
-)
-SECRET_EXACT_NAMES = frozenset(
-    {
-        ".netrc",
-        ".npmrc",
-        ".dockercfg",
-        ".git-credentials",
-        ".pgpass",
-        ".htpasswd",
-        "id_rsa",
-        "id_dsa",
-        "id_ecdsa",
-        "id_ed25519",
-    }
-)
-SECRET_DIR_NAMES = frozenset(
-    {
-        ".ssh",
-        ".aws",
-        ".kube",
-        "secrets",
-        "credentials",
-    }
-)
-SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
-
-
-def _is_secret_path(
-    path: str,
-    extra_keywords: tuple[str, ...] | list[str] | set[str] | None = None,
-    extra_dirs: tuple[str, ...] | list[str] | set[str] | None = None,
-) -> bool:
-    """Return True if path points to a sensitive file (secrets, keys, credentials)."""
-    if not path:
-        return False
-    p = str(path).replace("\\", "/").lower()
-    parts = p.strip("/").split("/")
-    # Only single-segment extra_dirs go into dir_names; multi-segment dirs
-    # (e.g. "configs/secrets") are matched via prefix check below so we don't
-    # inadvertently treat "configs" itself as a secret directory.
-    single_segment_extra = (
-        {
-            d.replace("\\", "/").strip("/").lower()
-            for d in extra_dirs
-            if d and d.strip() and "/" not in d.replace("\\", "/").strip("/")
-        }
-        if extra_dirs
-        else set()
-    )
-    dir_names = (
-        SECRET_DIR_NAMES | single_segment_extra if single_segment_extra else SECRET_DIR_NAMES
-    )
-    if any(part in dir_names for part in parts[:-1]):
-        return True
-    # Multi-segment extra_dirs: match when any extra_dir is a prefix of the
-    # directory portion of the path (e.g. "configs/secrets" matches
-    # "configs/secrets/token.json").
-    if extra_dirs:
-        dir_path = "/".join(parts[:-1])
-        for d in extra_dirs:
-            if not d or not d.strip():
-                continue
-            norm_d = d.replace("\\", "/").strip("/").lower()
-            # Match exact prefix segment boundary: "a/b" matches "a/b" or "a/b/c"
-            # but not "a/bc".
-            if dir_path == norm_d or dir_path.startswith(norm_d + "/"):
-                return True
-    name = parts[-1]
-    if not name:
-        return False
-    if name in SECRET_EXACT_NAMES:
-        return True
-    if name.startswith(".env") or name.endswith(".env") or ".env." in name:
-        return True
-    if any(name.endswith(ext) for ext in SECRET_EXTS):
-        return True
-    # Filter out empty/whitespace keywords so an empty string doesn't match
-    # every file in the repository.
-    if extra_keywords:
-        valid_kws = [kw.lower() for kw in extra_keywords if kw and kw.strip()]
-        if any(kw in name for kw in valid_kws):
-            return True
-    name_words = None
-    for kw in SECRET_KEYWORDS:
-        if kw == "token":
-            if name_words is None:
-                name_words = SECRET_WORD_RE.findall(name)
-            if "token" not in name_words:
-                continue
-        elif kw not in name:
-            continue
-        stem = name.lstrip(".")
-        if "." not in stem or any(name.endswith(ext) for ext in SECRET_CONFIG_EXTS):
-            return True
-    return False
 
 
 def read_jsonl(path: Path) -> list:

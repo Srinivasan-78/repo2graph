@@ -247,6 +247,10 @@ class BuildConfig:
     include_vendor: bool = False
     chunk_large_files: bool = False
     max_nodes: int = 0
+    include_secrets: bool = False
+    secret_policy: str = "redact-match"
+    extra_secret_keywords: list[str] = field(default_factory=list)
+    extra_secret_dirs: list[str] = field(default_factory=list)
 
 
 def _git_files(root: Path):
@@ -432,6 +436,17 @@ def discover(
                 stats["skipped_too_large"] += 1
             continue
         rp = rel.as_posix()
+        if not config.include_secrets:
+            from .secrets import _is_secret_path
+
+            if _is_secret_path(
+                rp,
+                extra_keywords=config.extra_secret_keywords,
+                extra_dirs=config.extra_secret_dirs,
+            ):
+                if stats is not None:
+                    stats["skipped_secret"] += 1
+                continue
         if include_globs and not matches_any(rp, include_globs):
             continue
         if exclude_globs and matches_any(rp, exclude_globs):

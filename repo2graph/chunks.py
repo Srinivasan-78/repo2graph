@@ -1,6 +1,7 @@
 """Turn graph nodes into retrieval chunks: code text + graph context header."""
 
 from collections import Counter, defaultdict
+from typing import Any
 
 MAX_CHARS = 4000
 OVERLAP_LINES = 8
@@ -12,6 +13,42 @@ MAX_EXT_CALLS = 12
 MAX_BASES = 6
 MAX_IMPORTS = 20
 MAX_DEFINES = 40
+
+
+def _process_chunk_content(
+    text: str, nid: str, path: str, policy: str, g: Any
+) -> tuple[str | None, int]:
+    """Apply secret scanning and redaction policy to chunk text."""
+    if policy == "exclude-file":
+        from .secrets import scan_content_secrets
+
+        if scan_content_secrets(text):
+            if hasattr(g, "stats"):
+                g.stats["skipped_secret_chunks"] += 1
+            return None, 0
+        return text, 0
+    elif policy == "redact-match":
+        from .secrets import redact_content
+
+        redacted, r_count = redact_content(text, policy=policy)
+        if r_count > 0 and hasattr(g, "stats"):
+            g.stats["redacted_secret_chunks"] += r_count
+        return redacted, r_count
+    elif policy == "warn-only":
+        from .events import emit
+        from .secrets import scan_content_secrets
+
+        findings = scan_content_secrets(text)
+        if findings:
+            emit(
+                "secret_detected_in_chunk",
+                level="warning",
+                node_id=nid,
+                path=path,
+                findings=[f[0] for f in findings],
+            )
+        return text, 0
+    return text, 0
 
 
 def _lines(src: str) -> list[str]:
@@ -114,6 +151,10 @@ def iter_chunks(g, include_files: bool = True):
         out_edges[e["src"]].append(e)
         in_edges[e["dst"]].append(e)
 
+    policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
+    if getattr(getattr(g, "config", None), "include_secrets", False):
+        policy = "off"
+
     src_cache: dict[str, str] = {}
 
     def source_of(path: str) -> str:
@@ -188,6 +229,9 @@ def iter_chunks(g, include_files: bool = True):
         if n.get("docstring"):
             header.append("# doc: " + n["docstring"].replace("\n", " ")[:300])
         for i, part in enumerate(_split(body)):
+            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
+            if proc_part is None:
+                continue
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -206,7 +250,7 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": caller_edges,
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
-                "text": "\n".join(header) + "\n" + part,
+                "text": "\n".join(header) + "\n" + proc_part,
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
@@ -260,6 +304,9 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# defines: {', '.join(defines)}")
         # ISS-141: same id rule as symbols — chunk 0 is unsuffixed `nid`.
         for i, part in enumerate(_split(body)):
+            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
+            if proc_part is None:
+                continue
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -278,5 +325,5 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": [],
                 "callee_edges": [],
                 "base_edges": [],
-                "text": "\n".join(header) + "\n" + part,
+                "text": "\n".join(header) + "\n" + proc_part,
             }

@@ -42,6 +42,20 @@ makes keeping it current a release-blocking step rather than a good intention.
   guaranteeing zero drift between code and documentation across CLI subcommands,
   parser language configurations, GitHub Action inputs/outputs, and MCP registered
   tools (Issue #319).
+- Secure-by-default secret exclusion across all artifact flows (`build`, `github`,
+  auto-build `query`/`rag`, GitHub Action, and MCP). Sensitive files (`.env*`,
+  private keys, certificates, credentials, `.ssh`, `.aws`, `.gnupg`) are excluded
+  automatically. `--include-secrets` provides explicit opt-in (Issue #260).
+- Content-aware secret scanning and line-preserving redaction in chunking. Detects
+  AWS keys, GitHub tokens, Slack tokens, OpenAI keys, Google API keys, PEM private
+  keys, JWTs, and database credentials with configurable policy (`--secret-policy
+  redact-match|exclude-file|warn-only|off`) (Issue #261).
+- Structured logging and audit log sanitization. Centralized sanitization with
+  recursion depth ceiling (12), container size limits (128 items), cycle detection,
+  and credential scrubbing for basic-auth URLs and sensitive headers (Issue #262).
+- Dedicated secrets hardening test suite (`tests/test_secrets_hardening.py`) verifying
+  path filtering, content redaction, false-positive resistance, log sanitization, and
+  GitHub Action flag propagation.
 - prod-igy reports check-run results for the PR head — counts, plus the names
   of failing checks. Read from `checks.listForRef`, which needs the new
   `checks: read` scope; a re-run supersedes the earlier result for that name,

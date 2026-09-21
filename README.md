@@ -249,10 +249,10 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 
 ## 🔐 Security
 
-`build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one
-opt-in exception — it sends the assembled pack to an LLM provider and prints the provider +
-hostname before doing so. The MCP server excludes credential-shaped files unconditionally, with no
-flag to turn that off. Details: **[SECURITY.md](SECURITY.md)**.
+- **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, GitHub Action, and MCP exclude credential files (`.env*`, private keys, certificates, tokens, `.ssh`, `.aws`, `.gnupg`) automatically. Use `--include-secrets` only if you explicitly choose to index them.
+- **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs, and private keys. Inline matches undergo line-preserving redaction (`--secret-policy redact-match|exclude-file|warn-only|off`).
+- **Sanitized logs and events**: Audit logs and structured event sinks enforce cycle detection, container size limits, recursion depth ceilings, and scrub URL basic-auth credentials.
+- **Local by default**: `build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one opt-in exception — it sends the assembled pack to an LLM provider and prints the provider + hostname before doing so. Details: **[SECURITY.md](SECURITY.md)**.
 
 ## 🤝 Contributing & community
 

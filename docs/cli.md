@@ -42,6 +42,10 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
+| `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
+| `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
+| `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
+| `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
 
 **Examples:**
 ```bash
