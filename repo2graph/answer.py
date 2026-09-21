@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​‌​​‌‌‌​‌‌‌​​‌‌‌​​‌​‌​​​​​‌​‌​‌​‌‌​​​‌‌​‌​​​‌​​​‌​​​‌‌​​​‌​​‌‌​​‌‌​​‌‌​​‌​‌​​‌‌​‌‌​​​‌‌​‌​‌​‌​‌​​​‌​‌​​‌​‌​​​‌​‌‌​‌​‌‌​‌​‌​​‌​‌​‌​​​​‌‌​​​​​‌‌‌​‌‌​​‌‌‌‌​​​​‌​​​‌‌​​‌​‌‌​​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.Rw9AV4Dbfe65QJ-jT0vxFX
 """Stream a grounded, citation-carrying answer from a packed context.
 
 Optional by design: nothing here is imported unless `repo2graph rag --answer`

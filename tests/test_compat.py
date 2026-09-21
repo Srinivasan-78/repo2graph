@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​​‌‌‌​‌‌​‌‌​​​‌​​​​‌​​‌‌‌​​‌‌​‌​​‌​‌​​‌​‌‌​‌​​‌‌​‌​​‌​​‌‌​‌​​​​‌‌‌​​‌​‌‌​​‌‌‌​​‌‌​‌‌‌​‌​‌​​‌​​‌​​‌​​‌​‌‌‌​​‌‌​‌‌​‌​‌‌​‌​​​‌​​​​‌‌​​‌‌​​‌‌​‌‌‌​‌‌​‌‌‌​​‌​‌​​‌‌​‌‌​​‌​​​‌‌‌​‌‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.glBsJZi49g7RIskD37nSdv
 """The backward-compatibility contract: AC-1 .. AC-9, plus AC-34 / AC-35.
 
 These are characterization tests. The golden files under `tests/golden/` were

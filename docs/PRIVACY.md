@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌​‌​‌​​‌‌‌​​‌​​‌​​‌​​‌‌​​​​​‌‌‌‌​‌​​​‌‌​‌​​​​‌‌‌​​​​‌‌‌​​‌‌​‌​​​‌​‌​‌​​​‌‌​​‌​​‌​‌​​‌​​​​​‌​​‌‌​‌​​​‌‌‌​​‌‌​‌​​​‌‌​​​‌​‌‌​‌​​‌‌​​‌‌​‌‌​‌​‌‌​‌‌‌​‌​‌​‌​​​​‌‌​‌​‌‌​‌​​‌​‌​‌​‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.5NI0z48sEFJA4sF-3kuCZU
+-->
 # Privacy
 
 What leaves your machine, what's cached, and what's logged — verified against the code, not

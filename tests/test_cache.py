@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌‌​​‌​‌​​​​‌‌​‌‌​​​​‌​‌‌‌‌​​​​‌​​‌‌​​​‌​​​‌‌​​‌​‌​​‌​​‌​​​‌‌​​‌‌​​‌‌‌​‌​​​‌​‌​‌‌‌​​​‌​​‌‌‌​​‌​‌​​‌​​​​‌‌​‌​​​​‌​​‌‌‌​​‌‌‌​​​​​‌‌‌​‌​​​‌​​​‌​‌​‌​‌​‌‌​​‌​‌‌​‌​​‌‌‌​‌‌‌​‌‌‌​​​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.9CaxLFRFgEq9HhNptEVZwp
 """The result cache, and the ways a cache in front of a code index goes wrong.
 
 A cache that only ever gets faster is easy. The tests that matter are the ones

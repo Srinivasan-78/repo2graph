@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​‌​‌​‌‌​​‌‌‌​‌‌‌​​‌​​‌​‌​‌‌‌​‌​​‌​​​​‌‌​‌‌‌‌​‌​‌​​‌​​‌​​​​‌‌​‌‌​‌​​​​‌​​‌​​‌​‌​​​‌‌​​‌​​​‌​​​‌‌​​​​‌​​‌‌‌​​​​‌​​‌​‌​​‌​​​​‌‌​​‌‌​‌​​​‌‌‌‌​‌​​‌‌​​‌‌‌​​‌‌​​‌‌​​‌‌​​​​​‌​‌​​​‌⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.ugrWHoRChIFDa8JC4zg30Q
 """Tests for .github/scripts/summary.py -- the GitHub Actions job-summary
 renderer that replaced `head -40 .r2g/human/overview.md >> $GITHUB_STEP_SUMMARY`.
 

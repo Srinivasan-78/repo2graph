@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​‌‌​‌​​‌‌​‌​‌‌​‌​​‌​‌​‌​​​​​‌‌‌​‌‌​​‌‌​‌‌‌‌​‌​​​​‌​​‌​​‌​​‌​​‌‌​​‌‌​​‌‌​‌​​​‌‌‌​‌​​​​‌‌​​​​​‌‌​​​‌‌​​‌‌​​‌‌​‌‌​​​‌​​​‌‌​​‌‌​​‌‌​​‌‌​‌​‌​‌​​​‌​‌‌​​​​‌‌​‌​​‌​‌​‌‌‌‌‌​‌​​​‌‌​⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.sMiPvoBI34t0c3b33TXi_F
+-->
 # How repo2graph compares
 
 Building a graph out of a codebase is not a new idea, and repo2graph is not the only tool doing it

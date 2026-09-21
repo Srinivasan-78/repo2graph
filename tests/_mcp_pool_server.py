@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​‌‌‌​‌​​​‌​‌​‌‌‌​‌​‌​‌​​‌​​‌​​‌‌​​‌‌​‌​‌‌‌‌‌​‌‌‌​​‌‌​‌‌​​‌​‌​‌​​‌‌​​​‌​​‌‌‌‌​‌‌​‌​‌‌​‌‌​‌​​​​‌​‌​‌‌​​‌‌​‌​​‌​‌​​‌​​‌​‌‌‌​‌‌‌​‌​​​​‌​​‌​‌​​​​​‌‌‌​‌‌‌​‌‌‌​‌​‌​‌​​​‌‌‌​‌‌​‌‌​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.7EuI3_seLOkhViIwBPwuGl
 """Launcher for the #90 end-to-end test. Not a test module.
 
 Runs the real `repo2graph.mcp.main()` -- real stdio transport, real auto-build

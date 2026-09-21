@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​​‌‌​​‌​​‌‌​​​​‌​‌‌‌​‌‌‌​‌​‌​‌​‌​​‌‌​​‌​​‌​‌​‌​‌​‌​​‌​​‌​‌​‌‌​​‌​‌‌‌​‌‌​​‌​‌​​​‌​​‌​‌‌​‌​‌‌‌​‌‌​​‌​​​​‌‌​‌‌‌​​‌‌​‌​‌​‌‌​​​‌‌​‌​​​‌​​​‌‌‌​‌​‌​‌​​​‌​​‌​‌​​‌‌‌‌​‌​​‌​‌​​​​​‌‌​‌​‌‌⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.2awU2UIYvQ-vCsV4GTJzPk
 name: Feature request
 description: Propose a new capability, CLI flag, MCP tool, or language.
 labels: ["enhancement"]

@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌‌‌‌​‌​‌​​​​​​‌‌​‌​​​‌​​‌‌​‌​​‌‌‌​​‌​‌​‌‌​​​​‌​‌​​​‌​‌‌​‌‌​‌​‌​​‌‌​​​‌‌‌‌​​‌​‌​‌‌​​‌​‌‌​​​‌​​‌​​‌‌​‌​‌‌‌​​​​​‌​‌​‌​‌​‌​‌​​​​​‌​‌​‌‌​​‌‌‌​​​​​‌‌‌‌​​‌​​‌‌​​​​​​‌‌​​‌‌​‌​‌​​​‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1._P4M9XQmLyYbMpUPVpy03Q
+-->
 # Build State
 
 Status: DONE
@@ -1061,7 +1068,6 @@ run, and must not be. What was done instead:
 
 ```
 $ head -1 repo2graph/embed.py repo2graph/mcp.py
-# @authormark v1 -- do not remove (authorship watermark)   (both, + 4 header lines each)
 ```
 
 ### Iteration 3 — loop-back from REVIEW iteration 2

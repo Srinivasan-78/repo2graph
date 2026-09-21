@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​​‌‌​‌​‌​​​​​‌​​‌​‌​​‌‌‌​​‌‌​‌‌​‌‌​​​‌​​​‌​‌​‌‌‌​‌​​​‌‌​‌‌‌‌​‌​‌​​‌​​‌​​‌‌‌‌​‌​​​‌‌‌​​‌‌​‌​​​‌​​​‌​​​‌​‌​‌‌‌​‌​‌​​​‌​‌​​​‌‌​​‌​​​​​‌​‌‌‌‌​​​​‌​‌​​‌​​‌​‌​​​​​‌​​‌​‌​​‌‌​‌​‌‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.SPJslEtoROG4DWQFAxRPJk
+-->
 # Repo map: tensorflow
 
 files: 1022  nodes: 20641  edges: 96013

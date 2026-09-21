@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​‌​‌​‌​​‌​‌​​‌​‌​​‌​​‌‌‌​​‌​​‌‌​​​‌‌​‌​​​​​‌​‌‌‌​​​‌​​‌​‌‌​‌​‌‌‌‌​​​​‌‌‌​‌‌​​​‌‌​‌​‌​‌‌‌​​‌​​​‌‌‌​​‌​​‌‌​​​​​‌‌​​‌‌​​‌‌‌​​‌‌​‌‌​‌​‌‌​‌​​‌‌‌‌​‌‌‌‌​​​​‌​​‌‌​‌​‌​​‌​​​​‌​‌​‌​‌⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.EJRrcAq-xv5r90fskOxMHU
 name: Dependency audit
 
 # Fails a PR when a known high-severity CVE is reachable from the dependency

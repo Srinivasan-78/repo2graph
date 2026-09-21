@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌​‌‌‌​‌​​​‌‌​​​‌‌‌​​​​‌​‌​​​​​‌‌‌​‌​​​​‌‌‌​​‌​‌​‌‌​‌​​‌​​‌​​​​‌‌​​‌‌​​​‌‌​‌​​​‌​​​‌‌‌​‌​‌​‌​‌​‌‌​​​‌‌​‌​​​​‌​​‌‌‌​​​​​​‌​‌‌​‌​‌​​‌​‌​​‌​​‌​‌‌​‌​​‌​​​​‌​‌​​​​​‌​‌‌‌‌‌​‌‌‌​‌​‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.WF8Pt9ZHf4GUcBp-JKHP_u
+-->
 # GitHub Action
 
 repo2graph is published on the GitHub Marketplace, so it is one step in any

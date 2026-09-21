@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌‌​​‌​‌‌‌‌​‌​​‌‌‌​​​‌​​‌‌​‌​​​‌‌‌​​​​​‌​‌​​‌​​​‌‌​‌​​​‌​‌​​‌‌​‌​‌‌‌‌‌​‌​​‌‌‌‌​‌‌​‌‌​‌​​‌‌‌​​​​‌‌‌‌​​‌​‌​​‌​‌​​‌‌​‌‌​​​‌‌‌‌​‌​​‌​​‌‌‌​​​‌‌​​​​​‌​​‌‌​‌​​‌‌‌​​‌​‌‌​‌‌​​​‌​​‌‌‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.yzq4pR4S_Om8yJlzN0M9lN
 """`human/CHANGELOG.md`: a per-push structural diff of the graph.
 
 Written once per `repo2graph build`, comparing the graph just built against

@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌‌​‌​​‌‌​‌​‌​‌‌‌​​​‌​‌​​‌‌​‌​‌​​‌‌​​​​‌‌​​‌​​‌‌​‌​​​​‌‌‌​​‌‌​‌​​‌​​‌​‌‌‌​‌‌​​‌​‌​​‌‌​‌‌‌​​​‌​‌‌‌​‌‌​​​‌‌​​​​​‌​‌​​​​​​‌‌​‌​‌​‌​‌​‌‌​​‌‌​​‌‌​​‌​‌‌​​‌​‌‌​​​​‌​‌​‌​​‌‌​‌​​​‌​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.m5qML2hsIvSqv0P5VfYaSD
 """An HTTP transport for the MCP server, so authentication can be real.
 
 stdio cannot carry credentials -- see `repo2graph.auth` for why -- so bearer and

@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​​​‌​​‌‌‌​‌​​​​‌‌​​​​​‌‌​​​​‌​‌​​​​‌​​​‌‌​​‌‌​‌‌​‌​‌​​‌​​​‌​​​‌​​​​‌​​‌​‌‌​​‌​‌​‌​‌‌​​‌​‌​‌​​​‌​‌​​​​​​‌‌​​​​​‌‌​‌​‌‌​‌‌​‌‌‌​​‌‌‌​​​​​‌‌​​​‌​​‌​​‌‌‌‌​‌‌‌​‌‌‌​‌​‌​​​‌​‌‌​‌​‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.bt0aB3jDBYVTP0knpbOwQj
 """The two places `graph.py` reads something too big to hold.
 
 Both had the same shape of bug: a bound that was written down but not enforced

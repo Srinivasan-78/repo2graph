@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌‌‌‌​‌‌‌​‌​‌​‌‌‌‌​​‌​‌​‌​‌‌‌​‌​‌​‌‌‌​‌​‌​‌​‌​‌​​​​‌‌​‌​‌​‌‌​​​‌‌‌​​​​‌‌‌​‌‌‌​‌​‌​‌​​​‌‌‌​​​‌​​‌‌​​​​​‌​‌​‌​​​‌‌‌‌​​​​‌​​​‌​​​​‌‌​​‌‌​‌​‌​‌​​​‌‌‌​‌​‌​‌‌‌‌​​‌​‌​‌‌​​‌​‌​‌​​‌‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.OuyWWUCV8wTq0TxD3TuyYS
+-->
 # Security
 
 This is the canonical security policy for repo2graph — what the tool does and doesn't send over

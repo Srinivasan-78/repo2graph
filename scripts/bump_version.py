@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌‌​​‌​‌​​​​​‌​‌‌‌‌​​​​‌‌‌​​‌​​‌​​‌​‌​​‌​‌‌​​​​‌‌​‌‌​‌​‌​‌​‌​​​‌​‌‌​​‌​‌‌‌‌​‌​​‌​​‌​‌​​‌​‌​​​‌​‌​​‌‌​​​‌‌‌​‌​​​‌​‌‌‌‌‌​‌​​​​​‌​‌‌​‌‌‌​​‌​‌​​​​​‌‌‌​​​​​‌​‌​‌​‌​‌‌‌​‌‌​​​‌‌​​​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.yAxrJXmTYzJQLt_AnPpUv0
 """Bump version across pyproject.toml, server.json, repo2graph/__init__.py, and CHANGELOG.md.
 
 Can automatically scan git commits and CHANGELOG.md since the latest release tag

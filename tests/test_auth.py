@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​​‌​​​​‌‌​‌​‌‌​‌​​​​‌‌​‌​‌‌‌‌‌​‌‌‌‌​‌​​‌​​​​‌​​‌‌‌​​​​​‌​‌​​​‌​‌‌​​‌‌‌​‌‌​‌‌​​​‌‌‌​‌​‌​‌​​​‌​​​‌‌​‌​‌​​‌‌​‌‌‌​​‌‌‌​‌‌​​‌​​‌‌‌​​‌‌​​‌​​​​‌‌​​​​​‌​‌​‌​​​‌​‌​‌‌​​‌‌‌‌​‌​​‌​‌‌​‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.HkC_zBpQgluDjnvNd0TVzZ
 """Bearer and OIDC authentication, including the forgeries it must refuse.
 
 Signing happens here in pure Python for the same reason verification does in

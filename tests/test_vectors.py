@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌​​‌‌​‌​​​​‌​​‌‌​​‌​‌​‌​​​​‌​​‌​​‌‌​​​‌‌​‌​‌‌​​‌‌‌​​‌​‌​​​‌​​​‌​​​‌‌​​‌​‌​‌​‌​‌‌​​‌​​​‌​‌‌‌‌‌​‌‌​​​‌​​‌‌​‌​​‌​‌​​​​‌‌​‌‌‌‌​‌​​‌‌​‌‌​‌​‌‌‌​​‌‌​‌​​‌‌‌​​​‌‌​‌‌​​‌​​‌‌​‌​‌​​‌‌‌‌⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.sBeBLk9DFUd_biCzmsN6MO
 """Change 1 -- make vectors real. AC-10 .. AC-21, plus AC-36 .. AC-38.
 
 Nothing here imports sentence-transformers, and nothing here needs numpy: every

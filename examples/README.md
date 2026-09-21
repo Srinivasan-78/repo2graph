@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​​‌​​​​‌‌​​‌​​‌​‌‌​​​​‌‌‌​‌‌‌​‌​‌​​​‌​‌‌​‌‌​​​‌‌​‌​​‌​​‌‌​‌‌​​‌​‌​​‌​​​‌‌‌​​‌​​‌‌​‌‌​​​‌‌​‌​‌​‌‌​‌‌‌‌​​‌‌‌​​‌​‌​‌​​​​​‌‌​​​‌‌​​‌‌‌​​​​‌​​‌​‌​​‌‌‌​‌​‌​‌‌‌​‌​‌​‌‌​​‌‌​​‌​​‌​‌​⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.d2XwQli6R965o9Pc8JuufJ
+-->
 # Real-world repository examples
 
 Five public repositories, each analyzed by `repo2graph` at a pinned commit, with the generated

@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌​‌‌​​​​‌​‌​​‌​​‌‌‌​‌‌‌​‌​​‌​‌‌​‌‌​‌‌‌‌​‌‌‌​‌​‌​​‌‌​​​‌​‌​‌​‌​‌​‌‌​​‌​​​‌​‌​‌​​​‌​‌​​​​​‌​‌​​​‌​‌​​‌​​​​‌​​​​‌‌​‌‌​​​‌​​‌‌​‌​‌​​‌​​​‌​‌​‌​‌​​​​​‌‌‌​‌‌‌​​‌‌​‌‌‌​‌​​‌‌‌​​‌‌​‌‌​​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.XRwKou1UdTPQHCbjEPw7Nl
 """#241: the provider response must be read under a byte ceiling, on both axes.
 
 `stream_answer` used to iterate the response directly (`for raw in resp`) and

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌‌‌​‌​​​‌​‌‌​‌​‌‌​‌‌​​​‌‌​​​‌‌​‌​‌‌​‌​​‌​​​‌‌‌​‌‌‌‌​‌​​‌‌‌​​‌‌​‌​​​‌​​​‌‌‌‌​​​​‌​​‌​​​​​‌‌​​​​​​‌‌​‌‌​​‌‌​​‌​‌​‌‌‌​‌​‌​‌​​‌​​‌​‌‌‌​‌‌‌​‌​​​‌​​​‌‌‌​‌‌​​‌​​‌​​​​‌‌‌​​​​​‌‌‌‌​‌​⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.z-lcZGzsDxH06euIwDvHpz
 """Drive a real stdio MCP session against the installed console script.
 
 This is the check that would have caught the Glama build failure. Glama's build

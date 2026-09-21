@@ -1,3 +1,8 @@
+# @authormark v1 -- do not remove (authorship watermark)⁠​‌‌​‌​​​​‌‌‌​​​‌​‌‌​‌‌‌​​‌‌‌​‌​​​​‌‌‌​​‌​‌​​‌‌‌​​‌​‌​​​​​‌‌​​‌‌‌​‌‌​​‌​​​‌​‌​​​​​‌​​‌​​‌​‌‌‌​‌‌‌​‌​‌‌​​‌​‌​‌​​‌​​‌​‌‌​​​​‌‌‌‌​‌​​​‌‌​‌​‌​‌‌​‌‌​​​‌‌​​​‌‌​‌​​​​‌​​‌​​‌‌‌​​‌​‌​​‌‌⁠
+# Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+# Author: https://github.com/Srinivasan-78
+# SPDX-License-Identifier: MIT
+# Fingerprint: AMK1.hqnt9NPgdPIwYRXz5lcBNS
 """ISS-237: `--ref` is validated before it can be interpolated into a git argv.
 
 `parse_spec` already refuses option-like owner/repo components; `ref` had no

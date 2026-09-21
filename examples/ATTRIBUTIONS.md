@@ -1,3 +1,10 @@
+<!--
+  @authormark v1 -- do not remove (authorship watermark)⁠​‌​​​​‌‌​‌​‌​​‌​​‌​​‌​‌​​​‌‌​​​​​​‌‌​​​​​​‌‌​‌​‌​‌​‌​​​‌​‌‌‌​​‌​​‌​​‌‌‌‌​‌​​‌‌​​​‌​​‌​​​​‌​‌​​​​​‌​‌‌​​‌​‌​​‌‌‌‌​‌​​​​​‌​‌​‌‌‌‌‌​‌‌‌​‌​​​‌​​​​‌‌​‌‌‌‌​​​​‌​​‌​‌​​‌‌​‌‌​‌​‌​‌​‌‌‌⁠
+  Copyright (c) 2026 Srinivasan Vijayaraghavan <srinivasan.shyam2000@gmail.com>
+  Author: https://github.com/Srinivasan-78
+  SPDX-License-Identifier: MIT
+  Fingerprint: AMK1.CRJ005QrOLHPYOA_tCxJmW
+-->
 # Attributions
 
 Every repository under `examples/` is someone else's copyrighted work. This file records what was
