@@ -9,6 +9,8 @@ from repo2graph.doctor import (
     DoctorReport,
     check_artifact_integrity,
     check_git,
+    check_mcp_sdk,
+    check_package,
     check_permissions,
     check_platform_encoding,
     check_provider_env,
@@ -71,6 +73,29 @@ def test_doctor_permissions_failure(tmp_path):
         assert "Cannot create directory" in res.summary
 
 
+def test_doctor_permissions_cleans_up_whole_created_chain(tmp_path):
+    """A probe against a nested, not-yet-created path must leave no trace.
+
+    mkdir(parents=True) creates every missing ancestor; the probe must
+    remove every one of them, not just the leaf it wrote the test file
+    into.
+    """
+    target = tmp_path / "a" / "b" / "c"
+    res = check_permissions(target)
+    assert res.status == "ok"
+    assert not (tmp_path / "a").exists()
+
+
+def test_doctor_permissions_does_not_remove_preexisting_ancestors(tmp_path):
+    """Only directories the probe itself created are removed."""
+    (tmp_path / "a").mkdir()
+    target = tmp_path / "a" / "b" / "c"
+    res = check_permissions(target)
+    assert res.status == "ok"
+    assert (tmp_path / "a").exists()
+    assert not (tmp_path / "a" / "b").exists()
+
+
 def test_doctor_artifact_integrity_clean(tmp_path):
     """Test artifact integrity on a validly built mini-index."""
     src = tmp_path / "src"
@@ -115,6 +140,44 @@ def test_doctor_artifact_integrity_corrupt_chunks(tmp_path):
     assert any("chunks.jsonl" in d for d in res.details)
 
 
+def test_doctor_artifact_integrity_ignores_unrelated_agent_dir(tmp_path):
+    """A top-level agent/ dir that isn't ours must not be treated as a
+    broken repo2graph index.
+
+    "agent/" and "chunks.jsonl" are generic names used by unrelated
+    projects (agent frameworks, ML repos with their own chunk files). Only
+    a directory carrying repo2graph's own manifest.json -- or a ".r2g"
+    subdirectory, which nothing else names -- counts as ours.
+    """
+    (tmp_path / "agent").mkdir()
+    (tmp_path / "agent" / "notes.txt").write_text("unrelated", encoding="utf-8")
+    (tmp_path / "main.py").write_text("x = 1\n", encoding="utf-8")
+
+    res = check_artifact_integrity(tmp_path)
+    assert res.status == "ok"
+    assert "No existing index" in res.summary
+
+    report = run_doctor(tmp_path)
+    assert report.ok is True
+
+
+def test_doctor_artifact_integrity_still_catches_corrupt_dot_r2g(tmp_path):
+    """A corrupt manifest.json *inside* a `.r2g` dir must still FAIL.
+
+    `.r2g` is repo2graph's own default -o name and nothing else uses it, so
+    it's still strong enough evidence to report corruption on, even without
+    a manifest that parses.
+    """
+    agent_dir = tmp_path / ".r2g" / "agent"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "chunks.jsonl").write_text('{"id": "c1", "text": "foo"}\n', encoding="utf-8")
+    # No manifest.json at all this time -- still corroborated by .r2g/agent/.
+
+    res = check_artifact_integrity(tmp_path)
+    assert res.status == "fail"
+    assert any("Missing agent/manifest.json" in d for d in res.details)
+
+
 def test_doctor_vector_checks(tmp_path):
     """Verify vector presence, missing companions, and desync checks."""
     agent_dir = tmp_path / ".r2g" / "agent"
@@ -142,7 +205,13 @@ def test_doctor_vector_checks(tmp_path):
 
 
 def test_doctor_provider_env_never_leaks_secrets(monkeypatch):
-    """Verify provider environment probe never prints secret values."""
+    """Verify provider environment probe never prints secret values.
+
+    Regression guard: the original masking (`val[:3]}...{val[-2:]}`, plus a
+    `length:` field) leaked the key's tail characters and exact length --
+    neither is caught by only checking the *middle* of the fixture key is
+    absent, so this asserts on the tail and on "length:" directly.
+    """
     secret_value = "AIzaSySuperSecretKey1234567890abcdef"
     monkeypatch.setenv("GEMINI_API_KEY", secret_value)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-AnotherSecretTokenVal999")
@@ -150,6 +219,15 @@ def test_doctor_provider_env_never_leaks_secrets(monkeypatch):
     res = check_provider_env()
     assert res.status == "ok"
     assert "2 provider(s) configured" in res.summary
+
+    # Check the probe's own (path-free) details for the tail-character and
+    # length leak directly -- the full rendered report below also contains
+    # filesystem paths that can coincidentally contain a 2-char tail like
+    # "ef", which would make that assertion meaningless against a random
+    # tmp_path.
+    detail_text = "\n".join(res.details)
+    assert secret_value[-2:] not in detail_text
+    assert "length:" not in detail_text
 
     report = run_doctor()
     rendered = report.format_text()
@@ -161,6 +239,44 @@ def test_doctor_provider_env_never_leaks_secrets(monkeypatch):
     # But configuration status is reported
     assert "GEMINI_API_KEY" in rendered
     assert "Configured" in rendered
+
+
+def test_doctor_mcp_sdk_reports_fail_when_unusable(monkeypatch):
+    """A successful `import mcp` alone is not evidence the SDK is usable --
+    the check must actually probe `mcp.server.Server`, the thing serve()
+    (mcp.py) needs, and FAIL when that's unavailable rather than reporting
+    OK on the bare import.
+    """
+    import repo2graph.mcp as r2g_mcp
+
+    def _boom():
+        raise SystemExit("the installed mcp SDK is not supported by repo2graph-mcp")
+
+    monkeypatch.setattr(r2g_mcp, "_require_sdk", _boom)
+
+    res = check_mcp_sdk()
+    assert res.status == "fail"
+    assert "not usable" in res.summary
+    assert res.remediation is not None
+
+
+def test_doctor_mcp_sdk_ok_when_usable():
+    """When mcp is absent this is a no-op OK; when installed in this dev
+    env it must actually be usable by repo2graph-mcp (pyproject.toml pins
+    `mcp` extra to a range serve() is written against)."""
+    res = check_mcp_sdk()
+    assert res.status == "ok"
+
+
+def test_doctor_package_version_mismatch_warns(monkeypatch):
+    """A module version that disagrees with the installed dist-info is
+    worth a WARN, not a silent OK -- it usually means a shadowed editable
+    install or a stale dist-info from a partial upgrade."""
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "999.999.999")
+    res = check_package()
+    assert res.status == "warn"
+    assert "!=" in res.summary
+    assert res.remediation is not None
 
 
 def test_doctor_platform_encoding():

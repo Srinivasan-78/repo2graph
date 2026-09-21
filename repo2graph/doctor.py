@@ -121,6 +121,17 @@ def check_package() -> CheckResult:
     details = [f"Module version: {code_ver}"]
     if dist_ver and dist_ver != code_ver:
         details.append(f"Installed dist-info: {dist_ver}")
+        # Usually an editable install shadowed by a second copy on
+        # sys.path, or a stale dist-info left by a partial upgrade -- either
+        # way, `import repo2graph` and `pip show repo2graph` disagree about
+        # what's running, which is worth a warning rather than a silent OK.
+        return CheckResult(
+            name="Package Version",
+            status="warn",
+            summary=f"repo2graph module v{code_ver} != installed dist-info v{dist_ver}",
+            details=details,
+            remediation="Reinstall to resync: pip install --force-reinstall -e .",
+        )
 
     return CheckResult(
         name="Package Version",
@@ -272,10 +283,24 @@ def check_git(repo_dir: Path) -> CheckResult:
 
 def check_permissions(target_path: Path) -> CheckResult:
     probe_dir = target_path if target_path.is_dir() else target_path.parent
-    if not probe_dir.exists():
+
+    # Walk up to the closest ancestor that already exists, so the cleanup
+    # below can rmdir() the *whole* chain mkdir(parents=True) creates -- not
+    # just the leaf. A doctor run against a nested, not-yet-created path
+    # (e.g. `repo2graph doctor a/b/c`) used to leave `a/` and `a/b/` behind
+    # forever; this is a diagnostic probe, it should leave no trace.
+    created_top: Path | None = None
+    ancestor = probe_dir
+    while not ancestor.exists():
+        created_top = ancestor
+        parent = ancestor.parent
+        if parent == ancestor:
+            break
+        ancestor = parent
+
+    if created_top is not None:
         try:
             probe_dir.mkdir(parents=True, exist_ok=True)
-            created = True
         except OSError as exc:
             return CheckResult(
                 name="Directory Permissions",
@@ -284,24 +309,32 @@ def check_permissions(target_path: Path) -> CheckResult:
                 details=[str(exc)],
                 remediation=f"Ensure write permissions to {probe_dir.parent}.",
             )
-    else:
-        created = False
+
+    def _cleanup_created_chain() -> None:
+        if created_top is None:
+            return
+        d = probe_dir
+        while True:
+            try:
+                d.rmdir()
+            except OSError:
+                return
+            if d == created_top:
+                return
+            d = d.parent
 
     test_file = probe_dir / f".r2g_doctor_probe_{os.getpid()}.tmp"
     try:
         test_file.write_text("ok", encoding="utf-8")
         test_file.unlink()
-        if created:
-            try:
-                probe_dir.rmdir()
-            except OSError:
-                pass
+        _cleanup_created_chain()
         return CheckResult(
             name="Directory Permissions",
             status="ok",
             summary=f"Write permissions verified for {probe_dir}",
         )
     except OSError as exc:
+        _cleanup_created_chain()
         return CheckResult(
             name="Directory Permissions",
             status="fail",
@@ -311,18 +344,57 @@ def check_permissions(target_path: Path) -> CheckResult:
         )
 
 
+def _is_repo2graph_manifest(manifest_file: Path) -> bool:
+    """True only if `manifest_file` parses as a repo2graph manifest.json.
+
+    A bare `agent/` directory or a `chunks.jsonl` are not proof of a
+    repo2graph index -- both names collide with unrelated projects (agent
+    frameworks, ML repos with their own chunk files). The manifest's
+    "format" key, written by export.write_manifest as "repo2graph/1", is
+    the only reliable signal. A missing or unparseable manifest means "not
+    our index", not "corrupt index" -- check_artifact_integrity only
+    reports corruption once this function has confirmed the directory is
+    actually ours.
+    """
+    try:
+        with open(manifest_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return isinstance(data, dict) and str(data.get("format", "")).startswith("repo2graph/")
+
+
 def _find_index_dir(path: Path) -> Path | None:
-    """Locate an existing .r2g or index directory if present."""
-    if (
-        (path / "agent").is_dir()
-        or (path / "manifest.json").exists()
-        or (path / "chunks.jsonl").exists()
-    ):
+    """Locate an existing repo2graph index directory if present.
+
+    ".r2g" is repo2graph's own default -o name (cli.py) and collides with
+    nothing else, so a bare agent/ or chunks.jsonl found there is already
+    corroborating evidence -- including a corrupt manifest.json, which
+    check_artifact_integrity should go on to report as broken. Anywhere
+    else, "agent/" and "chunks.jsonl" are generic names that unrelated
+    projects (agent frameworks, ML repos) use too, so only a manifest.json
+    that actually parses as ours counts as proof.
+    """
+    # `path` may itself be the ".r2g" dir (the default -o target, or a
+    # caller who already resolved it) or its parent -- treat either as the
+    # strong-signal case.
+    dot_r2g = path if path.name == ".r2g" else path / ".r2g"
+    if dot_r2g.is_dir():
+        agent_dir = dot_r2g / "agent" if (dot_r2g / "agent").is_dir() else dot_r2g
+        if (
+            (dot_r2g / "agent").is_dir()
+            or (agent_dir / "manifest.json").exists()
+            or (agent_dir / "chunks.jsonl").exists()
+        ):
+            return dot_r2g
+
+    # Note: if `path` itself is an agent/ dir with its own manifest.json,
+    # this already matches it -- agent_dir falls back to `path` when there's
+    # no nested agent/ subdir -- so there's no separate `path.name ==
+    # "agent"` case to add.
+    agent_dir = path / "agent" if (path / "agent").is_dir() else path
+    if _is_repo2graph_manifest(agent_dir / "manifest.json"):
         return path
-    if (path / ".r2g" / "agent").is_dir() or (path / ".r2g" / "manifest.json").exists():
-        return path / ".r2g"
-    if path.name == "agent" and path.is_dir():
-        return path.parent
     return None
 
 
@@ -489,15 +561,6 @@ def check_mcp_sdk() -> CheckResult:
     details: list[str] = []
     try:
         import mcp
-
-        mcp_ver = getattr(mcp, "__version__", None) or importlib.metadata.version("mcp")
-        details.append(f"Installed mcp version: {mcp_ver}")
-        return CheckResult(
-            name="MCP SDK Compatibility",
-            status="ok",
-            summary=f"MCP SDK v{mcp_ver} installed",
-            details=details,
-        )
     except ImportError:
         return CheckResult(
             name="MCP SDK Compatibility",
@@ -505,6 +568,51 @@ def check_mcp_sdk() -> CheckResult:
             summary="MCP SDK not installed (CLI and RAG functional)",
             details=["Install with `pip install repo2graph[mcp]` if MCP server is needed."],
         )
+    except Exception as exc:
+        return CheckResult(
+            name="MCP SDK Compatibility",
+            status="warn",
+            summary="mcp package is present but failed to import",
+            details=[str(exc)],
+            remediation='Reinstall the SDK: pip install "repo2graph[mcp]"',
+        )
+
+    try:
+        mcp_ver = getattr(mcp, "__version__", None) or importlib.metadata.version("mcp")
+    except Exception:
+        mcp_ver = "unknown"
+    details.append(f"Installed mcp version: {mcp_ver}")
+
+    # A successful `import mcp` is not evidence the SDK is usable: serve()
+    # (mcp.py) needs `mcp.server.Server` specifically, and that import is
+    # what actually gates whether repo2graph-mcp can start. Probe the same
+    # thing rather than just echoing the version string.
+    try:
+        from .mcp import _require_sdk
+
+        _require_sdk()
+    except SystemExit as exc:
+        return CheckResult(
+            name="MCP SDK Compatibility",
+            status="fail",
+            summary=f"mcp SDK v{mcp_ver} is installed but not usable by repo2graph-mcp",
+            details=details + [str(exc)],
+            remediation='Install a supported SDK: pip install "repo2graph[mcp]"',
+        )
+    except Exception as exc:
+        return CheckResult(
+            name="MCP SDK Compatibility",
+            status="warn",
+            summary=f"Could not verify mcp SDK v{mcp_ver} compatibility",
+            details=details + [str(exc)],
+        )
+
+    return CheckResult(
+        name="MCP SDK Compatibility",
+        status="ok",
+        summary=f"MCP SDK v{mcp_ver} installed and usable",
+        details=details,
+    )
 
 
 def check_provider_env() -> CheckResult:
@@ -522,10 +630,11 @@ def check_provider_env() -> CheckResult:
         val = os.environ.get(var)
         if val and val.strip():
             configured_count += 1
-            masked = (
-                f"{val[:3]}...{val[-2:]}" if len(val) >= 8 and var != "OLLAMA_HOST" else "(set)"
-            )
-            details.append(f"{name} ({var}): Configured [{masked}, length: {len(val)}]")
+            # Report presence only -- no tail characters, no length. Either
+            # leaks real key entropy or fingerprints the key, and this
+            # check's whole point (see docs/cli.md, CHANGELOG.md) is that it
+            # never discloses secret values.
+            details.append(f"{name} ({var}): Configured")
         else:
             details.append(f"{name} ({var}): Not set")
 

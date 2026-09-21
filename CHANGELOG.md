@@ -29,7 +29,15 @@ makes keeping it current a release-blocking step rather than a good intention.
   existing artifact integrity, vector correspondence, MCP SDK compatibility,
   and platform encoding. Safely probes LLM provider configuration without ever
   disclosing secret values or environment variables. Supports `--json` output
-  (Issue #308).
+  (Issue #308). Fixed during review, before release: the provider-env probe
+  was disclosing each key's last 2 characters and exact length; artifact
+  integrity treated any top-level `agent/` directory or `chunks.jsonl` as a
+  (possibly corrupt) repo2graph index, which false-positived on unrelated
+  projects using those same generic names; the MCP SDK check only echoed the
+  installed version instead of verifying `mcp.server.Server` is actually
+  importable, the thing `repo2graph-mcp` needs; and a probe against a
+  not-yet-created nested path left every directory it created behind instead
+  of cleaning up.
 - Automated documentation consistency test suite (`tests/test_doc_consistency.py`)
   guaranteeing zero drift between code and documentation across CLI subcommands,
   parser language configurations, GitHub Action inputs/outputs, and MCP registered

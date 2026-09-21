@@ -43,32 +43,51 @@ def test_cli_commands_documented():
 
 
 def test_languages_documented():
-    """Verify supported language families in LANG_CFG are documented in README.md."""
+    """Verify every LANG_CFG grammar key is documented in README.md.
+
+    Word-boundary regexes, not plain substrings: `"c" in readme_text.lower()`
+    or `"go" in ...` is true of nearly any English prose regardless of
+    whether the language is mentioned, so those checks passed even with the
+    language name deleted from README.md. `\\bC\\b` (with a negative
+    lookahead so it doesn't also match the "C" inside "C++"/"C#") actually
+    requires the token to appear.
+    """
     from repo2graph.parse import LANG_CFG
 
     readme_text = README_PATH.read_text(encoding="utf-8")
 
-    # Map internal grammar keys to user-facing language names mentioned in README
-    # e.g., 'python', 'javascript'/'typescript'/'tsx', 'go', 'rust', 'java', 'ruby', 'c', 'cpp', 'csharp', 'php', 'kotlin', 'swift', 'scala', 'bash'
+    # Map internal grammar keys to the exact token README.md uses for them
+    # (JS/TS/TSX are documented abbreviated, as "JS/TS/TSX" -- see the
+    # "15 languages" row). One regex per LANG_CFG key: every family repo2graph
+    # actually parses must have a matching entry here.
     families = {
-        "python": "Python",
-        "go": "Go",
-        "rust": "Rust",
-        "java": "Java",
-        "ruby": "Ruby",
-        "c": "C",
-        "cpp": "C++",
-        "csharp": "C#",
-        "php": "PHP",
-        "kotlin": "Kotlin",
-        "swift": "Swift",
-        "scala": "Scala",
-        "bash": "Bash",
+        "python": r"\bPython\b",
+        "javascript": r"\bJS\b",
+        "typescript": r"\bTS\b",
+        "tsx": r"\bTSX\b",
+        "go": r"\bGo\b",
+        "rust": r"\bRust\b",
+        "java": r"\bJava\b",
+        "ruby": r"\bRuby\b",
+        "c": r"\bC\b(?!\+\+|#)",
+        "cpp": r"C\+\+",
+        "csharp": r"C#",
+        "php": r"\bPHP\b",
+        "kotlin": r"\bKotlin\b",
+        "swift": r"\bSwift\b",
+        "scala": r"\bScala\b",
+        "bash": r"\bBash\b",
     }
 
-    for key, name in families.items():
-        assert key in LANG_CFG, f"Language key '{key}' missing from LANG_CFG"
-        assert name.lower() in readme_text.lower(), f"Language '{name}' missing from README.md"
+    assert set(families) == set(LANG_CFG), (
+        f"families mapping is out of sync with LANG_CFG: "
+        f"missing={set(LANG_CFG) - set(families)}, extra={set(families) - set(LANG_CFG)}"
+    )
+
+    for key, pattern in families.items():
+        assert re.search(pattern, readme_text), (
+            f"Language '{key}' (pattern {pattern!r}) missing from README.md"
+        )
 
 
 def test_action_inputs_and_outputs_documented():
