@@ -838,40 +838,51 @@ def test_iss139_commit_release_api_timeout(monkeypatch):
     assert recorded_timeouts == [30.0]
 
 
-def test_iss146_commit_release_api_path_posix(monkeypatch):
-    """Issue 146: commit_release_via_api.py must normalize Windows paths in git tree entries."""
+def _load_commit_release_module():
     import importlib.util
-    import io
 
     script_path = REPO_ROOT / "scripts" / "commit_release_via_api.py"
     spec = importlib.util.spec_from_file_location("commit_release_via_api", script_path)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    return mod
 
-    tree_entries_sent = []
+
+def _run_commit_release(mod, monkeypatch, *, branch_exists, file_path="release.txt"):
+    """Drive main() against fake REST + GraphQL, returning what each one saw.
+
+    `branch_exists` selects the two paths through main(): a fresh branch is
+    committed on directly, an existing one is staged and then moved.
+    """
+    import io
+
+    rest_calls = []
+    graphql_calls = []
+    # ref_sha() probes base first, then the target branch.
+    seen_refs = {"main"}
+    if branch_exists:
+        seen_refs.add("release-branch")
 
     def dummy_api(method, path, token, payload=None, timeout=30.0):
-        if method == "GET" and "ref/heads" in path:
+        rest_calls.append((method, path, payload))
+        if method == "GET" and "/git/ref/heads/" in path:
+            name = path.split("/git/ref/heads/", 1)[1]
+            if name not in seen_refs:
+                raise mod.urllib.error.HTTPError(path, 404, "Not Found", {}, None)
             return {"object": {"sha": "basesha"}}
-        if method == "GET" and "commits" in path:
-            return {"tree": {"sha": "treesha"}}
-        if method == "POST" and "blobs" in path:
-            return {"sha": "blobsha"}
-        if method == "POST" and "trees" in path:
-            tree_entries_sent.extend(payload["tree"])
-            return {"sha": "newtreesha"}
-        if method == "POST" and "commits" in path:
-            return {"sha": "newcommitsha"}
-        if method == "POST" and "refs" in path:
-            return {}
+        if method == "POST" and path.endswith("/git/refs"):
+            seen_refs.add(payload["ref"].split("refs/heads/", 1)[1])
         return {}
 
+    def dummy_graphql(query, variables, token, timeout=30.0):
+        graphql_calls.append((query, variables))
+        return {"createCommitOnBranch": {"commit": {"oid": "signedsha"}}}
+
     monkeypatch.setattr(mod, "api", dummy_api)
+    monkeypatch.setattr(mod, "graphql", dummy_graphql)
     monkeypatch.setattr(mod, "open", lambda *a, **k: io.BytesIO(b"v1.0.0"), raising=False)
     monkeypatch.setenv("GH_TOKEN", "fake-token")
-
-    win_style_path = "dist\\sub\\release.txt"
     monkeypatch.setattr(
         mod.sys,
         "argv",
@@ -884,17 +895,144 @@ def test_iss146_commit_release_api_path_posix(monkeypatch):
             "--base",
             "main",
             "--message",
-            "Release commit",
+            "chore(release): bump version to 1.2.3\n\nbody line\n",
             "--files",
-            win_style_path,
+            file_path,
         ],
     )
     mod.main()
+    return rest_calls, graphql_calls
 
-    assert len(tree_entries_sent) == 1
+
+def test_iss146_commit_release_api_path_posix(monkeypatch):
+    """Issue 146: commit_release_via_api.py must normalize Windows paths."""
+    mod = _load_commit_release_module()
+    _, graphql_calls = _run_commit_release(
+        mod, monkeypatch, branch_exists=False, file_path="dist\\sub\\release.txt"
+    )
+
+    assert len(graphql_calls) == 1
+    additions = graphql_calls[0][1]["input"]["fileChanges"]["additions"]
+    assert len(additions) == 1
     # Path must be POSIX normalized (no backslashes)
-    assert "\\" not in tree_entries_sent[0]["path"]
-    assert tree_entries_sent[0]["path"] == "dist/sub/release.txt"
+    assert "\\" not in additions[0]["path"]
+    assert additions[0]["path"] == "dist/sub/release.txt"
+
+
+def test_commit_release_uses_signing_mutation_not_git_data():
+    """The commit must be created by GraphQL createCommitOnBranch.
+
+    GitHub signs commits it authors (Contents API, createCommitOnBranch) and
+    does not sign ones assembled through the Git Data API. `main` requires
+    signed commits, so a regression back to blobs/trees/commits would leave
+    every release PR unmergeable without an admin bypass.
+    """
+    import ast
+
+    source = (REPO_ROOT / "scripts" / "commit_release_via_api.py").read_text(encoding="utf-8")
+    assert "createCommitOnBranch" in source
+
+    # Only literals the code evaluates count. The docstring names the Git Data
+    # routes precisely to explain why they are wrong, and a plain substring
+    # search over the file would read that explanation as the offence.
+    tree = ast.parse(source)
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    literals = " ".join(
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    )
+    for git_data_route in ("/git/blobs", "/git/trees", "/git/commits"):
+        assert git_data_route not in literals, (
+            f"Git Data route {git_data_route} produces unsigned commits"
+        )
+
+
+def test_commit_release_stages_an_existing_branch_before_moving_it(monkeypatch):
+    """An existing PR branch must never be reset to base in place.
+
+    Resetting it leaves the open PR with zero commits and GitHub closes the PR
+    automatically, so the branch is rebuilt on a staging ref and moved in one
+    force-update instead.
+    """
+    mod = _load_commit_release_module()
+    rest_calls, graphql_calls = _run_commit_release(mod, monkeypatch, branch_exists=True)
+
+    staging = f"release-branch{mod.STAGING_SUFFIX}"
+    committed_on = graphql_calls[0][1]["input"]["branch"]["branchName"]
+    assert committed_on == staging, "commit must land on the staging ref, not the PR branch"
+
+    writes = [
+        (method, path, payload)
+        for method, path, payload in rest_calls
+        if method in {"POST", "PATCH", "DELETE"}
+    ]
+    # The PR branch is written exactly once, and only to the finished commit.
+    pr_branch_writes = [
+        payload for _, path, payload in writes if path.endswith("/git/refs/heads/release-branch")
+    ]
+    assert pr_branch_writes == [{"sha": "signedsha", "force": True}]
+    # And the staging ref is cleaned up.
+    assert any(
+        method == "DELETE" and path.endswith(f"/git/refs/heads/{staging}")
+        for method, path, _ in writes
+    )
+
+
+def test_commit_release_commits_directly_on_a_new_branch(monkeypatch):
+    """A branch that does not exist yet needs no staging ref."""
+    mod = _load_commit_release_module()
+    rest_calls, graphql_calls = _run_commit_release(mod, monkeypatch, branch_exists=False)
+
+    assert graphql_calls[0][1]["input"]["branch"]["branchName"] == "release-branch"
+    assert not any(method == "DELETE" for method, _, _ in rest_calls)
+
+
+def test_commit_release_splits_headline_from_body(monkeypatch):
+    """GraphQL takes headline and body separately, not one git-style blob."""
+    mod = _load_commit_release_module()
+    _, graphql_calls = _run_commit_release(mod, monkeypatch, branch_exists=False)
+
+    message = graphql_calls[0][1]["input"]["message"]
+    assert message["headline"] == "chore(release): bump version to 1.2.3"
+    assert message["body"] == "body line"
+
+
+def test_commit_release_graphql_raises_on_error_payload():
+    """GraphQL reports failures as HTTP 200 with an `errors` array.
+
+    Without this check a failed commit would return None and the release would
+    carry on as though it had succeeded.
+    """
+    import io
+
+    mod = _load_commit_release_module()
+    body = json.dumps({"data": None, "errors": [{"message": "expectedHeadOid mismatch"}]})
+
+    class DummyResponse:
+        def __enter__(self):
+            return io.BytesIO(body.encode())
+
+        def __exit__(self, *args):
+            return False
+
+    original = mod.urllib.request.urlopen
+    mod.urllib.request.urlopen = lambda req, timeout=None: DummyResponse()
+    try:
+        with pytest.raises(RuntimeError, match="expectedHeadOid mismatch"):
+            mod.graphql("query {}", {}, "token")
+    finally:
+        mod.urllib.request.urlopen = original
 
 
 # ==========================================================================
