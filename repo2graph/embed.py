@@ -185,11 +185,17 @@ def build_vectors(
     return out
 
 
-def write_vectors(path, vectors, model_id: str, dim: int, chunk_ids, text_hashes=None) -> int:
+def write_vectors(
+    path, vectors, model_id: str, dim: int, chunk_ids, text_hashes=None, build_id: str | None = None
+) -> int:
     """Write vectors.npy plus its sibling vectors.meta.json; return the count.
 
     Row order is `chunk_ids` order, which is chunks.jsonl order, so re-running
     `embed` over an unchanged index reproduces the file byte for byte.
+
+    `build_id` is the manifest build_id for the index these vectors were built
+    against; stored so `verify_artifacts` and `doctor` can detect when a rebuild
+    has produced a new manifest build_id but `embed` has not been re-run.
     """
     path = Path(path)
     ids = list(chunk_ids)
@@ -204,7 +210,7 @@ def write_vectors(path, vectors, model_id: str, dim: int, chunk_ids, text_hashes
             raise ValueError(f"chunk {cid} has width {len(vec)}, expected {dim}")
         rows.append(vec)
     _npy_write(path, rows, dim)
-    meta = {
+    meta: dict = {
         "format": VECTORS_FORMAT,
         "model_id": model_id,
         "dim": int(dim),
@@ -212,6 +218,8 @@ def write_vectors(path, vectors, model_id: str, dim: int, chunk_ids, text_hashes
         "chunk_ids": [cid for cid, _h in keep],
         "text_hashes": [h for _cid, h in keep],
     }
+    if build_id:
+        meta["build_id"] = build_id
     with atomic_write(meta_path(path), "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(meta, indent=2) + "\n")
     return len(rows)

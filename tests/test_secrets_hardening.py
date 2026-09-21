@@ -112,11 +112,7 @@ def test_build_excludes_secrets_by_default(tmp_path: Path):
 
     # Verify nodes.jsonl has no secret file nodes
     nodes_path = out / "agent" / "nodes.jsonl"
-    nodes = [
-        json.loads(line)
-        for line in nodes_path.read_text(encoding="utf8").split("\n")
-        if line.strip()
-    ]
+    nodes = [json.loads(line) for line in nodes_path.read_text(encoding="utf8").split("\n") if line.strip()]
     indexed_paths = {n.get("path") for n in nodes if n.get("type") == "file"}
     assert "app.py" in indexed_paths
     assert "service.py" in indexed_paths
@@ -144,11 +140,7 @@ def test_build_include_secrets_flag(tmp_path: Path):
     manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf8"))
     assert manifest.get("secret_filter_policy") == "include-secrets"
 
-    nodes = [
-        json.loads(line)
-        for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").split("\n")
-        if line.strip()
-    ]
+    nodes = [json.loads(line) for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").split("\n") if line.strip()]
     indexed_paths = {n.get("path") for n in nodes if n.get("type") == "file"}
     assert ".env" in indexed_paths
     assert "app.py" in indexed_paths
@@ -165,27 +157,21 @@ def test_build_custom_secret_flags(tmp_path: Path):
     (corp_keys / "prod.conf").write_text("key = abc\n", encoding="utf8")
 
     out = tmp_path / "out"
-    rc = main(
-        [
-            "build",
-            str(src),
-            "-o",
-            str(out),
-            "--formats",
-            "jsonl",
-            "--secret-keyword",
-            "auth_store",
-            "--secret-dir",
-            "corp_keys",
-        ]
-    )
+    rc = main([
+        "build",
+        str(src),
+        "-o",
+        str(out),
+        "--formats",
+        "jsonl",
+        "--secret-keyword",
+        "auth_store",
+        "--secret-dir",
+        "corp_keys",
+    ])
     assert rc == 0
 
-    nodes = [
-        json.loads(line)
-        for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").split("\n")
-        if line.strip()
-    ]
+    nodes = [json.loads(line) for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").split("\n") if line.strip()]
     indexed_paths = {n.get("path") for n in nodes if n.get("type") == "file"}
     assert "app.py" in indexed_paths
     assert "custom_auth_store.txt" not in indexed_paths
@@ -242,23 +228,19 @@ def test_chunking_with_secret_policy_redact(tmp_path: Path):
     src = tmp_path / "src"
     src.mkdir()
     code = (
-        "def connect():\n    token = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n    return token\n"
+        "def connect():\n"
+        "    token = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n"
+        "    return token\n"
     )
     (src / "client.py").write_text(code, encoding="utf8")
 
     out = tmp_path / "out"
-    rc = main(
-        ["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "redact-match"]
-    )
+    rc = main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "redact-match"])
     assert rc == 0
 
     chunks_file = out / "agent" / "chunks.jsonl"
     assert chunks_file.is_file()
-    lines = [
-        json.loads(line)
-        for line in chunks_file.read_text(encoding="utf8").split("\n")
-        if line.strip()
-    ]
+    lines = [json.loads(line) for line in chunks_file.read_text(encoding="utf8").split("\n") if line.strip()]
     assert len(lines) >= 1
     found_redacted = False
     for chunk in lines:
@@ -273,22 +255,14 @@ def test_chunking_with_secret_policy_exclude_file(tmp_path: Path):
     src = tmp_path / "src"
     src.mkdir()
     (src / "clean.py").write_text("def ok(): return 42\n", encoding="utf8")
-    (src / "leaky.py").write_text(
-        "def leak(): token = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n", encoding="utf8"
-    )
+    (src / "leaky.py").write_text("def leak(): token = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n", encoding="utf8")
 
     out = tmp_path / "out"
-    rc = main(
-        ["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "exclude-file"]
-    )
+    rc = main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "exclude-file"])
     assert rc == 0
 
     chunks_file = out / "agent" / "chunks.jsonl"
-    lines = [
-        json.loads(line)
-        for line in chunks_file.read_text(encoding="utf8").split("\n")
-        if line.strip()
-    ]
+    lines = [json.loads(line) for line in chunks_file.read_text(encoding="utf8").split("\n") if line.strip()]
     paths = {c["path"] for c in lines}
     assert "clean.py" in paths
     assert "leaky.py" not in paths
@@ -381,7 +355,6 @@ def test_sanitization_headers():
 
 def _action_step_by_name(text: str, name: str) -> str:
     import re
-
     for chunk in re.split(r"\n(?=    - (?:name|uses):)", text):
         if re.search(rf"^\s+- name: {re.escape(name)}\s*$", chunk, re.M):
             return chunk
@@ -430,9 +403,7 @@ def test_action_yml_secret_flags_forwarding(tmp_path: Path):
         GITHUB_OUTPUT=str(tmp_path / "github_output.txt"),
         SUMMARY_FILE=str(tmp_path / "summary.json"),
     )
-    (tmp_path / "summary.json").write_text(
-        '{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8"
-    )
+    (tmp_path / "summary.json").write_text('{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8")
 
     proc = subprocess.run(
         [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True

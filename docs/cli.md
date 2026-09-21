@@ -46,6 +46,9 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
 | `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
+| `--allow-symlink-out` | off | Allow `-o` to point through a symbolic link. Off by default to prevent accidental writes outside the repo tree. |
+| `--force` | off | Allow overwriting an existing directory that was not created by repo2graph. Without this flag, build refuses to write into any non-empty directory that does not contain a recognised index. |
+| `--lock-timeout` | `60` | Seconds to wait for the per-output-directory build lock before failing. Increase this when several CI jobs share the same network-mounted output path. |
 
 **Examples:**
 ```bash
@@ -56,8 +59,10 @@ repo2graph build /path/to/project --include-vendor --chunk-large-files
 repo2graph build /path/to/project --exclude-dir generated --exclude-dir tmp --max-file-mb 5.0
 ```
 
-Output files are written atomically through sibling temp files (`os.replace`), so
-a crash or a full disk never leaves a half-written index behind.
+Artifacts are staged in a sibling temp directory and atomically swapped into
+`--out` on success, so a crash or a full disk never leaves a half-written index
+behind. The previous build is restored on failure. Files written by subsequent
+commands (`embed`, `github`) are preserved across rebuilds.
 
 ### `--incremental`
 

@@ -87,6 +87,21 @@ def cmd_build(args):
         )
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
+
+    # --- Harden the output path before any work begins ---
+    from .integrity import validate_outdir
+    from .lock import BuildLock, LockTimeoutError
+
+    try:
+        outdir = validate_outdir(
+            outdir,
+            repo_root=repo_path,
+            allow_symlink=getattr(args, "allow_symlink_out", False),
+            force=getattr(args, "force", False),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
     from .parse import BuildConfig
 
     include_secrets = getattr(args, "include_secrets", False)
@@ -127,19 +142,25 @@ def cmd_build(args):
         prev_state = previous_state(outdir)
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
-    g = build(
-        repo_path,
-        include=args.include,
-        exclude=args.exclude,
-        git_history=args.git_history,
-        max_files=args.max_files,
-        jobs=args.jobs,
-        cache=cache,
-        max_call_candidates=args.max_call_candidates,
-        config=config,
-    )
-    chunks = None if args.no_chunks else iter_chunks(g)
-    written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    lock_timeout = getattr(args, "lock_timeout", 60.0)
+    try:
+        with BuildLock(outdir, timeout=lock_timeout):
+            g = build(
+                repo_path,
+                include=args.include,
+                exclude=args.exclude,
+                git_history=args.git_history,
+                max_files=args.max_files,
+                jobs=args.jobs,
+                cache=cache,
+                max_call_candidates=args.max_call_candidates,
+                config=config,
+            )
+            chunks = None if args.no_chunks else iter_chunks(g)
+            written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
     if write_human_changelog:
         from datetime import date
 
@@ -159,6 +180,22 @@ def cmd_github(args):
     from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+
+    outdir = Path(args.out)
+
+    # --- Harden the output path before any work begins ---
+    from .integrity import validate_outdir
+    from .lock import BuildLock, LockTimeoutError
+
+    try:
+        outdir = validate_outdir(
+            outdir,
+            allow_symlink=getattr(args, "allow_symlink_out", False),
+            force=getattr(args, "force", False),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
     include_secrets = getattr(args, "include_secrets", False)
     if include_secrets:
         from .events import emit
@@ -180,24 +217,29 @@ def cmd_github(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
     )
-    meta = index_github(
-        args.repo,
-        Path(args.out),
-        ref=args.ref,
-        depth=args.depth,
-        git_history=args.git_history,
-        formats=args.formats,
-        include=args.include,
-        exclude=args.exclude,
-        max_files=args.max_files,
-        keep_clone=args.keep_clone,
-        token=args.token,
-        viz_nodes=args.viz_nodes,
-        jobs=args.jobs,
-        config=config,
-        max_call_candidates=args.max_call_candidates,
-        no_chunks=args.no_chunks,
-    )
+    lock_timeout = getattr(args, "lock_timeout", 60.0)
+    try:
+        with BuildLock(outdir, timeout=lock_timeout):
+            meta = index_github(
+                args.repo,
+                outdir,
+                ref=args.ref,
+                depth=args.depth,
+                git_history=args.git_history,
+                formats=args.formats,
+                include=args.include,
+                exclude=args.exclude,
+                max_files=args.max_files,
+                keep_clone=args.keep_clone,
+                token=args.token,
+                viz_nodes=args.viz_nodes,
+                jobs=args.jobs,
+                config=config,
+                max_call_candidates=args.max_call_candidates,
+                no_chunks=args.no_chunks,
+            )
+    except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
     _emit(json.dumps(meta, indent=2))
 
 
@@ -299,7 +341,19 @@ def cmd_embed(args):
         widths = {len(v) for v in vectors.values()}
     dim = widths.pop() if widths else 0
 
-    n = write_vectors(npy, vectors, model_id, dim, chunk_ids, [hashes[cid] for cid in chunk_ids])
+    # Read build_id from manifest so vectors.meta.json records which build they
+    # correspond to; verify_artifacts and doctor use this to detect staleness.
+    build_id: str | None = None
+    try:
+        _mpath = artifact_path(out, "manifest.json")
+        if _mpath.exists():
+            _mdata = json.loads(_mpath.read_text(encoding="utf8", errors="replace"))
+            if isinstance(_mdata, dict):
+                build_id = _mdata.get("build_id") or None
+    except Exception:
+        pass
+
+    n = write_vectors(npy, vectors, model_id, dim, chunk_ids, [hashes[cid] for cid in chunk_ids], build_id=build_id)
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
     _emit(
@@ -812,6 +866,27 @@ def main(argv=None):
         default=0,
         help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
+    b.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    b.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    b.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
@@ -872,6 +947,27 @@ def main(argv=None):
         type=_nonneg,
         default=0,
         help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
+    )
+    gh.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    gh.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    gh.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
     )
     gh.set_defaults(func=cmd_github)
 
