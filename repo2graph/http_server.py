@@ -614,7 +614,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                     duration_ms=elapsed.ms,
                     error=str(exc),
                 )
-                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, str(exc)))
+                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, "Index unavailable"))
                 return
             except Exception as exc:
                 self.audit.record(

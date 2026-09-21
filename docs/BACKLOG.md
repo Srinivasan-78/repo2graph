@@ -10,15 +10,21 @@ edit alongside a security audit.
 
 | Item | Size | Why deferred |
 |---|---|---|
-| **No SBOM generated in CI** | S | `pip-audit --strict` is a vulnerability gate, not a bill-of-materials artifact. Adding a CycloneDX export (`cyclonedx-py` or `pip-audit --format cyclonedx-json`) to `dependency-audit.yml` is straightforward but changes a release-facing CI artifact. |
+| **No SBOM generated in CI** *(Shipped)* | S | `dependency-audit.yml` now has a "Generate CycloneDX SBOM" step (`pip-audit --format cyclonedx-json`) and uploads `sbom.cyclonedx.json` as an artifact. |
 | **No per-file tree-sitter parse timeout** | M | `MAX_BYTES` bounds file size, not parse time. `tree_sitter.Parser.set_timeout_micros` support varies across grammar bindings in `tree-sitter-language-pack`; a wrong per-language timeout risks truncated parses on legitimately large generated files with no fixture to prove the value is well-calibrated. |
-| **No independent byte-size cap on `git log --name-only` cochange output** | XS | `graph.py:563-566` bounds commit count and wall time, not output bytes. Low risk (a local repo's own history), but worth a sanity cap for defense in depth. |
+| **No independent byte-size cap on `git log --name-only` cochange output** *(Shipped)* | XS | `graph.py` now has `MAX_COCHANGE_BYTES` (10 MB) and streams the pipe through `_read_capped`, so `add_cochange` bounds output bytes independently of `MAX_COCHANGE_COMMITS`/`COCHANGE_TIMEOUT`. |
 | **Secret-path denylist (`query.py` `SECRET_KEYWORDS`/`SECRET_DIR_NAMES`) is not user-configurable** | S | Solid and independent of `.gitignore`, but a hardcoded `frozenset` — an org with nonstandard secret-file naming can't extend it without a code change. Needs a CLI flag / config file design, not a quick patch. |
-| **HTTP transport returns `str(exc)` verbatim to the client** | S | `http_server.py:247,332,338`. Not a confirmed secret-leak path today, but internal exception text (occasionally a local path) reaches an untrusted network caller. Wants a generic client-facing message with detail routed only to the (now-redacted) audit/error log. |
+| **HTTP transport returns `str(exc)` verbatim to the client** *(Shipped)* | S | The generic-`Exception` handlers already sent a fixed "Internal server error" message; the one remaining leak was the `SystemExit` branch in `_call_tool` (`http_server.py`, was line 617), which echoed `open_index`'s exit message — including the on-disk index path — straight to the caller. Now sends a fixed "Index unavailable"; the real message still reaches the (redacted) audit log via `error=str(exc)`. |
 | **No enforced cap on total graph nodes/edges/files** | M | `graph.py`'s `max_files` is opt-in, defaults unbounded. `Graph.nodes`/`edges` are fully in-memory with no size guard, unlike the already-streamed chunk emission path. |
-| **No explicit `attestations:` flag on the PyPI publish step** | XS | OIDC Trusted Publishing is correctly configured; whether `pypa/gh-action-pypi-publish` emits PEP 740 attestations by default at the pinned SHA wasn't verified from the YAML alone. Worth an explicit flag once confirmed safe to set. |
+| **No explicit `attestations:` flag on the PyPI publish step** *(Shipped)* | XS | `publish.yml`'s `pypa/gh-action-pypi-publish` step now passes `attestations: true` explicitly. |
 | **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: requires local code execution on the same host to exploit (a stronger position than repo2graph could additionally defend against), and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. See `docs/SECURITY-AUDIT.md` P3.1. |
 | **No benchmark above 3,000 files** | L | `docs/PERFORMANCE.md` has real measurements at 90 and 3,000 files; nothing was run at 50k/100k+ in this pass (time budget). Overlaps the pre-existing BACKLOG item below, "a fixture above `PARALLEL_MIN_FILES`." |
+
+Note: the SBOM, byte-cap, and attestations rows above were already shipped by the time of a
+2026-09-21 pass through this backlog — this file had drifted from the code. Only the `str(exc)`
+leak in the `SystemExit` branch was still genuinely open; it's fixed now. Treat every row in this
+file as a claim to verify against current code before acting on it, same as any other memory of
+past state.
 
 Route back to the work the 2026-09 whole-repo audit found but did not fix in the
 first batch. Full detail lives in `docs/BUILD_STATE.graphrag-2026-09.md`, the

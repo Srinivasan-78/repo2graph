@@ -53,9 +53,9 @@ project stand out without you looking for them.
 | `CONTAINS` | project holds folder, folder holds file |
 | `DEFINES` | a file creates a function or class, or one function creates another inside it |
 | `IMPORTS` | a file borrows from another file (`internal: true`) or from an outside library |
-| `CALLS` | one function uses another. Carries `count` and `confidence`. |
+| `CALLS` | one function uses another. Carries `count`, `confidence`, `resolution_kind`, `candidate_count`, `scope_distance`, and `call_kind`. |
 | `CALLS_EXTERNAL` | a function uses something from outside the project |
-| `INHERITS` | a class is built on top of another class |
+| `INHERITS` | inheritance or interface implementation. Carries `subtype` (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`), `raw_base`, and `resolved_target`. |
 | `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
 
 A small corner of a real map looks like this:
@@ -129,16 +129,22 @@ nothing goes missing. Teaching it a new language means adding one entry to
 
 The map is very good, but it is not perfect. Worth knowing before you trust it:
 
-- **It matches calls by name, not by type.** If two functions share a name,
-  repo2graph draws up to 5 possible arrows and marks each one `1/n` sure. A
-  function defined in the same file wins ties. If you need certainty, keep only
-  the arrows where `confidence` is `1.0`.
+- **Scoped call resolution with 7-tier hierarchy.** Instead of blind global name matching, repo2graph resolves call targets using lexical proximity tiers:
+  1. `same_class` (methods within the enclosing class)
+  2. `same_file` (functions/classes in the calling file)
+  3. `import_alias` (explicitly imported symbols and aliases)
+  4. `same_dir` (definitions within the same directory package)
+  5. `global_unique` (unambiguous repository-wide unique symbol)
+  6. `ambiguous_fallback` (multiple candidate symbols, confidence distributed as `1/n`, capped at 5)
+  7. `external` (unresolved target classified as `CALLS_EXTERNAL`)
+  Each `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`, and `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
+- **Base class and interface resolution.** Class bases are mapped to in-repo definitions with relationship typing (`IMPLEMENTS`, `EXTENDS`, `INHERITS`, `MIXES_IN`). Built-in and framework base types without local declarations (e.g. `Object`, `Exception`, `Error`, `BaseModel`) do not link to unrelated external files.
 - **It works out imports by path, one language at a time.** Python packages and
   relative imports, JavaScript and TypeScript relative paths (including `.js`
   standing in for `.ts`), Go through `go.mod`, Java package folders, C and C++
   include names. Anything it cannot place becomes an outside `module` dot.
 - **Some files are skipped:** pictures and other non-text files, anything bigger
   than 1.5 MB, and the usual vendor and build folders. If the project is a git
-  checkout, `.gitignore` is respected.
+  checkout, `.gitignore` is respected. Use `repo2graph explain-path <path>` to inspect the 10-tier filter evaluation for any file.
 - **No arrow does not prove no call.** Code that decides while running which
   function to call is invisible to a reader like this one.

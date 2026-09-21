@@ -11,7 +11,16 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .parse import CONFIG_EXT, DOC_EXT, EXT_LANG, ParsedFile, Symbol, discover, parse_source
+from .parse import (
+    CONFIG_EXT,
+    DOC_EXT,
+    EXT_LANG,
+    ParseError,
+    ParsedFile,
+    Symbol,
+    discover,
+    parse_source,
+)
 
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
@@ -545,13 +554,27 @@ def _read_and_parse(item):
         raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
+    policy = getattr(config, "parse_policy", "best-effort")
+    pf = None
     try:
         pf = parse_source(raw, lang, filepath=abspath) if lang else None
-    except Exception:
-        # A grammar that raises on one pathological file must not abort the
-        # whole build (nor trigger a pointless serial retry that raises again):
-        # count the file, drop its symbols, same as an unavailable parser.
+    except Exception as exc:
+        if policy == "strict":
+            raise ParseError(
+                f"Strict parse policy: failed to parse '{rel}' as {lang}: {exc}"
+            ) from exc
         pf = None
+
+    if pf is not None and getattr(pf, "parse_errors", 0) > 0:
+        if policy == "strict":
+            raise ParseError(
+                f"Strict parse policy: '{rel}' produced {pf.parse_errors} syntax error(s) under language '{lang}'"
+            )
+        if policy == "warn":
+            sys.stderr.write(
+                f"repo2graph: warning: '{rel}' produced {pf.parse_errors} syntax error(s) ({lang})\n"
+            )
+
     return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())
 
 
@@ -957,10 +980,12 @@ def build(
                 resolved = resolve_import(target, rel, lang, file_index, ctx)
                 if resolved:
                     g.add_edge(fid, f"file:{resolved}", "IMPORTS", target=target, internal=True)
+                    g.stats["imports_resolved"] += 1
                 else:
                     mid = f"module:{target}"
                     g.add_node(mid, type="module", name=target, external=True)
                     g.add_edge(fid, mid, "IMPORTS", target=target, internal=False)
+                    g.stats["imports_unresolved"] += 1
 
     # ----- name index for call/inheritance resolution -----
     imported_files: dict[str, set[str]] = defaultdict(set)
@@ -970,83 +995,221 @@ def build(
             callee_rel = e["dst"].split(":", 1)[1]
             imported_files[caller_rel].add(callee_rel)
 
+    # Import aliases and imported symbol mappings per file
+    import_aliases: dict[str, dict[str, tuple[str, str | None]]] = defaultdict(dict)
+    imported_symbol_names: dict[str, set[str]] = defaultdict(set)
+    for rel, pf in parsed.items():
+        for imp in getattr(pf, "import_details", []):
+            if imp.alias:
+                import_aliases[rel][imp.alias] = (imp.module, imp.name)
+            if imp.name and imp.name != "*":
+                imported_symbol_names[rel].add(imp.name)
+
     by_name: dict[str, list[str]] = defaultdict(list)
     for nid, n in g.nodes.items():
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
 
+    # Common stdlib base types to protect against false global links
+    COMMON_STDLIB_BASES = frozenset(
+        {
+            "object",
+            "Object",
+            "Exception",
+            "BaseException",
+            "Error",
+            "StandardError",
+            "Throwable",
+            "Record",
+            "Any",
+            "Interface",
+            "Model",
+            "Component",
+            "Base",
+        }
+    )
+
     for rel, pf in parsed.items():
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
+            call_kinds: dict[str, str] = {}
+            for cd in getattr(sym, "call_details", []):
+                call_kinds[cd["name"]] = cd.get("kind", "static")
+
             for callee, count in Counter(sym.calls).items():
-                cands = by_name.get(callee, [])
-                local = [c for c in cands if c.startswith(f"sym:{rel}::")]
-                pick = local or cands
-                if not pick:
+                call_kind = call_kinds.get(callee, "static")
+                all_cands = by_name.get(callee, [])
+
+                # Tier 1: Same class / enclosing scope
+                tier1_cands: list[str] = []
+                if sym.parent:
+                    candidate_id = f"sym:{rel}::{sym.parent}.{callee}"
+                    if candidate_id in g.nodes and candidate_id != sid:
+                        tier1_cands = [candidate_id]
+                    else:
+                        tier1_cands = [
+                            c
+                            for c in all_cands
+                            if g.nodes[c].get("path") == rel
+                            and g.nodes[c].get("parent") == sym.parent
+                            and c != sid
+                        ]
+
+                # Tier 2: Same file
+                tier2_cands = [c for c in all_cands if g.nodes[c].get("path") == rel and c != sid]
+
+                # Tier 3: Import alias or explicitly imported symbol
+                tier3_cands: list[str] = []
+                res_kind_override = None
+                if callee in import_aliases.get(rel, {}):
+                    mod, orig_name = import_aliases[rel][callee]
+                    target_name = orig_name or callee
+                    tier3_cands = [
+                        c
+                        for c in by_name.get(target_name, [])
+                        if g.nodes[c].get("path") in imported_files.get(rel, set())
+                    ]
+                    if tier3_cands:
+                        res_kind_override = "import_alias"
+                elif callee in imported_symbol_names.get(rel, set()):
+                    tier3_cands = [
+                        c
+                        for c in all_cands
+                        if g.nodes[c].get("path") in imported_files.get(rel, set())
+                    ]
+                    if tier3_cands:
+                        res_kind_override = "imported_symbol"
+                elif imported_files.get(rel):
+                    tier3_cands = [
+                        c for c in all_cands if g.nodes[c].get("path") in imported_files[rel]
+                    ]
+                    if tier3_cands:
+                        res_kind_override = "imported_symbol"
+
+                # Tier 4: Same directory / package
+                rel_dir = Path(rel).parent
+                tier4_cands = [
+                    c
+                    for c in all_cands
+                    if Path(g.nodes[c].get("path", "")).parent == rel_dir and c != sid
+                ]
+
+                # Tier selection: pick the most specific tier that found candidates
+                chosen_cands: list[str] = []
+                res_kind = "unique_global_name"
+                scope_dist = 0
+
+                if tier1_cands:
+                    chosen_cands = tier1_cands
+                    res_kind = "same_class"
+                    scope_dist = 0
+                elif tier2_cands:
+                    chosen_cands = tier2_cands
+                    res_kind = "same_file"
+                    scope_dist = 1
+                elif tier3_cands:
+                    chosen_cands = tier3_cands
+                    res_kind = res_kind_override or "imported_symbol"
+                    scope_dist = 2
+                elif tier4_cands:
+                    chosen_cands = tier4_cands
+                    res_kind = "same_module"
+                    scope_dist = 3
+                elif len(all_cands) == 1:
+                    chosen_cands = all_cands
+                    res_kind = "unique_global_name"
+                    scope_dist = 4
+                elif len(all_cands) > 1:
+                    chosen_cands = all_cands
+                    res_kind = "ambiguous_global_name"
+                    scope_dist = 5
+
+                # Add edges
+                if not chosen_cands:
                     eid = f"external:{callee}"
                     g.add_node(eid, type="external", name=callee)
-                    g.add_edge(sid, eid, "CALLS_EXTERNAL", count=count)
-                elif len(pick) == 1:
-                    g.add_edge(sid, pick[0], "CALLS", count=count, confidence=1.0)
-                else:
-                    # Apply heuristics
-                    scores = {}
-                    for c in pick:
-                        c_rel = g.nodes[c]["path"]
-                        score = 1.0
-                        if c_rel == rel:
-                            score *= 2.0
-                        if Path(c_rel).parent == Path(rel).parent:
-                            score *= 1.5
-                        if c_rel in imported_files.get(rel, set()):
-                            score *= 3.0
-                        scores[c] = score
-
-                    total_score = sum(scores.values())
-                    norm_scores = {c: s / total_score for c, s in scores.items()}
-
-                    N = len(pick)
-                    threshold = 1.0 / min(N, max_call_candidates)
-                    heuristics_fired = any(s != 1.0 for s in scores.values())
-
-                    if heuristics_fired:
-                        kept = {c: ns for c, ns in norm_scores.items() if ns >= threshold}
-                        if not kept:
-                            sorted_c = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
-                            kept = dict(sorted_c[: min(N, max_call_candidates)])
-                        elif len(kept) > max_call_candidates:
-                            sorted_c = sorted(kept.items(), key=lambda x: x[1], reverse=True)
-                            kept = dict(sorted_c[:max_call_candidates])
-
-                        ambiguous = len(kept) > 1
-                        for c, conf in kept.items():
-                            g.add_edge(
-                                sid,
-                                c,
-                                "CALLS",
-                                count=count,
-                                confidence=round(conf, 3),
-                                **({"ambiguous": True} if ambiguous else {}),
-                            )
+                    g.add_edge(
+                        sid,
+                        eid,
+                        "CALLS_EXTERNAL",
+                        count=count,
+                        resolution_kind="unresolved_external",
+                        candidate_count=0,
+                        call_kind=call_kind,
+                    )
+                    g.stats["calls_external"] += 1
+                elif len(chosen_cands) == 1:
+                    g.add_edge(
+                        sid,
+                        chosen_cands[0],
+                        "CALLS",
+                        count=count,
+                        confidence=1.0,
+                        resolution_kind=res_kind,
+                        candidate_count=len(all_cands),
+                        scope_distance=scope_dist,
+                        call_kind=call_kind,
+                    )
+                    if res_kind == "unique_global_name":
+                        g.stats["calls_unique_global"] += 1
                     else:
-                        limit = min(N, max_call_candidates)
-                        if limit > 0:
-                            # keep up to limit
-                            for c in pick[:limit]:
-                                g.add_edge(
-                                    sid,
-                                    c,
-                                    "CALLS",
-                                    count=count,
-                                    confidence=round(1.0 / limit, 3),
-                                    ambiguous=True,
-                                )
-                        else:
-                            g.stats["ambiguous_calls"] += 1
+                        g.stats["calls_scoped"] += 1
+                else:
+                    limit = min(len(chosen_cands), max_call_candidates)
+                    conf = round(1.0 / limit, 3) if limit > 0 else 0.0
+                    for c in chosen_cands[:limit]:
+                        g.add_edge(
+                            sid,
+                            c,
+                            "CALLS",
+                            count=count,
+                            confidence=conf,
+                            ambiguous=True,
+                            resolution_kind=res_kind,
+                            candidate_count=len(all_cands),
+                            scope_distance=scope_dist,
+                            call_kind=call_kind,
+                        )
+                    g.stats["calls_ambiguous"] += 1
+                    g.stats["ambiguous_calls"] += 1
+
+            # Inheritance resolution
+            base_details_map = {bd["name"]: bd for bd in getattr(sym, "base_details", [])}
             for base in sym.bases:
-                base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
-                for c in by_name.get(base, [])[:max_call_candidates]:
-                    g.add_edge(sid, c, "INHERITS")
+                bd = base_details_map.get(base, {})
+                raw_base = bd.get("raw", base)
+                subtype = bd.get("subtype", "INHERITS")
+                clean_base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
+
+                base_cands = by_name.get(clean_base, [])
+                local_base = [c for c in base_cands if g.nodes[c].get("path") == rel]
+                imp_base = [
+                    c
+                    for c in base_cands
+                    if g.nodes[c].get("path") in imported_files.get(rel, set())
+                ]
+
+                if local_base:
+                    matched_base = local_base[:1]
+                elif imp_base:
+                    matched_base = imp_base[:1]
+                elif clean_base not in COMMON_STDLIB_BASES:
+                    matched_base = base_cands[:max_call_candidates]
+                else:
+                    matched_base = []
+
+                if matched_base:
+                    for c in matched_base:
+                        g.add_edge(
+                            sid,
+                            c,
+                            "INHERITS",
+                            subtype=subtype,
+                            raw_base=raw_base,
+                            resolved_target=c,
+                        )
+                else:
+                    g.stats["unresolved_bases"] += 1
 
     if git_history:
         add_cochange(g, root, git_history, file_index)

@@ -12,6 +12,7 @@ repo2graph embed             add meaning-based search to an index
 repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
 repo2graph doctor    [path]  diagnose environment, permissions, and index
+repo2graph explain-path <path> explain file inclusion/exclusion precedence
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -32,6 +33,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--formats` | `jsonl,graphml,cypher,overview,html` | Which artifacts to write. Drop what you do not need to save time. |
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
+| `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
@@ -239,7 +241,16 @@ Three things worth knowing:
 ```bash
 repo2graph map -o .r2g --viz-nodes 80   # redraw graph.html with fewer dots
 repo2graph stats -o .r2g                # dots, arrows, functions, errors
+repo2graph stats -o .r2g --format json  # structured JSON output
 ```
+
+`stats` reports high-level counts along with graph quality metrics:
+- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
+- **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
+- **Import resolution**: `imports_resolved` vs `imports_unresolved`.
+- **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.
+
+Use `--format json` or `--json` for machine-readable JSON output suitable for CI and automation.
 
 ## The two `--budget` flags count different things
 
@@ -331,4 +342,28 @@ permission, dependency, or artifact integrity issues:
 - **Platform encoding**: checks console and filesystem encoding to detect potential charmap limitations.
 
 Pass `--json` for machine-readable JSON output suitable for CI or automation. Exits with code 0 if all checks pass, or 1 if any critical check fails.
+
+## `explain-path` — explain file inclusion or exclusion
+
+```bash
+repo2graph explain-path <path> [-o .r2g] [--include GLOB] [--exclude GLOB]
+```
+
+Explains why a given file or directory path is included or excluded from indexing based on the 10-tier precedence hierarchy. Returns the final decision (`INCLUDED` or `EXCLUDED`), the governing tier, and a step-by-step trace showing each tier evaluated.
+
+### The 10-Tier Exclusion / Inclusion Precedence
+
+When discovering and filtering files to parse, `repo2graph` evaluates rules in the following order:
+
+1. **Explicit Include Flag (`--include`)**: If include globs are specified and the path matches, it is included unless matched by higher-priority exclusion rules. If include globs are given and the path does not match any, it is excluded.
+2. **Explicit Exclude Flag (`--exclude`)**: If the path matches any user-specified `--exclude` glob, it is immediately excluded.
+3. **Output Directory Reentrancy (`-o`, `--out`)**: The build output directory (default `.r2g`) is excluded to prevent indexing generated artifacts or circular build loops.
+4. **VCS Directory Boundary**: `.git` and other version-control internals are always excluded.
+5. **Dot-directories / Hidden Dirs**: Directories starting with `.` (e.g. `.venv`, `.idea`) are excluded by default unless explicitly included.
+6. **Default Tool & Cache Dirs**: Standard caches and package directories (`node_modules`, `__pycache__`, `.pytest_cache`, `.tox`, `dist`, `build`, etc.) defined in `DEFAULT_SKIP_DIRS` are excluded.
+7. **Vendor Directories (`vendor/`)**: Third-party vendored code in `vendor/` directories is skipped by default, unless `--include-vendor` is enabled.
+8. **Secret and Credential Files**: Known credential patterns (`.env*`, `*.pem`, `*.key`, `id_rsa`, etc.) are excluded by default, unless `--include-secrets` is enabled.
+9. **Binary & Non-Source File Extensions**: Non-text or compiled assets (`.png`, `.jpg`, `.pyc`, `.exe`, `.zip`, `.so`, etc.) defined in `BINARY_EXTS` are excluded.
+10. **File Size Ceilings (`--max-file-mb`)**: Files exceeding the configured size limit (default 1.5 MB) are skipped, unless `--chunk-large-files` is enabled to chunk them across character boundaries.
+
 

@@ -873,6 +873,18 @@ def write_manifest(g, path: Path, written: list[str], *, checksums: dict | None 
             "text",
         ],
         "counts": dict(g.stats),
+        "quality_metrics": {
+            "files_discovered": g.stats.get("files", 0),
+            "files_parsed": g.stats.get("parsed", 0),
+            "parse_errors": g.stats.get("parse_errors", 0),
+            "files_with_parse_errors": g.stats.get("files_with_parse_errors", 0),
+            "imports_resolved": g.stats.get("imports_resolved", 0),
+            "imports_unresolved": g.stats.get("imports_unresolved", 0),
+            "calls_scoped": g.stats.get("calls_scoped", 0),
+            "calls_unique_global": g.stats.get("calls_unique_global", 0),
+            "calls_ambiguous": g.stats.get("calls_ambiguous", 0),
+            "calls_external": g.stats.get("calls_external", 0),
+        },
         "entrypoints": [
             {
                 "id": n["id"],

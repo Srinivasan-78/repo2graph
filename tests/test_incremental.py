@@ -183,7 +183,13 @@ def test_adding_a_duplicate_name_elsewhere_lowers_confidence_repo_wide(tmp_path)
     imports must drop that edge to 0.5 and add a second candidate edge -- even
     though `pkg/caller.py` itself did not change and is served from cache.
     """
-    repo = write_repo(tmp_path)
+    unimported_files = {
+        **FILES,
+        "pkg/caller.py": (
+            "CALLER_TABLE = {'x': 1}\n\n\ndef entry(payload):\n    return handle(payload)\n"
+        ),
+    }
+    repo = write_repo(tmp_path, unimported_files)
     out = tmp_path / "idx"
     build(repo, out)
 
@@ -199,13 +205,19 @@ def test_adding_a_duplicate_name_elsewhere_lowers_confidence_repo_wide(tmp_path)
     build(repo, out, incremental=True)
 
     after = _calls_edges(out)
-    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.75
-    assert (src, "sym:pkg/beta.py::handle") not in after
+    assert after[(src, "sym:pkg/alpha.py::handle")] == 0.5
+    assert after[(src, "sym:pkg/beta.py::handle")] == 0.5
 
 
 def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
     """Deleting a symbol's file removes its nodes and re-raises confidences."""
-    repo = write_repo(tmp_path)
+    unimported_files = {
+        **FILES,
+        "pkg/caller.py": (
+            "CALLER_TABLE = {'x': 1}\n\n\ndef entry(payload):\n    return handle(payload)\n"
+        ),
+    }
+    repo = write_repo(tmp_path, unimported_files)
     out = tmp_path / "idx"
     (repo / "pkg" / "beta.py").write_text(
         "BETA_TABLE = {'q': 9}\n\n\ndef handle(payload):\n    return payload\n",
@@ -215,7 +227,7 @@ def test_deleting_a_file_removes_its_nodes_and_restores_confidence(tmp_path):
     build(repo, out)
 
     src = "sym:pkg/caller.py::entry"
-    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.75
+    assert _calls_edges(out)[(src, "sym:pkg/alpha.py::handle")] == 0.5
 
     (repo / "pkg" / "beta.py").unlink()
     build(repo, out, incremental=True)

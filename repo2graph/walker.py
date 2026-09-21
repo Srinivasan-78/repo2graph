@@ -7,6 +7,7 @@ from .parse import (
     _glob_re,
     _walk_files,
     discover,
+    explain_path,
     is_binary,
     matches_any,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "_glob_re",
     "_walk_files",
     "discover",
+    "explain_path",
     "is_binary",
     "matches_any",
 ]

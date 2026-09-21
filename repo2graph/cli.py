@@ -24,6 +24,7 @@ from .export import (
 )
 from .events import SAFE_ERRORS, encodable, write_safe
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
+from .parse import ParseError
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -102,7 +103,7 @@ def cmd_build(args):
     except ValueError as exc:
         raise SystemExit(f"error: {exc}") from None
 
-    from .parse import BuildConfig
+    from .parse import BuildConfig, ParseError
 
     include_secrets = getattr(args, "include_secrets", False)
     if include_secrets:
@@ -124,6 +125,7 @@ def cmd_build(args):
         secret_policy=getattr(args, "secret_policy", "redact-match"),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        parse_policy=getattr(args, "parse_policy", "best-effort"),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -159,6 +161,8 @@ def cmd_build(args):
             chunks = None if args.no_chunks else iter_chunks(g)
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except ParseError as exc:
         raise SystemExit(f"error: {exc}") from None
 
     if write_human_changelog:
@@ -216,6 +220,7 @@ def cmd_github(args):
         secret_policy=getattr(args, "secret_policy", "redact-match"),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        parse_policy=getattr(args, "parse_policy", "best-effort"),
     )
     lock_timeout = getattr(args, "lock_timeout", 60.0)
     try:
@@ -239,6 +244,8 @@ def cmd_github(args):
                 no_chunks=args.no_chunks,
             )
     except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except ParseError as exc:
         raise SystemExit(f"error: {exc}") from None
     _emit(json.dumps(meta, indent=2))
 
@@ -640,8 +647,88 @@ def cmd_map(args):
     )
 
 
+def format_stats_summary(data: dict) -> str:
+    lines = [
+        "repo2graph Index Quality & Coverage Summary",
+        "===========================================",
+        f"Files Discovered:        {data.get('files', 0)}",
+        f"Files Parsed:            {data.get('parsed', 0)}",
+        f"Parse Errors:            {data.get('parse_errors', 0)} (in {data.get('files_with_parse_errors', 0)} files)",
+        "",
+        "Graph Structure:",
+        f"  Nodes:                 {data.get('nodes', 0)}",
+        f"  Edges:                 {data.get('edges', 0)}",
+        "",
+        "Call Resolution Quality:",
+        f"  Scoped / Tiered:       {data.get('calls_scoped', 0)}",
+        f"  Unique Global:         {data.get('calls_unique_global', 0)}",
+        f"  Ambiguous:             {data.get('calls_ambiguous', data.get('ambiguous_calls', 0))}",
+        f"  External / Unresolved: {data.get('calls_external', 0)}",
+        "",
+        "Imports & Bases:",
+        f"  Imports Resolved:      {data.get('imports_resolved', 0)}",
+        f"  Imports External:      {data.get('imports_unresolved', 0)}",
+        f"  Unresolved Bases:      {data.get('unresolved_bases', 0)}",
+        "",
+        "Exclusions:",
+        f"  Dotfiles/Dirs:         {data.get('skipped_dotfile', 0)}",
+        f"  Vendor Dirs:           {data.get('skipped_vendor', 0)}",
+        f"  Secrets:               {data.get('skipped_secret', 0)}",
+        f"  Binary Files:          {data.get('skipped_binary', 0)}",
+        f"  Too Large:             {data.get('skipped_too_large', 0)}",
+        f"  Gitignored:            {data.get('skipped_gitignore', 0)}",
+    ]
+    return "\n".join(lines)
+
+
 def cmd_stats(args):
-    _emit(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
+    raw = _require_index(Path(args.out), "stats.json").read_text(encoding="utf8")
+    if getattr(args, "json", False) or getattr(args, "format", "json") == "json":
+        _emit(raw)
+    else:
+        try:
+            data = json.loads(raw)
+            _emit(format_stats_summary(data))
+        except Exception:
+            _emit(raw)
+
+
+def cmd_explain_path(args):
+    from .parse import BuildConfig, explain_path
+
+    repo_path = Path(args.repo)
+    if not repo_path.is_dir():
+        raise SystemExit(f"error: repository directory does not exist: {repo_path}")
+
+    config = BuildConfig(
+        include_vendor=getattr(args, "include_vendor", False),
+        include_secrets=getattr(args, "include_secrets", False),
+        chunk_large_files=getattr(args, "chunk_large_files", False),
+        extra_exclude_dirs=getattr(args, "extra_exclude_dirs", None) or [],
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+    )
+    res = explain_path(
+        repo_path,
+        args.path,
+        config=config,
+        include_globs=args.include or None,
+        exclude_globs=args.exclude or None,
+    )
+    if getattr(args, "json", False):
+        _emit(json.dumps(res, indent=2))
+    else:
+        status_str = "INCLUDED" if res["included"] else "EXCLUDED"
+        lines = [
+            f"Path:            {res['path']}",
+            f"Relative Path:   {res['relative_path']}",
+            f"Decision:        {status_str}",
+            f"Precedence Step: {res['precedence_step']}",
+            f"Rule:            {res['rule']}",
+            f"Reason:          {res['reason']}",
+        ]
+        _emit("\n".join(lines))
+    return 0
 
 
 def cmd_doctor(args):
@@ -895,6 +982,12 @@ def main(argv=None):
         metavar="SECONDS",
         help="seconds to wait for the build lock before failing (default: 60)",
     )
+    b.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
@@ -976,6 +1069,12 @@ def main(argv=None):
         dest="lock_timeout",
         metavar="SECONDS",
         help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    gh.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
     )
     gh.set_defaults(func=cmd_github)
 
@@ -1124,9 +1223,28 @@ def main(argv=None):
     )
     m.set_defaults(func=cmd_map)
 
-    s = sub.add_parser("stats", help="print index stats")
+    s = sub.add_parser("stats", help="print index stats and quality summary")
     s.add_argument("-o", "--out", default=".r2g")
+    s.add_argument("--json", action="store_true", help="output stats as JSON")
+    s.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="json",
+        help="output format: json (default) or text (human-readable quality summary)",
+    )
     s.set_defaults(func=cmd_stats)
+
+    ep = sub.add_parser("explain-path", help="explain why a file is included or excluded")
+    ep.add_argument("path", help="file path to evaluate")
+    ep.add_argument(
+        "-r", "--repo", default=".", help="repository root (default: current directory)"
+    )
+    ep.add_argument("--include", action="append", default=[], help="glob to include")
+    ep.add_argument("--exclude", action="append", default=[], help="glob to exclude")
+    ep.add_argument("--include-vendor", action="store_true", default=False)
+    ep.add_argument("--include-secrets", action="store_true", default=False)
+    ep.add_argument("--json", action="store_true", help="output explanation as JSON")
+    ep.set_defaults(func=cmd_explain_path)
 
     d = sub.add_parser(
         "doctor",

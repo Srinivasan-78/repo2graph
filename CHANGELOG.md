@@ -24,6 +24,30 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Scoped call resolution and evidence transparency**: Call targets are resolved
+  through 7 lexical proximity tiers (`same_class` -> `same_file` -> `import_alias` ->
+  `same_dir` -> `global_unique` -> `ambiguous_fallback` -> `external`) rather than
+  blind global matching. Each `CALLS` edge records `resolution_kind`, `candidate_count`,
+  `scope_distance`, and `call_kind` (`static`, `dynamic`, `decorator`, `possible`)
+  (Issues #270, #271, #273).
+- **Import and alias resolution**: Multi-language AST import parsing extracts modules,
+  imported symbols, and local aliases (`ImportDetail`), mapping calls to their aliased
+  targets and tracking `imports_resolved` vs `imports_unresolved` in graph stats (Issue #272).
+- **Graph quality metrics & reporting**: Added `quality_metrics` to `manifest.json`
+  and enhanced `repo2graph stats` with human-readable summary by default and structured
+  JSON output with `--format json` or `--json` (Issue #274).
+- **Parser strictness policies**: Added `--parse-policy best-effort|warn|strict` flag
+  to `build` and `github` commands. In `strict` mode, tree-sitter AST syntax errors
+  raise a typed `ParseError` and halt the build with clear diagnostics (Issue #275).
+- **Subtyped inheritance & interface extraction**: Extracted class bases carry
+  relationship subtypes (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) alongside
+  the primary `INHERITS` edge type for backwards compatibility. Built-in and framework
+  base types without repo-local definitions are guarded against false cross-project
+  linkages (Issue #276).
+- **Path precedence hierarchy & explain-path**: Documented the canonical 10-tier
+  exclusion/inclusion precedence hierarchy and introduced `repo2graph explain-path <path>`
+  to interactively trace and explain why any file or directory was included or excluded
+  from indexing (Issue #277).
 - `repo2graph doctor [path]` command diagnosing Python version, package version,
   tree-sitter & grammar availability, Git integration, directory permissions,
   existing artifact integrity, vector correspondence, MCP SDK compatibility,
