@@ -192,7 +192,7 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
 
     if not manifest_path.exists():
         report.status = "partial"
-        report.errors.append(f"Missing manifest file: {manifest_path}")
+        report.errors.append(f"Missing agent/manifest.json: {manifest_path}")
         return report
 
     # 1. Parse manifest
