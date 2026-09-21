@@ -22,6 +22,8 @@ The main [README](../README.md) is the front door; this is the index for everyth
   case.
 - **[Limitations](limitations.md)** — static-analysis limitations generally, plus what parsing five
   real repositories actually showed (parse-error rates, call ambiguity, cross-language resolution).
+- **[How it compares](comparison.md)** — repo2graph against Graphify, the Obsidian Code Graph
+  plugin, grep and embedding RAG, including where each of them is the better answer.
 
 ## When to use repo2graph
 
