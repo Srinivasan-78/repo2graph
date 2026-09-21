@@ -133,7 +133,14 @@ def emit(
         without re-parsing stderr.
     """
     record: dict[str, Any] = {"ts": timestamp(), "level": level, "event": event}
-    record.update(fields)
+    if fields:
+        try:
+            from .secrets import sanitize_value
+
+            for k, v in fields.items():
+                record[k] = sanitize_value(str(k), v)
+        except Exception:
+            record.update(fields)
     try:
         line = json.dumps(record, ensure_ascii=False, default=str)
     except (TypeError, ValueError):

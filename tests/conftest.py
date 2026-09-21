@@ -102,7 +102,7 @@ def write_mini_repo(root: Path) -> Path:
 
 def build_mini_index(repo: Path, out: Path) -> Path:
     """`repo2graph build` with the format set every fixture here relies on."""
-    main(["build", str(repo), "-o", str(out), "--formats", "jsonl,overview"])
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl,overview", "--include-secrets"])
     return Path(out)
 
 

@@ -95,6 +95,14 @@ inputs:
     description: "Token used to clone a private target repo"
     required: false
     default: ""
+  include-secrets:
+    description: "Set to true to index secret/credential files (default: false)"
+    required: false
+    default: "false"
+  secret-policy:
+    description: "Policy for inline content secrets: redact-match, exclude-file, warn-only, off (default: redact-match)"
+    required: false
+    default: "redact-match"
 
 outputs:
   out:
@@ -169,6 +177,8 @@ runs:
         R2G_HISTORY: ${{ inputs.git-history }}
         R2G_INCLUDE: ${{ inputs.include }}
         R2G_EXCLUDE: ${{ inputs.exclude }}
+        R2G_INCLUDE_SECRETS: ${{ inputs.include-secrets }}
+        R2G_SECRET_POLICY: ${{ inputs.secret-policy }}
         SUMMARY_FILE: ${{ runner.temp }}/summary.json
       run: |
         set -euo pipefail
@@ -180,6 +190,13 @@ runs:
           args=(build "$R2G_PATH")
         fi
         args+=(-o "$R2G_OUT" --formats "$R2G_FORMATS" --git-history "$R2G_HISTORY")
+        inc_sec="$(printf '%s' "$R2G_INCLUDE_SECRETS" | tr '[:upper:]' '[:lower:]')"
+        if [ "$inc_sec" = "true" ]; then
+          args+=(--include-secrets)
+        fi
+        if [ -n "$R2G_SECRET_POLICY" ] && [ "$R2G_SECRET_POLICY" != "redact-match" ]; then
+          args+=(--secret-policy "$R2G_SECRET_POLICY")
+        fi
         # read -a splits on spaces without letting bash expand the globs
         if [ -n "$R2G_INCLUDE" ]; then
           read -r -a inc <<< "$R2G_INCLUDE"
