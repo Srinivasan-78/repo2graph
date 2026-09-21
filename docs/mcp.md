@@ -27,10 +27,10 @@ pip install "repo2graph[mcp]"
 
 Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
 
-The extra pins `mcp>=1.0,<2`: the server is written against the 1.x `Server`
-decorator API, which 2.x removed. If a 1.x SDK is not what you have installed,
-`repo2graph-mcp` says so and names what to install instead rather than raising.
-2.x support is tracked in [`BACKLOG.md`](BACKLOG.md).
+The extra pins `mcp>=1.0,<3.0`: `serve()` supports both the 1.x `Server`
+decorator API and the 2.x registration API it was replaced with. If neither is
+what you have installed, `repo2graph-mcp` says so and names what to install
+instead rather than raising.
 
 ## The index builds itself
 
