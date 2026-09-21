@@ -143,24 +143,33 @@ reading, and each was live:
 
 ## Recommended next priorities
 
-1. **Port `serve()` to the mcp 2.x SDK API.** It is the single blocker for
-   streaming, native cache metadata, and the `<2` pin that is ageing.
-   `dispatch()` holds all the logic and needs no changes, so the blast radius is
-   `serve()`, `_require_sdk()`, the extra and one README paragraph.
-2. **Annotate the ten legacy modules.** 324 errors, ~223 of them missing
-   annotations and 29 real type errors. Do it module by module, removing each
-   from the `[[tool.mypy.overrides]]` list and the pre-commit regex as it goes
-   green. `query.py` and `export.py` first — they are the most depended on, so
-   their `Any` returns are what makes callers unprovable.
-3. **Coverage measurement.** ~400 tests were added across this run and the
-   previous one on judgement alone. Nobody can currently say which branch of
-   `auth.py` never executes.
-4. **A fixture above `PARALLEL_MIN_FILES`.** No test crosses 64 files, so
-   `build()`'s process-pool path is never exercised, and the known auto-build
-   pool hang would manifest as a hang rather than a failure.
+Items 1, 3 and 4 below were **already shipped** by later runs; the list above
+them was written before those landed and is kept only so the history reads
+straight. What is actually open is item 2 (partially) and item 5.
+
+1. ~~**Port `serve()` to the mcp 2.x SDK API.**~~ **Shipped.** `serve()` branches
+   on `supports_decorators = hasattr(Server, "list_tools")` and drives either
+   SDK generation; the extra is `mcp>=1.0,<3.0`. See docs/BACKLOG.md, "Port the
+   MCP server to the 2.x SDK API, as shipped".
+2. **Annotate the legacy modules.** *In progress.* `query.py` and `export.py`
+   are **done** — they were taken first because everything else imports them,
+   so their `Any` returns were what made callers unprovable. 179 errors remain,
+   concentrated in `mcp.py` (40), `graph.py` (39), `parse.py` (27) and
+   `cli.py` (23). Continue module by module, removing each from the
+   `[[tool.mypy.overrides]]` list in pyproject as it goes green — that list is
+   now the only place the strict scope is defined, so nothing else needs editing.
+3. ~~**Coverage measurement.**~~ **Shipped.** `[tool.coverage]` in pyproject
+   turns on branch coverage with a `fail_under` floor, and CI already ran
+   `pytest --cov`. Measured at 86%; the thinnest real modules are `lock.py`
+   (58%), `embed.py` and `events.py` (75%), `mcp.py` (78%), `parse.py` (79%)
+   and `auth.py` (80%, with 21 partial branches).
+4. ~~**A fixture above `PARALLEL_MIN_FILES`.**~~ **Shipped** as the session-scoped
+   `wide_repo` fixture (`tests/conftest.py`), consumed by
+   `test_iss67_build_takes_the_pool_path_above_parallel_min_files` and the two
+   MCP auto-build tests.
 5. **A real `sentence-transformers` smoke test**, network-gated and opt-in.
    Every embedder in the suite is a stub, so nothing proves the real wrapper's
-   `model_id`/`dim` agree with what `vectors.meta.json` records.
+   `model_id`/`dim` agree with what `vectors.meta.json` records. **Still open.**
 
 ---
 

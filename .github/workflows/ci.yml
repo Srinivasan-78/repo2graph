@@ -44,8 +44,9 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy repo2graph
-      # Coverage is reported, not gated: no repo-wide baseline exists yet to
-      # gate against (docs/BACKLOG.md item 7).
+      # Branch coverage, gated at a floor. The baseline that BACKLOG item 7 said
+      # was missing now exists: see [tool.coverage] in pyproject.toml for the
+      # measured number and why the floor sits below it.
       - run: pytest -q --cov=repo2graph --cov-report=term-missing
 
   packaging:
