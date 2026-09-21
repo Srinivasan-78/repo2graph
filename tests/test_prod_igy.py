@@ -375,3 +375,44 @@ def test_prod_igy_auto_retargets_main_to_develop():
     # formatBotComment contains the retargeted notice
     assert "Base Branch Notice @${author}" in content
     assert "automatically retargeted this PR to \\`develop\\`" in content
+
+
+def _js_regex(content: str, name: str, arg: str) -> re.Pattern:
+    """Pull a `const <name> = /<pattern>/i.test(<arg>)` literal out of the script.
+
+    The retarget guard is the one piece of prod-igy whose *behaviour* is worth
+    asserting rather than its source text, and the pytest environment has no
+    Node (see this module's docstring). Extracting the literal and compiling it
+    with `re` tests the pattern itself: a typo in the login shape fails here
+    instead of silently retargeting a release PR in production.
+    """
+    match = re.search(rf"const {name} = /(.+?)/i\.test\({arg}\);", content)
+    assert match, f"{name} guard not found in prod-igy.js"
+    return re.compile(match.group(1), re.IGNORECASE)
+
+
+def test_prod_igy_never_retargets_a_release_pr():
+    """A release PR must stay on `main`.
+
+    publish.yml has prod-igy raise `release/vX.Y.Z -> main` and then polls for
+    that merge, so retargeting it to `develop` strands the version bump and
+    times the release run out with nothing merged.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    assert (
+        "baseRef === 'main' && headRef !== 'develop' && !isProdigyPr && !isReleaseBranch" in content
+    )
+
+    author_re = _js_regex(content, "isProdigyPr", "author")
+    # The login GitHub actually sent on PR #252, the v1.6.0 release bump.
+    assert author_re.match("prod-igy-bot[bot]")
+    assert author_re.match("prod-igy[bot]")
+    assert not author_re.match("Srinivasan-78")
+    assert not author_re.match("dependabot[bot]")
+    assert not author_re.match("prod-igy-bot")
+
+    branch_re = _js_regex(content, "isReleaseBranch", "headRef")
+    assert branch_re.match("release/v1.6.0")
+    assert not branch_re.match("fix/parse-timeout")
+    assert not branch_re.match("docs/release-notes")

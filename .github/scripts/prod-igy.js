@@ -333,9 +333,20 @@ async function triagePullRequest({ github, owner, repo, prNumber, core }) {
   const headRef = pr.head.ref;
   const headSha = pr.head.sha;
 
-  // Auto-retarget to 'develop' if PR targets 'main' and is not a release PR from develop -> main
+  // Auto-retarget contributor PRs from 'main' to 'develop'.
+  //
+  // Three things must NOT be retargeted, because each of them belongs on main
+  // by design and moving it breaks a release:
+  //   - the develop -> main promotion PR itself;
+  //   - release/* branches, which carry the version bump for a tag;
+  //   - anything prod-igy itself opened. publish.yml has the bot raise
+  //     `release/vX.Y.Z -> main` and then polls for the merge, so retargeting
+  //     its own PR would strand the bump on develop and time the release run
+  //     out after 60 minutes with nothing to show for it.
+  const isProdigyPr = /^prod-igy(-bot)?\[bot\]$/i.test(author);
+  const isReleaseBranch = /^release\//i.test(headRef);
   let retargetedToDevelop = false;
-  if (baseRef === 'main' && headRef !== 'develop') {
+  if (baseRef === 'main' && headRef !== 'develop' && !isProdigyPr && !isReleaseBranch) {
     core.info(`[PR #${prNumber}] Base branch is 'main'. Retargeting to 'develop'...`);
     try {
       const { data: updatedPr } = await github.rest.pulls.update({
