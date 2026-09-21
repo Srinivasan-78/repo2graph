@@ -11,6 +11,7 @@ repo2graph rag     [target] <question>  pack a cited context for an LLM
 repo2graph embed             add meaning-based search to an index
 repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
+repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -300,3 +301,25 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
 
 Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
 `claude-haiku-4-5` and `llama3.1`); pass `--model` to override.
+
+## `doctor` — diagnose the environment and artifacts
+
+```bash
+repo2graph doctor [path] [--json]
+```
+
+Inspects the runtime environment and index directory for common configuration,
+permission, dependency, or artifact integrity issues:
+
+- **Python version**: checks that Python is >= 3.10.
+- **Tree-sitter & grammars**: checks that `tree-sitter` and `tree-sitter-language-pack` are installed and verifies all supported language grammars.
+- **Git integration**: verifies `git` executable availability and non-ASCII path support.
+- **Directory permissions**: verifies write permissions in the target directory.
+- **Artifact integrity**: validates `manifest.json`, `chunks.jsonl`, `nodes.jsonl`, and `edges.jsonl` if an index exists.
+- **Dense vector integrity**: checks `vectors.npy` and `vectors.meta.json` correspondence with `chunks.jsonl`.
+- **MCP SDK**: verifies installed `mcp` version compatibility.
+- **LLM providers**: checks if provider environment variables are configured without ever disclosing the secret values.
+- **Platform encoding**: checks console and filesystem encoding to detect potential charmap limitations.
+
+Pass `--json` for machine-readable JSON output suitable for CI or automation. Exits with code 0 if all checks pass, or 1 if any critical check fails.
+

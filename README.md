@@ -239,6 +239,7 @@ resolution limits).
 | `repo2graph embed -o .r2g [--verify-rag]` | Compute/verify dense vectors for hybrid search. |
 | `repo2graph map -o .r2g [--viz-nodes N]` | Regenerate `graph.html` with a different node cap. |
 | `repo2graph stats -o .r2g` | Node/edge/function counts for an existing index. |
+| `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
 **Environment variables** (only read by `rag --answer`, in this precedence order):

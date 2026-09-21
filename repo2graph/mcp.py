@@ -701,7 +701,7 @@ def _unusable_sdk(version: str, detail: str) -> str:
     )
 
 
-def _require_sdk():
+def _require_sdk() -> Any:
     """Turn a missing *or unusable* optional dependency into an instruction.
 
     Two distinct failures, both of which must end in a sentence a user can act
