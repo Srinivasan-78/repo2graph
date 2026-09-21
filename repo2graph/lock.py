@@ -13,7 +13,8 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Generator, TextIO
+from types import TracebackType
+from typing import Any, Generator, TextIO
 
 DEFAULT_LOCK_TIMEOUT = 60.0
 DEFAULT_STALE_THRESHOLD = 3600.0  # 1 hour
@@ -40,7 +41,7 @@ def _is_pid_alive(pid: int) -> bool:
             import ctypes
             from ctypes import wintypes
 
-            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            kernel32 = getattr(ctypes, "windll").kernel32
             # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             SYNCHRONIZE = 0x00100000
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -143,7 +144,12 @@ class BuildLock:
         self.acquire()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.release()
 
     def _try_os_lock(self, fh: TextIO) -> bool:
@@ -200,13 +206,15 @@ class BuildLock:
         except OSError:
             pass
 
-    def _read_holder_metadata(self) -> dict:
+    def _read_holder_metadata(self) -> dict[str, Any]:
         """Read owner metadata from lock file if readable."""
         try:
             if self.lock_file.exists():
                 text = self.lock_file.read_text(encoding="utf8", errors="replace").strip()
                 if text:
-                    return json.loads(text)
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict):
+                        return parsed
         except Exception:
             pass
         return {"file": str(self.lock_file)}
