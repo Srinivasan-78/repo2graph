@@ -12,12 +12,12 @@ format:
 format-check:
 	ruff format --check .
 
-# Mirrors .pre-commit-config.yaml's mypy-strict hook: strict on the modules
-# that are actually annotated. See pyproject.toml's [[tool.mypy.overrides]]
-# for why the legacy modules are excluded by name instead of by wildcard.
+# Checks the whole package, not a hand-listed subset. pyproject's
+# [[tool.mypy.overrides]] already relaxes exactly the legacy modules, so passing
+# the package is equivalent to the old list *and* picks up a new module
+# automatically -- the list form silently skipped anything not named in it.
 typecheck:
-	python -m mypy repo2graph/events.py repo2graph/cache.py repo2graph/auth.py \
-		repo2graph/audit.py repo2graph/tasks.py repo2graph/http_server.py
+	python -m mypy repo2graph/
 
 test:
 	pytest -q

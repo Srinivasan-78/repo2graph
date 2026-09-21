@@ -123,7 +123,7 @@ calls.
 
 Files in any other language still appear on the map as files in their folders, so
 nothing goes missing. Teaching it a new language means adding one entry to
-`LANG_CFG` in `repo2graph/langs.py`.
+`LANG_CFG` in `repo2graph/parse.py`.
 
 ## Where it guesses
 
