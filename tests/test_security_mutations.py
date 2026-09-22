@@ -171,7 +171,7 @@ def test_mutation_validate_outdir_refuses_unsafe_symlinks(tmp_path: Path):
         pytest.skip("symlinks not supported on this platform/privilege level")
 
     # Refuse symlink target without allow_symlink
-    with pytest.raises(ValueError, match="symbolic link"):
+    with pytest.raises(ValueError, match=r"[Ss]ymlink"):
         validate_outdir(symlink_dir, allow_symlink=False)
 
     # Allowed when explicitly enabled
@@ -258,3 +258,4 @@ def test_mutation_active_lock_cannot_be_stolen(tmp_path: Path):
             lock2.acquire()
     finally:
         lock1.release()
+
