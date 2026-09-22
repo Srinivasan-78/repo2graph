@@ -11,10 +11,12 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
+from repo2graph import secrets
 from repo2graph.cli import main
 from repo2graph.secrets import (
     MAX_CONTAINER_ITEMS,
@@ -215,6 +217,27 @@ def test_scan_content_secrets_matches():
     assert "openai_key" in match_types
     assert "google_key" in match_types
     assert "DATABASE_PASSWORD" in match_types
+
+
+def test_scan_content_secrets_returns_spans_not_plaintext():
+    """A finding locates a credential; it must never carry one.
+
+    Callers only count findings or report `f[0]`, so returning the matched
+    bytes built a list of live credentials that existed solely to be thrown
+    away -- and any later `emit(..., findings=findings)` would have shipped it
+    verbatim. Offsets below are hand-counted against `text`: "tok = '" is 7
+    characters, and the token is 36.
+    """
+    secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    text = f"tok = '{secret}'\n"
+
+    findings = scan_content_secrets(text)
+
+    assert findings == [("github_token", 7, 43)]
+    # The span is the contract: a caller holding `text` can still recover it.
+    stype, start, end = findings[0]
+    assert text[start:end] == secret
+    assert all(secret not in part for f in findings for part in f if isinstance(part, str))
 
 
 def test_redact_content_preserves_line_count():
@@ -504,3 +527,155 @@ def test_action_yml_incremental_and_parse_policy_forwarding(tmp_path: Path):
     assert call[call.index("--parse-policy") + 1] == "strict"
     assert "--max-call-candidates" in call
     assert call[call.index("--max-call-candidates") + 1] == "3"
+
+
+# ---------------------------------------------------------------------------
+# PEM pairing: correctness, and the cost of getting it wrong
+#
+# The single-pattern form (BEGIN, then a lazy [\s\S]*? to an optional END) is
+# quadratic on input that repeats BEGIN without ever supplying an END: each
+# BEGIN re-scans the whole remaining text before the optional group gives up.
+# Repository content is attacker-supplied on every build and max_file_bytes
+# defaults to 1.5 MB, so one committed file cost minutes of CPU per build.
+# ---------------------------------------------------------------------------
+
+BEGIN_PEM = "-----BEGIN RSA PRIVATE KEY-----"  # 31 chars
+END_PEM = "-----END RSA PRIVATE KEY-----"  # 29 chars
+
+
+def test_a_complete_pem_block_spans_begin_through_end():
+    """Offsets hand-derived: 31 + len("\nBODY\n") + 29 == 66."""
+    text = BEGIN_PEM + "\nBODY\n" + END_PEM
+    assert len(text) == 66
+    assert secrets._pem_spans(text) == [(0, 66)]
+    assert ("private_key", 0, 66) in secrets.scan_content_secrets(text)
+
+
+def test_an_unterminated_pem_block_spans_only_its_header():
+    """No END means the header alone, which is what the optional group gave."""
+    text = BEGIN_PEM + "\nnot actually a key\n"
+    assert secrets._pem_spans(text) == [(0, 31)]
+
+
+def test_a_begin_nested_inside_a_block_is_not_reported_twice():
+    """finditer never restarts inside a match it already made; nor does this."""
+    text = BEGIN_PEM + "\n" + BEGIN_PEM + "\n" + END_PEM
+    spans = secrets._pem_spans(text)
+    assert len(spans) == 1
+    assert spans[0] == (0, len(text))
+
+
+def test_two_separate_pem_blocks_pair_independently():
+    one = BEGIN_PEM + "\nA\n" + END_PEM
+    text = one + "\nfiller\n" + one
+    spans = secrets._pem_spans(text)
+    assert spans == [(0, len(one)), (len(one) + 8, len(text))]
+
+
+def test_repeated_begin_without_end_stays_linear():
+    """The detector for the quadratic form.
+
+    At 200k characters the paired scan takes tens of milliseconds; the lazy
+    single-pattern form took ~8 seconds, and ~8 minutes at the 1.5 MB file
+    ceiling. The bound below sits far from both, so it survives a slow CI box
+    without going vacuous.
+    """
+    text = (BEGIN_PEM + "\n") * (200_000 // 32)
+
+    start = time.perf_counter()
+    findings = secrets.scan_content_secrets(text)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 3.0, f"scan took {elapsed:.2f}s; the quadratic form is back"
+    # Every BEGIN is still reported -- fast and wrong would be worse.
+    assert len(findings) == 200_000 // 32
+    assert {f[0] for f in findings} == {"private_key"}
+
+
+def test_redact_content_on_repeated_begin_stays_linear():
+    """redact_content runs the scan and then rewrites; both must stay bounded.
+
+    Sized at 200k, not 100k: at 100k the quadratic form takes ~2s, which slips
+    under this bound and makes the test a detector in name only.
+    """
+    text = (BEGIN_PEM + "\n") * (200_000 // 32)
+
+    start = time.perf_counter()
+    redacted, count = secrets.redact_content(text)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 3.0, f"redact took {elapsed:.2f}s"
+    assert count == 200_000 // 32
+    assert BEGIN_PEM not in redacted
+    assert len(text.split("\n")) == len(redacted.split("\n"))
+
+
+# ---------------------------------------------------------------------------
+# NON_SECRET_KEYS: the audit log must stay readable
+#
+# SECRET_KEY_RE matches by substring, so `auth_modes` (which auth is in force)
+# and `budget_tokens` (a count) were redacted -- costing an operator the two
+# fields they most want when reading the log back, and telling them nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_shape_describing_fields_are_not_redacted():
+    """These name a shape; they never hold a credential."""
+    assert sanitize_value("auth_modes", ["none", "token"]) == ["none", "token"]
+    assert sanitize_value("budget_tokens", "4000") == "4000"
+    assert sanitize_value("result_tokens", "1234") == "1234"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "auth",
+        "auth_token",
+        "authorization",
+        "password",
+        "passwd",
+        "api_key",
+        "apikey",
+        "secret",
+        "credential",
+        "session",
+        "cookie",
+        "bearer",
+        "signature",
+        "access_key",
+        "private_key",
+        "AUTH_TOKEN",
+        "Authorization",
+    ],
+)
+def test_the_allowlist_does_not_weaken_the_key_rule(key):
+    """Every credential-shaped name still redacts, in any casing."""
+    out = sanitize_value(key, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+    assert out.startswith(f"[redacted:key:{key}"), out
+
+
+def test_an_allowlisted_key_still_has_its_value_inspected():
+    """Allowlisting the *name* must not blind the value checks.
+
+    A credential that turns up under one of these names is still caught by the
+    shape rules -- the allowlist skips the name test, not the rest.
+    """
+    got = sanitize_value("auth_modes", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+    assert got.startswith("[redacted:github_token")
+
+    got_url = sanitize_value("budget_tokens", "postgres://u:pw123456@host/db")
+    assert got_url.startswith("[redacted:")
+    assert "pw123456" not in got_url
+
+
+def test_every_allowlisted_key_actually_matches_the_regex():
+    """An entry that does not match SECRET_KEY_RE is dead weight.
+
+    It would silently suggest the name is dangerous when the general rule
+    never flagged it, which is how an allowlist rots into a list of guesses.
+    """
+    from repo2graph.secrets import NON_SECRET_KEYS, SECRET_KEY_RE
+
+    for key in NON_SECRET_KEYS:
+        assert SECRET_KEY_RE.search(key), f"{key!r} never needed allowlisting"
+        assert key == key.lower(), f"{key!r} must be lowercased to be matched"

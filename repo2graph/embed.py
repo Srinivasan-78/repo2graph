@@ -75,8 +75,14 @@ def _npy_read(path: Path) -> tuple[list, int]:
     short payload -- is a ValueError, which load_vectors turns into "no
     vectors" rather than an exception in the middle of a query.
     """
-    with open(path, "rb") as fh:
-        raw = fh.read()
+    from .integrity import MAX_VECTORS_BYTES, read_bounded
+
+    # Bounded: `path` belongs to an index that may have been built elsewhere,
+    # so its size is attacker-chosen and a plain `.read()` is an allocation
+    # somebody else picks. ValueError is what the rest of this reader already
+    # raises, and load_vectors' callers turn it into "no vectors" with BM25 as
+    # the floor.
+    raw = read_bounded(path, MAX_VECTORS_BYTES, what="vectors.npy")
     if len(raw) < 10 or not raw.startswith(_NPY_MAGIC):
         raise ValueError(f"{path}: not an .npy file")
     major = raw[6]
@@ -231,9 +237,17 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
     Raises ValueError/OSError on anything malformed; callers that must not fail
     (query.Index) catch both and fall back to BM25.
     """
+    from .integrity import MAX_METADATA_BYTES, read_bounded
+
     path = Path(path)
-    with open(meta_path(path), encoding="utf8", newline="\n") as fh:
-        meta = json.load(fh)
+    # Bounded, and bounded *here* in particular: the sidecar is read before the
+    # array, so a ceiling on vectors.npy alone would leave the whole allocation
+    # reachable through this file instead.
+    meta = json.loads(
+        read_bounded(meta_path(path), MAX_METADATA_BYTES, what="vectors.meta.json").decode(
+            "utf8", "replace"
+        )
+    )
     if not isinstance(meta, dict):
         raise ValueError(f"{meta_path(path)}: expected a JSON object")
     # The format marker is checked before anything is read out of the pair, and

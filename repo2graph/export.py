@@ -1147,12 +1147,19 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     target.rename(backup)
     try:
         staging.rename(target)
-    except Exception:
-        # Rollback: restore the backup
+    except Exception as swap_exc:
         try:
             backup.rename(target)
-        except Exception:
-            pass
+        except Exception as restore_exc:
+            # Both halves failed, so the previous index is no longer at
+            # `target` and could not be put back. Swallowing this left an
+            # operator with a vanished index and a dot-directory they had no
+            # reason to look in; name it instead.
+            raise RuntimeError(
+                f"failed to swap the new index into {target}, and failed to restore the "
+                f"previous one: it is still at {backup} -- move it back by hand. "
+                f"(swap: {swap_exc}; restore: {restore_exc})"
+            ) from swap_exc
         raise
     shutil.rmtree(backup, ignore_errors=True)
 

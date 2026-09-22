@@ -13,6 +13,143 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two builders could both hold the build lock.** `BuildLock` reclaimed a lock
+  whose file was older than `stale_threshold` (1 hour) by unlinking it —
+  regardless of whether the holder was alive. `_write_metadata` runs once, at
+  acquire, so the file's mtime measures how long the holder has been *working*,
+  not whether it is stuck: any build slower than the threshold was joined by a
+  second one. Because `flock`/`msvcrt.locking` attach to an open file rather
+  than a path, the second builder's lock on the freshly created file conflicted
+  with nobody, and `dump_all`'s directory swap then ran twice over one index.
+  A second, narrower instance of the same shape: `release()` unlinked the path
+  unconditionally, so a waiter that opened the path just before that unlink
+  locked a now-nameless file while the next process created and locked a new
+  one. The OS lock is now the only authority on whether the lock is held — it
+  is released by the kernel when its holder dies, so a lock file left by a
+  crash is already acquirable and never needed reclaiming. `acquire()`
+  additionally verifies that the descriptor it locked is still the file the
+  path names, and `release()` only unlinks a name that still refers to its own
+  file. `stale_threshold` now enriches the timeout diagnostic instead of
+  licensing a takeover.
+- **A failed index swap that also failed to roll back said nothing useful.**
+  `_atomic_dir_swap` swallowed the restore error and re-raised the original, so
+  an operator was left with a missing index and a `.<name>.backup.<pid>`
+  directory they had no reason to look in. The raised error now names it.
+
+### Security
+
+- **Index files are read under a size ceiling.** `embed._npy_read` and
+  `load_vectors`, `integrity.verify_artifacts` and `doctor` all read index
+  files whole with `.read()`/`read_text()`. An index is routinely consumed from
+  elsewhere — the `graph` branch, Action artifacts, `examples/` — and `doctor`
+  on a received index is the documented way to check one, so those sizes are
+  attacker-chosen and each read was an unbounded allocation driven by a file
+  somebody else wrote. All five sites now go through `integrity.read_bounded`,
+  which stats the open descriptor and refuses anything over its limit
+  (`MAX_METADATA_BYTES` 256 MB for `manifest.json` and `vectors.meta.json`,
+  `MAX_VECTORS_BYTES` 512 MB for `vectors.npy`). Bounding `vectors.npy` alone
+  would not have closed this: `load_vectors` reads the sidecar first, so the
+  whole allocation stayed reachable through that file.
+- **`auth_modes` and `budget_tokens` are no longer redacted out of the audit
+  log.** `SECRET_KEY_RE` matches by substring, so field names describing a
+  *shape* — which auth is in force, how large a request was — were replaced
+  with `[redacted:key:...]`, costing an operator the two fields most worth
+  reading back and revealing nothing in exchange. A short explicit
+  `NON_SECRET_KEYS` allowlist exempts them from the **name** test only; their
+  values still go through the credential-shape, URL and path checks, so a
+  token that turns up under one of those names is still redacted. The
+  allowlist rather than a narrower regex: loosening the pattern would also stop
+  matching names nobody has written yet, and that failure mode is a credential
+  in a log.
+- **The HTTP transport no longer tells a caller where its index lives.** Found
+  by an audit of the transport, not reported. When no index exists,
+  `open_index` raises `SystemExit` with a message written for an operator at a
+  terminal that names the absolute index directory — twice — and `_call_tool`
+  relayed `str(exc)` verbatim as the 503 body, so a caller (and the context
+  window of any agent driving the server) received the host's filesystem
+  layout. That is the disclosure `_public_repo_label` already refuses one
+  endpoint over. The 503 stays actionable per #265 but uses placeholders
+  (`repo2graph build <repo> -o <index-dir>`); the real directory goes to the
+  audit log, which is server-side. The rest of the transport audit found no
+  further issues: token comparison is constant-time, algorithm confusion is
+  refused by an RSA-only table plus a `kty` check, `Host`/`Origin` are
+  validated before the body is read, response headers are sanitised against
+  splitting, bodies are `Content-Length`-only and size-capped with a
+  `RecursionError` guard on deeply nested JSON, and the non-loopback bind
+  guard fails closed.
+- **Quadratic blowup scanning for PEM private keys (denial of service).** Found
+  by a ReDoS pass over `secrets.py`, not reported. The `private_key` pattern was
+  `BEGIN` followed by a lazy `[\s\S]*?` to an *optional* `END`, so every `BEGIN`
+  whose `END` is missing re-scanned the entire remaining text before the
+  optional group gave up — O(n²) in the number of `BEGIN` markers. Repository
+  content is attacker-supplied on every build and `max_file_bytes` defaults to
+  1.5 MB, so one committed file of repeated `-----BEGIN RSA PRIVATE KEY-----`
+  lines cost roughly eight minutes of CPU per build (measured: 4× time per 2×
+  input, 5.5s at 160 KB). `BEGIN` and `END` are now separate anchors paired by
+  `_pem_spans` in one linear pass: the same 1.5 MB worst case takes 269 ms.
+  Detection is unchanged — a complete block still spans `BEGIN` through `END`,
+  an unterminated one still yields its header, and line-preserving redaction
+  still holds. The other patterns were measured at the same sizes and are
+  linear.
+- **GHSA-mqm8-mc66-wjvj (high) — OIDC JWKS fetch could be downgraded to
+  cleartext by redirect.** `auth._fetch_json` checked `https` on the URL it was
+  handed, then called `urlopen`, which follows redirects using a handler that
+  accepts `http`, `https` and `ftp`. An issuer's discovery document or
+  `jwks_uri` could therefore `302` to `http://`, putting the signing keys on the
+  wire in clear; an on-path attacker answering that request substitutes their
+  own modulus and then satisfies every remaining check in the module — `alg`,
+  `use`/`key_ops`, `iss`, `aud`, `exp` and a genuinely valid signature over
+  their own key — to authenticate as any `sub`. Fetches now go through a
+  module-level opener whose redirect handler refuses any non-`https` hop and
+  caps redirects at 3. Affected deployments: `--auth-oidc-issuer` on the HTTP
+  transport.
+- **GHSA-f896-f643-87cf (medium) — `jwks_uri` was unconstrained.**
+  `JWKSCache._resolve_jwks_uri` cross-checked the discovery document's `issuer`
+  but took `jwks_uri` at face value, so one field in a document fetched over
+  the network relocated the trust anchor for every authentication decision to
+  any host. It must now share the issuer's scheme and host. The `issuer` field
+  is also required rather than optional: the old `if declared and ...` skipped
+  the mismatch check entirely when the field was absent, letting a document opt
+  out of being compared by omitting it. RFC 8414 §3.2 makes it REQUIRED.
+- **GHSA-6wrx-c2rg-mvm9 (medium) — `repo2graph doctor` was an arbitrary-file
+  hash oracle.** `integrity.verify_artifacts` built each path to check as
+  `out / rel_path` where `rel_path` is a key from the index's own
+  `manifest.json` — untrusted input, since this project ships indexes on a
+  `graph` branch, as Action artifacts and in `examples/`, with `doctor` as the
+  documented way to check a received one. `pathlib` discards the left operand
+  when the right is absolute, so an absolute key read any file the process
+  could reach and echoed its real `sha256` into `report.errors`, while a
+  missing file reported differently from a mismatching one, probing for
+  existence. Keys that are absolute, or that resolve outside the index, are now
+  reported as a corrupt manifest before anything is read. `checksums` keys were
+  the only manifest-derived values used as paths; `written` and `entrypoints`
+  were audited and are not.
+- **`rag --answer` no longer lets a provider redirect walk off with the API key.**
+  Found by sweeping the codebase for the class behind GHSA-mqm8-mc66-wjvj, not
+  reported separately. `stream_answer` called `urlopen`, which follows
+  redirects, and CPython's handler forwards every header except
+  `content-length`/`content-type` to the new target whatever host or scheme it
+  names — so a provider answering `302 http://elsewhere` was handed the
+  `Authorization` / `x-api-key` / `x-goog-api-key` header in clear. It also made
+  `_disclose` untrue, since the hostname printed to stderr before the first byte
+  would not be where the request ended up. Provider redirects are now confined
+  to the same origin, may not downgrade https to http, and are capped at 3; an
+  http-to-https upgrade on the same host is still allowed, because `OLLAMA_HOST`
+  is legitimately plain http. Sweep result for the three advisory classes:
+  `auth.py` and `answer.py` were the only redirect-following calls (no others
+  exist), `integrity.py` held the only untrusted path join, and there is no
+  archive extraction, no `pickle`/`eval`/`yaml.load`, and no `shell=True`
+  anywhere in the package.
+- `secrets.scan_content_secrets` returns `(type, start, end)` spans instead of
+  `(type, start, end, matched_text)`. No caller ever read the fourth element --
+  `redact_content` wanted only its newline count and `chunks._process_chunk_content`
+  reports `f[0]` -- so every scan built a list of live credentials that existed
+  purely to be discarded, one `emit(..., findings=findings)` away from becoming
+  the leak the module exists to prevent. Callers needing the bytes hold `text`
+  and can slice the span. Internal API: not exported from `repo2graph.__all__`.
+
 ## [2.0.0] — 2026-09-22
 
 ### Removed

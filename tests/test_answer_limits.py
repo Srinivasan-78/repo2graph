@@ -13,8 +13,10 @@ them by accident. Every expected value is hand-written here; none is computed by
 calling the code under test.
 """
 
+import http.client
 import io
 import json
+import pathlib
 import urllib.request
 
 import pytest
@@ -77,10 +79,25 @@ class SizedResponse:
         pass
 
 
+class FakeOpener:
+    """Stand-in for `answer._OPENER`, delegating to a urlopen-shaped callable.
+
+    `stream_answer` goes through an opener rather than `urlopen` so that its
+    redirect handler cannot be bypassed (`_SameOriginRedirect`); patching the
+    opener is what keeps these tests off the network.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **kw):
+        return self._fn(req, *a, **kw)
+
+
 def serve(monkeypatch, body: bytes) -> SizedResponse:
-    """Point urlopen at one canned body; return the response for its counters."""
+    """Point the opener at one canned body; return the response for its counters."""
     resp = SizedResponse(body)
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, *a, **kw: resp)
+    monkeypatch.setattr(answer, "_OPENER", FakeOpener(lambda req, *a, **kw: resp))
     return resp
 
 
@@ -311,10 +328,74 @@ def test_iss241_an_iteration_only_response_still_works(monkeypatch):
 
     only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
     monkeypatch.setattr(
-        urllib.request,
-        "urlopen",
-        lambda req, *a, **kw: IterOnly(
-            [b'{"message":{"content":"Hel"}}\n', b'{"message":{"content":"lo"}}\n']
+        answer,
+        "_OPENER",
+        FakeOpener(
+            lambda req, *a, **kw: IterOnly(
+                [b'{"message":{"content":"Hel"}}\n', b'{"message":{"content":"lo"}}\n']
+            )
         ),
     )
     assert answer.stream_answer(PACK, out=io.StringIO()) == "Hello"
+
+
+# ---------------------------------------------------------------------------
+# Redirect handling on the provider call
+#
+# CPython's HTTPRedirectHandler forwards every header except content-length
+# and content-type to the redirect target, whatever host and scheme it names.
+# The provider request carries the API key in one of those headers, so an
+# unconstrained redirect hands the credential to wherever the response points
+# -- and makes the hostname _disclose() printed the one place the request did
+# not go.
+# ---------------------------------------------------------------------------
+
+
+def _redirect(from_url, to_url):
+    """Ask the real handler what it does with `from_url` -> `to_url`."""
+    handler = answer._SameOriginRedirect()
+    req = urllib.request.Request(from_url, data=b"{}", method="POST")
+    return handler.redirect_request(req, None, 302, "Found", http.client.HTTPMessage(), to_url)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "http://api.openai.com/v1/chat/completions",  # scheme downgrade
+        "https://evil.example.com/v1/chat/completions",  # different host
+        "http://evil.example.com/v1/chat/completions",  # both
+        "file:///etc/passwd",
+        "ftp://api.openai.com/x",
+    ],
+)
+def test_a_provider_redirect_that_would_leak_the_key_is_refused(target):
+    assert _redirect("https://api.openai.com/v1/chat/completions", target) is None
+
+
+def test_a_same_origin_provider_redirect_is_followed():
+    onward = _redirect(
+        "https://api.openai.com/v1/chat/completions",
+        "https://api.openai.com/v2/chat/completions",
+    )
+    assert onward is not None
+    assert onward.full_url == "https://api.openai.com/v2/chat/completions"
+
+
+def test_an_ollama_upgrade_to_https_on_the_same_host_is_allowed():
+    """OLLAMA_HOST is legitimately plain http; moving it to TLS is not an attack."""
+    onward = _redirect("http://127.0.0.1:11434/api/chat", "https://127.0.0.1:11434/api/chat")
+    assert onward is not None and onward.full_url.startswith("https://")
+
+
+def test_stream_answer_goes_through_the_guarded_opener():
+    """A bare urlopen would rebuild the default, permissive redirect handler."""
+    src = pathlib.Path(answer.__file__).read_text(encoding="utf8")
+    assert "urllib.request.urlopen(" not in src
+    assert "_OPENER.open(req" in src
+
+    installed = [
+        h for h in answer._OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    assert len(installed) == 1
+    assert isinstance(installed[0], answer._SameOriginRedirect)
+    assert answer._SameOriginRedirect.max_redirections == 3
