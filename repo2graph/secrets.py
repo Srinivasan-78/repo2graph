@@ -104,6 +104,20 @@ SECRET_KEY_RE = re.compile(
     re.I,
 )
 
+# Field names that match SECRET_KEY_RE by substring but describe a *shape*
+# rather than hold a credential -- `auth_modes` is ("none",)/("token",)/
+# ("oidc",) and `budget_tokens` is a count. Redacting them cost the audit log
+# the two fields an operator most wants when reading it back: which auth was
+# in force, and how large the request was.
+#
+# An allowlist, not a narrower SECRET_KEY_RE: loosening the pattern to exclude
+# `auth_modes` would also stop matching names nobody has written yet, and the
+# failure mode there is a credential in a log. Every entry is an exact,
+# lowercased field name, and adding one is a deliberate statement that this
+# field's value is never sensitive. Note the values are not blindly trusted
+# either -- they still go through the shape, URL and path checks below.
+NON_SECRET_KEYS = frozenset({"auth_modes", "budget_tokens", "result_tokens", "max_tokens"})
+
 # Sensitive HTTP headers to redact in logs.
 SENSITIVE_HEADERS = frozenset(
     {
@@ -481,8 +495,10 @@ def sanitize_value(
             except Exception:
                 return f"[unprintable:{type(value).__name__}]"
 
-        # Check key name
-        if SECRET_KEY_RE.search(key or ""):
+        # Check key name. NON_SECRET_KEYS names the handful that match by
+        # substring but describe a shape rather than hold one; they fall
+        # through to the value checks below rather than skipping them.
+        if SECRET_KEY_RE.search(key or "") and (key or "").lower() not in NON_SECRET_KEYS:
             return redact(text, f"key:{key}")
 
         # Check URL

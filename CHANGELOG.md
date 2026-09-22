@@ -15,6 +15,29 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
+- **Index files are read under a size ceiling.** `embed._npy_read` and
+  `load_vectors`, `integrity.verify_artifacts` and `doctor` all read index
+  files whole with `.read()`/`read_text()`. An index is routinely consumed from
+  elsewhere — the `graph` branch, Action artifacts, `examples/` — and `doctor`
+  on a received index is the documented way to check one, so those sizes are
+  attacker-chosen and each read was an unbounded allocation driven by a file
+  somebody else wrote. All five sites now go through `integrity.read_bounded`,
+  which stats the open descriptor and refuses anything over its limit
+  (`MAX_METADATA_BYTES` 256 MB for `manifest.json` and `vectors.meta.json`,
+  `MAX_VECTORS_BYTES` 512 MB for `vectors.npy`). Bounding `vectors.npy` alone
+  would not have closed this: `load_vectors` reads the sidecar first, so the
+  whole allocation stayed reachable through that file.
+- **`auth_modes` and `budget_tokens` are no longer redacted out of the audit
+  log.** `SECRET_KEY_RE` matches by substring, so field names describing a
+  *shape* — which auth is in force, how large a request was — were replaced
+  with `[redacted:key:...]`, costing an operator the two fields most worth
+  reading back and revealing nothing in exchange. A short explicit
+  `NON_SECRET_KEYS` allowlist exempts them from the **name** test only; their
+  values still go through the credential-shape, URL and path checks, so a
+  token that turns up under one of those names is still redacted. The
+  allowlist rather than a narrower regex: loosening the pattern would also stop
+  matching names nobody has written yet, and that failure mode is a credential
+  in a log.
 - **The HTTP transport no longer tells a caller where its index lives.** Found
   by an audit of the transport, not reported. When no index exists,
   `open_index` raises `SystemExit` with a message written for an operator at a

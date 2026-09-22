@@ -119,6 +119,41 @@ def validate_outdir(
     return target
 
 
+# Ceilings for the index files that get read whole. An index is routinely
+# consumed from elsewhere -- the `graph` branch, Action artifacts, examples/ --
+# so these are attacker-chosen sizes, and `.read()` on one is an unbounded
+# allocation driven by a file somebody else wrote. The limits are far above any
+# real index: a manifest and a vectors sidecar are metadata, and `chunk_ids` +
+# `text_hashes` for 100k chunks is ~15 MB.
+MAX_METADATA_BYTES = 256 * 1024 * 1024
+# The array itself is larger by nature: 170k chunks at 768 dims is ~512 MB.
+# Note the pure-Python reader expands this several-fold as Python floats, so
+# this is a ceiling on the hostile case, not a target for the ordinary one.
+MAX_VECTORS_BYTES = 512 * 1024 * 1024
+
+
+def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
+    """Read `path` whole, refusing anything over `limit` bytes.
+
+    The size is checked against the open descriptor's own stat, not a separate
+    `Path.stat()`, so a file swapped between the check and the read cannot slip
+    past: the handle that was measured is the handle that is read. The read is
+    still capped at `limit + 1` so a file that grows underneath us is caught by
+    the length check rather than by trusting the stat.
+
+    Raises:
+        ValueError: When the file is larger than `limit`.
+    """
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        if size > limit:
+            raise ValueError(f"{path}: {what} is {size} bytes, over the {limit}-byte limit")
+        raw = fh.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError(f"{path}: {what} grew past the {limit}-byte limit while being read")
+    return raw
+
+
 def compute_file_checksum(path: Path | str) -> str:
     """Compute sha256 checksum of a file formatted as 'sha256:<hex>'."""
     p = Path(path)
@@ -197,7 +232,9 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
 
     # 1. Parse manifest
     try:
-        manifest_text = manifest_path.read_text(encoding="utf8", errors="replace")
+        manifest_text = read_bounded(
+            manifest_path, MAX_METADATA_BYTES, what="manifest.json"
+        ).decode("utf8", "replace")
         manifest = json.loads(manifest_text)
     except Exception as exc:
         report.status = "corrupt"
@@ -301,7 +338,11 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
             report.errors.append("vectors.npy present but vectors.meta.json is missing")
         else:
             try:
-                vmeta = json.loads(vectors_meta_file.read_text(encoding="utf8"))
+                vmeta = json.loads(
+                    read_bounded(
+                        vectors_meta_file, MAX_METADATA_BYTES, what="vectors.meta.json"
+                    ).decode("utf8", "replace")
+                )
                 v_build_id = vmeta.get("build_id")
                 if report.build_id and v_build_id and v_build_id != report.build_id:
                     report.status = "stale"

@@ -608,3 +608,74 @@ def test_redact_content_on_repeated_begin_stays_linear():
     assert count == 200_000 // 32
     assert BEGIN_PEM not in redacted
     assert len(text.split("\n")) == len(redacted.split("\n"))
+
+
+# ---------------------------------------------------------------------------
+# NON_SECRET_KEYS: the audit log must stay readable
+#
+# SECRET_KEY_RE matches by substring, so `auth_modes` (which auth is in force)
+# and `budget_tokens` (a count) were redacted -- costing an operator the two
+# fields they most want when reading the log back, and telling them nothing.
+# ---------------------------------------------------------------------------
+
+
+def test_shape_describing_fields_are_not_redacted():
+    """These name a shape; they never hold a credential."""
+    assert sanitize_value("auth_modes", ["none", "token"]) == ["none", "token"]
+    assert sanitize_value("budget_tokens", "4000") == "4000"
+    assert sanitize_value("result_tokens", "1234") == "1234"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "auth",
+        "auth_token",
+        "authorization",
+        "password",
+        "passwd",
+        "api_key",
+        "apikey",
+        "secret",
+        "credential",
+        "session",
+        "cookie",
+        "bearer",
+        "signature",
+        "access_key",
+        "private_key",
+        "AUTH_TOKEN",
+        "Authorization",
+    ],
+)
+def test_the_allowlist_does_not_weaken_the_key_rule(key):
+    """Every credential-shaped name still redacts, in any casing."""
+    out = sanitize_value(key, "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+    assert out.startswith(f"[redacted:key:{key}"), out
+
+
+def test_an_allowlisted_key_still_has_its_value_inspected():
+    """Allowlisting the *name* must not blind the value checks.
+
+    A credential that turns up under one of these names is still caught by the
+    shape rules -- the allowlist skips the name test, not the rest.
+    """
+    got = sanitize_value("auth_modes", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345")
+    assert got.startswith("[redacted:github_token")
+
+    got_url = sanitize_value("budget_tokens", "postgres://u:pw123456@host/db")
+    assert got_url.startswith("[redacted:")
+    assert "pw123456" not in got_url
+
+
+def test_every_allowlisted_key_actually_matches_the_regex():
+    """An entry that does not match SECRET_KEY_RE is dead weight.
+
+    It would silently suggest the name is dangerous when the general rule
+    never flagged it, which is how an allowlist rots into a list of guesses.
+    """
+    from repo2graph.secrets import NON_SECRET_KEYS, SECRET_KEY_RE
+
+    for key in NON_SECRET_KEYS:
+        assert SECRET_KEY_RE.search(key), f"{key!r} never needed allowlisting"
+        assert key == key.lower(), f"{key!r} must be lowercased to be matched"
