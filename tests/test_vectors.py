@@ -11,6 +11,7 @@ explicitly by the test.
 
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -804,3 +805,40 @@ def test_r4_explicit_vectors_still_builds_one(mini_index, use_stub_embedder, cap
     assert main(["rag", MINI_QUERY, "-o", str(mini_index), "--vectors"]) == 0
     capsys.readouterr()
     assert len(use_stub_embedder.made) == before + 1
+
+
+@pytest.mark.skipif(
+    not os.environ.get("R2G_TEST_REAL_EMBEDDER"),
+    reason="Real embedder smoke test requires R2G_TEST_REAL_EMBEDDER=1",
+)
+def test_real_sentence_transformers_smoke_test(mini_index):
+    """Smoke test against the real sentence-transformers wrapper."""
+    from repo2graph import embed
+    from repo2graph.query import Index
+
+    try:
+        real_emb = embed.default_embedder()
+    except RuntimeError:
+        pytest.skip("rag extra is not installed")
+
+    idx_before = Index(mini_index)
+    chunks = idx_before.chunks[:2]
+    vectors = embed.build_vectors(chunks, real_emb, batch=2)
+
+    model_id = embed.model_id_of(real_emb)
+    dim = embed.dim_of(real_emb)
+    chunk_ids = [c["id"] for c in chunks]
+    text_hashes = [embed.text_hash(c) for c in chunks]
+
+    agent_dir = mini_index / "agent"
+    agent_dir.mkdir(exist_ok=True)
+    target = agent_dir / VEC_NPY
+
+    embed.write_vectors(target, vectors, model_id, dim, chunk_ids, text_hashes)
+
+    idx = Index(mini_index)
+    assert idx.vectors is not None
+
+    ok, reason = idx.fuse_ok(real_emb)
+    assert ok is True
+    assert reason == ""
