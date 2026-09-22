@@ -209,7 +209,8 @@ generated slug. It belongs in two places:
 
 - `README.md`, in the "Listed on" column of the badge table — **done**; the
   badge resolves, so a score has been assigned.
-- `pyproject.toml`, as `project.urls."Quality Score"` — **still outstanding**.
+- `pyproject.toml`, as `project.urls."Quality Score"` — **done**; it shows on
+  the PyPI sidebar from the next release onward.
 
 The reason to check both rather than assume: a badge pointing at a nonexistent
 score renders as a broken image, which is worse than no badge. Confirm the URL
