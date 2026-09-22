@@ -258,4 +258,3 @@ def test_mutation_active_lock_cannot_be_stolen(tmp_path: Path):
             lock2.acquire()
     finally:
         lock1.release()
-
