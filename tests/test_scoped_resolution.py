@@ -855,15 +855,37 @@ def test_resolve_import_multilanguage_heuristics():
     }
     rust_ctx = dict(graph_mod.path_index(rust_files), rust_crate="my_crate")
     # crate::
-    assert graph_mod.resolve_import("crate::config", "src/main.rs", "rust", rust_files, rust_ctx) == "src/config.rs"
-    assert graph_mod.resolve_import("crate::config::Settings", "src/main.rs", "rust", rust_files, rust_ctx) == "src/config.rs"
-    assert graph_mod.resolve_import("crate::models::user", "src/main.rs", "rust", rust_files, rust_ctx) == "src/models/user.rs"
+    assert (
+        graph_mod.resolve_import("crate::config", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/config.rs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "crate::config::Settings", "src/main.rs", "rust", rust_files, rust_ctx
+        )
+        == "src/config.rs"
+    )
+    assert (
+        graph_mod.resolve_import("crate::models::user", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/models/user.rs"
+    )
     # my_crate:: (crate name from Cargo.toml)
-    assert graph_mod.resolve_import("my_crate::config", "src/main.rs", "rust", rust_files, rust_ctx) == "src/config.rs"
+    assert (
+        graph_mod.resolve_import("my_crate::config", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/config.rs"
+    )
     # super::
-    assert graph_mod.resolve_import("super::config", "src/models/user.rs", "rust", rust_files, rust_ctx) == "src/config.rs"
+    assert (
+        graph_mod.resolve_import(
+            "super::config", "src/models/user.rs", "rust", rust_files, rust_ctx
+        )
+        == "src/config.rs"
+    )
     # external
-    assert graph_mod.resolve_import("serde::Serialize", "src/main.rs", "rust", rust_files, rust_ctx) is None
+    assert (
+        graph_mod.resolve_import("serde::Serialize", "src/main.rs", "rust", rust_files, rust_ctx)
+        is None
+    )
 
     # 2. C#
     cs_files = {
@@ -872,9 +894,22 @@ def test_resolve_import_multilanguage_heuristics():
         "Program.cs",
     }
     cs_ctx = graph_mod.path_index(cs_files)
-    assert graph_mod.resolve_import("Services.UserService", "Program.cs", "csharp", cs_files, cs_ctx) == "src/Services/UserService.cs"
-    assert graph_mod.resolve_import("Services.UserService.Execute", "Program.cs", "csharp", cs_files, cs_ctx) == "src/Services/UserService.cs"
-    assert graph_mod.resolve_import("System.Collections.Generic", "Program.cs", "csharp", cs_files, cs_ctx) is None
+    assert (
+        graph_mod.resolve_import("Services.UserService", "Program.cs", "csharp", cs_files, cs_ctx)
+        == "src/Services/UserService.cs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "Services.UserService.Execute", "Program.cs", "csharp", cs_files, cs_ctx
+        )
+        == "src/Services/UserService.cs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "System.Collections.Generic", "Program.cs", "csharp", cs_files, cs_ctx
+        )
+        is None
+    )
 
     # 3. PHP
     php_files = {
@@ -883,9 +918,20 @@ def test_resolve_import_multilanguage_heuristics():
         "index.php",
     }
     php_ctx = graph_mod.path_index(php_files)
-    assert graph_mod.resolve_import(r"App\Models\User", "index.php", "php", php_files, php_ctx) == "app/Models/User.php"
-    assert graph_mod.resolve_import(r"Services\AuthService", "index.php", "php", php_files, php_ctx) == "src/Services/AuthService.php"
-    assert graph_mod.resolve_import(r"Illuminate\Support\Collection", "index.php", "php", php_files, php_ctx) is None
+    assert (
+        graph_mod.resolve_import(r"App\Models\User", "index.php", "php", php_files, php_ctx)
+        == "app/Models/User.php"
+    )
+    assert (
+        graph_mod.resolve_import(r"Services\AuthService", "index.php", "php", php_files, php_ctx)
+        == "src/Services/AuthService.php"
+    )
+    assert (
+        graph_mod.resolve_import(
+            r"Illuminate\Support\Collection", "index.php", "php", php_files, php_ctx
+        )
+        is None
+    )
 
     # 4. Kotlin
     kt_files = {
@@ -893,16 +939,48 @@ def test_resolve_import_multilanguage_heuristics():
         "src/main/kotlin/com/example/app/service/AuthService.kt",
     }
     kt_ctx = graph_mod.path_index(kt_files)
-    assert graph_mod.resolve_import("com.example.app.User", "src/main/kotlin/com/example/app/Main.kt", "kotlin", kt_files, kt_ctx) == "src/main/kotlin/com/example/app/User.kt"
-    assert graph_mod.resolve_import("com.example.app.service.AuthService", "src/main/kotlin/com/example/app/Main.kt", "kotlin", kt_files, kt_ctx) == "src/main/kotlin/com/example/app/service/AuthService.kt"
-    assert graph_mod.resolve_import("kotlinx.coroutines.launch", "src/main/kotlin/com/example/app/Main.kt", "kotlin", kt_files, kt_ctx) is None
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.User",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        == "src/main/kotlin/com/example/app/User.kt"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.service.AuthService",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        == "src/main/kotlin/com/example/app/service/AuthService.kt"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "kotlinx.coroutines.launch",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        is None
+    )
 
     # 5. Scala
     scala_files = {
         "src/main/scala/com/example/app/Server.scala",
     }
     scala_ctx = graph_mod.path_index(scala_files)
-    assert graph_mod.resolve_import("com.example.app.Server", "Main.scala", "scala", scala_files, scala_ctx) == "src/main/scala/com/example/app/Server.scala"
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.Server", "Main.scala", "scala", scala_files, scala_ctx
+        )
+        == "src/main/scala/com/example/app/Server.scala"
+    )
 
     # 6. Swift
     swift_files = {
@@ -910,8 +988,18 @@ def test_resolve_import_multilanguage_heuristics():
         "Sources/App/main.swift",
     }
     swift_ctx = graph_mod.path_index(swift_files)
-    assert graph_mod.resolve_import("NetworkKit", "Sources/App/main.swift", "swift", swift_files, swift_ctx) == "Sources/NetworkKit/NetworkClient.swift"
-    assert graph_mod.resolve_import("Foundation", "Sources/App/main.swift", "swift", swift_files, swift_ctx) is None
+    assert (
+        graph_mod.resolve_import(
+            "NetworkKit", "Sources/App/main.swift", "swift", swift_files, swift_ctx
+        )
+        == "Sources/NetworkKit/NetworkClient.swift"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "Foundation", "Sources/App/main.swift", "swift", swift_files, swift_ctx
+        )
+        is None
+    )
 
     # 7. Ruby
     rb_files = {
@@ -920,8 +1008,14 @@ def test_resolve_import_multilanguage_heuristics():
         "main.rb",
     }
     rb_ctx = graph_mod.path_index(rb_files)
-    assert graph_mod.resolve_import("./lib/app/helper", "main.rb", "ruby", rb_files, rb_ctx) == "lib/app/helper.rb"
-    assert graph_mod.resolve_import("app/client", "main.rb", "ruby", rb_files, rb_ctx) == "lib/app/client.rb"
+    assert (
+        graph_mod.resolve_import("./lib/app/helper", "main.rb", "ruby", rb_files, rb_ctx)
+        == "lib/app/helper.rb"
+    )
+    assert (
+        graph_mod.resolve_import("app/client", "main.rb", "ruby", rb_files, rb_ctx)
+        == "lib/app/client.rb"
+    )
     assert graph_mod.resolve_import("json", "main.rb", "ruby", rb_files, rb_ctx) is None
 
     # 8. Bash
@@ -930,8 +1024,14 @@ def test_resolve_import_multilanguage_heuristics():
         "scripts/deploy.sh",
     }
     sh_ctx = graph_mod.path_index(sh_files)
-    assert graph_mod.resolve_import("./common.sh", "scripts/deploy.sh", "bash", sh_files, sh_ctx) == "scripts/common.sh"
-    assert graph_mod.resolve_import("scripts/common.sh", "deploy.sh", "bash", sh_files, sh_ctx) == "scripts/common.sh"
+    assert (
+        graph_mod.resolve_import("./common.sh", "scripts/deploy.sh", "bash", sh_files, sh_ctx)
+        == "scripts/common.sh"
+    )
+    assert (
+        graph_mod.resolve_import("scripts/common.sh", "deploy.sh", "bash", sh_files, sh_ctx)
+        == "scripts/common.sh"
+    )
     assert graph_mod.resolve_import("ls", "scripts/deploy.sh", "bash", sh_files, sh_ctx) is None
 
 
@@ -941,4 +1041,3 @@ def test_repo_context_cargo_toml(tmp_path: Path):
     cargo.write_text('[package]\nname = "my-awesome-crate"\nversion = "0.1.0"\n', encoding="utf8")
     ctx = graph_mod.repo_context(tmp_path)
     assert ctx.get("rust_crate") == "my_awesome_crate"
-

@@ -490,7 +490,9 @@ def resolve_import(
         cands += [p for p in by_name.get(f"{tail}.scala", []) if p.endswith(f"{tail}.scala")][:1]
         if len(parts) > 1:
             p_tail = parts[-2]
-            cands += [p for p in by_name.get(f"{p_tail}.scala", []) if p.endswith(f"{p_tail}.scala")][:1]
+            cands += [
+                p for p in by_name.get(f"{p_tail}.scala", []) if p.endswith(f"{p_tail}.scala")
+            ][:1]
     elif lang == "swift":
         clean = target.split(".")[0]
         cands = [
