@@ -770,6 +770,21 @@ def test_plain_http_issuers_are_refused(monkeypatch):
 # this module is conditional on the key set being the issuer's.
 
 
+class FakeOpener:
+    """Stand-in for `auth._OPENER`, delegating to a urlopen-shaped callable.
+
+    `_fetch_json` goes through an opener rather than `urlopen` so that
+    `_HTTPSOnlyRedirect` cannot be bypassed; patching the opener is what keeps
+    these tests off the network.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **kw):
+        return self._fn(req, *a, **kw)
+
+
 def _serves(doc):
     """An opener that answers discovery with `doc` and refuses anything else.
 
@@ -1177,7 +1192,10 @@ def test_fetch_json_errors(monkeypatch):
         def read(self, n):
             return b"x" * (auth.MAX_JWKS_BYTES + 2)
 
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: FakeLargeResp())
+    # Patched on the opener, not on urlopen: `_fetch_json` goes through
+    # `_OPENER` so its https-only redirect handler cannot be bypassed, and a
+    # urlopen patch would leave this reaching the real network.
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener(lambda req, timeout: FakeLargeResp()))
     with pytest.raises(AuthError, match="implausibly large"):
         auth._fetch_json("https://valid.example.com")
 
@@ -1191,7 +1209,7 @@ def test_fetch_json_errors(monkeypatch):
         def read(self, n):
             return b"not json {"
 
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: FakeInvalidJsonResp())
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener(lambda req, timeout: FakeInvalidJsonResp()))
     with pytest.raises(AuthError, match="not valid JSON"):
         auth._fetch_json("https://valid.example.com")
 
