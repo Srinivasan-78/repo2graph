@@ -87,6 +87,10 @@ inputs:
     description: "Push the output to this orphan branch (blank = no push)"
     required: false
     default: ""
+  commit-force:
+    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: true)"
+    required: false
+    default: "true"
   version:
     description: "pip spec to install repo2graph from (blank = install the action checkout itself)"
     required: false
@@ -374,8 +378,18 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
         R2G_OUT: ${{ inputs.out }}
         R2G_BRANCH: ${{ inputs.commit-branch }}
+        R2G_COMMIT_FORCE: ${{ inputs.commit-force }}
+        EVENT_NAME: ${{ github.event_name }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
       run: |
         set -euo pipefail
+        if [ "${IS_FORK:-}" = "true" ]; then
+          echo "::error::Refusing to push graph to branch from a fork pull request. Use artifact-name instead or run on push events."
+          exit 1
+        fi
+        if [ "${EVENT_NAME:-}" = "pull_request" ] || [ "${EVENT_NAME:-}" = "pull_request_target" ]; then
+          echo "::warning::Pushing graph to branch during ${EVENT_NAME} events may expose tokens or overwrite branches unintentionally. Recommended: run on push to default branch."
+        fi
         tmp="$(mktemp -d)"
         cp -r "$R2G_OUT/." "$tmp/"
         cd "$tmp"
@@ -390,4 +404,9 @@ runs:
         # readable via `ps`/`/proc/$PID/cmdline` by any process on the host.
         git config --local http.https://github.com/.extraheader \
           "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
-        git push -q --force origin "$R2G_BRANCH"
+        force_flag="$(printf '%s' "${R2G_COMMIT_FORCE:-true}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$force_flag" = "false" ]; then
+          git push -q origin "$R2G_BRANCH"
+        else
+          git push -q --force origin "$R2G_BRANCH"
+        fi
