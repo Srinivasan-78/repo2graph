@@ -36,9 +36,10 @@ Two supported shapes, both real:
 
 ## Container hardening
 
-If you run `repo2graph-mcp` in a container (recommended for the HTTP-shared shape):
+If you run `repo2graph-mcp` in a container (recommended for the HTTP-shared shape), you can build the official `Dockerfile` provided in this repository, which is already configured for these requirements:
 
 ```bash
+docker build -t your-repo2graph-image .
 docker run --rm \
   --read-only \
   --cap-drop=ALL \
