@@ -189,6 +189,14 @@ _IMPORT_RE = {
     "csharp": re.compile(r"using\s+(?:static\s+)?(?:[\w.]+\s*=\s*)?([\w.]+)"),
     # PHP `use App\Models\User;` / `use function App\f;` / `use App\U as U;`
     "php": re.compile(r"use\s+(?:function\s+|const\s+)?([\w\\]+)"),
+    # Swift `import Foundation` / `import class UIKit.UIView`
+    "swift": re.compile(
+        r"import\s+(?:typealias|struct|class|enum|protocol|let|var|func\s+)?([\w.]+)"
+    ),
+    # Ruby `require "foo"` / `require_relative "bar"` / `load "baz.rb"`
+    "ruby": re.compile(r"""(?:require_relative|require|load)\s*\(?\s*['"]([^'"]+)['"]"""),
+    # Bash `source ./lib.sh` / `. ./lib.sh`
+    "bash": re.compile(r"""(?:source|\.)\s+['"]?([^'"\s]+)['"]?"""),
 }
 
 
@@ -218,21 +226,41 @@ def import_targets(raw: str, lang: str) -> list[str]:
                 return [f"{module}.{n}" for n in names]
             return [module]
         return [p.strip().split(" as ")[0].strip() for p in m.group(3).split(",") if p.strip()]
-    # Kotlin/Swift/Scala all import with `import a.b.C`, like Java; C# uses
+    if lang == "ruby":
+        raw_stripped = raw.strip()
+        m = _IMPORT_RE["ruby"].search(raw_stripped)
+        if not m:
+            m_quote = re.search(r"""['"]([^'"]+)['"]""", raw_stripped)
+            if not m_quote:
+                return []
+            mod = m_quote.group(1)
+        else:
+            mod = m.group(1)
+        if raw_stripped.startswith("require_relative") and not mod.startswith((".", "/")):
+            return [f"./{mod}"]
+        return [mod]
+    if lang in ("bash", "sh"):
+        m = _IMPORT_RE["bash"].search(raw.strip())
+        if not m:
+            return []
+        return [m.group(1)]
+    # Kotlin/Scala import with `import a.b.C`, like Java; C# uses
     # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
     key = {
         "javascript": "js",
         "typescript": "js",
         "tsx": "js",
         "kotlin": "java",
-        "swift": "java",
         "scala": "java",
         "cpp": "c",
     }.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
         return []
-    return [m.group(1) for m in rx.finditer(raw)][:4]
+    targets = [m.group(1) for m in rx.finditer(raw)][:4]
+    if lang == "rust":
+        targets = [t.rstrip(":") for t in targets]
+    return targets
 
 
 def path_index(file_index) -> dict:
@@ -328,6 +356,190 @@ def resolve_import(
         rel = target.replace(".", "/") + ".java"
         cands = [rel]
         cands += [p for p in by_name.get(rel.split("/")[-1], []) if p.endswith(rel)][:1]
+    elif lang == "rust":
+        clean = target.rstrip(":")
+        parts = clean.split("::")
+        crate_name = ctx.get("rust_crate")
+        if parts[0] == "crate" or (crate_name and parts[0] == crate_name):
+            sub = parts[1:]
+            if sub:
+                rel = "/".join(sub)
+                cands = [
+                    f"src/{rel}.rs",
+                    f"src/{rel}/mod.rs",
+                    f"{rel}.rs",
+                    f"{rel}/mod.rs",
+                ]
+                if len(sub) > 1:
+                    parent = "/".join(sub[:-1])
+                    cands += [
+                        f"src/{parent}.rs",
+                        f"src/{parent}/mod.rs",
+                        f"{parent}.rs",
+                        f"{parent}/mod.rs",
+                    ]
+        elif parts[0] == "super":
+            base_dir = src_dir
+            idx = 0
+            while idx < len(parts) and parts[idx] == "super":
+                base_dir = base_dir.parent
+                idx += 1
+            rest = "/".join(parts[idx:])
+            if rest:
+                base = (base_dir / rest).as_posix()
+                cands = [f"{base}.rs", f"{base}/mod.rs"]
+                if len(parts[idx:]) > 1:
+                    p_base = (base_dir / "/".join(parts[idx:-1])).as_posix()
+                    cands += [f"{p_base}.rs", f"{p_base}/mod.rs"]
+            else:
+                cands = [f"{base_dir.as_posix()}.rs", f"{base_dir.as_posix()}/mod.rs"]
+        elif parts[0] == "self":
+            rest = "/".join(parts[1:])
+            if rest:
+                base = (src_dir / rest).as_posix()
+                cands = [f"{base}.rs", f"{base}/mod.rs"]
+                if len(parts[1:]) > 1:
+                    p_base = (src_dir / "/".join(parts[1:-1])).as_posix()
+                    cands += [f"{p_base}.rs", f"{p_base}/mod.rs"]
+        else:
+            rel = "/".join(parts)
+            cands = [
+                f"src/{rel}.rs",
+                f"src/{rel}/mod.rs",
+                f"{rel}.rs",
+                f"{rel}/mod.rs",
+                str(src_dir / f"{rel}.rs"),
+                str(src_dir / f"{rel}/mod.rs"),
+            ]
+            if len(parts) > 1:
+                parent = "/".join(parts[:-1])
+                cands += [
+                    f"src/{parent}.rs",
+                    f"src/{parent}/mod.rs",
+                    f"{parent}.rs",
+                    f"{parent}/mod.rs",
+                ]
+            tail = parts[-1]
+            cands += [p for p in by_name.get(f"{tail}.rs", []) if "/" in p][:1]
+            if len(parts) > 1:
+                p_tail = parts[-2]
+                cands += [p for p in by_name.get(f"{p_tail}.rs", []) if "/" in p][:1]
+    elif lang == "csharp":
+        parts = target.split(".")
+        rel = target.replace(".", "/")
+        cands = [f"{rel}.cs", f"src/{rel}.cs"]
+        if len(parts) > 1:
+            parent = rel.rsplit("/", 1)[0]
+            cands += [f"{parent}.cs", f"src/{parent}.cs"]
+        tail = parts[-1]
+        cands += [p for p in by_name.get(f"{tail}.cs", []) if "/" in p][:1]
+        if len(parts) > 1:
+            p_tail = parts[-2]
+            cands += [p for p in by_name.get(f"{p_tail}.cs", []) if "/" in p][:1]
+    elif lang == "php":
+        clean = target.replace("\\", "/").strip("/")
+        parts = clean.split("/")
+        cands = [f"{clean}.php", f"src/{clean}.php"]
+        if clean.startswith("App/"):
+            rest = clean[4:]
+            cands += [f"app/{rest}.php", f"src/{rest}.php"]
+        if len(parts) > 1:
+            parent = clean.rsplit("/", 1)[0]
+            cands += [f"{parent}.php", f"src/{parent}.php"]
+            if parent.startswith("App/"):
+                rest = parent[4:]
+                cands += [f"app/{rest}.php", f"src/{rest}.php"]
+        tail = parts[-1]
+        cands += [p for p in by_name.get(f"{tail}.php", []) if "/" in p][:1]
+    elif lang == "kotlin":
+        parts = target.split(".")
+        rel = target.replace(".", "/")
+        cands = [
+            f"{rel}.kt",
+            f"src/main/kotlin/{rel}.kt",
+            f"src/{rel}.kt",
+        ]
+        if len(parts) > 1:
+            parent = rel.rsplit("/", 1)[0]
+            cands += [
+                f"{parent}.kt",
+                f"src/main/kotlin/{parent}.kt",
+                f"src/{parent}.kt",
+            ]
+        tail = parts[-1]
+        cands += [p for p in by_name.get(f"{tail}.kt", []) if p.endswith(f"{tail}.kt")][:1]
+        if len(parts) > 1:
+            p_tail = parts[-2]
+            cands += [p for p in by_name.get(f"{p_tail}.kt", []) if p.endswith(f"{p_tail}.kt")][:1]
+    elif lang == "scala":
+        parts = target.split(".")
+        rel = target.replace(".", "/")
+        cands = [
+            f"{rel}.scala",
+            f"src/main/scala/{rel}.scala",
+            f"src/{rel}.scala",
+        ]
+        if len(parts) > 1:
+            parent = rel.rsplit("/", 1)[0]
+            cands += [
+                f"{parent}.scala",
+                f"src/main/scala/{parent}.scala",
+                f"src/{parent}.scala",
+            ]
+        tail = parts[-1]
+        cands += [p for p in by_name.get(f"{tail}.scala", []) if p.endswith(f"{tail}.scala")][:1]
+        if len(parts) > 1:
+            p_tail = parts[-2]
+            cands += [
+                p for p in by_name.get(f"{p_tail}.scala", []) if p.endswith(f"{p_tail}.scala")
+            ][:1]
+    elif lang == "swift":
+        clean = target.split(".")[0]
+        cands = [
+            f"{target}.swift",
+            f"{clean}.swift",
+            f"Sources/{clean}/{clean}.swift",
+            f"Sources/{clean}.swift",
+            f"Sources/{clean}/main.swift",
+        ]
+        mod_files = [p for p in by_dir.get(f"Sources/{clean}", []) if p.endswith(".swift")]
+        if mod_files:
+            cands.append(mod_files[0])
+        tail = target.split(".")[-1]
+        cands += [p for p in by_name.get(f"{tail}.swift", []) if "/" in p][:1]
+    elif lang == "ruby":
+        if target.startswith("."):
+            base = Path(src_dir, target).as_posix()
+            base = re.sub(r"/\./", "/", base)
+            while "/../" in base:
+                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
+            cands = [f"{base}.rb", base]
+        else:
+            stem = target[: -len(".rb")] if target.endswith(".rb") else target
+            cands = [
+                str(src_dir / f"{stem}.rb"),
+                f"lib/{stem}.rb",
+                f"{stem}.rb",
+                f"src/{stem}.rb",
+            ]
+            tail = stem.split("/")[-1]
+            cands += [p for p in by_name.get(f"{tail}.rb", []) if "/" in p][:1]
+    elif lang in ("bash", "sh"):
+        if target.startswith((".", "/")):
+            base = Path(src_dir, target).as_posix()
+            base = re.sub(r"/\./", "/", base)
+            while "/../" in base:
+                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
+            cands = [base]
+        else:
+            cands = [
+                str(src_dir / target),
+                target,
+                f"bin/{target}",
+                f"scripts/{target}",
+            ]
+            tail = target.split("/")[-1]
+            cands += [p for p in by_name.get(tail, []) if "/" in p][:1]
     for c in cands:
         c = Path(c).as_posix().removeprefix("./")
         if c in file_index:
@@ -336,14 +548,27 @@ def resolve_import(
 
 
 def repo_context(root: Path) -> dict:
-    """Repo-level facts used to resolve imports (currently the Go module path)."""
+    """Repo-level facts used to resolve imports (Go module path, Rust crate name)."""
     ctx: dict = {}
     gomod = root / "go.mod"
     if gomod.exists():
-        for line in gomod.read_text("utf8", "replace").splitlines():
+        for line in gomod.read_text("utf8", "replace").split("\n"):
             if line.startswith("module "):
                 ctx["go_module"] = line.split(None, 1)[1].strip()
                 break
+    cargo = root / "Cargo.toml"
+    if cargo.exists():
+        in_pkg = False
+        for line in cargo.read_text("utf8", "replace").split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                in_pkg = stripped == "[package]"
+            elif in_pkg and stripped.startswith("name"):
+                parts = stripped.split("=", 1)
+                if len(parts) == 2:
+                    crate_name = parts[1].strip().strip('"').strip("'")
+                    ctx["rust_crate"] = crate_name.replace("-", "_")
+                    break
     return ctx
 
 
