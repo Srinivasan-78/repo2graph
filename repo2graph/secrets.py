@@ -121,6 +121,20 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
     r"(?i)([?&](?:token|key|api[-_]?key|secret|password|auth|access[-_]?token)=)([^&#]+)"
 )
 
+# A PEM block is matched as two separate anchors, paired in `_pem_spans`.
+# Writing it as one pattern -- BEGIN, then a lazy `[\s\S]*?` to an optional
+# END -- is quadratic: every BEGIN whose END is missing re-scans the entire
+# remaining text before the optional group gives up. Repository content is
+# attacker-supplied on every build and `max_file_bytes` defaults to 1.5 MB, so
+# a single file of repeated BEGIN lines cost minutes of CPU per build.
+PEM_BEGIN_RE = re.compile(r"-----BEGIN [-A-Z0-9_ ]*PRIVATE KEY-----")
+PEM_END_RE = re.compile(r"-----END [-A-Z0-9_ ]*PRIVATE KEY-----")
+
+# Types whose spans are computed by a dedicated pass rather than by running
+# their entry below over the text. The entry is still the shape test used by
+# `_looks_like_a_secret`.
+PAIRED_TYPES = frozenset({"private_key"})
+
 # Content scanning patterns: (type_name, regex)
 CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -128,18 +142,42 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack_token", re.compile(r"\bxox[abprs]-[-0-9A-Za-z]{10,}\b")),
     ("openai_key", re.compile(r"\bsk-[-A-Za-z0-9_]{20,}\b")),
     ("google_key", re.compile(r"\bAIza[-0-9A-Za-z_]{35}\b")),
-    (
-        "private_key",
-        re.compile(
-            r"-----BEGIN [-A-Z0-9_ ]*PRIVATE KEY-----(?:[\s\S]*?-----END [-A-Z0-9_ ]*PRIVATE KEY-----)?"
-        ),
-    ),
+    ("private_key", PEM_BEGIN_RE),
     (
         "jwt",
         re.compile(r"\beyJ[-A-Za-z0-9_]{10,}\.eyJ[-A-Za-z0-9_]{10,}\.[-A-Za-z0-9_]+\b"),
     ),
     ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
 )
+
+
+def _pem_spans(text: str) -> list[tuple[int, int]]:
+    """Span of every PEM private-key block, in one linear pass.
+
+    Each BEGIN takes the first END that follows it, exactly as the old lazy
+    pattern did, and an unterminated BEGIN yields just its own header -- which
+    is what the old optional group produced. The difference is cost: the ENDs
+    are collected once and consumed by a cursor that only moves forward, so
+    input with no END at all is O(n) instead of O(n*k).
+    """
+    ends = [m.end() for m in PEM_END_RE.finditer(text)]
+    spans: list[tuple[int, int]] = []
+    next_end = 0
+    consumed_to = 0  # mirror finditer: never start a match inside an earlier one
+    for begin in PEM_BEGIN_RE.finditer(text):
+        if begin.start() < consumed_to:
+            continue
+        while next_end < len(ends) and ends[next_end] <= begin.end():
+            next_end += 1
+        if next_end < len(ends):
+            spans.append((begin.start(), ends[next_end]))
+            consumed_to = ends[next_end]
+            next_end += 1
+        else:
+            spans.append((begin.start(), begin.end()))
+            consumed_to = begin.end()
+    return spans
+
 
 # URL pattern with embedded credentials: postgres://user:password@host
 DB_URL_RE = re.compile(
@@ -254,10 +292,15 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
 
     findings: list[tuple[str, int, int]] = []
 
-    # 1. Standard patterns (AWS, GitHub, Slack, OpenAI, Google, PEM, JWT)
+    # 1. Standard patterns (AWS, GitHub, Slack, OpenAI, Google, JWT)
     for stype, pattern in CONTENT_SECRET_PATTERNS:
+        if stype in PAIRED_TYPES:
+            continue  # spans come from the dedicated pass below
         for m in pattern.finditer(text):
             findings.append((stype, m.start(), m.end()))
+
+    # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
+    findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
 
     # 2. Database URLs with credentials
     for m in DB_URL_RE.finditer(text):

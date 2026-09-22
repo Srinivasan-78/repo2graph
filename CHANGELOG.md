@@ -15,6 +15,20 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
+- **Quadratic blowup scanning for PEM private keys (denial of service).** Found
+  by a ReDoS pass over `secrets.py`, not reported. The `private_key` pattern was
+  `BEGIN` followed by a lazy `[\s\S]*?` to an *optional* `END`, so every `BEGIN`
+  whose `END` is missing re-scanned the entire remaining text before the
+  optional group gave up — O(n²) in the number of `BEGIN` markers. Repository
+  content is attacker-supplied on every build and `max_file_bytes` defaults to
+  1.5 MB, so one committed file of repeated `-----BEGIN RSA PRIVATE KEY-----`
+  lines cost roughly eight minutes of CPU per build (measured: 4× time per 2×
+  input, 5.5s at 160 KB). `BEGIN` and `END` are now separate anchors paired by
+  `_pem_spans` in one linear pass: the same 1.5 MB worst case takes 269 ms.
+  Detection is unchanged — a complete block still spans `BEGIN` through `END`,
+  an unterminated one still yields its header, and line-preserving redaction
+  still holds. The other patterns were measured at the same sizes and are
+  linear.
 - **GHSA-mqm8-mc66-wjvj (high) — OIDC JWKS fetch could be downgraded to
   cleartext by redirect.** `auth._fetch_json` checked `https` on the URL it was
   handed, then called `urlopen`, which follows redirects using a handler that
