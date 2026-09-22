@@ -768,6 +768,41 @@ def cmd_completion(args) -> int:
     return 0
 
 
+def cmd_explain(args) -> int:
+    """Explain edges, nodes, or retrieval results."""
+    from .explain import (
+        explain_edge,
+        explain_node,
+        explain_retrieval,
+        format_explain_edge,
+        format_explain_node,
+        format_explain_retrieval,
+    )
+
+    outdir = Path(getattr(args, "out", ".r2g"))
+    subcmd = getattr(args, "explain_cmd", None)
+    is_json = getattr(args, "json", False)
+
+    if subcmd == "edge":
+        res = explain_edge(outdir, args.src, args.dst)
+        _emit(json.dumps(res, indent=2) if is_json else format_explain_edge(res))
+        return 0 if res.get("found") else 1
+    elif subcmd == "node":
+        res = explain_node(outdir, args.node_id)
+        _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
+        return 0 if res.get("found") else 1
+    elif subcmd == "retrieval":
+        k = getattr(args, "k", 5)
+        hops = getattr(args, "hops", 1)
+        conf = getattr(args, "min_confidence", None)
+        res = explain_retrieval(outdir, args.query, k=k, hops=hops, min_confidence=conf)
+        _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
+        return 0
+    else:
+        print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
+        return 1
+
+
 def _nonneg(value: str) -> int:
     """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
     numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
@@ -1297,6 +1332,49 @@ def main(argv=None):
         help="target shell (default: bash)",
     )
     comp.set_defaults(func=cmd_completion)
+
+    exp = sub.add_parser(
+        "explain",
+        help="explain graph edges, nodes, and retrieval results",
+    )
+    explain_sp = exp.add_subparsers(dest="explain_cmd", required=True)
+
+    exp_edge = explain_sp.add_parser("edge", help="explain connection between two nodes")
+    exp_edge.add_argument("src", help="source node ID")
+    exp_edge.add_argument("dst", help="destination node ID")
+    exp_edge.add_argument(
+        "-o", "--out", default=".r2g", help="path to index directory (default: .r2g)"
+    )
+    exp_edge.add_argument("--json", action="store_true", help="output explanation as JSON")
+    exp_edge.set_defaults(func=cmd_explain)
+
+    exp_node = explain_sp.add_parser("node", help="explain a node and its connections")
+    exp_node.add_argument("node_id", help="node ID to inspect")
+    exp_node.add_argument(
+        "-o", "--out", default=".r2g", help="path to index directory (default: .r2g)"
+    )
+    exp_node.add_argument("--json", action="store_true", help="output explanation as JSON")
+    exp_node.set_defaults(func=cmd_explain)
+
+    exp_ret = explain_sp.add_parser(
+        "retrieval", help="explain retrieval ranking and graph expansion"
+    )
+    exp_ret.add_argument("query", help="query to trace")
+    exp_ret.add_argument(
+        "-o", "--out", default=".r2g", help="path to index directory (default: .r2g)"
+    )
+    exp_ret.add_argument("-k", type=_nonneg, default=5, help="number of seed chunks (default: 5)")
+    exp_ret.add_argument(
+        "--hops", type=_nonneg, default=1, help="graph traversal hops (default: 1)"
+    )
+    exp_ret.add_argument(
+        "--min-confidence",
+        type=float,
+        default=None,
+        help="confidence threshold for CALLS edges",
+    )
+    exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
+    exp_ret.set_defaults(func=cmd_explain)
 
     if argv is None:
         try:

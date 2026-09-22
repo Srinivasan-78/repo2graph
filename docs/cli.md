@@ -13,6 +13,7 @@ repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
 repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph explain-path <path> explain file inclusion/exclusion precedence
+repo2graph explain <edge|node|retrieval> explain edges, nodes, or retrieval
 repo2graph completion [shell] print shell completion setup script
 repo2graph version           print the version (also -v / --version)
 ```
@@ -404,6 +405,24 @@ the first match:
 
 Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `included`)
 tells them apart, `precedence_step` is `10` either way.
+
+
+## `explain` — graph and retrieval inspection
+
+Explain connections, node properties, and retrieval decisions:
+
+```bash
+# Explain relationship between two nodes
+repo2graph explain edge "file:src/main.py" "file:src/util.py" -o .r2g
+
+# Inspect node metadata and incoming/outgoing edges
+repo2graph explain node "sym:src/main.py::Runner.run" -o .r2g
+
+# Trace retrieval ranking, candidate seeds, and graph expansion
+repo2graph explain retrieval "how does authentication work" -o .r2g -k 5 --hops 1
+```
+
+All explain subcommands support `--json` for machine-readable output.
 
 
 ## `completion` — shell tab completion
