@@ -790,3 +790,53 @@ def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch)
     with pytest.raises(ParseError):
         graph_mod.parse_all(files, 2)
     assert serial_reads == []
+
+
+def test_swift_ruby_and_bash_import_details():
+    """Verify parse_import_details extracts clean module and name for Swift, Ruby, and Bash (#343)."""
+    (sw1,) = parse_import_details("import Foundation", "swift")
+    assert sw1.module == "Foundation"
+    assert sw1.name is None
+
+    (sw2,) = parse_import_details("import class UIKit.UIView", "swift")
+    assert sw2.module == "UIKit.UIView"
+    assert sw2.name == "UIView"
+
+    (sw3,) = parse_import_details("@testable import MyModule", "swift")
+    assert sw3.module == "MyModule"
+    assert sw3.name is None
+
+    (rb1,) = parse_import_details('require "json"', "ruby")
+    assert rb1.module == "json"
+    assert rb1.name == "json"
+
+    (rb2,) = parse_import_details('require_relative "utils/helper"', "ruby")
+    assert rb2.module == "utils/helper"
+    assert rb2.name == "helper"
+
+    (rb3,) = parse_import_details('load "foo.rb"', "ruby")
+    assert rb3.module == "foo.rb"
+    assert rb3.name == "foo.rb"
+
+    (sh1,) = parse_import_details("source ./lib.sh", "bash")
+    assert sh1.module == "./lib.sh"
+    assert sh1.name == "lib.sh"
+
+    (sh2,) = parse_import_details(". ./other.sh", "bash")
+    assert sh2.module == "./other.sh"
+    assert sh2.name == "other.sh"
+
+
+def test_ruby_and_bash_parse_source_imports():
+    """Verify parse_source captures Ruby require calls and Bash source commands in imports (#343)."""
+    rb_src = b'require "json"\nrequire_relative "utils"\ndef run\n  puts "hello"\nend\n'
+    rb_pf = parse_source(rb_src, "ruby")
+    assert 'require "json"' in rb_pf.imports
+    assert 'require_relative "utils"' in rb_pf.imports
+    assert {d.module for d in rb_pf.import_details} == {"json", "utils"}
+
+    sh_src = b'source ./lib.sh\n. ./other.sh\necho "done"\n'
+    sh_pf = parse_source(sh_src, "bash")
+    assert "source ./lib.sh" in sh_pf.imports
+    assert ". ./other.sh" in sh_pf.imports
+    assert {d.module for d in sh_pf.import_details} == {"./lib.sh", "./other.sh"}
