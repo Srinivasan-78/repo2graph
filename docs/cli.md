@@ -37,6 +37,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
+| `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |

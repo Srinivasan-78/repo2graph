@@ -314,6 +314,7 @@ def index_github(
     config=None,
     max_call_candidates: int = 5,
     no_chunks: bool = False,
+    cochange_min: int = 3,
 ) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
@@ -335,6 +336,7 @@ def index_github(
             jobs=jobs,
             config=config,
             max_call_candidates=max_call_candidates,
+            cochange_min=cochange_min,
         )
         g.name = f"{owner}/{repo}"
         chunks = None if no_chunks else iter_chunks(g)  # a generator, streamed to disk by dump_all

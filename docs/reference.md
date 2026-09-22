@@ -64,7 +64,7 @@ project stand out without you looking for them.
 | `CALLS` | one function uses another. Carries `count`, `confidence`, `ambiguous`, `resolution_kind`, `candidate_count`, `scope_distance` and `call_kind`. |
 | `CALLS_EXTERNAL` | a function uses something from outside the project. Carries `count`, `resolution_kind`, `candidate_count` and `call_kind`. |
 | `INHERITS` | inheritance or interface implementation. Carries `subtype` (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) and `raw_base`. |
-| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
+| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more by default; configurable via `--cochange-min`). Carries `count`, `cochange_count`, `sampled_commits`, `min_pairs`. |
 
 A small corner of a real map looks like this:
 
