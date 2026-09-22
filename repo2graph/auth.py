@@ -21,10 +21,14 @@ Security properties this module is responsible for, none of them optional:
 
 * Token comparison is constant time (`hmac.compare_digest`). A `==` on a secret
   leaks its length and prefix to anyone who can time the response.
-* `alg` comes from the *key*, never from the token. A token claiming
-  `{"alg": "none"}` or `{"alg": "HS256"}` against an RSA JWKS is the classic
-  JWT forgery, and the only defence is refusing to let the attacker pick the
-  algorithm.
+* Algorithm confusion is refused by an RSA-only `ALGORITHMS` table plus an
+  enforced `kty == "RSA"` check. When the JWK declares `alg` (RFC 7517 makes
+  that field optional), that value selects the hash and a token claiming a
+  different one is refused. When the JWK omits `alg`, the token may choose
+  among the RSA entries only -- `{"alg": "none"}` and `{"alg": "HS256"}` still
+  miss the table. Adding a non-RSA algorithm to `ALGORITHMS` would reintroduce
+  the classic forgery; the table and the `kty` check are the defence, not a
+  claim that the token header is ignored.
 * A key's declared purpose is honoured. RFC 7517 §4.2/§4.3 make `use` and
   `key_ops` the issuer's own statement of what a key is for, and a JWKS
   routinely publishes encryption keys alongside signing ones. A key marked
@@ -74,9 +78,11 @@ DIGEST_INFO_PREFIX = {
     "sha384": bytes.fromhex("3041300d060960864801650304020205000430"),
     "sha512": bytes.fromhex("3051300d060960864801650304020305000440"),
 }
-# Signing algorithms this server will accept, and the hash each one uses. RSA
-# only: an HMAC algorithm in this table would let a token signed with the
-# *public* key validate, which is the other classic JWT forgery.
+# Signing algorithms this server will accept, and the hash each one uses.
+# RSA only -- adding a non-RSA entry here breaks the forgery defence: an
+# HMAC algorithm would let a token signed with the *public* key validate,
+# which is the other classic JWT confusion attack. The `kty == "RSA"`
+# check in decode_jwt is the other half of the same coupling.
 ALGORITHMS = {"RS256": "sha256", "RS384": "sha384", "RS512": "sha512"}
 
 
@@ -449,12 +455,14 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise AuthError("token header or payload is not an object")
 
-    alg = header.get("alg")
-    hash_name = ALGORITHMS.get(str(alg))
-    if hash_name is None:
+    token_alg = header.get("alg")
+    token_hash = ALGORITHMS.get(str(token_alg))
+    if token_hash is None:
         # Covers alg:none and every HMAC algorithm. Accepting HS256 against an
-        # RSA JWKS would let anyone sign a token with the *public* key.
-        raise AuthError(f"unsupported token algorithm {alg!r}")
+        # RSA JWKS would let anyone sign a token with the *public* key. This
+        # lookup is the floor: a token whose alg is not in ALGORITHMS is
+        # refused even when the JWK later names a supported RSA algorithm.
+        raise AuthError(f"unsupported token algorithm {token_alg!r}")
     kid = header.get("kid")
     if not kid:
         raise AuthError("token header has no kid")
@@ -475,10 +483,17 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     ops = key.get("key_ops")
     if isinstance(ops, list) and "verify" not in ops:
         raise AuthError("signing key does not permit the verify operation")
-    # The algorithm is taken from the key when the key declares one, never from
-    # the token: the attacker controls the token and must not choose the maths.
-    if key.get("alg") and ALGORITHMS.get(str(key["alg"])) != hash_name:
-        raise AuthError("token algorithm does not match the signing key")
+    # Prefer the JWK's alg when RFC 7517's optional field is present.
+    # The token header chooses the hash only if the key omitted alg.
+    key_alg = key.get("alg")
+    if key_alg:
+        hash_name = ALGORITHMS.get(str(key_alg))
+        if hash_name is None:
+            raise AuthError(f"unsupported key algorithm {key_alg!r}")
+        if token_hash != hash_name:
+            raise AuthError("token algorithm does not match the signing key")
+    else:
+        hash_name = token_hash
 
     # `.get`, not `key["n"]`: a key set advertising {"kty": "RSA"} with no
     # modulus raises KeyError here, and a KeyError is not an AuthError -- it

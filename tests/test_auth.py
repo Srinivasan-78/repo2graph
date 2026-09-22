@@ -98,11 +98,11 @@ def int_b64u(value: int) -> str:
 
 
 def jwks_doc(kid=KID, key=KEY, alg="RS256"):
-    return {
-        "keys": [
-            {"kty": "RSA", "kid": kid, "alg": alg, "n": int_b64u(key["n"]), "e": int_b64u(key["e"])}
-        ]
-    }
+    """A one-key JWKS. Pass `alg=None` to omit the field (RFC 7517)."""
+    entry = {"kty": "RSA", "kid": kid, "n": int_b64u(key["n"]), "e": int_b64u(key["e"])}
+    if alg is not None:
+        entry["alg"] = alg
+    return {"keys": [entry]}
 
 
 _ABSENT = object()
@@ -286,6 +286,53 @@ def test_hmac_algorithm_confusion_is_refused():
     jwks, _ = cache()
     with pytest.raises(AuthError, match="unsupported token algorithm"):
         decode_jwt(f"{header}.{payload}.{b64u(sig)}", jwks, ISSUER, AUDIENCE)
+
+
+def test_declared_jwk_alg_rejects_a_token_override():
+    """A JWK that names RS384 must not let the token pick RS256's hash (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="RS384")))
+    with pytest.raises(AuthError, match="does not match the signing key"):
+        decode_jwt(sign(claims(), alg="RS256", hash_name="sha256"), jwks, ISSUER, AUDIENCE)
+
+
+def test_unsupported_jwk_alg_is_refused_even_if_token_is_rsa():
+    """A declared-but-unknown JWK alg must not fall back to the token (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="HS256")))
+    with pytest.raises(AuthError, match="unsupported key algorithm"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_declared_jwk_alg_drives_the_verify_hash(monkeypatch):
+    """When the JWK names RS384, verification hashes with SHA-384 (#207)."""
+    seen = []
+    real = auth.rsa_verify
+
+    def spy(n, e, signature, message, hash_name):
+        seen.append(hash_name)
+        return real(n, e, signature, message, hash_name)
+
+    monkeypatch.setattr(auth, "rsa_verify", spy)
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="RS384")))
+    got = decode_jwt(sign(claims(), alg="RS384", hash_name="sha384"), jwks, ISSUER, AUDIENCE)
+    assert got["sub"] == "user-42"
+    assert seen == ["sha384"]
+
+
+def test_jwk_without_alg_accepts_token_rs256():
+    """RFC 7517 makes JWK alg optional; the token may still pick RS256 (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg=None)))
+    got = decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    assert got["sub"] == "user-42"
+
+
+@pytest.mark.parametrize("alg", ["none", "HS256"])
+def test_alg_none_and_hs256_are_refused_when_jwk_omits_alg(alg):
+    """Omitting JWK alg must not let the token pick a non-RSA algorithm (#207)."""
+    header = b64u(json.dumps({"alg": alg, "kid": KID}).encode())
+    payload = b64u(json.dumps(claims()).encode())
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg=None)))
+    with pytest.raises(AuthError, match="unsupported token algorithm"):
+        decode_jwt(f"{header}.{payload}.", jwks, ISSUER, AUDIENCE)
 
 
 def test_an_expired_token_is_refused():
