@@ -13,6 +13,65 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Security
+
+- **GHSA-mqm8-mc66-wjvj (high) — OIDC JWKS fetch could be downgraded to
+  cleartext by redirect.** `auth._fetch_json` checked `https` on the URL it was
+  handed, then called `urlopen`, which follows redirects using a handler that
+  accepts `http`, `https` and `ftp`. An issuer's discovery document or
+  `jwks_uri` could therefore `302` to `http://`, putting the signing keys on the
+  wire in clear; an on-path attacker answering that request substitutes their
+  own modulus and then satisfies every remaining check in the module — `alg`,
+  `use`/`key_ops`, `iss`, `aud`, `exp` and a genuinely valid signature over
+  their own key — to authenticate as any `sub`. Fetches now go through a
+  module-level opener whose redirect handler refuses any non-`https` hop and
+  caps redirects at 3. Affected deployments: `--auth-oidc-issuer` on the HTTP
+  transport.
+- **GHSA-f896-f643-87cf (medium) — `jwks_uri` was unconstrained.**
+  `JWKSCache._resolve_jwks_uri` cross-checked the discovery document's `issuer`
+  but took `jwks_uri` at face value, so one field in a document fetched over
+  the network relocated the trust anchor for every authentication decision to
+  any host. It must now share the issuer's scheme and host. The `issuer` field
+  is also required rather than optional: the old `if declared and ...` skipped
+  the mismatch check entirely when the field was absent, letting a document opt
+  out of being compared by omitting it. RFC 8414 §3.2 makes it REQUIRED.
+- **GHSA-6wrx-c2rg-mvm9 (medium) — `repo2graph doctor` was an arbitrary-file
+  hash oracle.** `integrity.verify_artifacts` built each path to check as
+  `out / rel_path` where `rel_path` is a key from the index's own
+  `manifest.json` — untrusted input, since this project ships indexes on a
+  `graph` branch, as Action artifacts and in `examples/`, with `doctor` as the
+  documented way to check a received one. `pathlib` discards the left operand
+  when the right is absolute, so an absolute key read any file the process
+  could reach and echoed its real `sha256` into `report.errors`, while a
+  missing file reported differently from a mismatching one, probing for
+  existence. Keys that are absolute, or that resolve outside the index, are now
+  reported as a corrupt manifest before anything is read. `checksums` keys were
+  the only manifest-derived values used as paths; `written` and `entrypoints`
+  were audited and are not.
+- **`rag --answer` no longer lets a provider redirect walk off with the API key.**
+  Found by sweeping the codebase for the class behind GHSA-mqm8-mc66-wjvj, not
+  reported separately. `stream_answer` called `urlopen`, which follows
+  redirects, and CPython's handler forwards every header except
+  `content-length`/`content-type` to the new target whatever host or scheme it
+  names — so a provider answering `302 http://elsewhere` was handed the
+  `Authorization` / `x-api-key` / `x-goog-api-key` header in clear. It also made
+  `_disclose` untrue, since the hostname printed to stderr before the first byte
+  would not be where the request ended up. Provider redirects are now confined
+  to the same origin, may not downgrade https to http, and are capped at 3; an
+  http-to-https upgrade on the same host is still allowed, because `OLLAMA_HOST`
+  is legitimately plain http. Sweep result for the three advisory classes:
+  `auth.py` and `answer.py` were the only redirect-following calls (no others
+  exist), `integrity.py` held the only untrusted path join, and there is no
+  archive extraction, no `pickle`/`eval`/`yaml.load`, and no `shell=True`
+  anywhere in the package.
+- `secrets.scan_content_secrets` returns `(type, start, end)` spans instead of
+  `(type, start, end, matched_text)`. No caller ever read the fourth element --
+  `redact_content` wanted only its newline count and `chunks._process_chunk_content`
+  reports `f[0]` -- so every scan built a list of live credentials that existed
+  purely to be discarded, one `emit(..., findings=findings)` away from becoming
+  the leak the module exists to prevent. Callers needing the bytes hold `text`
+  and can slice the span. Internal API: not exported from `repo2graph.__all__`.
+
 ## [2.0.0] — 2026-09-22
 
 ### Removed

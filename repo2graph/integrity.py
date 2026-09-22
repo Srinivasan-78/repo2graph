@@ -228,7 +228,26 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
 
     # Check checksums for all declared files
     for rel_path, expected_hash in checksums.items():
+        # These keys are untrusted input. A manifest travels with the index it
+        # describes, and this project actively encourages consuming indexes
+        # built elsewhere -- the `graph` branch, Action artifacts, examples/ --
+        # with `doctor` as the documented way to check a received one. An
+        # absolute key makes `out / rel_path` discard `out` entirely (pathlib
+        # keeps the right operand) and `..` segments walk out, which turns this
+        # loop into an arbitrary-file hash oracle: the real digest lands in
+        # `errors`, and a missing file reports differently from a mismatching
+        # one, so it probes for existence too.
         artifact_file = out / rel_path
+        try:
+            resolved = artifact_file.resolve()
+        except OSError:
+            resolved = None
+        if Path(rel_path).is_absolute() or resolved is None or not resolved.is_relative_to(out):
+            # A corrupt manifest, not a missing artifact: nothing is read, and
+            # the message names no path but the one the manifest already knows.
+            report.status = "corrupt"
+            report.errors.append(f"Manifest names a path outside the index: {rel_path}")
+            continue
         if not artifact_file.exists():
             report.status = "partial"
             report.errors.append(f"Missing artifact: {rel_path}")

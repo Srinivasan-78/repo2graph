@@ -459,6 +459,74 @@ class TestVerifyArtifacts:
         assert report.status in ("stale",)
         assert any("build_id" in w or "differs" in w for w in report.warnings)
 
+    # GHSA-6wrx-c2rg-mvm9. The manifest is untrusted input: this project ships
+    # indexes on a `graph` branch, as Action artifacts and in examples/, and
+    # `doctor` on a received index is the documented way to check one. That is
+    # exactly when a checksum key becomes attacker-chosen.
+
+    @staticmethod
+    def _index_naming(tmp_path, key):
+        """An index whose manifest declares one checksum, for `key`."""
+        idx = tmp_path / "idx"
+        (idx / "agent").mkdir(parents=True)
+        for name in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl"):
+            (idx / "agent" / name).write_text("", encoding="utf8")
+        (idx / "agent" / "manifest.json").write_text(
+            json.dumps(
+                {"format": "repo2graph/1", "checksums": {key: "sha256:" + "0" * 64}},
+            ),
+            encoding="utf8",
+        )
+        return idx
+
+    @pytest.mark.parametrize("shape", ["absolute", "dotdot"])
+    def test_manifest_cannot_name_a_path_outside_the_index(self, tmp_path, shape):
+        """An absolute or escaping key must be refused before anything is read.
+
+        `out / rel_path` discards `out` when rel_path is absolute, so the loop
+        used to hash any file the process could reach and put the real digest
+        in `errors` -- a hash-disclosure oracle -- while a missing file
+        reported differently from a mismatching one, probing for existence.
+        """
+        from repo2graph.integrity import verify_artifacts
+
+        secret = tmp_path / "outside_the_index.txt"
+        # write_bytes, not write_text: text mode translates "\n" to "\r\n" on
+        # Windows, which would change the file's digest and make the literal
+        # pinned below vacuous on exactly the platform this repo's CI adds a
+        # leg for.
+        secret.write_bytes(b"SUPER SECRET CONTENT\n")
+        key = str(secret.resolve()) if shape == "absolute" else "../outside_the_index.txt"
+        idx = self._index_naming(tmp_path, key)
+
+        report = verify_artifacts(idx)
+
+        assert report.status == "corrupt"
+        assert report.checked_files == 0, "the outside file was read"
+        assert any("outside the index" in e for e in report.errors), report.errors
+        # sha256 of b"SUPER SECRET CONTENT\n", pinned as a literal. The digest
+        # must appear nowhere, as a mismatch or a "cannot read" message alike.
+        digest = "86e4ec134d254afcc457f8ca82c501eebb296f9a6449c1ab2cc87e4f5814dea3"
+        joined = " ".join(report.errors)
+        assert digest not in joined
+        assert "SUPER SECRET" not in joined
+
+    def test_a_relative_manifest_key_is_still_checked(self, tmp_path):
+        """The guard must reject escapes only -- an ordinary key still verifies.
+
+        Without this, a containment check that rejected everything would look
+        exactly as green as one that works.
+        """
+        from repo2graph.integrity import verify_artifacts
+
+        idx = self._index_naming(tmp_path, "agent/nodes.jsonl")
+
+        report = verify_artifacts(idx)
+
+        assert report.checked_files == 1
+        assert report.status == "corrupt"  # the planted hash is deliberately wrong
+        assert any("Checksum mismatch for agent/nodes.jsonl" in e for e in report.errors)
+
 
 # ============================================================================
 # Transactional staging — dump_all atomic swap

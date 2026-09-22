@@ -236,28 +236,32 @@ def _is_secret_path(
     return False
 
 
-def scan_content_secrets(text: str) -> list[tuple[str, int, int, str]]:
+def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     """Scan string for known credential patterns.
 
+    The matched bytes are deliberately *not* returned. Every caller either
+    counts the findings or reports their types, so carrying the plaintext would
+    build a list of live credentials that exists only to be discarded -- one
+    `emit(..., findings=findings)` away from being the leak this module exists
+    to prevent. A caller that genuinely needs the bytes already holds `text`
+    and can slice the span itself.
+
     Returns:
-        List of (secret_type, start_idx, end_idx, matched_secret_text).
+        List of (secret_type, start_idx, end_idx) spans into `text`.
     """
     if not text:
         return []
 
-    findings: list[tuple[str, int, int, str]] = []
+    findings: list[tuple[str, int, int]] = []
 
     # 1. Standard patterns (AWS, GitHub, Slack, OpenAI, Google, PEM, JWT)
     for stype, pattern in CONTENT_SECRET_PATTERNS:
         for m in pattern.finditer(text):
-            findings.append((stype, m.start(), m.end(), m.group(0)))
+            findings.append((stype, m.start(), m.end()))
 
     # 2. Database URLs with credentials
     for m in DB_URL_RE.finditer(text):
-        password = m.group(2)
-        start = m.start(2)
-        end = m.end(2)
-        findings.append(("DATABASE_PASSWORD", start, end, password))
+        findings.append(("DATABASE_PASSWORD", m.start(2), m.end(2)))
 
     # 3. High-entropy assignments
     for m in ASSIGNMENT_RE.finditer(text):
@@ -267,7 +271,7 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int, str]]:
             digits = sum(c.isdigit() for c in secret)
             letters = sum(c.isalpha() for c in secret)
             if digits and letters:
-                findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2), secret))
+                findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
 
     # Sort by start index
     findings.sort(key=lambda x: x[1])
@@ -295,16 +299,19 @@ def redact_content(text: str, policy: str = "redact-match") -> tuple[str, int]:
     out = text
     count = 0
     # Deduplicate overlapping spans
-    filtered_findings: list[tuple[str, int, int, str]] = []
+    filtered_findings: list[tuple[str, int, int]] = []
     last_end = -1
-    for stype, start, end, matched in findings:
+    for stype, start, end in findings:
         if start >= last_end:
-            filtered_findings.append((stype, start, end, matched))
+            filtered_findings.append((stype, start, end))
             last_end = end
 
-    for stype, start, end, matched in reversed(filtered_findings):
-        # Line-preserving rule: preserve exact count of newlines
-        nl_count = matched.count("\n")
+    for stype, start, end in reversed(filtered_findings):
+        # Line-preserving rule: preserve exact count of newlines. Count them in
+        # the original `text` over the span's bounds -- `out` is rewritten
+        # back-to-front, so this span is still untouched there either way, and
+        # str.count(sub, start, end) never materialises the secret substring.
+        nl_count = text.count("\n", start, end)
         repl = f"[REDACTED:{stype}]" + ("\n" * nl_count)
         out = out[:start] + repl + out[end:]
         count += 1

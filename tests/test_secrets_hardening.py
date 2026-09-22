@@ -217,6 +217,27 @@ def test_scan_content_secrets_matches():
     assert "DATABASE_PASSWORD" in match_types
 
 
+def test_scan_content_secrets_returns_spans_not_plaintext():
+    """A finding locates a credential; it must never carry one.
+
+    Callers only count findings or report `f[0]`, so returning the matched
+    bytes built a list of live credentials that existed solely to be thrown
+    away -- and any later `emit(..., findings=findings)` would have shipped it
+    verbatim. Offsets below are hand-counted against `text`: "tok = '" is 7
+    characters, and the token is 36.
+    """
+    secret = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"
+    text = f"tok = '{secret}'\n"
+
+    findings = scan_content_secrets(text)
+
+    assert findings == [("github_token", 7, 43)]
+    # The span is the contract: a caller holding `text` can still recover it.
+    stype, start, end = findings[0]
+    assert text[start:end] == secret
+    assert all(secret not in part for f in findings for part in f if isinstance(part, str))
+
+
 def test_redact_content_preserves_line_count():
     """Line preserving: text.split('\\n') count must match exactly before and after."""
     text = (

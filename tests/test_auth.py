@@ -14,10 +14,13 @@ unenforced `aud` -- each of which leaves the happy path working perfectly.
 
 import base64
 import hashlib
+import http.client
 import json
 import random
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -758,6 +761,124 @@ def test_plain_http_issuers_are_refused(monkeypatch):
     """Fetching signing keys over http would put them on the wire in clear."""
     with pytest.raises(AuthError, match="must be https"):
         auth._fetch_json("http://issuer.example.com/.well-known/openid-configuration")
+
+
+# --------------------------------------------------- discovery hardening ----
+#
+# GHSA-f896-f643-87cf and GHSA-mqm8-mc66-wjvj. Both are about where the signing
+# keys come from rather than how a token is checked: every other guarantee in
+# this module is conditional on the key set being the issuer's.
+
+
+def _serves(doc):
+    """An opener that answers discovery with `doc` and refuses anything else.
+
+    The AssertionError is the point of the helper: it proves the key fetch is
+    never reached, so a rejection happened before anything was sourced from
+    the host the document named.
+    """
+
+    def opener(url):
+        if url.endswith("/.well-known/openid-configuration"):
+            return doc
+        raise AssertionError(f"must not fetch {url}")
+
+    return opener
+
+
+def test_a_jwks_uri_on_another_host_is_refused():
+    """One field in a fetched document must not relocate the trust anchor."""
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"issuer": ISSUER, "jwks_uri": "https://evil.example.com/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="jwks_uri origin"):
+        jwks.key_for(KID)
+
+
+def test_a_jwks_uri_downgraded_to_http_is_refused():
+    """Same host, cleartext scheme: still not where these keys come from."""
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"issuer": ISSUER, "jwks_uri": "http://issuer.example.com/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="jwks_uri origin"):
+        jwks.key_for(KID)
+
+
+def test_a_discovery_document_without_an_issuer_is_refused():
+    """RFC 8414 §3.2 makes `issuer` REQUIRED.
+
+    Absence used to skip the mismatch check entirely, so a document opted out
+    of being compared by leaving the field off.
+    """
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"jwks_uri": f"{ISSUER}/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="no issuer"):
+        jwks.key_for(KID)
+
+
+def test_a_redirect_off_https_is_refused():
+    """urlopen follows redirects; CPython's handler allows http, https and ftp.
+
+    Without this the scheme check in `_fetch_json` covers the first hop only,
+    and a 302 to http:// puts the signing keys on the wire in clear -- where
+    an on-path attacker substitutes their own modulus and mints tokens that
+    pass every remaining check in the module.
+    """
+    handler = auth._HTTPSOnlyRedirect()
+    req = urllib.request.Request(f"{ISSUER}/jwks")
+    headers = http.client.HTTPMessage()
+
+    for target in (
+        "http://issuer.example.com/jwks",
+        "ftp://issuer.example.com/jwks",
+        "//issuer.example.com/jwks",
+    ):
+        assert handler.redirect_request(req, None, 302, "Found", headers, target) is None, target
+
+    onward = handler.redirect_request(
+        req, None, 302, "Found", headers, "https://issuer.example.com/keys"
+    )
+    assert onward is not None and onward.full_url == "https://issuer.example.com/keys"
+
+
+def test_fetch_json_goes_through_the_guarded_opener(monkeypatch):
+    """The handler only helps if `_fetch_json` stops using the default opener.
+
+    A bare `urlopen` would silently keep the permissive redirect handler, so
+    pin the call site rather than only the handler's own logic.
+    """
+    used = []
+
+    class FakeOpener:
+        def open(self, request, timeout=None):
+            used.append((request.full_url, timeout))
+            raise urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener())
+    with pytest.raises(AuthError, match="could not reach the issuer"):
+        auth._fetch_json(f"{ISSUER}/jwks")
+
+    assert used == [(f"{ISSUER}/jwks", auth.HTTP_TIMEOUT)]
+
+
+def test_the_guarded_opener_replaces_the_permissive_handler():
+    """build_opener drops its default only because ours subclasses it."""
+    installed = [
+        h for h in auth._OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    assert len(installed) == 1
+    assert isinstance(installed[0], auth._HTTPSOnlyRedirect)
+    assert auth._HTTPSOnlyRedirect.max_redirections == 3
 
 
 # ------------------------------------------------------- authenticator ----
