@@ -217,6 +217,117 @@ class TestBuildLock:
         assert fresh._acquired
         fresh.release()
 
+    def test_is_pid_alive_paths(self, monkeypatch):
+        from repo2graph.lock import _is_pid_alive
+
+        assert not _is_pid_alive(-1)
+        assert not _is_pid_alive(0)
+        assert _is_pid_alive(os.getpid())
+        assert not _is_pid_alive(99999999)
+
+        # Test Unix path
+        monkeypatch.setattr("sys.platform", "linux")
+
+        def fake_kill(pid, sig):
+            if pid == 100:
+                raise ProcessLookupError()
+            elif pid == 200:
+                raise PermissionError()
+            elif pid == 300:
+                raise OSError()
+            return None
+
+        monkeypatch.setattr("os.kill", fake_kill)
+        assert not _is_pid_alive(100)
+        assert _is_pid_alive(200)
+        assert not _is_pid_alive(300)
+        assert _is_pid_alive(400)
+
+    def test_release_when_not_acquired(self, tmp_path):
+        from repo2graph.lock import BuildLock
+
+        lock = BuildLock(tmp_path / "idx")
+        # Should be a no-op
+        lock.release()
+        assert not lock._acquired
+
+    def test_stale_lock_threshold_reclaimed(self, tmp_path):
+        import time
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        lock = BuildLock(idx, stale_threshold=1.0)
+        lock.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock.lock_file.write_text("{}", encoding="utf8")
+        past = time.time() - 100.0
+        os.utime(lock.lock_file, (past, past))
+
+        fresh = BuildLock(idx, stale_threshold=1.0, timeout=2.0)
+        fresh.acquire()
+        assert fresh._acquired
+        fresh.release()
+
+    def test_read_holder_metadata_edge_cases(self, tmp_path):
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        lock = BuildLock(idx)
+        meta = lock._read_holder_metadata()
+        assert meta["file"] == str(lock.lock_file)
+
+        lock.lock_file.write_text("invalid json", encoding="utf8")
+        meta2 = lock._read_holder_metadata()
+        assert meta2["file"] == str(lock.lock_file)
+        lock.lock_file.unlink()
+
+    def test_try_reclaim_stale_unlink_error(self, tmp_path, monkeypatch):
+        import time
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        lock = BuildLock(idx)
+        lock.lock_file.write_text("{}", encoding="utf8")
+        past = time.time() - 10000.0
+        os.utime(lock.lock_file, (past, past))
+
+        def fake_unlink(*args, **kwargs):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(Path, "unlink", fake_unlink)
+        assert not lock._try_reclaim_stale()
+        # Restore real unlink so tmp_path cleans up
+        monkeypatch.undo()
+        lock.lock_file.unlink()
+
+    def test_unix_os_lock_and_release(self, tmp_path, monkeypatch):
+        import types
+        from repo2graph.lock import BuildLock
+
+        monkeypatch.setattr("sys.platform", "linux")
+        mock_fcntl = types.ModuleType("fcntl")
+        mock_fcntl.LOCK_EX = 2  # type: ignore
+        mock_fcntl.LOCK_NB = 4  # type: ignore
+        mock_fcntl.LOCK_UN = 8  # type: ignore
+
+        def fake_flock(fd, op):
+            pass
+
+        mock_fcntl.flock = fake_flock  # type: ignore
+        monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
+
+        lock = BuildLock(tmp_path / "idx")
+        lock.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock.lock_file, "w") as fh:
+            assert lock._try_os_lock(fh)
+            lock._release_os_lock(fh)
+
+            def error_flock(fd, op):
+                raise OSError("error")
+
+            mock_fcntl.flock = error_flock  # type: ignore
+            assert not lock._try_os_lock(fh)
+            lock._release_os_lock(fh)
+
 
 # ============================================================================
 # verify_artifacts — integrity report
