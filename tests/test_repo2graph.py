@@ -210,6 +210,50 @@ def test_parse_unknown_language_is_empty():
     assert pf.symbols == [] and pf.imports == []
 
 
+def test_parse_lua_extracts_functions_and_calls():
+    """Verify Lua function definitions, docstrings, and calls extraction."""
+    src = b"""-- Greets a person with a friendly message
+local function greet(name)
+    print(name)
+end
+
+-- Top-level runner
+function run()
+    greet("world")
+end
+"""
+    pf = parse_source(src, "lua")
+    if not pf.symbols:
+        pytest.skip("lua grammar unavailable")
+    assert pf.parse_errors == 0
+    names = {s.name: s for s in pf.symbols}
+    assert "greet" in names
+    assert "run" in names
+    assert names["greet"].kind == "function"
+    assert names["run"].kind == "function"
+    assert names["greet"].docstring == "-- Greets a person with a friendly message"
+    assert "print" in names["greet"].calls
+    assert "greet" in names["run"].calls
+
+
+def test_build_lua_calls_edge(tmp_path):
+    """Verify build indexes .lua files and creates CALLS edges."""
+    (tmp_path / "main.lua").write_text(
+        "-- Helper function\n"
+        "local function helper()\n"
+        "    return 42\n"
+        "end\n\n"
+        "function run()\n"
+        "    helper()\n"
+        "end\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    assert ("sym:main.lua::run", "sym:main.lua::helper") in edges_of(g, "CALLS")
+    assert ("file:main.lua", "sym:main.lua::run") in edges_of(g, "DEFINES")
+    assert ("file:main.lua", "sym:main.lua::helper") in edges_of(g, "DEFINES")
+
+
 # ---------- import resolution ----------
 
 
