@@ -1118,6 +1118,7 @@ def build(
     cache: dict | None = None,
     max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
     config=None,
+    cochange_min: int = 3,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1439,7 +1440,7 @@ def build(
                     g.stats["unresolved_bases"] += 1
 
     if git_history:
-        add_cochange(g, root, git_history, file_index)
+        add_cochange(g, root, git_history, file_index, min_pairs=cochange_min)
 
     # Every edge endpoint must be a node. A file can be in file_index (so an
     # IMPORTS target resolves to it, and git log pairs it) yet have no file:
@@ -1554,10 +1555,22 @@ def _reap_child(proc, reader=None) -> None:
 
 
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
-    """CO_CHANGE edges from files edited together in the last N commits."""
+    """CO_CHANGE edges from files edited together in the last N commits.
+
+    Formula and semantics:
+    - History depth: Scans up to `commits` commits (capped at MAX_COCHANGE_COMMITS = 1000).
+    - Merge handling: `--no-merges` skips merge commits to avoid false co-change correlations.
+    - Noise filter: Commits touching > 25 files are skipped as bulk refactors/noise.
+    - Path filtering: Only paths matching `file_index` (current indexed tree) are paired.
+    - Pair counting: Each commit touching 2..25 files increments pair count by +1 for all pairs.
+    - Threshold: Emits an edge if pair count >= `min_pairs` (default: 3, configurable).
+    """
+    g.stats["cochange_sampled_commits"] = commits
+    g.stats["cochange_min_pairs"] = min_pairs
     if commits > MAX_COCHANGE_COMMITS:
         g.stats["cochange_history_capped"] = commits
         commits = MAX_COCHANGE_COMMITS
+        g.stats["cochange_sampled_commits"] = commits
     try:
         # Popen, not run(capture_output=True): run() reads the child's stdout to
         # EOF before it returns, so a byte cap applied to its result bounds only
@@ -1655,4 +1668,12 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             current.append(line)
     for (a, b), n in pairs.items():
         if n >= min_pairs:
-            g.add_edge(f"file:{a}", f"file:{b}", "CO_CHANGE", count=n)
+            g.add_edge(
+                f"file:{a}",
+                f"file:{b}",
+                "CO_CHANGE",
+                count=n,
+                cochange_count=n,
+                sampled_commits=commits,
+                min_pairs=min_pairs,
+            )

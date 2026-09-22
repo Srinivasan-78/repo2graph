@@ -155,3 +155,67 @@ def test_add_cochange_edge_cases(tmp_path: Path):
     }
 
     assert edges == expected_edges
+
+
+def test_cochange_threshold_and_metadata(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+
+    for i in range(2):
+        (repo / "a.py").write_text(f"val = {i}\n", encoding="utf8")
+        (repo / "b.py").write_text(f"val = {i}\n", encoding="utf8")
+        subprocess.run(["git", "add", "a.py", "b.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", f"commit {i}"], cwd=repo, check=True)
+
+    file_index = {"a.py", "b.py"}
+
+    # Default threshold (min_pairs=3): 2 co-edits is below threshold -> 0 CO_CHANGE edges
+    g_default = Graph(repo, "test")
+    add_cochange(g_default, repo, commits=10, file_index=file_index)
+    assert not any(e["type"] == "CO_CHANGE" for e in g_default.edges)
+    assert g_default.stats["cochange_sampled_commits"] == 10
+    assert g_default.stats["cochange_min_pairs"] == 3
+
+    # Custom threshold (min_pairs=2): 2 co-edits meets threshold -> edge emitted with enriched metadata
+    g_tuned = Graph(repo, "test")
+    add_cochange(g_tuned, repo, commits=10, file_index=file_index, min_pairs=2)
+    co_edges = [e for e in g_tuned.edges if e["type"] == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    edge = co_edges[0]
+    assert edge["count"] == 2
+    assert edge["cochange_count"] == 2
+    assert edge["sampled_commits"] == 10
+    assert edge["min_pairs"] == 2
+
+
+def test_cli_cochange_min_flag(tmp_path: Path):
+    from repo2graph.cli import main
+    from repo2graph.query import Index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+
+    for i in range(2):
+        (repo / "a.py").write_text(f"CONST_A_{i} = 1\n", encoding="utf8")
+        (repo / "b.py").write_text(f"CONST_B_{i} = 1\n", encoding="utf8")
+        subprocess.run(["git", "add", "a.py", "b.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", f"commit {i}"], cwd=repo, check=True)
+
+    out_default = tmp_path / "out_default"
+    main(["build", str(repo), "-o", str(out_default), "--git-history", "10"])
+    g_def = Index(out_default)
+    assert not any(e.get("type") == "CO_CHANGE" for e in g_def.edges)
+
+    out_custom = tmp_path / "out_custom"
+    main(["build", str(repo), "-o", str(out_custom), "--git-history", "10", "--cochange-min", "2"])
+    g_custom = Index(out_custom)
+    co_edges = [e for e in g_custom.edges if e.get("type") == "CO_CHANGE"]
+    assert len(co_edges) == 1
+    assert co_edges[0]["cochange_count"] == 2
+    assert co_edges[0]["min_pairs"] == 2

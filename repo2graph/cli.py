@@ -158,6 +158,7 @@ def cmd_build(args):
                 cache=cache,
                 max_call_candidates=args.max_call_candidates,
                 config=config,
+                cochange_min=getattr(args, "cochange_min", 3),
             )
             chunks = None if args.no_chunks else iter_chunks(g)
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
@@ -243,6 +244,7 @@ def cmd_github(args):
                 config=config,
                 max_call_candidates=args.max_call_candidates,
                 no_chunks=args.no_chunks,
+                cochange_min=getattr(args, "cochange_min", 3),
             )
     except LockTimeoutError as exc:
         raise SystemExit(f"error: {exc}") from None
@@ -935,6 +937,12 @@ def main(argv=None):
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
     common.add_argument(
         "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
+    )
+    common.add_argument(
+        "--cochange-min",
+        type=_nonneg,
+        default=3,
+        help="minimum co-edits across git history required to emit a CO_CHANGE edge (default: 3)",
     )
     common.add_argument("--max-files", type=_nonneg, default=0)
     common.add_argument(
