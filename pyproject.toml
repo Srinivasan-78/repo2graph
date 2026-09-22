@@ -60,6 +60,9 @@ rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # The bound is `<3.0` -- an unreleased 3.x is the thing that has not been
 # tested, not 2.x. Keep this in sync with `SDK_SPEC` in repo2graph/mcp.py.
 mcp = ["mcp>=1.0,<3.0"]
+# Shell tab completion via argcomplete
+completion = ["argcomplete>=3.0"]
+
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

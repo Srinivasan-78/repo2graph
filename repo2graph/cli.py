@@ -1,3 +1,4 @@
+# PYTHON_ARGCOMPLETE_OK
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 
 import argparse
@@ -742,6 +743,31 @@ def cmd_doctor(args):
     return 0 if report.ok else 1
 
 
+def cmd_completion(args) -> int:
+    """Print shell completion script or setup instructions."""
+    shell = getattr(args, "shell", "bash")
+    if shell == "bash":
+        _emit(
+            "# Bash completion for repo2graph\n"
+            '# Prerequisite: pip install "repo2graph[completion]"\n'
+            'eval "$(register-python-argcomplete repo2graph)"\n'
+        )
+    elif shell == "zsh":
+        _emit(
+            "# Zsh completion for repo2graph\n"
+            '# Prerequisite: pip install "repo2graph[completion]"\n'
+            "autoload -U bashcompinit && bashcompinit\n"
+            'eval "$(register-python-argcomplete repo2graph)"\n'
+        )
+    elif shell == "fish":
+        _emit(
+            "# Fish completion for repo2graph\n"
+            '# Prerequisite: pip install "repo2graph[completion]"\n'
+            "register-python-argcomplete --shell fish repo2graph | source\n"
+        )
+    return 0
+
+
 def _nonneg(value: str) -> int:
     """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
     numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
@@ -1258,6 +1284,27 @@ def main(argv=None):
     )
     d.add_argument("--json", action="store_true", help="output report as JSON")
     d.set_defaults(func=cmd_doctor)
+
+    comp = sub.add_parser(
+        "completion",
+        help="print shell completion setup script (bash, zsh, fish)",
+    )
+    comp.add_argument(
+        "shell",
+        nargs="?",
+        default="bash",
+        choices=["bash", "zsh", "fish"],
+        help="target shell (default: bash)",
+    )
+    comp.set_defaults(func=cmd_completion)
+
+    if argv is None:
+        try:
+            import argcomplete
+
+            argcomplete.autocomplete(p)
+        except Exception:
+            pass
 
     try:
         args = p.parse_args(argv)

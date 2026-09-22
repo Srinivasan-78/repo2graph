@@ -3538,3 +3538,19 @@ def test_clone_does_not_checkout_fetch_head_on_failed_fetch(tmp_path, monkeypatc
     # Verify FETCH_HEAD checkout was never attempted
     all_cmd_strs = [" ".join(str(c) for c in cmd) for cmd in recorded_cmds]
     assert not any("FETCH_HEAD" in s for s in all_cmd_strs)
+
+
+def test_cmd_completion(capsys):
+    """Verify repo2graph completion prints setup snippets for bash, zsh, and fish (#326)."""
+    assert main(["completion", "bash"]) == 0
+    out = capsys.readouterr().out
+    assert "register-python-argcomplete repo2graph" in out
+
+    assert main(["completion", "zsh"]) == 0
+    out = capsys.readouterr().out
+    assert "bashcompinit" in out
+    assert "register-python-argcomplete repo2graph" in out
+
+    assert main(["completion", "fish"]) == 0
+    out = capsys.readouterr().out
+    assert "register-python-argcomplete --shell fish repo2graph" in out

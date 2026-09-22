@@ -13,6 +13,7 @@ repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
 repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph explain-path <path> explain file inclusion/exclusion precedence
+repo2graph completion [shell] print shell completion setup script
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -405,3 +406,30 @@ Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `include
 tells them apart, `precedence_step` is `10` either way.
 
 
+## `completion` — shell tab completion
+
+Prints shell completion configuration for `bash`, `zsh`, or `fish`.
+Tab completion relies on `argcomplete`, available via the `completion` extra:
+
+```bash
+pip install "repo2graph[completion]"
+```
+
+### Setup
+
+**Bash:**
+```bash
+eval "$(repo2graph completion bash)"
+# or: eval "$(register-python-argcomplete repo2graph)"
+```
+
+**Zsh:**
+```zsh
+autoload -U bashcompinit && bashcompinit
+eval "$(repo2graph completion zsh)"
+```
+
+**Fish:**
+```fish
+repo2graph completion fish | source
+```
