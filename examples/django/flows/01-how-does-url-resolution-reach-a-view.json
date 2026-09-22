@@ -10,7 +10,7 @@
       "start_line": 186,
       "end_line": 187,
       "why": "lexical",
-      "score": 12.5
+      "score": 11.809
     },
     {
       "node_id": "sym:django/template/defaulttags.py::url",
@@ -21,7 +21,7 @@
       "start_line": 1515,
       "end_line": 1584,
       "why": "lexical",
-      "score": 11.347
+      "score": 10.271
     },
     {
       "node_id": "sym:tests/admin_views/test_autocomplete_view.py::AutocompleteJsonViewTests.test_to_field_resolution_with_fk_pk",
@@ -32,18 +32,29 @@
       "start_line": 197,
       "end_line": 216,
       "why": "lexical",
-      "score": 8.841
+      "score": 7.439
     },
     {
-      "node_id": "sym:tests/admin_views/test_autocomplete_view.py::AutocompleteJsonViewTests.test_to_field_resolution_with_mti",
-      "path": "tests/admin_views/test_autocomplete_view.py",
+      "node_id": "sym:tests/forms_tests/widget_tests/test_clearablefileinput.py::ClearableFileInputTest.test_html_does_not_mask_exceptions.FailingURLFieldFile",
+      "path": "tests/forms_tests/widget_tests/test_clearablefileinput.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "ClearableFileInputTest.test_html_does_not_mask_exceptions.FailingURLFieldFile",
+      "start_line": 184,
+      "end_line": 190,
+      "why": "DEFINES in of url",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:django/template/base.py::Token.split_contents",
+      "path": "django/template/base.py",
       "lang": "python",
       "kind": "function",
-      "name": "AutocompleteJsonViewTests.test_to_field_resolution_with_mti",
-      "start_line": 163,
-      "end_line": 195,
-      "why": "lexical",
-      "score": 8.77
+      "name": "Token.split_contents",
+      "start_line": 391,
+      "end_line": 404,
+      "why": "CALLS out of url",
+      "score": 0.0
     }
   ]
 }

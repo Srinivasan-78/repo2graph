@@ -183,11 +183,11 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 
 | リポジトリ | 言語 | 範囲 | ノード数 | エッジ数 |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 範囲限定(controllers、scheduler、APIサーバー) | 14,197 | 83,525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | 範囲限定(Python/C++境界) | 20,641 | 96,013 |
-| [Django](https://github.com/django/django) | Python | リポジトリ全体 | 54,544 | 228,461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | 範囲限定(`src/vs/`) | 113,115 | 431,453 |
-| [Linux kernel](https://github.com/torvalds/linux) | C | 範囲限定(超大規模) | 136,182 | 257,655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 範囲限定(controllers、scheduler、APIサーバー) | 14,451 | 110,246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | 範囲限定(Python/C++境界) | 21,380 | 115,984 |
+| [Django](https://github.com/django/django) | Python | リポジトリ全体 | 55,810 | 303,339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | 範囲限定(`src/vs/`) | 113,080 | 656,158 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | 範囲限定(超大規模) | 136,219 | 256,413 |
 
 完全な一覧と再現手順は **[examples/README.md](../../examples/README.md)**、測定方法は **[docs/benchmarks.md](../benchmarks.md)**、5つの実リポジトリで実行して実際に判明した課題(マクロ多用なC/C++での解析エラー率、呼び出し名の曖昧性、言語間解決の限界)は **[docs/limitations.md](../limitations.md)**(いずれも英語)を参照してください。
 

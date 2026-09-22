@@ -6,7 +6,7 @@
 
 ## Revision
 
-Commit `238650ef6c7c7cca08e032527329424c9fbd70e5` on `master`, analyzed 2026-09-17T15:32:06Z.
+Commit `f0100363d8c374bd8e9ea7c9ba02744f0b802ca4` on `master`, analyzed 2026-09-22T08:12:19Z.
 
 ## Why this repository?
 
@@ -28,23 +28,23 @@ Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, 
 |---|---:|
 | Files indexed | 3,660 |
 | Files parsed (code) | 3,574 |
-| Parse errors | 14,663 |
+| Parse errors | 14,631 |
 
 ## Graph statistics
 
 | Metric | Value |
 |---|---:|
-| Nodes | 136,182 |
-| Edges | 257,655 |
-| Symbols (functions) | 39,944 |
+| Nodes | 136,219 |
+| Edges | 256,413 |
+| Symbols (functions) | 39,954 |
 | Symbols (classes) | 0 |
-| CALLS edges | 70,079 |
-| CALLS_EXTERNAL edges | 44,350 |
+| CALLS edges | 68,785 |
+| CALLS_EXTERNAL edges | 44,375 |
 | IMPORTS edges | 13,949 |
 | INHERITS edges | 0 |
-| DEFINES edges | 125,401 |
-| Ambiguous calls (name matched >1 candidate) | 227 |
-| Entrypoints | 16,471 |
+| DEFINES edges | 125,428 |
+| Ambiguous calls (name matched >1 candidate) | 3,155 |
+| Entrypoints | 16,927 |
 
 ## Supported languages
 
@@ -65,7 +65,7 @@ the commit above and build it directly:
 
 ```bash
 git clone --filter=blob:none https://github.com/torvalds/linux /tmp/linux
-cd /tmp/linux && git checkout 238650ef6c7c7cca08e032527329424c9fbd70e5
+cd /tmp/linux && git checkout f0100363d8c374bd8e9ea7c9ba02744f0b802ca4
 repo2graph build . -o .r2g --include kernel/** fs/ext4/** drivers/net/ethernet/intel/e1000/** include/linux/**
 repo2graph query "Where is the scheduler subsystem initialized?" -o .r2g
 ```
@@ -89,7 +89,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-227 out of 70,079 total CALLS edges.
+3,155 out of 68,785 total CALLS edges.
 
 ## Reproduce
 

@@ -1,21 +1,97 @@
 {
   "discovery": "git",
+  "skipped_gitignore": 0,
+  "skipped_vendor": 7,
   "files": 1022,
   "edge:CONTAINS": 1041,
   "parsed": 969,
-  "parse_errors": 12469,
+  "parse_errors": 12473,
   "symbol:namespace": 466,
-  "edge:DEFINES": 14968,
-  "symbol:function": 15388,
+  "edge:DEFINES": 14970,
+  "symbol:function": 15390,
   "symbol:class": 956,
-  "edge:IMPORTS": 9634,
+  "edge:IMPORTS": 10921,
+  "imports_resolved": 3915,
+  "imports_unresolved": 7117,
+  "files_with_parse_errors": 325,
   "symbol:struct": 384,
+  "cpp_fallback_files": 6,
   "symbol:enum": 43,
-  "edge:CALLS_EXTERNAL": 27313,
-  "edge:CALLS": 42395,
-  "edge:INHERITS": 662,
-  "ambiguous_calls": 5631,
-  "entrypoints": 5676,
-  "nodes": 20641,
-  "edges": 96013
+  "edge:CALLS_EXTERNAL": 30012,
+  "calls_external": 36484,
+  "edge:CALLS": 58556,
+  "calls_ambiguous": 12487,
+  "ambiguous_calls": 12487,
+  "edge:INHERITS": 484,
+  "calls_unique_global": 3822,
+  "calls_scoped": 24989,
+  "unresolved_bases": 466,
+  "entrypoints": 5269,
+  "nodes": 21380,
+  "edges": 115984,
+  "parse_errors_summary": "Files with parse errors: 325  (6 C/C++ files used cpp fallback)",
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:tensorflow/python/framework/constant_op.py::constant",
+      "label": "constant",
+      "in_degree": 1059
+    },
+    {
+      "node_id": "sym:tensorflow/python/eager/polymorphic_function/polymorphic_function.py::function",
+      "label": "function",
+      "in_degree": 764
+    },
+    {
+      "node_id": "sym:tensorflow/core/framework/types.h::tensorflow.DataTypeSet.size",
+      "label": "tensorflow.DataTypeSet.size",
+      "in_degree": 597
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/test_util.py::TensorFlowTestCase.assertAllEqual",
+      "label": "TensorFlowTestCase.assertAllEqual",
+      "in_degree": 480
+    },
+    {
+      "node_id": "sym:tensorflow/core/framework/tensor_slice.h::tensorflow.TensorSlice.end",
+      "label": "tensorflow.TensorSlice.end",
+      "in_degree": 411
+    },
+    {
+      "node_id": "sym:tensorflow/core/framework/tensor_shape.cc::tensorflow.end",
+      "label": "tensorflow.end",
+      "in_degree": 409
+    },
+    {
+      "node_id": "sym:tensorflow/core/framework/tensor_shape_test.cc::tensorflow.end",
+      "label": "tensorflow.end",
+      "in_degree": 408
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/ops.py::Graph",
+      "label": "Graph",
+      "in_degree": 404
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/ops.py::Operation.device",
+      "label": "Operation.device",
+      "in_degree": 397
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/ops.py::Graph.device",
+      "label": "Graph.device",
+      "in_degree": 397
+    }
+  ],
+  "languages": {
+    "cpp": 426,
+    "c": 296,
+    "python": 247,
+    "proto": 34,
+    "tpl": 1,
+    "md": 1,
+    "pyx": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "9edd58f"
 }

@@ -244,11 +244,11 @@ from [`benchmarks/results.json`](benchmarks/results.json), not estimated.
 
 | Repository | Language(s) | Scope | Nodes | Edges |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server) | 14,197 | 83,525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | scoped (Python/C++ boundary) | 20,641 | 96,013 |
-| [Django](https://github.com/django/django) | Python | full repository | 54,544 | 228,461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`) | 113,115 | 431,453 |
-| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (extreme-scale) | 136,182 | 257,655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server) | 14,451 | 110,246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | scoped (Python/C++ boundary) | 21,380 | 115,984 |
+| [Django](https://github.com/django/django) | Python | full repository | 55,810 | 303,339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`) | 113,080 | 656,158 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (extreme-scale) | 136,219 | 256,413 |
 
 See **[examples/README.md](examples/README.md)** for the full index and reproduction commands,
 **[docs/benchmarks.md](docs/benchmarks.md)** for methodology, and

@@ -1,5 +1,27 @@
 {
   "format": "repo2graph/1",
+  "build_id": "d62e69aa-98b1-4325-84ff-51af40eec215",
+  "tool_version": "1.6.0",
+  "schema_version": 1,
+  "created_at": "2026-09-22T08:07:37.820406+00:00",
+  "source_revision": {
+    "commit": "dd6f6b1531984823e3dc56740dfa93f3ceb09357",
+    "short_commit": "dd6f6b1",
+    "branch": "main",
+    "dirty": false,
+    "remote_url": "https://github.com/django/django"
+  },
+  "checksums": {
+    "agent/nodes.jsonl": "sha256:143258b39b743c62e8aff09b5159ea5ce6c1c67eb659eec15492acea11c3ff9b",
+    "agent/edges.jsonl": "sha256:1e9f4dd76f63811504d0592bbaa2627276eae0bed3f1669ef7e1f5671cc49839",
+    "agent/chunks.jsonl": "sha256:3e683754c9fc5de7afe8ce4034fe287bc8c6d869ed8fb3d41de145b57db72914",
+    "human/overview.md": "sha256:8176327131392448d81689d18acc9e28bfee5cb0c5b63001704036560ff77972",
+    "agent/overview.md": "sha256:5e440c38f59a697018b9fde941c63749ec143b4ff7cd551931e0c12a8cf2cb8f",
+    "human/graph.html": "sha256:a8cc16d335ab8d41f721aaa9e74b88951214ba49ea019383e5937e7ae9d03476",
+    "agent/stats.json": "sha256:d87292af3b2cf05534c2a4f3ab0c183909437785b9711efdd388d493e8f1200d",
+    "agent/index.state.json": "sha256:8fc5ddef674edff992205f6973028a9604a81905d2549dd0c3400f2979924eab",
+    "agent/parse.cache.json": "sha256:e74df1efb753ed8db3776750f101b7703607fe6e75e8a774188d78899ea10e64"
+  },
   "repo": "django",
   "written": [
     "agent/nodes.jsonl",
@@ -13,6 +35,7 @@
     "agent/parse.cache.json",
     "agent/manifest.json"
   ],
+  "secret_filter_policy": "redact-match",
   "sections": {
     "human": "for people: prose map and drawings",
     "agent": "for programs: the graph, the chunks, this manifest"
@@ -69,28 +92,57 @@
     "callers",
     "callees",
     "callees_external",
+    "caller_edges",
+    "callee_edges",
+    "base_edges",
     "text"
   ],
   "counts": {
     "discovery": "git",
-    "files": 5637,
-    "edge:CONTAINS": 8888,
+    "skipped_gitignore": 0,
+    "skipped_binary": 1382,
+    "skipped_vendor": 72,
+    "skipped_secret": 4,
+    "files": 5629,
+    "edge:CONTAINS": 8879,
     "parsed": 2979,
     "parse_errors": 11,
-    "symbol:function": 32799,
-    "edge:DEFINES": 43779,
-    "edge:IMPORTS": 11579,
-    "symbol:class": 11106,
+    "symbol:function": 32803,
+    "edge:DEFINES": 43782,
+    "edge:IMPORTS": 12508,
+    "imports_resolved": 13906,
+    "symbol:class": 11105,
+    "imports_unresolved": 2833,
     "symbol:method": 10,
-    "edge:CALLS": 104418,
-    "edge:CALLS_EXTERNAL": 35777,
-    "ambiguous_calls": 18797,
-    "edge:INHERITS": 24012,
+    "files_with_parse_errors": 2,
+    "edge:CALLS": 189381,
+    "calls_scoped": 35938,
+    "calls_unique_global": 22060,
+    "calls_ambiguous": 35338,
+    "ambiguous_calls": 35338,
+    "edge:CALLS_EXTERNAL": 39633,
+    "calls_external": 39662,
+    "unresolved_bases": 2212,
+    "edge:INHERITS": 9148,
     "cochange_commits_skipped": 5,
     "edge:CO_CHANGE": 8,
-    "entrypoints": 25543,
-    "nodes": 54544,
-    "edges": 228461
+    "entrypoints": 23554,
+    "nodes": 55810,
+    "edges": 303339,
+    "parse_errors_summary": "Files with parse errors: 2  (0 C/C++ files used cpp fallback)",
+    "redacted_secret_chunks": 42
+  },
+  "quality_metrics": {
+    "files_discovered": 5629,
+    "files_parsed": 2979,
+    "parse_errors": 11,
+    "files_with_parse_errors": 2,
+    "imports_resolved": 13906,
+    "imports_unresolved": 2833,
+    "calls_scoped": 35938,
+    "calls_unique_global": 22060,
+    "calls_ambiguous": 35338,
+    "calls_external": 39662
   },
   "entrypoints": [
     {
@@ -98,178 +150,179 @@
       "path": "django/core/management/commands/migrate.py",
       "qualname": "Command.handle",
       "kind": "function",
-      "reach": 1124
+      "reach": 2572
     },
     {
-      "id": "sym:tests/admin_views/test_templatetags.py::AdminTemplateTagsTest.test_submit_row_save_as_new_add_permission_required",
-      "path": "tests/admin_views/test_templatetags.py",
-      "qualname": "AdminTemplateTagsTest.test_submit_row_save_as_new_add_permission_required",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_index",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_index",
       "kind": "function",
-      "reach": 974
+      "reach": 2479
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_field_check_does_not_remove_meta_constraints",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_remove_field_check_does_not_remove_meta_constraints",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_func_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_func_unique_constraint",
       "kind": "function",
-      "reach": 903
+      "reach": 2471
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_field_unique_does_not_remove_meta_constraints",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_remove_field_unique_does_not_remove_meta_constraints",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_alter_model_table_comment",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_alter_model_table_comment",
       "kind": "function",
-      "reach": 900
+      "reach": 2470
     },
     {
-      "id": "sym:tests/admin_changelist/tests.py::ChangeListTests.test_dynamic_list_display",
-      "path": "tests/admin_changelist/tests.py",
-      "qualname": "ChangeListTests.test_dynamic_list_display",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_func_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_func_unique_constraint",
       "kind": "function",
-      "reach": 898
+      "reach": 2469
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_db_index_doesnt_remove_custom_indexes",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_remove_db_index_doesnt_remove_custom_indexes",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_func_index",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_func_index",
       "kind": "function",
-      "reach": 895
+      "reach": 2469
     },
     {
-      "id": "sym:tests/admin_changelist/tests.py::ChangeListTests.test_dynamic_list_display_links",
-      "path": "tests/admin_changelist/tests.py",
-      "qualname": "ChangeListTests.test_dynamic_list_display_links",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_index",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_index",
       "kind": "function",
-      "reach": 892
+      "reach": 2468
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_remove_db_index_doesnt_remove_unique_constraints",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_remove_db_index_doesnt_remove_unique_constraints",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_alter_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_alter_constraint",
       "kind": "function",
-      "reach": 889
+      "reach": 2468
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_text_field_to_not_null_with_default_value",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_text_field_to_not_null_with_default_value",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_rename_index",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_rename_index",
       "kind": "function",
-      "reach": 886
+      "reach": 2468
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_generated_field",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_generated_field",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_func_index",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_func_index",
       "kind": "function",
-      "reach": 880
+      "reach": 2467
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_field_add_index_to_integerfield",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_field_add_index_to_integerfield",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_alter_order_with_respect_to",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_alter_order_with_respect_to",
       "kind": "function",
-      "reach": 879
+      "reach": 2467
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_rename_column_renames_deferred_sql_references",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_rename_column_renames_deferred_sql_references",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_constraint",
       "kind": "function",
-      "reach": 879
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_array_field_decrease_base_field_length",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_array_field_decrease_base_field_length",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_alter_field",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_alter_field",
       "kind": "function",
-      "reach": 878
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_array_field_decrease_nested_base_field_length",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_array_field_decrease_nested_base_field_length",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_alter_index_together",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_alter_index_together",
       "kind": "function",
-      "reach": 878
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_int_pk_to_int_unique",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_int_pk_to_int_unique",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_constraint",
       "kind": "function",
-      "reach": 878
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_check_constraints",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_check_constraints",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_covering_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_covering_unique_constraint",
       "kind": "function",
-      "reach": 878
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_char_field_decrease_length",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_char_field_decrease_length",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_deferred_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_deferred_unique_constraint",
       "kind": "function",
-      "reach": 877
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_field_default_dropped",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_field_default_dropped",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_field",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_field",
       "kind": "function",
-      "reach": 877
+      "reach": 2465
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_db_collation_arrayfield",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_db_collation_arrayfield",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_covering_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_covering_unique_constraint",
       "kind": "function",
-      "reach": 877
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_indexed_charfield_to_textfield",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_indexed_charfield_to_textfield",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_deferred_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_deferred_unique_constraint",
       "kind": "function",
-      "reach": 877
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_indexes",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_indexes",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_remove_partial_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_remove_partial_unique_constraint",
       "kind": "function",
-      "reach": 877
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_primary_key",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_primary_key",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_rename_field",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_rename_field",
       "kind": "function",
-      "reach": 877
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_add_auto_field",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_add_auto_field",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_run_python",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_run_python",
       "kind": "function",
-      "reach": 876
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_autofield_pk_to_bigautofield_pk",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_autofield_pk_to_bigautofield_pk",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_separate_database_and_state",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_separate_database_and_state",
       "kind": "function",
-      "reach": 876
+      "reach": 2464
     },
     {
-      "id": "sym:tests/schema/tests.py::SchemaTests.test_alter_autofield_pk_to_smallautofield_pk",
-      "path": "tests/schema/tests.py",
-      "qualname": "SchemaTests.test_alter_autofield_pk_to_smallautofield_pk",
+      "id": "sym:tests/migrations/test_operations.py::OperationTests.test_add_partial_unique_constraint",
+      "path": "tests/migrations/test_operations.py",
+      "qualname": "OperationTests.test_add_partial_unique_constraint",
       "kind": "function",
-      "reach": 876
+      "reach": 2463
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "max_call_candidates": 5,
   "how_to_read": [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
@@ -283,5 +336,36 @@
     "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call."
-  ]
+  ],
+  "usage_hints": {
+    "tool_decision_tree": {
+      "orient_first": "Call repo_map once to get languages, hub files and entry points before any other tool.",
+      "search_by_question": "Use repo_search for natural-language questions; it returns cited chunks plus graph neighbours.",
+      "trace_relationships": "Use repo_neighbours with a node_id to hop through callers, callees, base classes and defining files.",
+      "node_id_format": "sym:pkg/relative/path.py::function_name -- read the 'id' field off nodes.jsonl or a chunk's node_id directly; or take a chunk's caller_edges/callee_edges/base_edges target (which is a bare path::qualname) and prefix 'sym:' to construct one."
+    },
+    "confidence_semantics": {
+      "1.0": "Certain: the call name resolved to exactly one definition.",
+      "lt_1.0": "Ambiguous: the name matched multiple candidates, fanned out to up to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 when correctness matters more than recall. IMPORTS, DEFINES and INHERITS edges carry no confidence key -- they are never ambiguous."
+    },
+    "edge_type_meanings": {
+      "CONTAINS": "repo -> dir -> file",
+      "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+      "IMPORTS": "file -> file (internal: true) or file -> module",
+      "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+      "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+      "INHERITS": "symbol -> base class or interface",
+      "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+    },
+    "what_is_not_indexed": [
+      "binary files",
+      "files over 1.5 MB",
+      "vendor/build folders",
+      "dotfiles",
+      ".gitignore entries",
+      "secret / credential files",
+      "dynamic dispatch -- code that decides at runtime which function to call"
+    ],
+    "dynamic_calls_note": "No CALLS edge does not prove no call happens at runtime. Dynamic dispatch, reflection and generated code are invisible to a parser -- hedge answers about them accordingly."
+  }
 }

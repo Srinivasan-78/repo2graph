@@ -35,31 +35,35 @@ only show up at scale.
 ## What parsing five real repositories actually showed
 
 Numbers below are from [`benchmarks/results.json`](../benchmarks/results.json) and each example's
-`metadata.json`/`stats.json`, generated 2026-09-17 (`generated_at: 2026-09-17T15:36:04Z`,
-`repo2graph_version: 1.5.1`) — not estimated. Those artifacts predate the `cpp`
-preprocessor fallback and CALLS heuristic-confidence work (merged 2026-09-18). Until
-the five-example corpus is regenerated, the tables are the raw tree-sitter
-parse-error rate and the pre-heuristic CALLS ambiguity rates, not a measurement of
-those later mitigations.
+`metadata.json`/`stats.json`, generated 2026-09-22 (`generated_at: 2026-09-22T08:12:20Z`,
+`repo2graph_version: 1.6.0`) on a GitHub-hosted `ubuntu-latest` runner — not estimated. Unlike the
+previous corpus, these artifacts *do* exercise the `cpp` preprocessor fallback and scoped call
+resolution, so the tables below measure the mitigations rather than the raw behaviour they replaced.
 
 ### Macro-heavy C/C++ produces real tree-sitter parse errors
 
 Tree-sitter parses raw source, which means C/C++ macros can produce syntax it cannot handle. `parse_errors` counts individual tree-sitter `ERROR` nodes inside a file's parse tree (see `repo2graph/parse.py`), not "files that failed to parse" — a single file can contribute many. This value is now visible as a `parse_errors` field on each file node and in the `stats.json` summary.
 
-Current code uses a two-pass strategy for C/C++ files (this path did not exist when
-the table below was measured):
+Current code uses a two-pass strategy for C/C++ files:
 1. Parse raw source (Pass 1).
 2. If errors are found, optionally run the system's `cpp` preprocessor (Pass 2) and parse the expanded output. If it yields fewer errors and output size constraints are met, `used_cpp=True` is recorded as a signal that macros were the problem. Symbol extraction and `start_line`/`end_line` stay on the original file — cpp is invoked with `-P`, which drops `# <linenum> "<file>"` markers, so adopting the preprocessed tree would make `chunks.py` slice the wrong on-disk rows.
 
-The published counts are the 2026-09-17 raw-parse figures. Across the five examples:
+Two counts matter and they answer different questions. `parse_errors` counts individual `ERROR`
+nodes, so one pathological file can contribute hundreds; `files_with_parse_errors` counts how much
+of the repository is affected at all. Across the five examples:
 
-| Example | Files indexed | `parse_errors` | Language |
-|---|---:|---:|---|
-| [Linux kernel](../examples/linux/) (`kernel/`, `fs/ext4/`, e1000 driver, `include/linux/`) | 3,660 | 14,663 | C |
-| [TensorFlow](../examples/tensorflow/) (Python/C++ framework boundary) | 1,022 | 12,469 | C++ / Python |
-| [Django](../examples/django/) (full repository) | 5,637 | 11 | Python |
-| [Kubernetes](../examples/kubernetes/) (controllers/scheduler/API server) | 1,082 | 260 | Go |
-| [VS Code](../examples/vscode/) (`src/vs/`) | 6,000 | 6 | TypeScript |
+| Example | Files indexed | Files with errors | `parse_errors` | Used `cpp` fallback | Language |
+|---|---:|---:|---:|---:|---|
+| [Linux kernel](../examples/linux/) (`kernel/`, `fs/ext4/`, e1000 driver, `include/linux/`) | 3,660 | 1,356 (37%) | 14,631 | 65 | C |
+| [TensorFlow](../examples/tensorflow/) (Python/C++ framework boundary) | 1,022 | 325 (32%) | 12,473 | 6 | C++ / Python |
+| [Kubernetes](../examples/kubernetes/) (controllers/scheduler/API server) | 1,084 | 30 (2.8%) | 260 | 0 | Go |
+| [Django](../examples/django/) (full repository) | 5,629 | 2 (0.04%) | 11 | 0 | Python |
+| [VS Code](../examples/vscode/) (`src/vs/`) | 6,000 | 4 (0.07%) | 6 | 0 | TypeScript |
+
+The `cpp` fallback fires on a small minority of the C/C++ files that have errors — 65 of Linux's
+1,356, 6 of TensorFlow's 325. It is a targeted mitigation, not a general fix: it only engages when
+the preprocessed parse yields *fewer* errors and the expanded output stays within the size cap, and
+the remaining ~95% are files whose errors the preprocessor does not resolve.
 
 The pattern is exactly what the C/C++ grammar's known weak spot predicts: the kernel and TensorFlow
 lean heavily on preprocessor macros (`SYSCALL_DEFINE`, `EXPORT_SYMBOL`, conditional compilation,
@@ -73,32 +77,46 @@ crash.
 
 ### Call-name ambiguity scales with symbol reuse conventions, not repository size
 
-These rates are from the same 2026-09-17 run: every same-name fan-out counts as
-ambiguous. Current CALLS heuristics may narrow some of those sites; they are not
-in these numbers.
+These rates are from the same 2026-09-22 run, and they measure what survives scoped resolution: a
+call is counted ambiguous only once tiers 0–5 have all failed to isolate a single candidate and
+confidence is split `1/n`. `calls_scoped` counts the sites resolved by the same-class, same-file,
+import and same-module tiers before that point.
 
-| Example | `CALLS` edges | Ambiguous (matched >1 candidate) | Ambiguous rate |
-|---|---:|---:|---:|
-| [VS Code](../examples/vscode/) | 223,594 | 73,028 | 33% |
-| [Django](../examples/django/) | 104,418 | 18,797 | 18% |
-| [TensorFlow](../examples/tensorflow/) | 42,395 | 5,631 | 13% |
-| [Kubernetes](../examples/kubernetes/) | 37,612 | 5,192 | 14% |
-| [Linux kernel](../examples/linux/) | 70,079 | 227 | 0.3% |
+| Example | `CALLS` edges | Resolved by scope | Ambiguous (matched >1 candidate) | Ambiguous rate |
+|---|---:|---:|---:|---:|
+| [TensorFlow](../examples/tensorflow/) | 58,556 | 24,989 | 12,487 | 21.3% |
+| [Django](../examples/django/) | 189,381 | 35,938 | 35,338 | 18.7% |
+| [VS Code](../examples/vscode/) | 450,921 | 137,142 | 82,225 | 18.2% |
+| [Kubernetes](../examples/kubernetes/) | 62,630 | 17,059 | 10,948 | 17.5% |
+| [Linux kernel](../examples/linux/) | 68,785 | 47,205 | 3,155 | 4.6% |
 
-VS Code's ambiguity rate is an order of magnitude above the others, consistent with TypeScript's
-convention of many small classes implementing a shared interface (`dispose()`, `getId()`,
-`register()` — the same method name on dozens of unrelated types). The Linux kernel's near-zero rate
-is consistent with C having no method dispatch at all — every call site names one free function, and
-C's flat, prefix-disciplined naming convention (`ext4_*`, `e1000_*`) means two unrelated functions
-rarely share a bare name. Ambiguity is a property of the *language and codebase convention*, not of
-scale: Kubernetes and TensorFlow, similar in file count, land within a point of each other.
+**This table used to tell a different story, and the change is the point.** On the pre-scoped-
+resolution corpus, VS Code sat at 33% — an order of magnitude above the Linux kernel's 0.3% — and
+the honest conclusion then was that ambiguity is a property of language convention: TypeScript's
+habit of putting `dispose()`, `getId()` and `register()` on dozens of unrelated types against C's
+flat, prefix-disciplined naming (`ext4_*`, `e1000_*`).
+
+Scoped resolution collapsed that spread. VS Code fell from 33% to 18.2%, because most of those
+same-name method calls are now resolved by the same-class or same-file tier before they can fan out.
+Four of the five repositories now sit within four points of each other regardless of language, which
+means the *residual* ambiguity — what is left after scope is exhausted — is a fairly uniform
+property of name-based resolution rather than a per-language trait. Two rates moved the other way
+(TensorFlow 13%→21.3%, Linux 0.3%→4.6%) for the same underlying reason: far more call sites now
+resolve to in-repo candidates at all instead of becoming a single `CALLS_EXTERNAL` edge, so calls
+that were previously invisible to this metric are now inside it, some of them ambiguously.
+
+The Linux kernel remains the outlier at 4.6%, and its `calls_scoped` share is the highest of the
+five — 69% of its `CALLS` edges are settled by scope alone. That is C with no method dispatch
+behaving exactly as the original analysis predicted; it is the only part of that analysis the new
+numbers leave standing.
 
 ### Windows filename-length limits can silently shrink a checkout
 
 Reproducing the VS Code example's full (unscoped) `src/vs/` tree on Windows hits `git checkout`
 errors like `Filename too long` for paths that exceed Windows' historical ~260-character `MAX_PATH`
 (observed on `src/vs/platform/agentHost/test/**` and `src/vs/workbench/contrib/**/__snapshots__/**`
-during this project's own example generation). This is a Windows/git limitation, not a repo2graph
+when this project generated its examples on a Windows workstation — the reason the corpus is now
+generated on a Linux CI runner instead). This is a Windows/git limitation, not a repo2graph
 one — repo2graph never sees the files git failed to write to disk — but it means a checkout done on
 Windows can legitimately discover fewer files than the same commit checked out on Linux or macOS.
 `examples/vscode/README.md` documents the file cap this project applied on top of that; if you hit

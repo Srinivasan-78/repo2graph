@@ -10,7 +10,7 @@
       "start_line": 199,
       "end_line": 227,
       "why": "lexical",
-      "score": 15.964
+      "score": 15.662
     },
     {
       "node_id": "sym:pkg/scheduler/framework/preemption/preemption.go::Interface",
@@ -21,18 +21,18 @@
       "start_line": 46,
       "end_line": 64,
       "why": "lexical",
-      "score": 15.367
+      "score": 14.697
     },
     {
-      "node_id": "sym:pkg/scheduler/scheduler.go::Scheduler",
-      "path": "pkg/scheduler/scheduler.go",
+      "node_id": "sym:pkg/scheduler/framework/runtime/framework.go::ListPlugins",
+      "path": "pkg/scheduler/framework/runtime/framework.go",
       "lang": "go",
-      "kind": "type",
-      "name": "Scheduler",
-      "start_line": 61,
-      "end_line": 115,
-      "why": "lexical",
-      "score": 14.416
+      "kind": "method",
+      "name": "ListPlugins",
+      "start_line": 2379,
+      "end_line": 2403,
+      "why": "CALLS in of Interface",
+      "score": 0.0
     }
   ]
 }

@@ -1,22 +1,105 @@
 {
   "discovery": "git",
+  "skipped_gitignore": 0,
+  "skipped_dotfile": 115,
+  "skipped_vendor": 468,
+  "skipped_too_large": 1,
+  "skipped_binary": 174,
+  "skipped_secret": 5,
   "files": 6000,
-  "edge:CONTAINS": 7231,
-  "parsed": 5488,
+  "edge:CONTAINS": 7225,
+  "parsed": 5486,
   "parse_errors": 6,
-  "symbol:class": 7577,
-  "edge:DEFINES": 88981,
-  "symbol:method": 56615,
+  "symbol:class": 7550,
+  "edge:DEFINES": 88767,
+  "symbol:method": 56301,
   "symbol:enum": 1174,
-  "symbol:function": 13076,
-  "edge:IMPORTS": 75900,
-  "symbol:interface": 9086,
-  "symbol:type": 3578,
-  "edge:CALLS": 223594,
-  "edge:CALLS_EXTERNAL": 25166,
-  "ambiguous_calls": 73028,
-  "edge:INHERITS": 10581,
-  "entrypoints": 19390,
-  "nodes": 113115,
-  "edges": 431453
+  "symbol:function": 13168,
+  "edge:IMPORTS": 75885,
+  "imports_resolved": 56413,
+  "symbol:interface": 9105,
+  "symbol:type": 3594,
+  "imports_unresolved": 22543,
+  "files_with_parse_errors": 4,
+  "edge:CALLS": 450921,
+  "calls_scoped": 137142,
+  "edge:CALLS_EXTERNAL": 25902,
+  "calls_external": 26558,
+  "calls_ambiguous": 82225,
+  "ambiguous_calls": 82225,
+  "calls_unique_global": 14749,
+  "edge:INHERITS": 7458,
+  "unresolved_bases": 258,
+  "entrypoints": 16904,
+  "nodes": 113080,
+  "edges": 656158,
+  "parse_errors_summary": "Files with parse errors: 4  (0 C/C++ files used cpp fallback)",
+  "redacted_secret_chunks": 1,
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:src/vs/base/common/lifecycle.ts::DisposableMap.get",
+      "label": "DisposableMap.get",
+      "in_degree": 5397
+    },
+    {
+      "node_id": "sym:src/vs/nls.ts::localize",
+      "label": "localize",
+      "in_degree": 4103
+    },
+    {
+      "node_id": "sym:src/vs/base/common/lifecycle.ts::Disposable._register",
+      "label": "Disposable._register",
+      "in_degree": 3701
+    },
+    {
+      "node_id": "sym:src/vs/base/common/lifecycle.ts::DisposableStore.add",
+      "label": "DisposableStore.add",
+      "in_degree": 3360
+    },
+    {
+      "node_id": "sym:src/vs/base/common/lifecycle.ts::DisposableSet.add",
+      "label": "DisposableSet.add",
+      "in_degree": 3355
+    },
+    {
+      "node_id": "sym:src/vs/base/common/lifecycle.ts::DisposableMap.set",
+      "label": "DisposableMap.set",
+      "in_degree": 3342
+    },
+    {
+      "node_id": "sym:src/vs/base/browser/ui/actionbar/actionbar.ts::ActionBar.push",
+      "label": "ActionBar.push",
+      "in_degree": 3004
+    },
+    {
+      "node_id": "sym:src/vs/base/common/linkedList.ts::LinkedList.push",
+      "label": "LinkedList.push",
+      "in_degree": 2980
+    },
+    {
+      "node_id": "sym:src/vs/base/browser/cssValue.ts::Builder.push",
+      "label": "Builder.push",
+      "in_degree": 2837
+    },
+    {
+      "node_id": "sym:src/vs/base/parts/ipc/common/ipc.net.ts::Queue.push",
+      "label": "Queue.push",
+      "in_degree": 2802
+    }
+  ],
+  "languages": {
+    "typescript": 5480,
+    "css": 399,
+    "md": 73,
+    "svg": 24,
+    "html": 7,
+    "scm": 5,
+    "json": 3,
+    "javascript": 3,
+    "bash": 3,
+    "txt": 2
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "a11ec07"
 }

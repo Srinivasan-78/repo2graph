@@ -1,5 +1,27 @@
 {
   "format": "repo2graph/1",
+  "build_id": "bb7f0de2-628c-4c1b-972b-dd10978871cb",
+  "tool_version": "1.6.0",
+  "schema_version": 1,
+  "created_at": "2026-09-22T08:08:10.484868+00:00",
+  "source_revision": {
+    "commit": "50b66f3c122cb1553cd4d46d4eba81a101e05b50",
+    "short_commit": "50b66f3",
+    "branch": "master",
+    "dirty": false,
+    "remote_url": "https://github.com/kubernetes/kubernetes"
+  },
+  "checksums": {
+    "agent/nodes.jsonl": "sha256:7ce8b9669664006f94f830ccca3d5f074b9352f456ca25e46deef68478581ceb",
+    "agent/edges.jsonl": "sha256:bc274fe6eaef7743adc20a47a50d33a85788976cd03471133b7a5726231085dd",
+    "agent/chunks.jsonl": "sha256:6e837df20850278acb5e8751d57f704f9fefa5b3feb61ad7b1774ad04de0cd58",
+    "human/overview.md": "sha256:edb081b6bc866c6701cef1041807135cee3e79182e68e2fe34068ac76b40fe58",
+    "agent/overview.md": "sha256:49797a4f8b0e77677d13a0fd5a254f8269bf8aea64b40ec8947d6f6b316420b1",
+    "human/graph.html": "sha256:3ddeb1a3514edc8b4bec764a38effebc55efcbf6b5de3b9c912dcf3cce2f1b61",
+    "agent/stats.json": "sha256:68628a336a42dcbc390a4da61eea0cc72c9e72999e44d5eb68dcf774279ee99f",
+    "agent/index.state.json": "sha256:e3c5ef6789978794e2b01720c9cfa89b65c3a5ffb38bfc6c042e4febe22f6bcc",
+    "agent/parse.cache.json": "sha256:b0d0976b8236087e3f6d5290ab596c8139543b8cecf8cfe516b071b10d704147"
+  },
   "repo": "kubernetes",
   "written": [
     "agent/nodes.jsonl",
@@ -13,6 +35,7 @@
     "agent/parse.cache.json",
     "agent/manifest.json"
   ],
+  "secret_filter_policy": "redact-match",
   "sections": {
     "human": "for people: prose map and drawings",
     "agent": "for programs: the graph, the chunks, this manifest"
@@ -69,204 +92,231 @@
     "callers",
     "callees",
     "callees_external",
+    "caller_edges",
+    "callee_edges",
+    "base_edges",
     "text"
   ],
   "counts": {
     "discovery": "git",
-    "files": 1082,
-    "edge:CONTAINS": 1339,
-    "parsed": 1005,
+    "skipped_gitignore": 0,
+    "skipped_vendor": 5478,
+    "skipped_secret": 2,
+    "files": 1084,
+    "edge:CONTAINS": 1341,
+    "parsed": 1007,
     "parse_errors": 260,
-    "symbol:function": 5275,
-    "edge:DEFINES": 10502,
-    "edge:IMPORTS": 8665,
-    "symbol:type": 1440,
-    "symbol:method": 4423,
-    "edge:CALLS": 37612,
-    "edge:CALLS_EXTERNAL": 25407,
-    "ambiguous_calls": 5192,
-    "entrypoints": 3516,
-    "nodes": 14197,
-    "edges": 83525
+    "symbol:function": 5287,
+    "edge:DEFINES": 10526,
+    "edge:IMPORTS": 8693,
+    "imports_unresolved": 5309,
+    "imports_resolved": 4726,
+    "symbol:type": 1447,
+    "symbol:method": 4426,
+    "files_with_parse_errors": 30,
+    "edge:CALLS": 62630,
+    "calls_scoped": 17059,
+    "calls_unique_global": 5621,
+    "edge:CALLS_EXTERNAL": 27056,
+    "calls_external": 27243,
+    "calls_ambiguous": 10948,
+    "ambiguous_calls": 10948,
+    "entrypoints": 3017,
+    "nodes": 14451,
+    "edges": 110246,
+    "parse_errors_summary": "Files with parse errors: 30  (0 C/C++ files used cpp fallback)"
+  },
+  "quality_metrics": {
+    "files_discovered": 1084,
+    "files_parsed": 1007,
+    "parse_errors": 260,
+    "files_with_parse_errors": 30,
+    "imports_resolved": 4726,
+    "imports_unresolved": 5309,
+    "calls_scoped": 17059,
+    "calls_unique_global": 5621,
+    "calls_ambiguous": 10948,
+    "calls_external": 27243
   },
   "entrypoints": [
+    {
+      "id": "sym:pkg/scheduler/framework/preemption/podgrouppreemption_test.go::TestPodGroupEvaluator_Preempt_Victims",
+      "path": "pkg/scheduler/framework/preemption/podgrouppreemption_test.go",
+      "qualname": "TestPodGroupEvaluator_Preempt_Victims",
+      "kind": "function",
+      "reach": 1339
+    },
+    {
+      "id": "sym:pkg/scheduler/framework/preemption/podgrouppreemption_test.go::TestPodGroupPreemptionEvaluationDurationMetric",
+      "path": "pkg/scheduler/framework/preemption/podgrouppreemption_test.go",
+      "qualname": "TestPodGroupPreemptionEvaluationDurationMetric",
+      "kind": "function",
+      "reach": 1334
+    },
+    {
+      "id": "sym:pkg/scheduler/framework/preemption/podgrouppreemption_test.go::TestPodGroupEvaluator_Preempt",
+      "path": "pkg/scheduler/framework/preemption/podgrouppreemption_test.go",
+      "qualname": "TestPodGroupEvaluator_Preempt",
+      "kind": "function",
+      "reach": 1322
+    },
+    {
+      "id": "sym:pkg/scheduler/framework/preemption/manager_test.go::TestDefaultPreemptionManager_GenerateVictims",
+      "path": "pkg/scheduler/framework/preemption/manager_test.go",
+      "qualname": "TestDefaultPreemptionManager_GenerateVictims",
+      "kind": "function",
+      "reach": 1305
+    },
     {
       "id": "sym:pkg/scheduler/schedule_one_test.go::TestSchedulerScheduleOne",
       "path": "pkg/scheduler/schedule_one_test.go",
       "qualname": "TestSchedulerScheduleOne",
       "kind": "function",
-      "reach": 1203
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_test.go::TestSchedulerFailedSchedulingReasons",
-      "path": "pkg/scheduler/schedule_one_test.go",
-      "qualname": "TestSchedulerFailedSchedulingReasons",
-      "kind": "function",
-      "reach": 1182
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGBasicWithGangChildren_Internal",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestCPGBasicWithGangChildren_Internal",
-      "kind": "function",
-      "reach": 1177
+      "reach": 1267
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGHierarchicalScheduling_Internal",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestCPGHierarchicalScheduling_Internal",
       "kind": "function",
-      "reach": 1177
+      "reach": 1242
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGBasicWithGangChildren_Internal",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestCPGBasicWithGangChildren_Internal",
+      "kind": "function",
+      "reach": 1238
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGMinGroupCount_Internal",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestCPGMinGroupCount_Internal",
       "kind": "function",
-      "reach": 1177
+      "reach": 1238
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_test.go::TestScheduleOneMarksPodAsProcessedBeforePreBind",
       "path": "pkg/scheduler/schedule_one_test.go",
       "qualname": "TestScheduleOneMarksPodAsProcessedBeforePreBind",
       "kind": "function",
-      "reach": 1177
+      "reach": 1238
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_SchedulerNameMismatchUpdatesStatus",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestScheduleOnePodGroup_SchedulerNameMismatchUpdatesStatus",
       "kind": "function",
-      "reach": 1174
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_PodGroupStateAvailability",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestScheduleOnePodGroup_PodGroupStateAvailability",
-      "kind": "function",
-      "reach": 1173
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_FillsPodResultsOnFewerResults",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupCycle_FillsPodResultsOnFewerResults",
-      "kind": "function",
-      "reach": 1171
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodStatusConditions",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupCycle_PodStatusConditions",
-      "kind": "function",
-      "reach": 1171
+      "reach": 1230
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_FinishesAttemptWhenAllPoppedPodsAreAssumed",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestScheduleOnePodGroup_FinishesAttemptWhenAllPoppedPodsAreAssumed",
       "kind": "function",
-      "reach": 1165
+      "reach": 1225
     },
     {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodGroupPostFilter",
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_PodGroupStateAvailability",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupCycle_PodGroupPostFilter",
+      "qualname": "TestScheduleOnePodGroup_PodGroupStateAvailability",
       "kind": "function",
-      "reach": 1162
+      "reach": 1225
     },
     {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_NominatedNodes",
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_UpdateSnapshotError",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupCycle_NominatedNodes",
+      "qualname": "TestPodGroupCycle_UpdateSnapshotError",
       "kind": "function",
-      "reach": 1146
+      "reach": 1210
     },
     {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestSubmitPodGroupAlgorithmResult",
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_FillsPodResultsOnFewerResults",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestSubmitPodGroupAlgorithmResult",
+      "qualname": "TestPodGroupCycle_FillsPodResultsOnFewerResults",
       "kind": "function",
-      "reach": 1072
+      "reach": 1209
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodStatusConditions",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_PodStatusConditions",
+      "kind": "function",
+      "reach": 1209
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestScheduleOnePodGroup_PodGroupNotFound",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestScheduleOnePodGroup_PodGroupNotFound",
+      "kind": "function",
+      "reach": 1209
     },
     {
       "id": "sym:pkg/scheduler/framework/runtime/framework_test.go::TestRecordingMetrics",
       "path": "pkg/scheduler/framework/runtime/framework_test.go",
       "qualname": "TestRecordingMetrics",
       "kind": "function",
-      "reach": 881
+      "reach": 1205
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_PodGroupPostFilter",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_PodGroupPostFilter",
+      "kind": "function",
+      "reach": 1198
+    },
+    {
+      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupCycle_NominatedNodes",
+      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
+      "qualname": "TestPodGroupCycle_NominatedNodes",
+      "kind": "function",
+      "reach": 1184
+    },
+    {
+      "id": "sym:pkg/scheduler/backend/cache/cache_test.go::TestUpdatePodGroupStateSnapshot",
+      "path": "pkg/scheduler/backend/cache/cache_test.go",
+      "qualname": "TestUpdatePodGroupStateSnapshot",
+      "kind": "function",
+      "reach": 1129
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGSchedulingPlacementAlgorithm",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestCPGSchedulingPlacementAlgorithm",
       "kind": "function",
-      "reach": 803
+      "reach": 1127
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGSchedulingPlacementAlgorithm_Scoring",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestCPGSchedulingPlacementAlgorithm_Scoring",
       "kind": "function",
-      "reach": 802
+      "reach": 1125
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPlacementCycleStateLifecycle_MultiLevel",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestPlacementCycleStateLifecycle_MultiLevel",
       "kind": "function",
-      "reach": 801
+      "reach": 1124
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingAlgorithm",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestPodGroupSchedulingAlgorithm",
       "kind": "function",
-      "reach": 801
+      "reach": 1124
     },
     {
       "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm",
       "path": "pkg/scheduler/schedule_one_podgroup_test.go",
       "qualname": "TestPodGroupSchedulingPlacementAlgorithm",
       "kind": "function",
-      "reach": 801
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm_NominatedNode",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupSchedulingPlacementAlgorithm_NominatedNode",
-      "kind": "function",
-      "reach": 791
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPodGroupSchedulingPlacementAlgorithm_Scoring",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPodGroupSchedulingPlacementAlgorithm_Scoring",
-      "kind": "function",
-      "reach": 791
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestPlacementCycleStateLifecycle",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestPlacementCycleStateLifecycle",
-      "kind": "function",
-      "reach": 790
-    },
-    {
-      "id": "sym:pkg/scheduler/schedule_one_podgroup_test.go::TestCPGHierarchicalScheduling_RecursiveAlgorithm",
-      "path": "pkg/scheduler/schedule_one_podgroup_test.go",
-      "qualname": "TestCPGHierarchicalScheduling_RecursiveAlgorithm",
-      "kind": "function",
-      "reach": 783
-    },
-    {
-      "id": "sym:pkg/scheduler/eventhandlers_test.go::TestEventHandlers_MoveToActiveOnNominatedNodeUpdate",
-      "path": "pkg/scheduler/eventhandlers_test.go",
-      "qualname": "TestEventHandlers_MoveToActiveOnNominatedNodeUpdate",
-      "kind": "function",
-      "reach": 777
+      "reach": 1124
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "max_call_candidates": 5,
   "how_to_read": [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
@@ -280,5 +330,36 @@
     "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call."
-  ]
+  ],
+  "usage_hints": {
+    "tool_decision_tree": {
+      "orient_first": "Call repo_map once to get languages, hub files and entry points before any other tool.",
+      "search_by_question": "Use repo_search for natural-language questions; it returns cited chunks plus graph neighbours.",
+      "trace_relationships": "Use repo_neighbours with a node_id to hop through callers, callees, base classes and defining files.",
+      "node_id_format": "sym:pkg/relative/path.py::function_name -- read the 'id' field off nodes.jsonl or a chunk's node_id directly; or take a chunk's caller_edges/callee_edges/base_edges target (which is a bare path::qualname) and prefix 'sym:' to construct one."
+    },
+    "confidence_semantics": {
+      "1.0": "Certain: the call name resolved to exactly one definition.",
+      "lt_1.0": "Ambiguous: the name matched multiple candidates, fanned out to up to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 when correctness matters more than recall. IMPORTS, DEFINES and INHERITS edges carry no confidence key -- they are never ambiguous."
+    },
+    "edge_type_meanings": {
+      "CONTAINS": "repo -> dir -> file",
+      "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+      "IMPORTS": "file -> file (internal: true) or file -> module",
+      "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+      "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+      "INHERITS": "symbol -> base class or interface",
+      "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+    },
+    "what_is_not_indexed": [
+      "binary files",
+      "files over 1.5 MB",
+      "vendor/build folders",
+      "dotfiles",
+      ".gitignore entries",
+      "secret / credential files",
+      "dynamic dispatch -- code that decides at runtime which function to call"
+    ],
+    "dynamic_calls_note": "No CALLS edge does not prove no call happens at runtime. Dynamic dispatch, reflection and generated code are invisible to a parser -- hedge answers about them accordingly."
+  }
 }

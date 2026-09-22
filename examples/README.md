@@ -14,11 +14,11 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 
 | Repository | Language(s) | Scope | Files | Nodes | Edges | Example |
 |---|---|---|---:|---:|---:|---|
-| [Django](https://github.com/django/django) | Python | full repository | 5,637 | 54,544 | 228,461 | [examples/django](django/) |
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,082 | 14,197 | 83,525 | [examples/kubernetes](kubernetes/) |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 20,641 | 96,013 | [examples/tensorflow](tensorflow/) |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 113,115 | 431,453 | [examples/vscode](vscode/) |
-| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 136,182 | 257,655 | [examples/linux](linux/) |
+| [Django](https://github.com/django/django) | Python | full repository | 5,629 | 55,810 | 303,339 | [examples/django](django/) |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,084 | 14,451 | 110,246 | [examples/kubernetes](kubernetes/) |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 21,380 | 115,984 | [examples/tensorflow](tensorflow/) |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 113,080 | 656,158 | [examples/vscode](vscode/) |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 136,219 | 256,413 | [examples/linux](linux/) |
 
 "Full repository" means no `--include`/`--exclude` narrowing — every file `repo2graph` would index
 on a plain `repo2graph build`. "Scoped" means only the listed subtrees were cloned and indexed; see

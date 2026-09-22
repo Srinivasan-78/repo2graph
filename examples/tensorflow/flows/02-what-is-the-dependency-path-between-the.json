@@ -10,18 +10,40 @@
       "start_line": 1,
       "end_line": 439,
       "why": "lexical",
-      "score": 11.527
+      "score": 10.676
     },
     {
-      "node_id": "sym:tensorflow/python/framework/extension_type_field.py::_convert_value",
-      "path": "tensorflow/python/framework/extension_type_field.py",
+      "node_id": "file:tensorflow/python/framework/kythe_metadata.proto",
+      "path": "tensorflow/python/framework/kythe_metadata.proto",
+      "lang": "proto",
+      "kind": "other",
+      "name": "tensorflow/python/framework/kythe_metadata.proto",
+      "start_line": 1,
+      "end_line": 143,
+      "why": "lexical",
+      "score": 10.505
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/error_interpolation.py::_compute_device_assignment_summary_from_op",
+      "path": "tensorflow/python/framework/error_interpolation.py",
       "lang": "python",
       "kind": "function",
-      "name": "_convert_value",
-      "start_line": 270,
-      "end_line": 321,
-      "why": "lexical",
-      "score": 11.34
+      "name": "_compute_device_assignment_summary_from_op",
+      "start_line": 158,
+      "end_line": 162,
+      "why": "DEFINES out of error_interpolation.py",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:tensorflow/python/framework/error_interpolation.py::_compute_colocation_summary_from_op",
+      "path": "tensorflow/python/framework/error_interpolation.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "_compute_colocation_summary_from_op",
+      "start_line": 207,
+      "end_line": 212,
+      "why": "DEFINES out of error_interpolation.py",
+      "score": 0.0
     }
   ]
 }

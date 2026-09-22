@@ -226,11 +226,11 @@ geschätzt.
 
 | Repository | Sprache(n) | Umfang | Knoten | Kanten |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | eingegrenzt (Controller, Scheduler, API-Server) | 14.197 | 83.525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | eingegrenzt (Python/C++-Grenze) | 20.641 | 96.013 |
-| [Django](https://github.com/django/django) | Python | vollständiges Repository | 54.544 | 228.461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | eingegrenzt (`src/vs/`) | 113.115 | 431.453 |
-| [Linux-Kernel](https://github.com/torvalds/linux) | C | eingegrenzt (extreme Größenordnung) | 136.182 | 257.655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | eingegrenzt (Controller, Scheduler, API-Server) | 14.451 | 110.246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | eingegrenzt (Python/C++-Grenze) | 21.380 | 115.984 |
+| [Django](https://github.com/django/django) | Python | vollständiges Repository | 55.810 | 303.339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | eingegrenzt (`src/vs/`) | 113.080 | 656.158 |
+| [Linux-Kernel](https://github.com/torvalds/linux) | C | eingegrenzt (extreme Größenordnung) | 136.219 | 256.413 |
 
 Siehe **[examples/README.md](../../examples/README.md)** für den vollständigen Index und die
 Reproduktionsbefehle, **[docs/benchmarks.md](../benchmarks.md)** für die Methodik, und

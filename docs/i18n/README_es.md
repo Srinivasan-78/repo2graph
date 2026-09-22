@@ -229,11 +229,11 @@ estimado.
 
 | Repositorio | Lenguaje(s) | Alcance | Nodos | Aristas |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | acotado (controllers, scheduler, API server) | 14.197 | 83.525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | acotado (frontera Python/C++) | 20.641 | 96.013 |
-| [Django](https://github.com/django/django) | Python | repositorio completo | 54.544 | 228.461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | acotado (`src/vs/`) | 113.115 | 431.453 |
-| [Linux kernel](https://github.com/torvalds/linux) | C | acotado (escala extrema) | 136.182 | 257.655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | acotado (controllers, scheduler, API server) | 14.451 | 110.246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | acotado (frontera Python/C++) | 21.380 | 115.984 |
+| [Django](https://github.com/django/django) | Python | repositorio completo | 55.810 | 303.339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | acotado (`src/vs/`) | 113.080 | 656.158 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | acotado (escala extrema) | 136.219 | 256.413 |
 
 Consulta **[examples/README.md](../../examples/README.md)** para el índice completo y los comandos
 de reproducción, **[docs/benchmarks.md](../benchmarks.md)** para la metodología, y

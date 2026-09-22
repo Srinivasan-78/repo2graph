@@ -183,11 +183,11 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 
 | 仓库 | 语言 | 范围 | 节点数 | 边数 |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 限定范围(controllers、scheduler、API server) | 14,197 | 83,525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | 限定范围(Python/C++ 边界) | 20,641 | 96,013 |
-| [Django](https://github.com/django/django) | Python | 完整仓库 | 54,544 | 228,461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | 限定范围(`src/vs/`) | 113,115 | 431,453 |
-| [Linux kernel](https://github.com/torvalds/linux) | C | 限定范围(极大规模) | 136,182 | 257,655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | 限定范围(controllers、scheduler、API server) | 14,451 | 110,246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | 限定范围(Python/C++ 边界) | 21,380 | 115,984 |
+| [Django](https://github.com/django/django) | Python | 完整仓库 | 55,810 | 303,339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | 限定范围(`src/vs/`) | 113,080 | 656,158 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | 限定范围(极大规模) | 136,219 | 256,413 |
 
 完整列表与复现命令见 **[examples/README.md](../../examples/README.md)**,测试方法见 **[docs/benchmarks.md](../benchmarks.md)**,针对五个真实仓库运行后暴露出的实际问题(宏密集型 C/C++ 的解析错误率、调用名歧义、跨语言解析限制)见 **[docs/limitations.md](../limitations.md)**(均为英文)。
 

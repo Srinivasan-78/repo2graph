@@ -1,6 +1,6 @@
 # Repo map: linux
 
-files: 3660  nodes: 136182  edges: 257655
+files: 3660  nodes: 136219  edges: 256413
 languages: c=3573, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=1, debug=1, bc=1
 
 ## Most depended-on files
@@ -35,10 +35,10 @@ languages: c=3573, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=
 - kernel/locking/mutex.c::mutex_unlock (function, in=614)
 - kernel/locking/rtmutex_api.c::mutex_unlock (function, in=612)
 - include/linux/err.h::ERR_PTR (function, in=603)
-- kernel/locking/mutex.c::mutex_lock (function, in=586)
-- include/linux/mutex.h::mutex_lock (function, in=584)
-- kernel/locking/rtmutex_api.c::mutex_lock (function, in=584)
+- include/linux/mutex.h::mutex_lock (function, in=583)
 - include/linux/err.h::PTR_ERR (function, in=481)
+- kernel/locking/mutex.c::mutex_lock (function, in=434)
+- kernel/locking/rtmutex_api.c::mutex_lock (function, in=432)
 - fs/ext4/ext4.h::EXT4_SB (function, in=412)
 - include/linux/rcupdate.h::rcu_read_lock (function, in=397)
 - include/linux/rcupdate.h::rcu_read_unlock (function, in=393)
@@ -46,13 +46,13 @@ languages: c=3573, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=
 - include/linux/atomic/atomic-instrumented.h::atomic_read (function, in=285)
 - include/linux/instrumented.h::instrument_atomic_read_write (function, in=243)
 - fs/ext4/ext4.h::EXT4_I (function, in=230)
-- include/linux/list.h::INIT_LIST_HEAD (function, in=227)
+- include/linux/list.h::INIT_LIST_HEAD (function, in=228)
 - kernel/bpf/verifier.c::verbose (function, in=180)
 - include/linux/spinlock.h::spin_unlock (function, in=179)
-- include/linux/spinlock_rt.h::spin_unlock (function, in=179)
 - include/linux/spinlock.h::spin_lock (function, in=171)
-- include/linux/spinlock_rt.h::spin_lock (function, in=171)
 - kernel/sched/core.c::cpu_rq (function, in=171)
 - include/linux/list.h::list_del (function, in=153)
+- include/linux/spinlock_rt.h::spin_unlock (function, in=150)
 - include/linux/atomic/atomic-instrumented.h::atomic_inc (function, in=146)
+- include/linux/spinlock_rt.h::spin_lock (function, in=143)
 - include/linux/cpumask.h::cpumask_test_cpu (function, in=137)

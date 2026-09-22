@@ -227,11 +227,11 @@ mesuré, tiré de [`benchmarks/results.json`](../../benchmarks/results.json), pa
 
 | Dépôt | Langage(s) | Portée | Nœuds | Arêtes |
 |---|---|---|---:|---:|
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | ciblée (controllers, scheduler, API server) | 14 197 | 83 525 |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | ciblée (frontière Python/C++) | 20 641 | 96 013 |
-| [Django](https://github.com/django/django) | Python | dépôt complet | 54 544 | 228 461 |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | ciblée (`src/vs/`) | 113 115 | 431 453 |
-| [Linux kernel](https://github.com/torvalds/linux) | C | ciblée (échelle extrême) | 136 182 | 257 655 |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | ciblée (controllers, scheduler, API server) | 14 451 | 110 246 |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | C++ / Python | ciblée (frontière Python/C++) | 21 380 | 115 984 |
+| [Django](https://github.com/django/django) | Python | dépôt complet | 55 810 | 303 339 |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | ciblée (`src/vs/`) | 113 080 | 656 158 |
+| [Linux kernel](https://github.com/torvalds/linux) | C | ciblée (échelle extrême) | 136 219 | 256 413 |
 
 Voir **[examples/README.md](../../examples/README.md)** pour l'index complet et les commandes de
 reproduction, **[docs/benchmarks.md](../benchmarks.md)** pour la méthodologie, et

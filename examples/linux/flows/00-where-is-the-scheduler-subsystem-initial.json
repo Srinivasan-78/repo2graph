@@ -10,18 +10,7 @@
       "start_line": 527,
       "end_line": 542,
       "why": "lexical",
-      "score": 11.431
-    },
-    {
-      "node_id": "file:include/linux/bpf.h",
-      "path": "include/linux/bpf.h",
-      "lang": "c",
-      "kind": "code",
-      "name": "include/linux/bpf.h",
-      "start_line": 1,
-      "end_line": 4221,
-      "why": "lexical",
-      "score": 10.445
+      "score": 8.507
     },
     {
       "node_id": "sym:include/linux/ipack.h::ipack_device",
@@ -32,7 +21,7 @@
       "start_line": 248,
       "end_line": 248,
       "why": "lexical",
-      "score": 10.416
+      "score": 8.112
     },
     {
       "node_id": "sym:include/linux/hte.h::hte_return",
@@ -43,39 +32,50 @@
       "start_line": 85,
       "end_line": 85,
       "why": "lexical",
-      "score": 10.328
+      "score": 8.056
     },
     {
-      "node_id": "sym:kernel/cgroup/rstat.c::ss_rstat_init.cgroup_subsys",
-      "path": "kernel/cgroup/rstat.c",
-      "lang": "c",
-      "kind": "struct",
-      "name": "ss_rstat_init.cgroup_subsys",
-      "start_line": 527,
-      "end_line": 527,
-      "why": "DEFINES out of ss_rstat_init",
-      "score": 0.0
-    },
-    {
-      "node_id": "sym:kernel/cgroup/rstat.c::ss_rstat_lock",
-      "path": "kernel/cgroup/rstat.c",
-      "lang": "c",
-      "kind": "function",
-      "name": "ss_rstat_lock",
-      "start_line": 41,
-      "end_line": 47,
-      "why": "CALLS out of ss_rstat_init",
-      "score": 0.0
-    },
-    {
-      "node_id": "file:include/linux/bpf-netns.h",
-      "path": "include/linux/bpf-netns.h",
+      "node_id": "file:include/linux/habanalabs/hl_boot_if.h",
+      "path": "include/linux/habanalabs/hl_boot_if.h",
       "lang": "c",
       "kind": "code",
-      "name": "include/linux/bpf-netns.h",
+      "name": "include/linux/habanalabs/hl_boot_if.h",
       "start_line": 1,
-      "end_line": 63,
-      "why": "IMPORTS in of bpf.h",
+      "end_line": 808,
+      "why": "lexical",
+      "score": 6.835
+    },
+    {
+      "node_id": "sym:kernel/trace/trace_events.c::subsystem_release",
+      "path": "kernel/trace/trace_events.c",
+      "lang": "c",
+      "kind": "function",
+      "name": "subsystem_release",
+      "start_line": 2425,
+      "end_line": 2442,
+      "why": "lexical",
+      "score": 6.736
+    },
+    {
+      "node_id": "sym:kernel/rcu/tree.c::rcu_scheduler_starting",
+      "path": "kernel/rcu/tree.c",
+      "lang": "c",
+      "kind": "function",
+      "name": "rcu_scheduler_starting",
+      "start_line": 4703,
+      "end_line": 4721,
+      "why": "lexical",
+      "score": 6.726
+    },
+    {
+      "node_id": "sym:include/linux/ipack.h::ipack_device.ipack_bus_device",
+      "path": "include/linux/ipack.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "ipack_device.ipack_bus_device",
+      "start_line": 94,
+      "end_line": 94,
+      "why": "DEFINES out of ipack_device",
       "score": 0.0
     }
   ]
