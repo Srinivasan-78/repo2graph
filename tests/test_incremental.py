@@ -467,3 +467,50 @@ def test_incremental_preserves_import_alias_resolution(tmp_path):
     build(repo, out, incremental=True)
     assert entry_calls(out) == {ALIAS_CALL}
     assert snapshot(out) == first
+
+
+def test_incremental_rename_and_delete_sequence(tmp_path):
+    """End-to-end sequence: build -> rename -> incremental -> delete -> incremental -> modify -> compare."""
+    inc_repo = write_repo(tmp_path / "a")
+    inc_out = tmp_path / "a-idx"
+    build(inc_repo, inc_out)
+
+    full_repo = write_repo(tmp_path / "b")
+    full_out = tmp_path / "b-idx"
+
+    # 1. Rename file
+    (inc_repo / "pkg" / "alpha.py").rename(inc_repo / "pkg" / "gamma.py")
+    caller_text_1 = FILES["pkg/caller.py"].replace("pkg.alpha", "pkg.gamma")
+    (inc_repo / "pkg" / "caller.py").write_text(caller_text_1, encoding="utf8", newline="\n")
+
+    build(inc_repo, inc_out, incremental=True)
+
+    (full_repo / "pkg" / "alpha.py").rename(full_repo / "pkg" / "gamma.py")
+    (full_repo / "pkg" / "caller.py").write_text(caller_text_1, encoding="utf8", newline="\n")
+    build(full_repo, full_out)
+
+    assert snapshot(inc_out) == snapshot(full_out)
+    nodes_1 = artifact(inc_out, "nodes.jsonl").decode("utf8")
+    assert "pkg/alpha.py" not in nodes_1
+    assert "pkg/gamma.py" in nodes_1
+
+    # 2. Delete file
+    (inc_repo / "pkg" / "gamma.py").unlink()
+    build(inc_repo, inc_out, incremental=True)
+
+    (full_repo / "pkg" / "gamma.py").unlink()
+    build(full_repo, full_out)
+
+    assert snapshot(inc_out) == snapshot(full_out)
+    nodes_2 = artifact(inc_out, "nodes.jsonl").decode("utf8")
+    assert "pkg/gamma.py" not in nodes_2
+
+    # 3. Modify imports/calls (fix caller to not import deleted file)
+    caller_text_2 = "CALLER_TABLE = {'x': 1}\n\n\ndef entry(payload):\n    return payload\n"
+    (inc_repo / "pkg" / "caller.py").write_text(caller_text_2, encoding="utf8", newline="\n")
+    build(inc_repo, inc_out, incremental=True)
+
+    (full_repo / "pkg" / "caller.py").write_text(caller_text_2, encoding="utf8", newline="\n")
+    build(full_repo, full_out)
+
+    assert snapshot(inc_out) == snapshot(full_out)
