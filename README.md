@@ -13,14 +13,32 @@
   <a href="docs/i18n/README_de.md">Deutsch</a>
 </p>
 
+<table align="center">
+<tr>
+<th align="center">📦&nbsp; Package</th>
+<th align="center">🩺&nbsp; Health</th>
+<th align="center">🗂️&nbsp; Listed on</th>
+</tr>
+<tr>
+<td align="center" valign="top">
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue&label=PyPI" alt="PyPI version" /></a><br />
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a><br />
+<a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml/badge.svg" alt="Dependency audit status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml/badge.svg" alt="Provenance and licence compliance status" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a><br />
+<a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a><br />
+<a href="https://registry.modelcontextprotocol.io/v0/servers?search=repo2graph"><img src="https://img.shields.io/badge/MCP_Registry-io.github.Srinivasan--78%2Frepo2graph-purple" alt="Listed in the MCP Registry" /></a>
+</td>
+</tr>
+</table>
+
 <p align="center">
-  <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
-  <a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue" alt="PyPI version" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/MCP-Compatible-purple.svg" alt="MCP Compatible" />
   <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
 </p>
 
@@ -32,6 +50,7 @@
   <a href="#-what-is-repo2graph">What is it</a> ·
   <a href="#-quickstart-under-30-seconds">Quickstart</a> ·
   <a href="#-mcp-client-configuration">MCP setup</a> ·
+  <a href="#-how-it-compares">Compare</a> ·
   <a href="#-see-it-on-real-repositories">Benchmarks</a> ·
   <a href="#-architecture--token-economics">Architecture</a> ·
   <a href="docs/README.md">Docs</a> ·
@@ -78,6 +97,8 @@ No project setup, no language server, no build step — point it at a folder and
 `graph.html` is one self-contained file — no server, no internet, drag to pan, scroll to zoom,
 click a node to inspect its code and neighbours.
 
+<a id="install"></a>
+
 ## 🚀 Quickstart (under 30 seconds)
 
 Requires Python 3.10+. Run via [uv](https://docs.astral.sh/uv/), no install step:
@@ -98,9 +119,9 @@ repo2graph query "how does routing match a path" -o .r2g
   <img src="docs/images/demo-build.gif" alt="A terminal running repo2graph build on a repository; a JSON summary appears counting files, functions, classes, CALLS, IMPORTS and CO_CHANGE edges, nodes, edges and chunks" width="850" />
 </p>
 
-One pass over this repository — 185 files — takes about two seconds and needs no configuration
-file, no language server and no API key. Ask it something, and the answer comes back as source you
-can check, not a summary you have to trust:
+One pass over this repository — 195 files, 2,552 nodes, 11,118 edges — takes about three seconds
+and needs no configuration file, no language server and no API key. Ask it something, and the
+answer comes back as source you can check, not a summary you have to trust:
 
 <p align="center">
   <img src="docs/images/demo-rag.gif" alt="A terminal running repo2graph rag with a question; a repo map scrolls past and then cited code blocks appear, each headed with a cite marker naming the file and line range, listing the callers and callees of the function shown" width="850" />
@@ -147,7 +168,7 @@ back with file and line — the relationship, not a text match that happens to c
 | **Deterministic graph, not embeddings-only search** | Callers, callees, imports and class hierarchies resolved from the actual AST — not a nearest-neighbour guess. |
 | **Hybrid retrieval** | BM25 + graph-neighbour expansion by default; optional dense vector fusion (`repo2graph embed`) with zero required extra dependencies. |
 | **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
-| **15 languages, full treatment** | Python, JS/TS/TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash get functions/classes/calls. Everything else still appears as files on the map. |
+| <a id="languages"></a>**16 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala and Bash get functions/classes/calls — 28 file extensions in all. Everything else still appears as files on the map. |
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
 | **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
@@ -164,7 +185,7 @@ when you ask a question — a picture, a subgraph, or the code itself.
 | **Token budget** | hard cap on the *whole* pack, re-measured before returning (12k ceiling over MCP) | not a packing layer | n/a | usually unbounded |
 | **Edges from git history** | `CO_CHANGE`, from `--git-history` | — | — | — |
 | **Runs with no assistant, no model, no account** | yes — CLI, MCP, or the GitHub Action | code pass is local; the docs/media pass uses a model | needs Obsidian desktop 1.7.2+ | varies |
-| **Corpus** | code in 15 parsed languages, every other file as text | code in ~40 languages, plus docs, PDFs, images, video | TS/TSX/JS/Python parsed, imports-only for 8 more | anything |
+| **Corpus** | code in 16 parsed grammars, every other file as text | code in ~40 languages, plus docs, PDFs, images, video | TS/TSX/JS/Python parsed, imports-only for 8 more | anything |
 
 **Reach for [Graphify](https://github.com/Graphify-Labs/graphify)** when the graph itself is the
 product: community detection, shortest path between two concepts, and your PDFs and design docs in
@@ -179,15 +200,21 @@ Longer version, with the trade-offs each choice implies: **[docs/comparison.md](
 
 ## 🛠️ MCP tools exposed
 
+Five tools. Three answer questions about the code; two report on the server itself.
+
 | Tool | Arguments | What comes back |
 |---|---|---|
 | `repo_map` | none | Languages, hub files, and top entry points. Stable across calls — read this first. |
 | `repo_search` | `query`, optional `k` (default 8, max 50), `hops` (default 1, max 4), `budget_tokens` (default 6000, max 12000) | Seed chunks plus graph neighbours, each block headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops` (max 4), `limit` (default 20, max 50) | One graph hop from a symbol/file/dir id: callers, callees, base classes, defining file. |
+| `repo_neighbours` | `node_id`, optional `hops` (default 1, max 4), `limit` (default 20, max 50) | One graph hop from a symbol/file/dir id: callers, callees, base classes, defining file. |
+| `repo_cache_stats` | none | Result-cache counters: `hits`, `misses`, `size`, `max_size`, `ttl_s`, `evictions`, `hit_rate`. Never itself cached. |
+| `repo_build_status` | `task_id` | Progress of a background `--async-build`: `building`, `ready`, `failed` or `unknown`, with `progress_pct` and `eta_s`. |
 
-Secrets are excluded unconditionally on every tool call — no flag turns that off. Full contract,
-including the two diagnostic tools (`repo_cache_stats`, `repo_build_status`) added for long-running
-server deployments: **[docs/mcp.md](docs/mcp.md)**.
+The three content tools exclude secrets unconditionally — no flag turns that off — and every
+numeric argument is clamped in the handler, so a caller cannot widen a bound by asking. Full
+contract, argument ceilings and client configs: **[docs/mcp.md](docs/mcp.md)**. Running it
+shared, over HTTP, with bearer or OIDC auth and an audit log:
+**[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)**.
 
 ## 📐 Architecture & token economics
 
@@ -254,7 +281,7 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 - **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, GitHub Action, and MCP exclude credential files (`.env*`, private keys, certificates, tokens, `.ssh`, `.aws`, `.gnupg`) automatically. Use `--include-secrets` only if you explicitly choose to index them.
 - **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs, and private keys. Inline matches undergo line-preserving redaction (`--secret-policy redact-match|exclude-file|warn-only|off`).
 - **Sanitized logs and events**: Audit logs and structured event sinks enforce cycle detection, container size limits, recursion depth ceilings, and scrub URL basic-auth credentials.
-- **Local by default**: `build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one opt-in exception — it sends the assembled pack to an LLM provider and prints the provider + hostname before doing so. Details: **[SECURITY.md](SECURITY.md)**.
+- **Local by default**: `build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one opt-in exception — it sends the assembled pack to an LLM provider and prints the provider + hostname before doing so. Details: **[.github/SECURITY.md](.github/SECURITY.md)**.
 
 ## 🤝 Contributing & community
 

@@ -6,6 +6,8 @@ The main [README](../README.md) is the front door; this is the index for everyth
 
 - **[Install and quick start](../README.md#install)** — the main README covers this directly;
   there is no separate copy here to keep in sync.
+- **[MCP client configuration](mcp.md#client-configuration)** — Claude Code, Claude Desktop,
+  Cursor, and any other stdio client.
 - **[CLI reference](cli.md)** — every flag, what it counts, budget accounting.
 - **[Python API](python-api.md)** — `build()`, `dump_all()`, `Index`, the same objects the CLI uses.
 - **[GitHub Action](github-action.md)** — inputs, outputs, CI wiring.
@@ -16,7 +18,7 @@ The main [README](../README.md) is the front door; this is the index for everyth
   scoring, budget accounting, "where it guesses and why."
 - **[Reference: what is in the index](reference.md)** — every file, node type and edge type the
   output can contain.
-- **[MCP server](mcp.md)** — the three tools, their argument bounds, client configs.
+- **[MCP server](mcp.md)** — the five tools, their argument bounds, client configs.
 - **[Why a graph, not just search](why-graph.md)** — what each is actually good at, with the
   citation-following behavior [examples/django](../examples/django/) demonstrates as the concrete
   case.
@@ -48,7 +50,7 @@ Less value:
   no marker distinguishing the two — see [docs/limitations.md](limitations.md).
 - **A language repo2graph does not parse deeply.** Unsupported languages still appear as file nodes
   (nothing goes missing from the map), but get no function/class/call-level structure — see
-  [the language list](../README.md#languages).
+  [the language list](../README.md#languages) and [reference.md](reference.md#languages).
 - **Highly dynamic, runtime-decided architecture.** Plugin registries and reflection-heavy dispatch
   are invisible to a static reader — see [docs/limitations.md](limitations.md).
 
@@ -77,8 +79,9 @@ the reproduction command documented:
 
 ## Security and privacy
 
-- **[SECURITY.md](../SECURITY.md)** — the security model: what makes network calls, what is
-  opt-in, how secrets are excluded.
+- **[.github/SECURITY.md](../.github/SECURITY.md)** — the security model: what makes network
+  calls, what is opt-in, how secrets are excluded, and how the repository itself is protected.
+  (The root `SECURITY.md` is a redirect stub kept only so old links don't 404.)
 - **[docs/PRIVACY.md](PRIVACY.md)** — what leaves your machine, what's cached, what's logged.
 - **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
 - **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP

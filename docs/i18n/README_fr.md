@@ -13,14 +13,32 @@
   <a href="README_de.md">Deutsch</a>
 </p>
 
+<table align="center">
+<tr>
+<th align="center">📦&nbsp; Paquet</th>
+<th align="center">🩺&nbsp; Santé</th>
+<th align="center">🗂️&nbsp; Référencé sur</th>
+</tr>
+<tr>
+<td align="center" valign="top">
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue&label=PyPI" alt="PyPI version" /></a><br />
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a><br />
+<a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml/badge.svg" alt="Dependency audit status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml/badge.svg" alt="Provenance and licence compliance status" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a><br />
+<a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a><br />
+<a href="https://registry.modelcontextprotocol.io/v0/servers?search=repo2graph"><img src="https://img.shields.io/badge/MCP_Registry-io.github.Srinivasan--78%2Frepo2graph-purple" alt="Listed in the MCP Registry" /></a>
+</td>
+</tr>
+</table>
+
 <p align="center">
-  <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
-  <a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue" alt="PyPI version" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/MCP-Compatible-purple.svg" alt="MCP Compatible" />
   <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
 </p>
 
@@ -127,23 +145,55 @@ de configuration selon la plateforme et le client.
 | **Graphe déterministe, pas une simple recherche par embeddings** | Appelants, appelés, imports et hiérarchies de classes résolus à partir de l'AST réel — pas une supposition par plus proche voisin. |
 | **Recherche hybride** | BM25 + expansion par voisinage de graphe par défaut ; fusion vectorielle dense optionnelle (`repo2graph embed`) sans dépendance supplémentaire requise. |
 | **Plafonds de tokens appliqués deux fois** | Le budget de `pack_context()` borne le markdown rendu *dans son intégralité*, pas seulement le texte des morceaux — et le serveur MCP écrête et remesure avant de renvoyer. |
-| **15 langages, traitement complet** | Python, JS/TS/TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash bénéficient de l'analyse fonctions/classes/appels. Tout le reste apparaît quand même comme fichiers sur la carte. |
+| **16 grammaires, traitement complet** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala et Bash bénéficient de l'analyse fonctions/classes/appels — 28 extensions de fichiers au total. Tout le reste apparaît quand même comme fichiers sur la carte. |
 | **Natif CI** | Publié en tant que GitHub Action — versionnez un graphe à jour à côté de votre code à chaque push. |
 | **Local par défaut** | `build`, `query`, `rag` et le serveur MCP n'effectuent aucun appel réseau. La seule exception optionnelle (`rag --answer`) affiche le fournisseur et l'hôte avant tout envoi. |
 | **Export vers de vrais outils de graphe** | `graph.graphml` (yEd, Gephi, NetworkX) et `graph.cypher` (Neo4j, Memgraph) sont générés à chaque build, sans étape supplémentaire. |
 
+## 🆚 Comparaison
+
+Plusieurs outils construisent un graphe à partir d'une base de code. Ce qui les distingue, c'est ce
+qui *revient* quand on pose une question — une image, un sous-graphe, ou le code lui-même.
+
+| | repo2graph | [Graphify](https://github.com/Graphify-Labs/graphify) | [Code Graph](https://community.obsidian.md/plugins/code-graph) (Obsidian) | grep / RAG par embeddings |
+|---|---|---|---|---|
+| **Ce que renvoie une requête** | le code source, empaqueté — chaque bloc précédé de `[cite: chemin:début-fin]` | un sous-graphe délimité, un chemin, ou une explication conceptuelle à parcourir | une image en disposition par forces, à lire | des lignes correspondantes, ou des morceaux par plus proche voisin |
+| **Comment les résultats sont classés** | amorces BM25, puis expansion de graphe sur k sauts ; fusion dense optionnelle | traversée de graphe (explicitement pas un index vectoriel) | sans objet — c'est une vue | lexical seul, ou vectoriel seul |
+| **Budget de tokens** | plafond strict sur *tout* le paquet, remesuré avant renvoi (limite de 12k via MCP) | pas une couche d'empaquetage | sans objet | généralement illimité |
+| **Arêtes issues de l'historique git** | `CO_CHANGE`, via `--git-history` | — | — | — |
+| **Fonctionne sans assistant, sans modèle, sans compte** | oui — CLI, MCP, ou la GitHub Action | la passe sur le code est locale ; la passe docs/médias utilise un modèle | nécessite Obsidian desktop 1.7.2+ | variable |
+| **Corpus** | code dans 16 grammaires analysées, tout autre fichier en texte | code dans ~40 langages, plus documents, PDF, images, vidéo | TS/TSX/JS/Python analysés, imports seuls pour 8 autres | n'importe quoi |
+
+**Tournez-vous vers [Graphify](https://github.com/Graphify-Labs/graphify)** quand le graphe lui-même est le produit : détection de
+communautés, plus court chemin entre deux concepts, et vos PDF et documents de conception dans le
+même graphe que le code.
+**Tournez-vous vers le [plugin Obsidian](https://community.obsidian.md/plugins/code-graph)** quand un humain veut *lire* le graphe à côté
+de ses notes.
+**Tournez-vous vers repo2graph** quand un agent a besoin de code source cité dans un budget de
+tokens fixe, quand cela doit tourner en CI sans modèle ni compte, ou quand « quels fichiers changent
+toujours ensemble » fait partie de la réponse.
+
+La version longue, avec les compromis qu'implique chaque choix :
+**[docs/comparison.md](../comparison.md)** (en anglais).
+
 ## 🛠️ Outils MCP exposés
+
+Cinq outils. Trois répondent à des questions sur le code, deux rendent compte du serveur lui-même.
 
 | Outil | Arguments | Ce qui est renvoyé |
 |---|---|---|
 | `repo_map` | aucun | Langages, fichiers centraux et points d'entrée principaux. Stable d'un appel à l'autre — à lire en premier. |
 | `repo_search` | `query`, `k` optionnel (défaut 8, max 50), `hops` optionnel (défaut 1, max 4), `budget_tokens` optionnel (défaut 6000, max 12000) | Morceaux germes plus leurs voisins de graphe, chaque bloc étant précédé de `[cite: chemin:début-fin]`. |
-| `repo_neighbours` | `node_id`, `hops` optionnel (max 4), `limit` optionnel (défaut 20, max 50) | Un saut de graphe depuis un identifiant de symbole/fichier/dossier : appelants, appelés, classes de base, fichier de définition. |
+| `repo_neighbours` | `node_id`, `hops` optionnel (défaut 1, max 4), `limit` optionnel (défaut 20, max 50) | Un saut de graphe depuis un identifiant de symbole/fichier/dossier : appelants, appelés, classes de base, fichier de définition. |
+| `repo_cache_stats` | aucun | Compteurs du cache de résultats : `hits`, `misses`, `size`, `max_size`, `ttl_s`, `evictions`, `hit_rate`. Jamais mis en cache lui-même. |
+| `repo_build_status` | `task_id` | Progression d'une construction en arrière-plan lancée par `--async-build` : `building`, `ready`, `failed` ou `unknown`, avec `progress_pct` et `eta_s`. |
 
-Les secrets sont exclus sans condition à chaque appel d'outil — aucun flag ne permet de désactiver
-ce comportement. Contrat complet, y compris les deux outils de diagnostic (`repo_cache_stats`,
-`repo_build_status`) ajoutés pour les déploiements serveur de longue durée : **[docs/mcp.md](../mcp.md)**
-(en anglais).
+Les trois outils de code excluent les secrets sans condition — aucun flag ne permet de désactiver ce
+comportement — et chaque argument numérique est écrêté dans le gestionnaire, si bien qu'un appelant
+ne peut pas élargir une borne en la demandant. Contrat complet, plafonds d'arguments et
+configurations clientes : **[docs/mcp.md](../mcp.md)** (en anglais). Exécution partagée, via HTTP,
+avec authentification bearer ou OIDC et journal d'audit :
+**[docs/ENTERPRISE_DEPLOYMENT.md](../ENTERPRISE_DEPLOYMENT.md)** (en anglais).
 
 ## 📐 Architecture et économie des tokens
 
@@ -199,7 +249,9 @@ d'appels, limites de résolution inter-langages) — tous en anglais.
 | `repo2graph rag "<question>" -o .r2g [--vectors] [--answer]` | Paquet GraphRAG borné en tokens ; `--answer` l'envoie à un LLM (optionnel, réseau). |
 | `repo2graph embed -o .r2g [--verify-rag]` | Calcule/vérifie les vecteurs denses pour la recherche hybride. |
 | `repo2graph map -o .r2g [--viz-nodes N]` | Régénère `graph.html` avec un plafond de nœuds différent. |
-| `repo2graph stats -o .r2g` | Comptes de nœuds/arêtes/fonctions pour un index existant. |
+| `repo2graph stats -o .r2g [--format text]` | Comptes de nœuds/arêtes/fonctions pour un index existant ; `--format text` pour un résumé de qualité lisible. |
+| `repo2graph doctor [path]` | Diagnostique l'environnement, les dépendances, les permissions et l'intégrité de l'index. |
+| `repo2graph explain-path <path> [-r <repo>]` | Indique si un chemin serait indexé, et quelle règle de précédence l'a décidé. |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | Serveur MCP stdio sur `.r2g`. |
 
 **Variables d'environnement** (lues uniquement par `rag --answer`, dans cet ordre de priorité) :
@@ -213,7 +265,7 @@ budget : **[docs/cli.md](../cli.md)** (en anglais).
 seule exception optionnelle — il envoie le paquet assemblé à un fournisseur de LLM et affiche le
 fournisseur et l'hôte avant de le faire. Le serveur MCP exclut sans condition les fichiers ayant
 l'apparence d'identifiants, sans flag pour désactiver ce comportement. Détails :
-**[SECURITY.md](../../SECURITY.md)** (en anglais).
+**[SECURITY.md](../../.github/SECURITY.md)** (en anglais).
 
 ## 🤝 Contribution & communauté
 

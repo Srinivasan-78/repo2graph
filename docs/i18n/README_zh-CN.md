@@ -13,14 +13,32 @@
   <a href="README_de.md">Deutsch</a>
 </p>
 
+<table align="center">
+<tr>
+<th align="center">📦&nbsp; 软件包</th>
+<th align="center">🩺&nbsp; 健康状况</th>
+<th align="center">🗂️&nbsp; 收录于</th>
+</tr>
+<tr>
+<td align="center" valign="top">
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue&label=PyPI" alt="PyPI version" /></a><br />
+<a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a><br />
+<a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/dependency-audit.yml/badge.svg" alt="Dependency audit status" /></a><br />
+<a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/provenance.yml/badge.svg" alt="Provenance and licence compliance status" /></a>
+</td>
+<td align="center" valign="top">
+<a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a><br />
+<a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a><br />
+<a href="https://registry.modelcontextprotocol.io/v0/servers?search=repo2graph"><img src="https://img.shields.io/badge/MCP_Registry-io.github.Srinivasan--78%2Frepo2graph-purple" alt="Listed in the MCP Registry" /></a>
+</td>
+</tr>
+</table>
+
 <p align="center">
-  <a href="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"><img src="https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg" alt="Glama MCP server score" /></a>
-  <a href="https://mcpservers.org/servers/srinivasan-78/repo2graph"><img src="https://mcpservers.org/badge.svg" alt="Listed on mcpservers.org" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/v/repo2graph.svg?color=blue" alt="PyPI version" /></a>
-  <a href="https://pypi.org/project/repo2graph/"><img src="https://img.shields.io/pypi/pyversions/repo2graph.svg" alt="Python versions" /></a>
-  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-  <a href="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml"><img src="https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg" alt="CI status" /></a>
-  <img src="https://img.shields.io/badge/MCP-Compatible-purple.svg" alt="MCP Compatible" />
   <a href="https://github.com/Srinivasan-78/repo2graph/stargazers"><img src="https://img.shields.io/github/stars/Srinivasan-78/repo2graph?style=social" alt="GitHub stars" /></a>
 </p>
 
@@ -111,20 +129,43 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 | **确定性图谱,而非纯向量检索** | 调用者、被调用者、导入关系与类继承关系均从真实 AST 解析得出——而非最近邻猜测。 |
 | **混合检索** | 默认使用 BM25 + 图邻居扩展;可选的稠密向量融合(`repo2graph embed`)无需任何必装的额外依赖。 |
 | **双重强制的 token 上限** | `pack_context()` 的预算约束的是*整份*渲染后的 Markdown,而不仅是片段文本;MCP 服务器还会二次裁剪并重新计量后再返回。 |
-| **15 种语言,完整支持** | Python、JS/TS/TSX、Go、Rust、Java、Ruby、C、C++、C#、PHP、Kotlin、Swift、Scala、Bash 均支持函数/类/调用解析。其余语言的文件仍会出现在地图上。 |
+| **16 种文法,完整支持** | Python、JS、TS、TSX、Go、Rust、Java、Ruby、C、C++、C#、PHP、Kotlin、Swift、Scala、Bash 均支持函数/类/调用解析,共覆盖 28 种文件扩展名。其余语言的文件仍会出现在地图上。 |
 | **原生支持 CI** | 已发布为 GitHub Action——每次 push 都能在代码旁提交最新图谱。 |
 | **默认本地运行** | `build`、`query`、`rag` 与 MCP 服务器均不发起任何网络请求。唯一的可选例外(`rag --answer`)会在发送前打印所用的服务商与主机名。 |
 | **导出至主流图谱工具** | 每次构建都会生成 `graph.graphml`(yEd、Gephi、NetworkX)与 `graph.cypher`(Neo4j、Memgraph),无需额外步骤。 |
 
+## 🆚 横向对比
+
+从代码库构建图谱的工具不止一个。真正的区别在于:当你提出问题时,*返回*的是什么——一张图、一个子图,还是代码本身。
+
+| | repo2graph | [Graphify](https://github.com/Graphify-Labs/graphify) | [Code Graph](https://community.obsidian.md/plugins/code-graph)(Obsidian) | grep / 向量 RAG |
+|---|---|---|---|---|
+| **查询返回什么** | 打包好的源码——每段都以 `[cite: 路径:起始-结束]` 作为标题 | 一个限定范围的子图、一条路径,或供继续追溯的概念说明 | 一张力导向布局的图,供人阅读 | 匹配到的行,或最近邻片段 |
+| **如何排序** | BM25 种子,再做 k 跳图扩展;可选稠密向量融合 | 图遍历(明确表示不是向量索引) | 不适用——它只是一个视图 | 仅词法,或仅向量 |
+| **Token 预算** | 对*整份*打包内容的硬上限,返回前重新计量(经 MCP 时上限 12k) | 并非打包层 | 不适用 | 通常无上限 |
+| **来自 git 历史的边** | `CO_CHANGE`,由 `--git-history` 生成 | — | — | — |
+| **无需助手、模型与账号即可运行** | 是——CLI、MCP 或 GitHub Action | 代码分析在本地;文档/媒体分析需要模型 | 需要 Obsidian 桌面版 1.7.2+ | 视情况而定 |
+| **语料范围** | 16 种已解析文法的代码,其余所有文件按文本处理 | 约 40 种语言的代码,外加文档、PDF、图片、视频 | 解析 TS/TSX/JS/Python,另外 8 种仅解析导入 | 任何内容 |
+
+当图谱本身就是目的时,请选择 **[Graphify](https://github.com/Graphify-Labs/graphify)**:社区发现、两个概念之间的最短路径,以及把 PDF 和设计文档与代码放进同一张图。
+当需要有人在笔记旁*阅读*这张图时,请选择 **[Obsidian 插件](https://community.obsidian.md/plugins/code-graph)**。
+当智能体需要在固定 token 预算内获得带引用的源码、需要在没有模型和账号的 CI 中运行,或者「哪些文件总是一起改动」本身就是答案的一部分时,请选择 **repo2graph**。
+
+包含各选项取舍的详细版本:**[docs/comparison.md](../comparison.md)**(英文)。
+
 ## 🛠️ 暴露的 MCP 工具
+
+共五个工具:三个回答关于代码的问题,两个报告服务器自身的状态。
 
 | 工具 | 参数 | 返回内容 |
 |---|---|---|
 | `repo_map` | 无 | 语言构成、核心文件与主要入口点。多次调用结果稳定,建议首先调用。 |
 | `repo_search` | `query`,可选 `k`(默认 8,最大 50)、`hops`(默认 1,最大 4)、`budget_tokens`(默认 6000,最大 12000) | 检索到的种子片段及其图邻居,每段均带有 `[cite: 路径:起始-结束]` 头部。 |
-| `repo_neighbours` | `node_id`,可选 `hops`(最大 4)、`limit`(默认 20,最大 50) | 从某个符号/文件/目录节点出发的一跳邻居:调用者、被调用者、基类、所在文件。 |
+| `repo_neighbours` | `node_id`,可选 `hops`(默认 1,最大 4)、`limit`(默认 20,最大 50) | 从某个符号/文件/目录节点出发的一跳邻居:调用者、被调用者、基类、所在文件。 |
+| `repo_cache_stats` | 无 | 结果缓存的计数器:`hits`、`misses`、`size`、`max_size`、`ttl_s`、`evictions`、`hit_rate`。该工具自身永不被缓存。 |
+| `repo_build_status` | `task_id` | `--async-build` 后台构建的进度:`building`、`ready`、`failed` 或 `unknown`,并附带 `progress_pct` 与 `eta_s`。 |
 
-每次工具调用都会无条件排除疑似密钥的文件——没有任何开关可以关闭该行为。完整协议说明(含两个用于长期运行部署的诊断工具 `repo_cache_stats`、`repo_build_status`):**[docs/mcp.md](../mcp.md)**(英文)。
+三个处理代码的工具会无条件排除疑似密钥的文件——没有任何开关可以关闭该行为;所有数值参数都在处理函数内被钳制,调用方无法通过请求放宽上限。完整协议、参数上限与客户端配置:**[docs/mcp.md](../mcp.md)**(英文)。以 HTTP 方式共享部署,并启用 Bearer 或 OIDC 认证与审计日志:**[docs/ENTERPRISE_DEPLOYMENT.md](../ENTERPRISE_DEPLOYMENT.md)**(英文)。
 
 ## 📐 架构与 Token 经济学
 
@@ -160,14 +201,16 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 | `repo2graph rag "<question>" -o .r2g [--vectors] [--answer]` | 带预算上限的 GraphRAG 打包;`--answer` 会将内容发送给 LLM(可选,涉及联网)。 |
 | `repo2graph embed -o .r2g [--verify-rag]` | 计算/校验用于混合检索的稠密向量。 |
 | `repo2graph map -o .r2g [--viz-nodes N]` | 以不同节点上限重新生成 `graph.html`。 |
-| `repo2graph stats -o .r2g` | 输出现有索引的节点/边/函数统计。 |
+| `repo2graph stats -o .r2g [--format text]` | 输出现有索引的节点/边/函数统计;`--format text` 给出便于阅读的质量摘要。 |
+| `repo2graph doctor [path]` | 诊断运行环境、依赖、权限与索引完整性。 |
+| `repo2graph explain-path <path> [-r <repo>]` | 说明某个路径是否会被索引,以及是哪条优先级规则决定的。 |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | 基于 `.r2g` 的 stdio MCP 服务器。 |
 
 **环境变量**(仅被 `rag --answer` 读取,按以下优先级):`GEMINI_API_KEY` → `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `OLLAMA_HOST`。其余命令均不读取这些变量,也不会发起网络请求。完整参数表与预算核算方式:**[docs/cli.md](../cli.md)**(英文)。
 
 ## 🔐 安全性
 
-`build`、`query`、`rag` 与 MCP 服务器均不会发起任何网络请求。`rag --answer` 是唯一的可选例外——它会把打包好的内容发送给 LLM 服务商,并在发送前打印所用的服务商与主机名。MCP 服务器会无条件排除疑似密钥的文件,没有任何开关可以关闭该行为。详情见 **[SECURITY.md](../../SECURITY.md)**(英文)。
+`build`、`query`、`rag` 与 MCP 服务器均不会发起任何网络请求。`rag --answer` 是唯一的可选例外——它会把打包好的内容发送给 LLM 服务商,并在发送前打印所用的服务商与主机名。MCP 服务器会无条件排除疑似密钥的文件,没有任何开关可以关闭该行为。详情见 **[SECURITY.md](../../.github/SECURITY.md)**(英文)。
 
 ## 🤝 贡献与社区
 

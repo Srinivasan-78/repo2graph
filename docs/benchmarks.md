@@ -56,7 +56,7 @@ claim: `repo2graph/graph.py`, `repo2graph/parse.py` and `repo2graph/export.py` â
 client, and `scripts/generate_examples.py` clones into a scratch directory *before* calling
 `build()`, never during or after. `repo2graph rag --answer` is the one command in this whole project
 that makes an outbound network call during analysis, and it is opt-in and separately documented â€”
-see [docs/cli.md](cli.md#-answer-sends-your-code-to-someone-elses-computer). None of the example
+see [docs/cli.md](cli.md#answer-sends-your-code-elsewhere). None of the example
 generation described here touches it.
 
 ## Security of benchmark execution

@@ -1,7 +1,7 @@
 # Privacy
 
 What leaves your machine, what's cached, and what's logged — verified against the code, not
-claimed from memory. See [SECURITY.md](../SECURITY.md) for the network/credential-exclusion
+claimed from memory. See [.github/SECURITY.md](../.github/SECURITY.md) for the network/credential-exclusion
 guarantees this document assumes, and [docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md) for how those
 guarantees were checked.
 
@@ -79,7 +79,7 @@ simply never iterated or dumped anywhere in the codebase (grepped; no hits).
 
 ## What this document does not claim
 
-Same caveat as `SECURITY.md`: this is a description of what the code does, verifiable by reading
+Same caveat as `.github/SECURITY.md`: this is a description of what the code does, verifiable by reading
 it, not a claim of formal audit, certification, or compliance (SOC 2, ISO, or otherwise). If your
 organization requires one of those, it requires organizational and technical controls beyond this
 repository's scope — this document is an input to that process, not a substitute for it.

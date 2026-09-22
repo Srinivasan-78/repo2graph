@@ -188,7 +188,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--format` | `markdown` | `markdown` for the pack, `json` for the pack plus its parts. |
-| `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#-answer-sends-your-code-to-someone-elses-computer). |
+| `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#answer-sends-your-code-elsewhere). |
 | `--model` | provider default | Override the best-effort default model, only with `--answer`. |
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 
@@ -283,6 +283,8 @@ it, while `rag` has to promise an LLM that the thing it is handed fits.
    outwards (the base classes) and `IMPORTS` outwards (the modules it borrows
    from).
 4. **Then the budget.** Blocks are added best-first until the budget is used up.
+
+<a id="answer-sends-your-code-elsewhere"></a>
 
 ## ⚠️ `--answer` sends your code to someone else's computer
 
