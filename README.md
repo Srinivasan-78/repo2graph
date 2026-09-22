@@ -48,8 +48,8 @@
 
 <p align="center">
   <a href="#-what-is-repo2graph">What is it</a> ·
-  <a href="#-quickstart-under-30-seconds">Quickstart</a> ·
-  <a href="#-mcp-client-configuration">MCP setup</a> ·
+  <a href="#install">Quickstart</a> ·
+  <a href="#mcp-server">MCP setup</a> ·
   <a href="#-how-it-compares">Compare</a> ·
   <a href="#-see-it-on-real-repositories">Benchmarks</a> ·
   <a href="#-architecture--token-economics">Architecture</a> ·
@@ -99,7 +99,45 @@ click a node to inspect its code and neighbours.
 
 <a id="install"></a>
 
-## 🚀 Quickstart (under 30 seconds)
+## 🚀 Three ways to run repo2graph
+
+Same graph, same chunk format, same `.r2g` output — pick the interface for where you're
+standing right now.
+
+<table>
+<tr>
+<th align="center">🐍&nbsp; Python / CLI</th>
+<th align="center">⚙️&nbsp; GitHub Action</th>
+<th align="center">🔌&nbsp; MCP server</th>
+</tr>
+<tr>
+<td valign="top">
+
+Local dev, scripting, ad-hoc questions from a terminal.
+
+**[Jump in ↓](#python-cli)**
+
+</td>
+<td valign="top">
+
+A fresh graph committed next to your code on every push, zero Python setup.
+
+**[Jump in ↓](#github-action)**
+
+</td>
+<td valign="top">
+
+Give Claude, Cursor or any MCP client live, cited access to the codebase.
+
+**[Jump in ↓](#mcp-server)**
+
+</td>
+</tr>
+</table>
+
+<a id="python-cli"></a>
+
+### 🐍 1. Python / CLI
 
 Requires Python 3.10+. Run via [uv](https://docs.astral.sh/uv/), no install step:
 
@@ -127,7 +165,47 @@ answer comes back as source you can check, not a summary you have to trust:
   <img src="docs/images/demo-rag.gif" alt="A terminal running repo2graph rag with a question; a repo map scrolls past and then cited code blocks appear, each headed with a cite marker naming the file and line range, listing the callers and callees of the function shown" width="850" />
 </p>
 
-## 🔌 MCP client configuration
+Full flag tables, budget accounting and the Python API: **[docs/cli.md](docs/cli.md)** ·
+**[docs/python-api.md](docs/python-api.md)**.
+
+<a id="github-action"></a>
+
+### ⚙️ 2. GitHub Action
+
+Published on the [GitHub Marketplace](https://github.com/marketplace/actions/repo2graph) — one
+step, no Python setup on the runner:
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
+
+- uses: Srinivasan-78/repo2graph@v1
+  with:
+    path: .                  # or: repo: some-org/other-repo
+    git-history: "500"       # commits scanned for CO_CHANGE edges (0 = skip)
+    artifact-name: repo-graph
+```
+
+`@v1` follows every 1.x release; pin an exact tag (`@v1.6.0`) to upgrade by hand instead. It never
+calls an LLM — `--answer` is deliberately not exposed — and it writes a job-summary table (hub
+files, CO_CHANGE hotspots, the graph delta since the last build) straight from the artifacts, so
+the shape of the map shows up in the run without downloading anything.
+
+Also pack a cited context for a fixed question, and push the map to a browsable branch:
+
+```yaml
+- uses: Srinivasan-78/repo2graph@v1
+  with:
+    query: "how does auth middleware validate a token"
+    commit-branch: graph     # force-pushed; this repo's own /graph branch is built this way
+```
+
+All inputs/outputs, private-repo tokens and the vector-embedding step:
+**[docs/github-action.md](docs/github-action.md)**.
+
+<a id="mcp-server"></a>
+
+### 🔌 3. MCP server
 
 `repo2graph-mcp` is a stdio MCP server. It builds its own index on the first call if one doesn't
 exist yet — nothing to run ahead of time.

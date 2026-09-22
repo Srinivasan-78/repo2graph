@@ -27,8 +27,6 @@ class ImportDetail:
     module: str
     name: str | None = None
     alias: str | None = None
-    is_relative: bool = False
-    relative_level: int = 0
 
 
 EXT_LANG = {
@@ -858,7 +856,7 @@ def _cpp_available() -> bool:
 
 
 def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
-    """Extract structured import metadata (modules, names, aliases, relative level)."""
+    """Extract structured import metadata (modules, names, aliases)."""
     raw_clean = raw.strip()
     if not raw_clean:
         return []
@@ -869,8 +867,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
         m = re.match(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)", raw_clean)
         if m:
             module = m.group(1) or ""
-            dots = len(module) - len(module.lstrip("."))
-            is_rel = dots > 0
             names_part = m.group(2).replace("(", " ").replace(")", " ")
             for p in names_part.split(","):
                 p = p.strip()
@@ -890,8 +886,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                             module=module,
                             name=orig,
                             alias=alias,
-                            is_relative=is_rel,
-                            relative_level=dots,
                         )
                     )
             return details
@@ -916,8 +910,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                             module=orig,
                             name=orig,
                             alias=alias,
-                            is_relative=False,
-                            relative_level=0,
                         )
                     )
             return details
@@ -925,7 +917,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
     elif lang in ("javascript", "typescript", "tsx"):
         m = re.search(r"""(?:from\s+)?['"]([^'"]+)['"]""", raw_clean)
         module = m.group(1) if m else ""
-        is_rel = module.startswith(".")
         named_m = re.search(r"\{([^}]+)\}", raw_clean)
         if named_m:
             for p in named_m.group(1).split(","):
@@ -946,7 +937,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                             module=module,
                             name=orig,
                             alias=alias,
-                            is_relative=is_rel,
                         )
                     )
         ns_m = re.search(r"\*\s+as\s+(\w+)", raw_clean)
@@ -957,7 +947,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     module=module,
                     name="*",
                     alias=ns_m.group(1),
-                    is_relative=is_rel,
                 )
             )
         def_m = re.match(r"^import\s+(\w+)\s+from", raw_clean)
@@ -968,7 +957,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     module=module,
                     name="default",
                     alias=def_m.group(1),
-                    is_relative=is_rel,
                 )
             )
         if not details and module:
@@ -978,7 +966,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     module=module,
                     name=None,
                     alias=None,
-                    is_relative=is_rel,
                 )
             )
         return details
@@ -993,7 +980,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     raw=raw_clean,
                     module=module,
                     alias=alias,
-                    is_relative=module.startswith("."),
                 )
             )
             return details
@@ -1012,7 +998,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     raw=raw_clean,
                     module=module,
                     name=name,
-                    is_relative=False,
                 )
             )
             return details
@@ -1037,7 +1022,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                 module=module,
                 name=module.split("\\")[-1].split(".")[-1],
                 alias=alias,
-                is_relative=False,
             )
         )
         return details
@@ -1045,13 +1029,11 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
     elif lang in ("c", "cpp"):
         m = re.search(r"""([<"])([^>"]+)[>"]""", raw_clean)
         if m:
-            is_rel = m.group(1) == '"'
             module = m.group(2)
             details.append(
                 ImportDetail(
                     raw=raw_clean,
                     module=module,
-                    is_relative=is_rel,
                 )
             )
             return details
@@ -1080,8 +1062,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                             module=base_mod,
                             name=orig,
                             alias=it_alias,
-                            is_relative=base_mod.startswith("crate")
-                            or base_mod.startswith("super"),
                         )
                     )
             else:
@@ -1094,7 +1074,6 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                         module=mod_name,
                         name=sym_name,
                         alias=alias,
-                        is_relative=base_mod.startswith("crate") or base_mod.startswith("super"),
                     )
                 )
             return details
