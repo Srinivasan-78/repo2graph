@@ -878,6 +878,12 @@ def main(argv=None):
         help="never build: exit unless the index already exists",
     )
     p.add_argument(
+        "--allow-auto-build",
+        action="store_true",
+        default=False,
+        help="allow automatic building of missing index in HTTP mode (default: disabled in HTTP mode)",
+    )
+    p.add_argument(
         "--async-build",
         action="store_true",
         help="build a missing index on a background thread and "
@@ -906,12 +912,22 @@ def main(argv=None):
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
-    build_from = None if args.no_auto_build else repo
+
     # --well-known-port is the spelling the discovery spec uses; it and
     # --http-port name the same HTTP transport, since serving the metadata
     # document from a second server would be two ports for one job.
     if args.http_port is None and args.well_known_port is not None:
         args.http_port = args.well_known_port
+
+    is_http = args.http_port is not None or args.auth_cimd or args.http_only
+    if is_http:
+        # HTTP mode: auto-build is disabled by default to prevent read-only
+        # network tool calls from triggering parser execution, file writes,
+        # or git interactions without explicit authorization (#265).
+        build_from = repo if (args.allow_auto_build and not args.no_auto_build) else None
+    else:
+        # stdio mode: preserve auto-build by default for local developer workflows.
+        build_from = None if args.no_auto_build else repo
 
     # --http-only names what to leave out, not what to serve, so on its own it
     # asks for no transport at all. It used to be tested *inside* the block that

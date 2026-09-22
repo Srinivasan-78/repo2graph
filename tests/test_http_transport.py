@@ -1070,3 +1070,33 @@ def test_iss249_the_handler_pins_its_protocol_version_deliberately():
 
     assert "protocol_version" in MCPRequestHandler.__dict__
     assert MCPRequestHandler.protocol_version == "HTTP/1.0"
+
+
+def test_missing_index_without_repo_returns_503_actionable_error(tmp_path):
+    """When no index exists and auto-build is off, HTTP mode returns 503 with instructions (#265)."""
+    empty_idx = tmp_path / "absent_index"
+    transport = HTTPTransport(empty_idx, repo=None, host="127.0.0.1", port=0)
+    transport.start()
+    try:
+        url = f"http://127.0.0.1:{transport.port}/mcp"
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "repo_map", "arguments": {}},
+            }
+        ).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                status = resp.status
+                payload = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            payload = json.loads(exc.read())
+        assert status == 503
+        assert "error" in payload
+        assert "Build one first with: repo2graph build" in payload["error"]["message"]
+    finally:
+        transport.stop()
