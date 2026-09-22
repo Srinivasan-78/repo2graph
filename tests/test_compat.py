@@ -603,7 +603,9 @@ def test_r9_the_fallback_version_agrees_with_pyproject():
 # instead, so `git push`'s own argv never contains it.
 
 
-def _resolved_push_git_calls(tmp_path: Path, token: str) -> list:
+def _resolved_push_git_calls(
+    tmp_path: Path, token: str, extra_env: dict[str, str] | None = None
+) -> list:
     """Every `git ...` invocation the "Push graph to branch" step's real body
     makes, as the literal argv bash hands it -- captured by overriding `git`
     with a shell function instead of truncating/rewriting the script, so the
@@ -613,7 +615,7 @@ def _resolved_push_git_calls(tmp_path: Path, token: str) -> list:
     )
     log = tmp_path / "git-calls.log"
     out_dir = tmp_path / "out"
-    out_dir.mkdir()
+    out_dir.mkdir(exist_ok=True)
     (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
     script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
     env = dict(os.environ)
@@ -625,6 +627,8 @@ def _resolved_push_git_calls(tmp_path: Path, token: str) -> list:
         R2G_BRANCH="r2g-graph",
         GIT_LOG=str(log),
     )
+    if extra_env:
+        env.update(extra_env)
     proc = subprocess.run(
         [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
     )
@@ -661,6 +665,46 @@ def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path)
     for call in calls:
         assert not any("x-access-token" in word for word in call), call
         assert not any(word.startswith("https://") and "@" in word for word in call), call
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_commit_force_false_uses_plain_push(tmp_path):
+    """Setting commit-force to false uses standard push without --force (#310)."""
+    token = "ghs_TotallyFakeIssue310ProbeToken"  # noqa: S105
+    calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "false"})
+    push_calls = [c for c in calls if c[:1] == ["push"]]
+    assert len(push_calls) == 1, calls
+    assert push_calls[0] == ["push", "-q", "origin", "r2g-graph"]
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_push_refused_on_fork_pull_request(tmp_path):
+    """The action refuses to push graph to branch when run from a fork PR (#310)."""
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch")
+    )
+    log = tmp_path / "git-calls.log"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
+    script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
+    env = dict(os.environ)
+    env.update(
+        GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+        GITHUB_REPOSITORY="acme/widgets",
+        GITHUB_SHA="0" * 40,
+        R2G_OUT=str(out_dir),
+        R2G_BRANCH="r2g-graph",
+        GIT_LOG=str(log),
+        IS_FORK="true",
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode != 0
+    assert "Refusing to push graph to branch from a fork pull request" in (
+        proc.stdout + proc.stderr
+    )
 
 
 # ==========================================================================
