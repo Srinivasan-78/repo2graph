@@ -103,6 +103,18 @@ inputs:
     description: "Policy for inline content secrets: redact-match, exclude-file, warn-only, off (default: redact-match)"
     required: false
     default: "redact-match"
+  incremental:
+    description: "Enable incremental graph builds using the parse cache (default: false)"
+    required: false
+    default: "false"
+  parse-policy:
+    description: "Policy for AST parse errors: lenient, warn, strict (default: lenient)"
+    required: false
+    default: "lenient"
+  max-call-candidates:
+    description: "Maximum call edge candidates to retain per ambiguous call site (default: 5)"
+    required: false
+    default: "5"
 
 outputs:
   out:
@@ -179,6 +191,9 @@ runs:
         R2G_EXCLUDE: ${{ inputs.exclude }}
         R2G_INCLUDE_SECRETS: ${{ inputs.include-secrets }}
         R2G_SECRET_POLICY: ${{ inputs.secret-policy }}
+        R2G_INCREMENTAL: ${{ inputs.incremental }}
+        R2G_PARSE_POLICY: ${{ inputs.parse-policy }}
+        R2G_MAX_CALL_CANDIDATES: ${{ inputs.max-call-candidates }}
         SUMMARY_FILE: ${{ runner.temp }}/summary.json
       run: |
         set -euo pipefail
@@ -193,6 +208,16 @@ runs:
         inc_sec="$(printf '%s' "$R2G_INCLUDE_SECRETS" | tr '[:upper:]' '[:lower:]')"
         if [ "$inc_sec" = "true" ]; then
           args+=(--include-secrets)
+        fi
+        inc_mode="$(printf '%s' "${R2G_INCREMENTAL:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$inc_mode" = "true" ]; then
+          args+=(--incremental)
+        fi
+        if [ -n "${R2G_PARSE_POLICY:-}" ] && [ "$R2G_PARSE_POLICY" != "lenient" ]; then
+          args+=(--parse-policy "$R2G_PARSE_POLICY")
+        fi
+        if [ -n "${R2G_MAX_CALL_CANDIDATES:-}" ] && [ "$R2G_MAX_CALL_CANDIDATES" != "5" ]; then
+          args+=(--max-call-candidates "$R2G_MAX_CALL_CANDIDATES")
         fi
         if [ -n "$R2G_SECRET_POLICY" ] && [ "$R2G_SECRET_POLICY" != "redact-match" ]; then
           args+=(--secret-policy "$R2G_SECRET_POLICY")

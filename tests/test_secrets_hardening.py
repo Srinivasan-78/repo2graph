@@ -450,3 +450,57 @@ def test_action_yml_secret_flags_forwarding(tmp_path: Path):
     assert "--secret-policy" in call
     policy_idx = call.index("--secret-policy")
     assert call[policy_idx + 1] == "exclude-file"
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_action_yml_incremental_and_parse_policy_forwarding(tmp_path: Path):
+    """Verify action.yml passes --incremental, --parse-policy, and --max-call-candidates (#346)."""
+    action_yml = REPO_ROOT / "action.yml"
+    body = _run_body(_action_step_by_name(action_yml.read_text(encoding="utf8"), "Build the graph"))
+
+    log = tmp_path / "r2g-calls.log"
+    script = (
+        'repo2graph() { printf "%s\\x1f" "$@" >> "$R2G_LOG"; printf "\\n" >> "$R2G_LOG"; echo \'{"nodes": 1, "edges": 0, "chunks": 1}\'; }\n'
+        + body
+    )
+    env = dict(os.environ)
+    env.update(
+        GH_TOKEN="",
+        R2G_REPO="",
+        R2G_REF="",
+        R2G_PATH=".",
+        R2G_OUT=str(tmp_path / "out"),
+        R2G_FORMATS="jsonl",
+        R2G_HISTORY="0",
+        R2G_INCLUDE="",
+        R2G_EXCLUDE="",
+        R2G_INCLUDE_SECRETS="false",
+        R2G_SECRET_POLICY="redact-match",
+        R2G_INCREMENTAL="TRUE",  # case-insensitive check
+        R2G_PARSE_POLICY="strict",
+        R2G_MAX_CALL_CANDIDATES="3",
+        R2G_LOG=str(log),
+        GITHUB_OUTPUT=str(tmp_path / "github_output.txt"),
+        SUMMARY_FILE=str(tmp_path / "summary.json"),
+    )
+    (tmp_path / "summary.json").write_text(
+        '{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8"
+    )
+
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    calls = []
+    for line in log.read_text(encoding="utf8").split("\n"):
+        if line:
+            calls.append(line.split("\x1f")[:-1])
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert "--incremental" in call
+    assert "--parse-policy" in call
+    assert call[call.index("--parse-policy") + 1] == "strict"
+    assert "--max-call-candidates" in call
+    assert call[call.index("--max-call-candidates") + 1] == "3"

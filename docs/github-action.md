@@ -68,6 +68,9 @@ the step.
 | `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.6.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
 | `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
 | `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
+| `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
+| `parse-policy` | `lenient` | Policy for AST parse errors: `lenient`, `warn`, `strict`. |
+| `max-call-candidates` | `5` | Maximum call edge candidates to retain per ambiguous call site. |
 
 ### Pinning the package instead of the checkout
 
