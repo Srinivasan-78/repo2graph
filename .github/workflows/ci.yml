@@ -49,6 +49,14 @@ jobs:
       # measured number and why the floor sits below it.
       - run: pytest -q --cov=repo2graph --cov-report=term-missing
 
+      - name: Real embedder smoke test
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        env:
+          R2G_TEST_REAL_EMBEDDER: "1"
+        run: |
+          pip install ".[rag]"
+          pytest -q tests/test_vectors.py -k test_real_sentence_transformers_smoke_test
+
   packaging:
     # Reproduces how third-party hosts install and start this server, which the
     # rest of the suite cannot: it imports `repo2graph.mcp` directly, and never
