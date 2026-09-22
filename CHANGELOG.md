@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-22
+
 ### Removed
 
 - `claude-code-review.yml` and `claude.yml`, and with them all automated code
