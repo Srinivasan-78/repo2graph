@@ -154,9 +154,12 @@ runtime argument — see [`server.json`](../server.json).
 | --- | --- | --- |
 | `-o`, `--out` | `<repo>/.r2g` | Index directory to serve. |
 | `--no-auto-build` | off | Never build. Exit at startup unless the index already exists. |
+| `--allow-auto-build` | off | Allow auto-building a missing index on tool calls in HTTP mode. (In HTTP mode, auto-build is disabled by default to prevent read-only network tool requests from initiating background builds without explicit authorization). |
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
+
+> **Auto-build in stdio vs HTTP mode:** In local stdio mode, a missing index is automatically built on the first tool call for developer convenience. In HTTP mode, auto-build is disabled by default — tool calls against an unindexed directory return a 503 error with build instructions unless `--allow-auto-build` is explicitly enabled.
 
 **HTTP transport** — stdio carries no headers, so authentication requires this.
 

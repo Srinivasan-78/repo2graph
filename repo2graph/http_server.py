@@ -621,15 +621,16 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 # open_index exits rather than raises when there is no index and
                 # nothing safe to build from. Over HTTP that is a 503, not a
                 # dead process: the server stays up and says what is wrong.
+                err_msg = str(exc).strip() or "Index unavailable"
                 self.audit.record(
                     tool=name,
                     params=arguments,
                     identity=identity.subject,
                     outcome="error",
                     duration_ms=elapsed.ms,
-                    error=str(exc),
+                    error=err_msg,
                 )
-                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, "Index unavailable"))
+                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, err_msg))
                 return
             except Exception as exc:
                 self.audit.record(
