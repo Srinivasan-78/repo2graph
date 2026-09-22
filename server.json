@@ -3,7 +3,7 @@
   "name": "io.github.Srinivasan-78/repo2graph",
   "title": "repo2graph",
   "description": "Ask a codebase questions and get cited code back, from a tree-sitter graph of the repo.",
-  "version": "1.6.0",
+  "version": "2.0.0",
   "websiteUrl": "https://github.com/Srinivasan-78/repo2graph/blob/main/docs/mcp.md",
   "repository": {
     "url": "https://github.com/Srinivasan-78/repo2graph",
@@ -15,7 +15,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "repo2graph",
-      "version": "1.6.0",
+      "version": "2.0.0",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
