@@ -348,6 +348,7 @@ resolution limits).
 | `repo2graph stats -o .r2g [--format text]` | Node/edge/function counts for an existing index; `--format text` for a quality summary. |
 | `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
 | `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
+| `repo2graph completion [shell]` | Print shell tab completion setup script (`bash`, `zsh`, `fish`). |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
 **Environment variables** (only read by `rag --answer`, in this precedence order):
