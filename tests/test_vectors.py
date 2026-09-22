@@ -239,11 +239,16 @@ def test_ac14_embed_appends_to_the_manifest_without_disturbing_it(
 
     assert set(before["written"]) <= set(after["written"])
     for key in before:
-        if key in ("written", "files"):
+        if key in ("written", "files", "checksums"):
+            # `embed` is allowed to extend `written`, `files`, and `checksums`
+            # with the two new vector artifacts; all other keys must be stable.
             continue
         assert after[key] == before[key], key
     for name, note in before["files"].items():
         assert after["files"][name] == note, name
+    # Checksums can only grow: any entry that existed before embed must not change
+    for rel, ck in before.get("checksums", {}).items():
+        assert after.get("checksums", {}).get(rel) == ck, (rel, ck)
 
 
 # ==========================================================================

@@ -1,14 +1,17 @@
 # MCP server
 
-> **Note**: `repo2graph-mcp` requires the `mcp` SDK `mcp>=1.0,<3.0`. You can install it using `pip install 'repo2graph[mcp]'`.
-
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
-pasting a pack into a chat window.
+pasting a pack into a chat window. This page is its full contract: the five tools,
+their argument bounds, the server's own flags, and a config block per client.
 
 It is an *additional* surface, not a replacement: every tool is a thin call into
 `repo2graph.query.Index`, the same object the CLI and the GitHub Action use, over
 the same artifacts.
+
+> **Note**: `repo2graph-mcp` needs the `mcp` SDK (`mcp>=1.0,<3.0`), which ships as
+> an optional extra: `pip install "repo2graph[mcp]"`. The CLI, the Action and the
+> Python API never import it.
 
 ## Install
 
@@ -27,10 +30,10 @@ pip install "repo2graph[mcp]"
 
 Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
 
-The extra pins `mcp>=1.0,<2`: the server is written against the 1.x `Server`
-decorator API, which 2.x removed. If a 1.x SDK is not what you have installed,
-`repo2graph-mcp` says so and names what to install instead rather than raising.
-2.x support is tracked in [`BACKLOG.md`](BACKLOG.md).
+The extra pins `mcp>=1.0,<3.0`: `serve()` supports both the 1.x `Server`
+decorator API and the 2.x registration API it was replaced with. If neither is
+what you have installed, `repo2graph-mcp` says so and names what to install
+instead rather than raising.
 
 ## The index builds itself
 
@@ -141,6 +144,53 @@ runtime argument — see [`server.json`](../server.json).
 > path as `command` — `.venv/bin/repo2graph-mcp`, or
 > `.venv\Scripts\repo2graph-mcp.exe` on Windows.
 
+## Server options
+
+`repo2graph-mcp --help` is the full list. Grouped by what they change:
+
+**Index and cache**
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `-o`, `--out` | `<repo>/.r2g` | Index directory to serve. |
+| `--no-auto-build` | off | Never build. Exit at startup unless the index already exists. |
+| `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
+| `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
+| `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
+
+**HTTP transport** — stdio carries no headers, so authentication requires this.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--http-port` | off | Serve JSON-RPC on this port in addition to stdio. |
+| `--http-host` | `127.0.0.1` | Bind address. Binding beyond loopback with no authentication is **refused at startup**, not merely discouraged. |
+| `--http-only` | off | Serve HTTP without the stdio transport. |
+| `--well-known-port` | off | Alias for `--http-port`; the discovery documents are served by the same transport. |
+| `--http-allow-hosts` | none | Extra hostnames accepted in the `Host`/`Origin` headers on `POST /mcp`, for a deliberate deployment behind a reverse proxy. Loopback and `--http-host` are always accepted; anything else is refused with 403. |
+
+**Authentication**
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--auth-token` | no auth | Require `Authorization: Bearer <TOKEN>` on every HTTP tool call. Prefer the `R2G_AUTH_TOKEN` environment variable — this flag's value is visible to other local users through `ps`/procfs. The flag wins when both are set. |
+| `--auth-oidc-issuer` | off | Validate bearer tokens as JWTs against this OIDC issuer's JWKS, enforcing `iss`, `aud` and `exp`. |
+| `--auth-audience` | unchecked | Expected `aud` claim for `--auth-oidc-issuer` tokens. |
+| `--auth-jwks-ttl` | `300` | Seconds a fetched JWKS is trusted before refetch. |
+| `--auth-cimd` | off | Publish an RFC 7591 client metadata document at `/.well-known/oauth-client-metadata`. |
+
+**Audit logging**
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
+| `--audit-log-level` | `all` | `none`, `errors` or `all` — which tool calls produce a record. |
+| `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
+
+`--auth-oidc-issuer` is the only one of these that makes a network call, and only
+to that one issuer's JWKS endpoint. Container hardening, TLS termination and the
+deployment checklist that goes with the HTTP shape:
+[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md).
+
 ## Tools
 
 | Tool | Arguments | What comes back |
@@ -150,6 +200,27 @@ runtime argument — see [`server.json`](../server.json).
 | `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
+
+The first three answer questions about the code and exclude secrets
+unconditionally. The last two report on the server itself, never read a chunk,
+and are never served from the cache — a cached cache-stats or progress reading is
+the one answer guaranteed to be out of date.
+
+### Argument bounds
+
+Every numeric argument is coerced and clamped **in the handler**, so `dispatch()`,
+a direct Python caller and the stdio server all inherit the same ceiling. Nothing
+here raises on a bad value; it is clamped and answered.
+
+| Argument | Tool | Default | Maximum |
+| --- | --- | ---: | ---: |
+| `k` | `repo_search` | 8 | 50 |
+| `hops` | `repo_search`, `repo_neighbours` | 1 | 4 |
+| `budget_tokens` | `repo_search` | 6 000 | 12 000 |
+| `limit` | `repo_neighbours` | 20 | 50 |
+| `query` (length) | `repo_search` | — | 4 000 chars |
+| `node_id` (length) | `repo_neighbours` | — | 2 000 chars |
+| `task_id` (length) | `repo_build_status` | — | 200 chars |
 
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and

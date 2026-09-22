@@ -11,6 +11,8 @@ repo2graph rag     [target] <question>  pack a cited context for an LLM
 repo2graph embed             add meaning-based search to an index
 repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
+repo2graph doctor    [path]  diagnose environment, permissions, and index
+repo2graph explain-path <path> explain file inclusion/exclusion precedence
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -31,6 +33,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--formats` | `jsonl,graphml,cypher,overview,html` | Which artifacts to write. Drop what you do not need to save time. |
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
+| `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
@@ -41,6 +44,13 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
+| `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
+| `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
+| `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
+| `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
+| `--allow-symlink-out` | off | Allow `-o` to point through a symbolic link. Off by default to prevent accidental writes outside the repo tree. |
+| `--force` | off | Allow overwriting an existing directory that was not created by repo2graph. Without this flag, build refuses to write into any non-empty directory that does not contain a recognised index. |
+| `--lock-timeout` | `60` | Seconds to wait for the per-output-directory build lock before failing. Increase this when several CI jobs share the same network-mounted output path. |
 
 **Examples:**
 ```bash
@@ -51,8 +61,10 @@ repo2graph build /path/to/project --include-vendor --chunk-large-files
 repo2graph build /path/to/project --exclude-dir generated --exclude-dir tmp --max-file-mb 5.0
 ```
 
-Output files are written atomically through sibling temp files (`os.replace`), so
-a crash or a full disk never leaves a half-written index behind.
+Artifacts are staged in a sibling temp directory and atomically swapped into
+`--out` on success, so a crash or a full disk never leaves a half-written index
+behind. The previous build is restored on failure. Files written by subsequent
+commands (`embed`, `github`) are preserved across rebuilds.
 
 ### `--incremental`
 
@@ -176,7 +188,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--format` | `markdown` | `markdown` for the pack, `json` for the pack plus its parts. |
-| `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#-answer-sends-your-code-to-someone-elses-computer). |
+| `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#answer-sends-your-code-elsewhere). |
 | `--model` | provider default | Override the best-effort default model, only with `--answer`. |
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 
@@ -227,9 +239,18 @@ Three things worth knowing:
 ## `map` and `stats`
 
 ```bash
-repo2graph map -o .r2g --viz-nodes 80   # redraw graph.html with fewer dots
-repo2graph stats -o .r2g                # dots, arrows, functions, errors
+repo2graph map -o .r2g --viz-nodes 80    # redraw graph.html with fewer dots
+repo2graph stats -o .r2g                 # raw stats.json, verbatim (default)
+repo2graph stats -o .r2g --format text   # human-readable quality summary
 ```
+
+`stats` prints `agent/stats.json` verbatim by default — that has always been the
+default, and `--json` is just an explicit way to ask for it. Pass `--format text`
+for a formatted summary of the same counts, covering:
+- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
+- **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
+- **Import resolution**: `imports_resolved` vs `imports_unresolved`.
+- **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.
 
 ## The two `--budget` flags count different things
 
@@ -262,6 +283,8 @@ it, while `rag` has to promise an LLM that the thing it is handed fits.
    outwards (the base classes) and `IMPORTS` outwards (the modules it borrows
    from).
 4. **Then the budget.** Blocks are added best-first until the budget is used up.
+
+<a id="answer-sends-your-code-elsewhere"></a>
 
 ## ⚠️ `--answer` sends your code to someone else's computer
 
@@ -300,3 +323,85 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
 
 Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
 `claude-haiku-4-5` and `llama3.1`); pass `--model` to override.
+
+## `doctor` — diagnose the environment and artifacts
+
+```bash
+repo2graph doctor [path] [--json]
+```
+
+Inspects the runtime environment and index directory for common configuration,
+permission, dependency, or artifact integrity issues:
+
+- **Python version**: checks that Python is >= 3.10.
+- **Tree-sitter & grammars**: checks that `tree-sitter` and `tree-sitter-language-pack` are installed and verifies all supported language grammars.
+- **Git integration**: verifies `git` executable availability and non-ASCII path support.
+- **Directory permissions**: verifies write permissions in the target directory.
+- **Artifact integrity**: validates `manifest.json`, `chunks.jsonl`, `nodes.jsonl`, and `edges.jsonl` if an index exists.
+- **Dense vector integrity**: checks `vectors.npy` and `vectors.meta.json` correspondence with `chunks.jsonl`.
+- **MCP SDK**: verifies installed `mcp` version compatibility.
+- **LLM providers**: checks if provider environment variables are configured without ever disclosing the secret values.
+- **Platform encoding**: checks console and filesystem encoding to detect potential charmap limitations.
+
+Pass `--json` for machine-readable JSON output suitable for CI or automation. Exits with code 0 if all checks pass, or 1 if any critical check fails.
+
+## `explain-path` — explain file inclusion or exclusion
+
+```bash
+repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
+                         [--include-vendor] [--include-secrets] [--json]
+```
+
+Evaluates one path against the same rules `build`'s discovery uses, and reports
+the single rule that decided it — not a trace of every rule that was checked.
+`<path>` is relative to `-r`/`--repo` (default: the current directory) or
+absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
+There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
+no size flags, so it cannot explain a build that used them: the size check
+below is always evaluated against the 1.5 MB `--max-file-mb` default with
+`--chunk-large-files` off, whatever the build was actually run with.
+
+```bash
+$ repo2graph explain-path repo2graph/cli.py
+Path:            E:\Github\repo2graph\repo2graph\cli.py
+Relative Path:   repo2graph/cli.py
+Decision:        INCLUDED
+Precedence Step: 10
+Rule:            included
+Reason:          Path passed all exclusion checks and is eligible for indexing
+
+$ repo2graph explain-path .git/config
+Path:            E:\Github\repo2graph\.git\config
+Relative Path:   .git/config
+Decision:        EXCLUDED
+Precedence Step: 2
+Rule:            skip_dir
+Reason:          Path component '.git' is in excluded dot-directory filter (DEFAULT_SKIP_DIRS/--exclude-dir)
+```
+
+`--json` returns the same facts as data: `path`, `relative_path`, `included`,
+`rule`, `reason`, `precedence_step`.
+
+### Precedence order
+
+`explain_path` (`repo2graph/parse.py`) checks rules in this order and stops at
+the first match:
+
+| Step | Rule | What it means |
+| --- | --- | --- |
+| 0 | `outside_root` | The path resolves outside `-r`/`--repo`. |
+| 1 | `not_found` | The path does not exist on disk. |
+| 2 | `skip_dir` | A path component is a dot-directory, or is in `DEFAULT_SKIP_DIRS` / `--exclude-dir` (`vendor/` only counts here when `--include-vendor` is off). |
+| 3 | `internal_lock` | The path is a sibling `.*.r2glock` build-lock file. |
+| 4 | `gitignore` | `.gitignore` excludes it, checked with `git check-ignore` — only when `-r` is a git checkout. |
+| 5 | `non_regular_file` (or `stat_error`) | Not a regular file — a directory, symlink, device or FIFO — or `lstat` itself failed. |
+| 6 | `too_large` | Bigger than `--max-file-mb` (default 1.5 MB) and `--chunk-large-files` is off. |
+| 7 | `secret_file` | Matches a secret/credential path pattern and `--include-secrets` is off. |
+| 8 | `not_included` | `--include` globs were given and the path matches none of them. |
+| 9 | `exclude_glob` | The path matches an `--exclude` glob. |
+| 10 | `binary` or `included` | A null byte in the first 4 KB marks it binary; otherwise every check passed. |
+
+Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `included`)
+tells them apart, `precedence_step` is `10` either way.
+
+

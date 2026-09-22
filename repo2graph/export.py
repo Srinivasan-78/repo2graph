@@ -4,21 +4,39 @@ import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import threading
+import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import IO, TYPE_CHECKING, Any
 
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
+
+if TYPE_CHECKING:
+    # Type-only: `graph` imports the tree-sitter stack, and this module is the
+    # lower of the two -- query.py imports export.py, and a query-only install
+    # must not pull a parser in. The two runtime uses below are function-local
+    # imports for exactly that reason.
+    from .graph import Graph
 
 HUMAN_DIR = "human"
 AGENT_DIR = "agent"
 
+# A node, edge or artifact record. Values are whatever the graph put there.
+Record = dict[str, Any]
+# (x, y) in points, and (width, height) in points.
+Point = tuple[float, float]
+Size = tuple[float, float]
+
 
 @contextmanager
-def atomic_write(path: Path, mode: str = "w", **open_kw):
+def atomic_write(path: Path, mode: str = "w", **open_kw: Any) -> Iterator[IO[Any]]:
     """Write via a sibling temp file renamed onto `path` only on a clean exit.
 
     A crash, exception or Ctrl-C mid-write then leaves the previous artifact (or
@@ -69,16 +87,16 @@ def rel(name: str) -> str:
     return rels(name)[0]
 
 
-def path(outdir, name) -> Path:
+def path(outdir: Path | str, name: str) -> Path:
     """The path an artifact is read back from."""
     return Path(outdir) / rel(name)
 
 
-def paths(outdir, name) -> list[Path]:
+def paths(outdir: Path | str, name: str) -> list[Path]:
     return [Path(outdir) / r for r in rels(name)]
 
 
-def make_path(outdir, name) -> Path:
+def make_path(outdir: Path | str, name: str) -> Path:
     """Like path(), but creates the section directory first."""
     p = path(outdir, name)
     if not p.parent.is_dir():
@@ -86,7 +104,7 @@ def make_path(outdir, name) -> Path:
     return p
 
 
-def make_paths(outdir, name) -> list[Path]:
+def make_paths(outdir: Path | str, name: str) -> list[Path]:
     out = paths(outdir, name)
     for p in out:
         if not p.parent.is_dir():
@@ -97,13 +115,13 @@ def make_paths(outdir, name) -> list[Path]:
 SCALAR = (str, int, float, bool)
 
 
-def _flat(d: dict) -> dict:
+def _flat(d: Mapping[str, Any]) -> dict[str, Any]:
     return {
         k: (v if isinstance(v, SCALAR) else json.dumps(v)) for k, v in d.items() if v is not None
     }
 
 
-def write_jsonl(path: Path, rows) -> int:
+def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
     """Stream `rows` to `path` as JSONL; return how many were written.
 
     newline="\n" (ISS-28) + atomic: a crash mid-write must not leave a truncated
@@ -132,14 +150,14 @@ CHAR_WIDTH = 7.0
 _NEIGHBOR_CELLS = ((1, 0), (1, 1), (0, 1), (-1, 1))
 
 
-def _grid_pairs(pos, cell):
+def _grid_pairs(pos: Mapping[str, Any], cell: float) -> Iterator[tuple[str, str]]:
     """Yield the node pairs sitting within one grid cell of each other.
 
     Every pair lands in the same bucket or in two adjacent ones, and each
     unordered pair is yielded once: only four of the eight neighbouring cells
     are scanned, the other four see the pair from their own side.
     """
-    cells = defaultdict(list)
+    cells: dict[tuple[int, int], list[str]] = defaultdict(list)
     for nid, (x, y) in pos.items():
         cells[(int(x // cell), int(y // cell))].append(nid)
     for (cx, cy), members in cells.items():
@@ -151,7 +169,9 @@ def _grid_pairs(pos, cell):
                 yield a, b
 
 
-def _spring(nodes, adjacency, iterations):
+def _spring(
+    nodes: list[str], adjacency: list[tuple[str, str]], iterations: int
+) -> dict[str, Point]:
     """Fruchterman-Reingold in pure Python: networkx's needs numpy, we do not.
 
     Repulsion runs only between nodes less than 2k apart, bucketed on a grid.
@@ -199,7 +219,7 @@ def _spring(nodes, adjacency, iterations):
     return {nid: (xy[0], xy[1]) for nid, xy in pos.items()}
 
 
-def _shelf(nodes, sizes, pad: float = 24.0):
+def _shelf(nodes: list[str], sizes: Mapping[str, Size], pad: float = 24.0) -> dict[str, Point]:
     """Row-pack the boxes for graphs too big to force-lay-out in Python.
 
     Rows are filled in node order, which keeps a file next to the symbols it
@@ -207,7 +227,7 @@ def _shelf(nodes, sizes, pad: float = 24.0):
     """
     area = sum((sizes[nid][0] + pad) * (sizes[nid][1] + pad) for nid in nodes)
     row_width = max(math.sqrt(area * 1.6), max(sizes[nid][0] for nid in nodes) + pad)
-    pos = {}
+    pos: dict[str, Point] = {}
     x = y = row_height = 0.0
     for nid in nodes:
         width, height = sizes[nid]
@@ -225,7 +245,7 @@ def _shelf(nodes, sizes, pad: float = 24.0):
 SPRING_MAX_NODES = 1500
 
 
-def _layout(g, sizes):
+def _layout(g: "Graph", sizes: Mapping[str, Size]) -> dict[str, Point]:
     """Node positions in points, spread so labels do not collide."""
     nodes = list(g.nodes)
     n = len(nodes)
@@ -235,8 +255,8 @@ def _layout(g, sizes):
         return {nodes[0]: (0.0, 0.0)}
     if n > SPRING_MAX_NODES:
         return _shelf(nodes, sizes)
-    seen = set()
-    adjacency = []
+    seen: set[tuple[str, str]] = set()
+    adjacency: list[tuple[str, str]] = []
     for e in g.edges:
         u, v = e["src"], e["dst"]
         if u != v:
@@ -258,13 +278,15 @@ def _layout(g, sizes):
     return _separate(pos, sizes, 200 if n <= 400 else 60 if n <= 800 else 25)
 
 
-def _node_size(label: str, degree: int) -> tuple[float, float]:
+def _node_size(label: str, degree: int) -> Size:
     """Box a node needs: wide enough for its label, bigger for hubs."""
     scale = min(2.5, 1.0 + degree / 40.0)
     return max(60.0, len(label) * CHAR_WIDTH + 16.0) * scale, NODE_HEIGHT * scale
 
 
-def _separate(pos, sizes, iterations):
+def _separate(
+    pos: dict[str, Point], sizes: Mapping[str, Size], iterations: int
+) -> dict[str, Point]:
     """Push overlapping boxes apart; the spring layout only knows points.
 
     The grid cell is as wide as the widest box, so two overlapping boxes always
@@ -323,7 +345,7 @@ def _xml_safe(text: str) -> str:
     )
 
 
-def write_graphml(g, path: Path):
+def write_graphml(g: "Graph", path: Path) -> None:
     degree = Counter(e["src"] for e in g.edges) + Counter(e["dst"] for e in g.edges)
     labels = {nid: node_label(n) for nid, n in g.nodes.items()}
     sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in g.nodes}
@@ -347,7 +369,7 @@ def write_graphml(g, path: Path):
     # One data key per attribute name, typed from the values it carries.
     keys: dict[tuple[str, str], str] = {}
 
-    def key_for(scope: str, name: str, value) -> str:
+    def key_for(scope: str, name: str, value: Any) -> str:
         ident = keys.get((scope, name))
         if ident is None:
             ident = f"d{len(keys)}"
@@ -373,7 +395,7 @@ def write_graphml(g, path: Path):
         f"{{{GRAPHML_NS}}}graph", {"id": _xml_safe(str(g.name)), "edgedefault": "directed"}
     )
 
-    def add_data(parent, scope: str, attrs: dict):
+    def add_data(parent: ET.Element, scope: str, attrs: Mapping[str, Any]) -> None:
         for name, value in attrs.items():
             data = ET.SubElement(
                 parent, f"{{{GRAPHML_NS}}}data", {"key": key_for(scope, name, value)}
@@ -446,7 +468,7 @@ def write_graphml(g, path: Path):
         fh.write(b"\n")
 
 
-def _cy(v):
+def _cy(v: Any) -> str:
     return json.dumps(v if isinstance(v, SCALAR) else json.dumps(v))
 
 
@@ -458,7 +480,7 @@ def _cy_key(k: str) -> str:
     return "`" + k.replace("`", "``") + "`"
 
 
-def write_cypher(g, path: Path):
+def write_cypher(g: "Graph", path: Path) -> None:
     lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
         lab = n["type"].capitalize()
@@ -482,7 +504,7 @@ def write_cypher(g, path: Path):
         fh.write("\n".join(lines) + "\n")
 
 
-def write_overview(g, path: Path, top: int = 25):
+def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     """Human/LLM-readable repo map: top directories, hub files, entry points."""
     indeg: Counter[str] = Counter()
     outdeg: Counter[str] = Counter()
@@ -517,7 +539,7 @@ def write_overview(g, path: Path, top: int = 25):
         fh.write("\n".join(out))
 
 
-def _git_short_sha(root) -> str | None:
+def _git_short_sha(root: Path | str) -> str | None:
     """The short commit `root` was built at, or None outside a git repo.
 
     Same subprocess pattern as graph.add_cochange / walker._git_files (see
@@ -556,10 +578,11 @@ _SKIP_STAT_LABELS = (
     ("skipped_vendor", "vendor/build folders"),
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
+    ("skipped_secret", "secret / credential files"),
 )
 
 
-def write_overview_human(g, path: Path, top: int = 25):
+def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
     """Structured, scannable repo map for `human/overview.md`.
 
     Unlike `write_overview` (still the agent/overview.md prose, unchanged),
@@ -783,8 +806,16 @@ def _fanout(text: str, max_call_candidates: int) -> str:
     return text.replace("{n}", str(max_call_candidates))
 
 
-def write_manifest(g, path: Path, written: list[str]):
-    """Describe the agent-facing output so a reader needs no other docs."""
+def write_manifest(
+    g: Any, path: Path, written: list[str], *, checksums: dict[str, Any] | None = None
+) -> None:
+    """Describe the agent-facing output so a reader needs no other docs.
+
+    `g` is `Any`, not `Graph`, on purpose: every read below is a defaulted
+    `getattr`, and the contract this function has always offered -- see the
+    `max_call_candidates` note -- is that anything quacking like a Graph is
+    accepted. Narrowing the annotation would document a promise it does not make.
+    """
     # Imported here, not at module scope, for the same reason PARSE_CACHE_FORMAT
     # is below: export is the lower layer of the two and query.py imports it.
     from .graph import DEFAULT_MAX_CALL_CANDIDATES
@@ -802,10 +833,41 @@ def write_manifest(g, path: Path, written: list[str]):
         (n for n in g.nodes.values() if n.get("entrypoint")),
         key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
     )
+    cfg = getattr(g, "config", None)
+    if cfg and getattr(cfg, "include_secrets", False):
+        secret_filter_policy = "include-secrets"
+    else:
+        secret_filter_policy = (
+            getattr(cfg, "secret_policy", "redact-match") if cfg else "redact-match"
+        )
+
+    # --- Provenance: build ID, tool version, and source revision ---
+    try:
+        from . import __version__ as _tool_ver
+    except Exception:
+        _tool_ver = "unknown"
+
+    source_revision: dict[str, Any] = {}
+    try:
+        from .integrity import get_source_provenance
+
+        root = getattr(g, "root", None)
+        if root is not None:
+            source_revision = get_source_provenance(root)
+    except Exception:
+        pass
+
     manifest = {
         "format": "repo2graph/1",
+        "build_id": str(_uuid_mod.uuid4()),
+        "tool_version": _tool_ver,
+        "schema_version": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "source_revision": source_revision,
+        "checksums": checksums or {},
         "repo": g.name,
         "written": written,
+        "secret_filter_policy": secret_filter_policy,
         "sections": {
             HUMAN_DIR: "for people: prose map and drawings",
             AGENT_DIR: "for programs: the graph, the chunks, this manifest",
@@ -838,6 +900,18 @@ def write_manifest(g, path: Path, written: list[str]):
             "text",
         ],
         "counts": dict(g.stats),
+        "quality_metrics": {
+            "files_discovered": g.stats.get("files", 0),
+            "files_parsed": g.stats.get("parsed", 0),
+            "parse_errors": g.stats.get("parse_errors", 0),
+            "files_with_parse_errors": g.stats.get("files_with_parse_errors", 0),
+            "imports_resolved": g.stats.get("imports_resolved", 0),
+            "imports_unresolved": g.stats.get("imports_unresolved", 0),
+            "calls_scoped": g.stats.get("calls_scoped", 0),
+            "calls_unique_global": g.stats.get("calls_unique_global", 0),
+            "calls_ambiguous": g.stats.get("calls_ambiguous", 0),
+            "calls_external": g.stats.get("calls_external", 0),
+        },
         "entrypoints": [
             {
                 "id": n["id"],
@@ -881,7 +955,7 @@ STATE_FORMAT = "repo2graph/state-1"
 INDEX_SCHEMA_VERSION = "1"
 
 
-def _stats_extra(g) -> dict:
+def _stats_extra(g: "Graph") -> dict[str, Any]:
     """Additive stats.json fields, computed live from `g` at write time.
 
     Never re-read from nodes.jsonl/edges.jsonl -- dump_all always has the
@@ -896,7 +970,7 @@ def _stats_extra(g) -> dict:
         (n for n in g.nodes.values() if n["type"] in ("file", "symbol") and indeg[n["id"]]),
         key=lambda n: -indeg[n["id"]],
     )[:10]
-    extra: dict = {
+    extra: dict[str, Any] = {
         "top_hub_nodes": [
             {
                 "node_id": n["id"],
@@ -933,7 +1007,7 @@ def _stats_extra(g) -> dict:
     return extra
 
 
-def _mark_has_vectors(outdir) -> None:
+def _mark_has_vectors(outdir: Path | str) -> None:
     """Flip stats.json's has_vectors to True after `embed` writes vectors.npy.
 
     Best-effort, same as register_written: a missing or unreadable stats.json
@@ -953,15 +1027,15 @@ def _mark_has_vectors(outdir) -> None:
         fh.write(json.dumps(stats, indent=2) + "\n")
 
 
-def register_written(outdir, names) -> bool:
-    """Merge `names` into an existing manifest's `written` and `files`.
+def register_written(outdir: Path | str, names: Iterable[str]) -> bool:
+    """Merge `names` into an existing manifest's `written`, `files`, and `checksums`.
 
     `embed` runs after `build` as a separate command, so it must append to the
     manifest dump_all already wrote rather than rewrite it: every other key --
     counts, entrypoints, how_to_read -- is left exactly as it was. Returns
     False when there is no readable manifest to append to.
     """
-    names = list(names)
+    name_list = list(names)
     target = path(outdir, "manifest.json")
     try:
         with open(target, encoding="utf8", newline="\n") as fh:
@@ -972,22 +1046,33 @@ def register_written(outdir, names) -> bool:
         return False
     written = [w for w in (manifest.get("written") or []) if isinstance(w, str)]
     files = dict(manifest.get("files") or {})
-    for name in names:
+    checksums = dict(manifest.get("checksums") or {})
+    for name in name_list:
         if name not in written:
             written.append(name)
         base = name.split("/", 1)[-1]
         if base in FILE_NOTES:
             files[base] = FILE_NOTES[base]
+        # Compute checksum for the newly registered file if it exists
+        artifact_file = Path(outdir) / name
+        if artifact_file.exists():
+            try:
+                from .integrity import compute_file_checksum
+
+                checksums[name] = compute_file_checksum(artifact_file)
+            except Exception:
+                pass
     manifest["written"] = written
     manifest["files"] = files
+    manifest["checksums"] = checksums
     with atomic_write(target, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(manifest, indent=2) + "\n")
-    if any(name.split("/", 1)[-1] == "vectors.npy" for name in names):
+    if any(name.split("/", 1)[-1] == "vectors.npy" for name in name_list):
         _mark_has_vectors(outdir)
     return True
 
 
-def write_state(g, path: Path, n_chunks: int):
+def write_state(g: "Graph", path: Path, n_chunks: int) -> None:
     """The per-file content hashes a later incremental build reads back."""
     state = {
         "format": STATE_FORMAT,
@@ -998,7 +1083,7 @@ def write_state(g, path: Path, n_chunks: int):
         fh.write(json.dumps(state, indent=2) + "\n")
 
 
-def write_parse_cache(g, path: Path):
+def write_parse_cache(g: "Graph", path: Path) -> None:
     """Write the per-file parse cache the next `--incremental` build reads.
 
     Args:
@@ -1016,7 +1101,7 @@ def write_parse_cache(g, path: Path):
         fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def load_parse_cache(outdir: Path) -> dict:
+def load_parse_cache(outdir: Path) -> dict[str, Any]:
     """Read a previous build's parse cache out of an index directory.
 
     Every failure mode -- no index, no cache file, unreadable, malformed JSON,
@@ -1044,44 +1129,134 @@ def load_parse_cache(outdir: Path) -> dict:
     return files if isinstance(files, dict) else {}
 
 
-def dump_all(g, chunks, outdir: Path, formats: set[str], viz_nodes: int = MAX_NODES):
+def _atomic_dir_swap(staging: Path, target: Path) -> None:
+    """Atomically replace target directory with staging directory.
+
+    On Windows, os.replace doesn't work for non-empty directories, so we use
+    a rename dance: target -> backup, staging -> target, then remove backup.
+    If the staging rename fails, we restore the backup.
+    """
+    if not target.exists():
+        staging.rename(target)
+        return
+
+    backup = target.parent / f".{target.name}.backup.{os.getpid()}"
+    # Ensure no stale backup from a prior crash
+    if backup.exists():
+        shutil.rmtree(backup, ignore_errors=True)
+    target.rename(backup)
+    try:
+        staging.rename(target)
+    except Exception:
+        # Rollback: restore the backup
+        try:
+            backup.rename(target)
+        except Exception:
+            pass
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
+# Files produced by commands OTHER than dump_all (embed, github) that must be
+# preserved when the staging dir is swapped in over the real outdir.
+_PRESERVE_ACROSS_BUILDS = (
+    "agent/vectors.npy",
+    "agent/vectors.meta.json",
+    "agent/index.json",
+)
+
+
+def dump_all(
+    g: "Graph",
+    chunks: Iterable[Record] | None,
+    outdir: Path,
+    formats: set[str],
+    viz_nodes: int = MAX_NODES,
+) -> tuple[list[str], int]:
     """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
-    build_chunks generator) or None. Returns (written_paths, chunk_count)."""
-    outdir = Path(outdir)
+    build_chunks generator) or None. Returns (written_paths, chunk_count).
+
+    Artifacts are staged in a sibling directory and atomically swapped into
+    outdir on success; a failed or interrupted build never leaves a partial
+    index behind.
+    """
+    outdir = Path(outdir).resolve()
     if outdir.exists() and not outdir.is_dir():
         raise ValueError(f"output path exists and is not a directory: {outdir}")
-    outdir.mkdir(parents=True, exist_ok=True)
-    written = []
+
+    # Create a sibling staging directory for atomic swap
+    staging_dir = outdir.parent / (
+        f".{outdir.name}.staging.{os.getpid()}.{_uuid_mod.uuid4().hex[:8]}"
+    )
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    # Preserve files written by other commands (embed, github) so they survive
+    # the directory swap.
+    if outdir.is_dir():
+        for preserved in _PRESERVE_ACROSS_BUILDS:
+            src = outdir / preserved
+            if src.exists():
+                dst = staging_dir / preserved
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+
+    written: list[str] = []
     n_chunks = 0
 
     def out(name: str) -> list[Path]:
         written.extend(rels(name))
-        return make_paths(outdir, name)
+        return make_paths(staging_dir, name)
 
-    if "jsonl" in formats:
-        write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
-        write_jsonl(out("edges.jsonl")[0], g.edges)
-    if chunks is not None:
-        # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
-        n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
-    if "graphml" in formats:
-        write_graphml(g, out("graph.graphml")[0])
-    if "cypher" in formats:
-        write_cypher(g, out("graph.cypher")[0])
-    if "overview" in formats:
-        # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
-        # structured, scannable map for a person; agent/ keeps the terse prose
-        # write_overview has always produced -- GraphRAG's repo-map protocol
-        # (query.Index.overview / pack_context) reads the agent copy and must
-        # not see the new tables.
-        human, agent = out("overview.md")
-        write_overview_human(g, human)
-        write_overview(g, agent)
-    if "html" in formats:
-        write_html(g, out("graph.html")[0], viz_nodes)
-    with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
-        fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
-    write_state(g, out("index.state.json")[0], n_chunks)
-    write_parse_cache(g, out("parse.cache.json")[0])
-    write_manifest(g, out("manifest.json")[0], written)
+    try:
+        if "jsonl" in formats:
+            write_jsonl(out("nodes.jsonl")[0], g.nodes.values())
+            write_jsonl(out("edges.jsonl")[0], g.edges)
+        if chunks is not None:
+            # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
+            n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
+        if "graphml" in formats:
+            write_graphml(g, out("graph.graphml")[0])
+        if "cypher" in formats:
+            write_cypher(g, out("graph.cypher")[0])
+        if "overview" in formats:
+            # SECTIONS["overview.md"] = (HUMAN_DIR, AGENT_DIR): human/ gets the
+            # structured, scannable map for a person; agent/ keeps the terse prose
+            # write_overview has always produced -- GraphRAG's repo-map protocol
+            # (query.Index.overview / pack_context) reads the agent copy and must
+            # not see the new tables.
+            human, agent = out("overview.md")
+            write_overview_human(g, human)
+            write_overview(g, agent)
+        if "html" in formats:
+            write_html(g, out("graph.html")[0], viz_nodes)
+        with atomic_write(out("stats.json")[0], "w", encoding="utf8", newline="\n") as fh:
+            fh.write(json.dumps({**dict(g.stats), **_stats_extra(g)}, indent=2) + "\n")
+        write_state(g, out("index.state.json")[0], n_chunks)
+        write_parse_cache(g, out("parse.cache.json")[0])
+
+        # Compute checksums for all artifacts written so far (before manifest)
+        checksums: dict[str, str] = {}
+        try:
+            from .integrity import compute_file_checksum
+
+            for rel_path in written:
+                p = staging_dir / rel_path
+                if p.exists():
+                    try:
+                        checksums[rel_path] = compute_file_checksum(p)
+                    except OSError:
+                        pass
+        except Exception:
+            pass  # Checksum failure is non-fatal; manifest still gets written
+
+        write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
+
+        # All writes succeeded: swap staging -> outdir atomically
+        _atomic_dir_swap(staging_dir, outdir)
+
+    except BaseException:
+        # Clean up staging on any failure, leaving the previous build intact
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+
     return written, n_chunks

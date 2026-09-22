@@ -10,29 +10,7 @@
       "start_line": 1,
       "end_line": 171,
       "why": "lexical",
-      "score": 7.535
-    },
-    {
-      "node_id": "sym:tensorflow/python/eager/polymorphic_function/attributes.py::parse_func_attrs",
-      "path": "tensorflow/python/eager/polymorphic_function/attributes.py",
-      "lang": "python",
-      "kind": "function",
-      "name": "parse_func_attrs",
-      "start_line": 160,
-      "end_line": 184,
-      "why": "lexical",
-      "score": 6.824
-    },
-    {
-      "node_id": "sym:tensorflow/python/framework/experimental/_nn_ops.pyi::sparse_softmax_cross_entropy_with_logits",
-      "path": "tensorflow/python/framework/experimental/_nn_ops.pyi",
-      "lang": "python",
-      "kind": "function",
-      "name": "sparse_softmax_cross_entropy_with_logits",
-      "start_line": 17,
-      "end_line": 17,
-      "why": "lexical",
-      "score": 6.792
+      "score": 6.663
     },
     {
       "node_id": "sym:tensorflow/python/framework/experimental/nn_ops.py::sparse_softmax_cross_entropy_with_logits",
@@ -43,7 +21,29 @@
       "start_line": 26,
       "end_line": 29,
       "why": "lexical",
-      "score": 6.683
+      "score": 6.55
+    },
+    {
+      "node_id": "sym:tensorflow/core/common_runtime/optimize_cross_host_control_deps_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/optimize_cross_host_control_deps_test.cc",
+      "lang": "cpp",
+      "kind": "function",
+      "name": "tensorflow.TEST",
+      "start_line": 228,
+      "end_line": 254,
+      "why": "lexical",
+      "score": 6.218
+    },
+    {
+      "node_id": "sym:tensorflow/python/eager/record_test.py::TapeTest.testGcTwoOutputs.fn",
+      "path": "tensorflow/python/eager/record_test.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "TapeTest.testGcTwoOutputs.fn",
+      "start_line": 148,
+      "end_line": 150,
+      "why": "CALLS in of sparse_softmax_cross_entropy_with_logits",
+      "score": 0.0
     }
   ]
 }

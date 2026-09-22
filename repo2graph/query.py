@@ -4,10 +4,52 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from .export import path as artifact_path
 from .export import paths as artifact_paths
+
+from .secrets import (
+    SECRET_CONFIG_EXTS,
+    SECRET_DIR_NAMES,
+    SECRET_EXACT_NAMES,
+    SECRET_EXTS,
+    SECRET_KEYWORDS,
+    SECRET_WORD_RE,
+    _is_secret_path,
+)
+
+__all__ = [
+    "Index",
+    "SECRET_CONFIG_EXTS",
+    "SECRET_DIR_NAMES",
+    "SECRET_EXACT_NAMES",
+    "SECRET_EXTS",
+    "SECRET_KEYWORDS",
+    "SECRET_WORD_RE",
+    "_is_secret_path",
+    "format_pack",
+    "read_jsonl",
+    "tokenize",
+]
+
+if TYPE_CHECKING:
+    # Type-only: `embed` pulls the optional `rag` extra, and every runtime use
+    # below is a lazy import inside a function so a query-only install never
+    # needs it. A TYPE_CHECKING import keeps that promise at runtime.
+    from .embed import Embedder
+
+# A JSONL record -- a chunk, node or edge as read off disk. `Any` on the value
+# is honest rather than lazy: the files are documented as inspectable and
+# hand-editable, so a value's type is whatever the file actually holds, which
+# is why the readers below use `.get(...) or <default>` throughout.
+Record = dict[str, Any]
+# One embedding. A Sequence, not list[float], so a numpy row from a real
+# sentence-transformers encode() satisfies it without a conversion.
+Vector = Sequence[float]
+_T = TypeVar("_T")
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
@@ -44,7 +86,7 @@ DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # reads `dirs.get(etype)` and treats a missing entry as "no direction filter".
 # retrieve() passes this explicitly so that DEFAULT_EDGE_DIRS, which exists for
 # pack_context(), can never narrow what `repo2graph query` has always returned.
-ALL_EDGE_DIRS: dict = {}
+ALL_EDGE_DIRS: dict[str, tuple[str, ...]] = {}
 
 # Token accounting. 4 characters per token is the usual English/code rule of
 # thumb; it under-counts dense code and CJK, which is why pack_context takes a
@@ -56,157 +98,15 @@ MAP_BUDGET_FRAC = 0.2  # at most this share of the budget goes to the map
 MAP_ENTRYPOINTS = 10  # entry points listed in the map prepend
 PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
 
-# Sensitive file detection for pack_context(exclude_secrets=True)
-SECRET_EXTS = frozenset(
-    {
-        ".pem",
-        ".key",
-        ".p12",
-        ".pfx",
-        ".pkcs12",
-        ".p8",
-        ".asc",
-        ".gpg",
-        ".der",
-        ".cer",
-        ".crt",
-        ".ovpn",
-        ".kdbx",
-        ".keystore",
-        ".jks",
-    }
-)
-SECRET_CONFIG_EXTS = frozenset(
-    {
-        ".json",
-        ".yaml",
-        ".yml",
-        ".toml",
-        ".xml",
-        ".ini",
-        ".env",
-        ".properties",
-        ".conf",
-        ".cfg",
-        ".txt",
-    }
-)
-SECRET_KEYWORDS = (
-    "secret",
-    "credential",
-    "token",
-    "service-account",
-    "service_account",
-    "password",
-    "id_rsa",
-    "id_ed25519",
-    "id_ecdsa",
-    "id_dsa",
-)
-SECRET_EXACT_NAMES = frozenset(
-    {
-        ".netrc",
-        ".npmrc",
-        ".dockercfg",
-        ".git-credentials",
-        ".pgpass",
-        ".htpasswd",
-        "id_rsa",
-        "id_dsa",
-        "id_ecdsa",
-        "id_ed25519",
-    }
-)
-SECRET_DIR_NAMES = frozenset(
-    {
-        ".ssh",
-        ".aws",
-        ".kube",
-        "secrets",
-        "credentials",
-    }
-)
-SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
 
-
-def _is_secret_path(
-    path: str,
-    extra_keywords: tuple[str, ...] | list[str] | set[str] | None = None,
-    extra_dirs: tuple[str, ...] | list[str] | set[str] | None = None,
-) -> bool:
-    """Return True if path points to a sensitive file (secrets, keys, credentials)."""
-    if not path:
-        return False
-    p = str(path).replace("\\", "/").lower()
-    parts = p.strip("/").split("/")
-    # Only single-segment extra_dirs go into dir_names; multi-segment dirs
-    # (e.g. "configs/secrets") are matched via prefix check below so we don't
-    # inadvertently treat "configs" itself as a secret directory.
-    single_segment_extra = (
-        {
-            d.replace("\\", "/").strip("/").lower()
-            for d in extra_dirs
-            if d and d.strip() and "/" not in d.replace("\\", "/").strip("/")
-        }
-        if extra_dirs
-        else set()
-    )
-    dir_names = (
-        SECRET_DIR_NAMES | single_segment_extra if single_segment_extra else SECRET_DIR_NAMES
-    )
-    if any(part in dir_names for part in parts[:-1]):
-        return True
-    # Multi-segment extra_dirs: match when any extra_dir is a prefix of the
-    # directory portion of the path (e.g. "configs/secrets" matches
-    # "configs/secrets/token.json").
-    if extra_dirs:
-        dir_path = "/".join(parts[:-1])
-        for d in extra_dirs:
-            if not d or not d.strip():
-                continue
-            norm_d = d.replace("\\", "/").strip("/").lower()
-            # Match exact prefix segment boundary: "a/b" matches "a/b" or "a/b/c"
-            # but not "a/bc".
-            if dir_path == norm_d or dir_path.startswith(norm_d + "/"):
-                return True
-    name = parts[-1]
-    if not name:
-        return False
-    if name in SECRET_EXACT_NAMES:
-        return True
-    if name.startswith(".env") or name.endswith(".env") or ".env." in name:
-        return True
-    if any(name.endswith(ext) for ext in SECRET_EXTS):
-        return True
-    # Filter out empty/whitespace keywords so an empty string doesn't match
-    # every file in the repository.
-    if extra_keywords:
-        valid_kws = [kw.lower() for kw in extra_keywords if kw and kw.strip()]
-        if any(kw in name for kw in valid_kws):
-            return True
-    name_words = None
-    for kw in SECRET_KEYWORDS:
-        if kw == "token":
-            if name_words is None:
-                name_words = SECRET_WORD_RE.findall(name)
-            if "token" not in name_words:
-                continue
-        elif kw not in name:
-            continue
-        stem = name.lstrip(".")
-        if "." not in stem or any(name.endswith(ext) for ext in SECRET_CONFIG_EXTS):
-            return True
-    return False
-
-
-def read_jsonl(path: Path) -> list:
+def read_jsonl(path: Path) -> list[Record]:
     """Load a JSONL file written by export.write_jsonl.
 
     newline="\n" matters: json.dumps(ensure_ascii=False) passes U+2028, U+2029
     and U+0085 through verbatim, and both str.splitlines() and universal-newline
     mode treat those as line breaks, which would cut records in half.
     """
-    rows = []
+    rows: list[Record] = []
     with open(path, encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for lineno, line in enumerate(fh, 1):
             if not line.strip():
@@ -230,7 +130,7 @@ _DEFAULT_MEASURE = count_tokens
 
 
 def tokenize(text: str) -> list[str]:
-    out = []
+    out: list[str] = []
     for t in TOKEN_RE.findall(text):
         low = t.lower()
         out.append(low)
@@ -250,7 +150,8 @@ class Index:
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
         self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
         self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
-        self.adj = defaultdict(list)
+        # node id -> (other node id, edge type, "in"|"out", the edge record)
+        self.adj: dict[str, list[tuple[str, str, str, Record]]] = defaultdict(list)
         for e in self.edges:
             # The edge record itself (not a copy) rides along: traversal needs
             # `confidence` on CALLS, and `count` on CO_CHANGE, without a lookup.
@@ -260,13 +161,13 @@ class Index:
         # `--formats jsonl` build writes no overview.md, and a build interrupted
         # before write_manifest leaves no manifest.json. Neither may raise here.
         self._overview: str | None = None
-        self._manifest: dict | None = None
-        self.by_node = defaultdict(list)
+        self._manifest: dict[str, Any] | None = None
+        self.by_node: dict[str, list[Record]] = defaultdict(list)
         for c in self.chunks:
             self.by_node[c["node_id"]].append(c)
         # inverted index: term -> [(chunk_index, term_count)], so scoring touches
         # only the chunks that contain a query term instead of every chunk.
-        self.df: Counter = Counter()
+        self.df: Counter[str] = Counter()
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lengths: list[int] = []
         for i, c in enumerate(self.chunks):
@@ -281,8 +182,8 @@ class Index:
         self.avgdl = (sum(self.lengths) / self.N) if self.N else BM25_AVG_LEN
         # Dense vectors are optional in every sense: absent, unreadable,
         # truncated or stale, the index still answers lexically.
-        self.vectors: dict[int, list[float]] | None = None
-        self.vector_meta: dict | None = None
+        self.vectors: dict[int, Vector] | None = None
+        self.vector_meta: dict[str, Any] | None = None
         self._load_vectors()
 
     def _load_vectors(self) -> None:
@@ -304,12 +205,12 @@ class Index:
             # OSError, ValueError, a malformed meta -- all the same answer.
             return
         pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
-        vectors = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
+        vectors: dict[int, Vector] = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
         if not vectors:
             return
         self.vectors, self.vector_meta = vectors, meta
 
-    def fuse_ok(self, embedder) -> tuple[bool, str]:
+    def fuse_ok(self, embedder: "Embedder") -> tuple[bool, str]:
         """May `embedder`'s query vectors be fused with this index's vectors?
 
         A silent model or width mismatch is worse than no vectors at all: the
@@ -369,7 +270,7 @@ class Index:
                 continue
         return ""
 
-    def _load_manifest(self) -> dict:
+    def _load_manifest(self) -> dict[str, Any]:
         try:
             with open(
                 artifact_path(self.dir, "manifest.json"), encoding="utf8", newline="\n"
@@ -392,13 +293,13 @@ class Index:
         self._overview = value
 
     @property
-    def manifest(self) -> dict:
+    def manifest(self) -> dict[str, Any]:
         if self._manifest is None:
             self._manifest = self._load_manifest()
         return self._manifest
 
     @manifest.setter
-    def manifest(self, value: dict) -> None:
+    def manifest(self, value: dict[str, Any]) -> None:
         self._manifest = value
 
     _is_secret_path = staticmethod(_is_secret_path)
@@ -423,7 +324,7 @@ class Index:
         scored.sort(reverse=True)
         return scored
 
-    def _boost_identifiers(self, query: str, acc: dict) -> None:
+    def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
         """Multiply the score of chunks the query names outright.
 
         A pinpoint query like `normalize_provider` should return the symbol, not
@@ -445,7 +346,12 @@ class Index:
             if names & idents or {n.lower() for n in names} & lowered:
                 acc[i] *= IDENT_BOOST
 
-    def score_rrf(self, query: str, vectors=None, embedder=None) -> list[tuple[float, int]]:
+    def score_rrf(
+        self,
+        query: str,
+        vectors: Mapping[Any, Vector] | None = None,
+        embedder: "Embedder | None" = None,
+    ) -> list[tuple[float, int]]:
         """BM25 fused with an optional dense ranking by reciprocal rank fusion.
 
         With neither `vectors` nor `embedder` this is exactly `score()` — the
@@ -486,7 +392,7 @@ class Index:
             range(len(candidates)), key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p])
         )
         vec_rank = {candidates[p]: r for r, p in enumerate(by_sim, 1)}
-        fused = []
+        fused: list[tuple[float, int]] = []
         for rank, (_s, i) in enumerate(base, 1):
             score = 1.0 / (RRF_K + rank)
             if i in vec_rank:
@@ -495,7 +401,13 @@ class Index:
         fused.sort(reverse=True)
         return fused
 
-    def _vectors_for(self, query, candidates, vectors, embedder):
+    def _vectors_for(
+        self,
+        query: str,
+        candidates: list[int],
+        vectors: Mapping[Any, Vector] | None,
+        embedder: "Embedder | None",
+    ) -> tuple[Vector | None, list[Vector], str]:
         """Query vector plus one vector per candidate, or a reason there is none.
 
         Args:
@@ -541,9 +453,14 @@ class Index:
             if reason:
                 return None, [], reason
             return qvec, cvecs, ""
+        if embedder is None:
+            # Unreachable from score_rrf, which returns before calling this when
+            # both are None. Stated as a reason rather than an assert because
+            # every other failure here is a reason, and a private helper that
+            # raises for one caller mistake and returns for the rest is worse.
+            return None, [], "no vectors mapping and no embedder to build one with"
         texts = [self.chunks[i].get("text") or "" for i in candidates]
-        encoded = embedder.encode([query] + texts)
-        encoded = list(encoded)
+        encoded: list[Vector] = list(embedder.encode([query] + texts))
         if len(encoded) != len(texts) + 1:
             return (
                 None,
@@ -557,8 +474,14 @@ class Index:
         return qvec, cvecs, ""
 
     def expand(
-        self, seed_nodes, hops=1, edge_types=None, per_hop=6, min_confidence=1.0, edge_dirs=None
-    ):
+        self,
+        seed_nodes: Iterable[str],
+        hops: int = 1,
+        edge_types: Iterable[str] | None = None,
+        per_hop: int = 6,
+        min_confidence: float = 1.0,
+        edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
+    ) -> list[tuple[str, str, str, str]]:
         """Walk `hops` edges out from `seed_nodes`, newest frontier first.
 
         `min_confidence` gates CALLS edges only: call resolution is name-based
@@ -567,9 +490,12 @@ class Index:
         never be dropped by the gate. `edge_dirs` maps an edge type to the
         directions worth following (see DEFAULT_EDGE_DIRS).
         """
-        edge_types = edge_types or DEFAULT_EDGE_TYPES
-        dirs = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs
-        seen, frontier, order = set(seed_nodes), list(seed_nodes), []
+        wanted = frozenset(edge_types) if edge_types else DEFAULT_EDGE_TYPES
+        dirs: Mapping[str, tuple[str, ...]] = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs
+        seed_list = list(seed_nodes)
+        seen: set[str] = set(seed_list)
+        frontier: list[str] = seed_list
+        order: list[tuple[str, str, str, str]] = []
         for _ in range(hops):
             if not frontier:
                 break
@@ -583,7 +509,7 @@ class Index:
                     break
                 added_for_nid = 0
                 for dst, etype, direction, edge in self.adj.get(nid, []):
-                    if etype not in edge_types or dst in seen:
+                    if etype not in wanted or dst in seen:
                         continue
                     allowed = dirs.get(etype)
                     if allowed is not None and direction not in allowed:
@@ -612,9 +538,9 @@ class Index:
         budget_chars: int = 24000,
         *,
         min_confidence: float | None = None,
-        vectors=None,
-        embedder=None,
-    ):
+        vectors: Mapping[Any, Vector] | None = None,
+        embedder: "Embedder | None" = None,
+    ) -> list[Record]:
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
         `budget_chars` bounds the sum of the returned chunks' `text` only — it
@@ -632,7 +558,7 @@ class Index:
             else self.score_rrf(query, vectors=vectors, embedder=embedder)
         )
         scored = ranked[: k * 3]
-        picked: list[dict] = []
+        picked: list[Record] = []
         seen_nodes_list: list[str] = []
         seen_nodes_set: set[str] = set()
         used = 0
@@ -707,14 +633,14 @@ class Index:
         budget_chars: int = 24000,
         min_confidence: float = 1.0,
         expand_graph: bool = True,
-        vectors=None,
-        embedder=None,
+        vectors: Mapping[Any, Vector] | None = None,
+        embedder: "Embedder | None" = None,
         exclude_secrets: bool = False,
         budget_tokens: int | None = None,
-        count_tokens=None,
+        count_tokens: Callable[[str], int] | None = None,
         extra_secret_keywords: tuple[str, ...] | list[str] | None = None,
         extra_secret_dirs: tuple[str, ...] | list[str] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """An agent-ready markdown pack: repo map, `---`, then cited chunks.
 
         `budget_chars` bounds the WHOLE returned markdown — map prepend, `---`
@@ -738,10 +664,11 @@ class Index:
         # len is the character measure, and it is additive, so the cumulative
         # accounting below reduces to exactly the arithmetic this method has
         # always done when budget_tokens is None (D1: byte-identical output).
-        measure = measure_tokens if use_tokens else len
+        measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
         bounded = budget > 0
-        seeds, seen_nodes = [], set()
+        seeds: list[Record] = []
+        seen_nodes: set[str] = set()
         for s, i in self.score_rrf(query, vectors=vectors, embedder=embedder)[: k * 3]:
             c = self.chunks[i]
             nid = c["node_id"]
@@ -758,7 +685,7 @@ class Index:
             if len(seeds) >= k:
                 break
 
-        neighbours = []
+        neighbours: list[Record] = []
         if expand_graph and seeds:
             for nid, etype, direction, src in self.expand(
                 [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
@@ -787,7 +714,7 @@ class Index:
         head = shown_map.rstrip("\n") + PACK_SEPARATOR if shown_map.strip() else ""
         truncated = shown_map != full_map
 
-        picked = []
+        picked: list[tuple[Record, str]] = []
         body = ""  # everything accepted so far, for cumulative measuring
 
         def fits(block: str) -> bool:
@@ -848,13 +775,13 @@ class Index:
         }
 
 
-def _first(seq):
+def _first(seq: Iterable[_T]) -> _T | None:
     for item in seq:
         return item
     return None
 
 
-def _has_vector(vectors, i) -> bool:
+def _has_vector(vectors: Any, i: int) -> bool:
     """True when `vectors` holds a vector for chunk index `i`.
 
     Used only to count what is missing for a diagnostic message, so it answers
@@ -866,7 +793,7 @@ def _has_vector(vectors, i) -> bool:
         return False
 
 
-def _dim_mismatch_reason(qvec, cvecs) -> str:
+def _dim_mismatch_reason(qvec: Vector, cvecs: Sequence[Vector]) -> str:
     """Empty when every candidate vector matches `qvec`'s width, else a reason.
 
     `zip()` truncates to the shorter operand, so a width mismatch (e.g. 768 vs
@@ -887,7 +814,7 @@ def _dim_mismatch_reason(qvec, cvecs) -> str:
     )
 
 
-def _cosine(a, b) -> float:
+def _cosine(a: Vector, b: Vector) -> float:
     """Cosine similarity over any two sequences of floats (no numpy needed).
 
     Raises `ValueError` on mismatched lengths rather than letting `zip()`
@@ -908,7 +835,7 @@ def _cosine(a, b) -> float:
     return num / math.sqrt(na * nb)
 
 
-def _fit_lines(text: str, limit: int, measure=len) -> str:
+def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> str:
     """The longest whole-line prefix of `text` that fits in `limit` units.
 
     The candidate is measured whole rather than line by line, so a measure that
@@ -945,7 +872,7 @@ def _compress(text: str) -> str:
     return "\n".join(kept)
 
 
-def _cite_block(chunk: dict, text: str) -> str:
+def _cite_block(chunk: Record, text: str) -> str:
     """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line."""
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
@@ -959,8 +886,8 @@ def _cite_block(chunk: dict, text: str) -> str:
     return f"{head}\n{disarmed}\n\n"
 
 
-def format_pack(results) -> str:
-    out = []
+def format_pack(results: Iterable[Record]) -> str:
+    out: list[str] = []
     for r in results:
         path = r.get("path") or ""
         qual = r.get("qualname") or r.get("name") or ""

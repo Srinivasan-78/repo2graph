@@ -46,32 +46,6 @@ from .query import (
 )
 
 
-def check_mcp_version(version_str: str | None = None):
-    import mcp
-
-    v_str = version_str or getattr(mcp, "__version__", None)
-    if not v_str:
-        try:
-            from importlib.metadata import version as _dist_version
-
-            v_str = _dist_version("mcp")
-        except Exception:
-            v_str = "1.0.0"
-        setattr(mcp, "__version__", v_str)
-    parts = []
-    for x in v_str.split(".")[:2]:
-        try:
-            parts.append(int(x))
-        except ValueError:
-            parts.append(0)
-    _mcp_version = tuple(parts)
-    if _mcp_version < (1, 0):
-        raise RuntimeError(
-            f"repo2graph requires mcp>=1.0, found {v_str}. "
-            "Run: pip install 'repo2graph[mcp]' to get the right version."
-        )
-
-
 # The formats a served index actually needs: `jsonl` carries the chunks, nodes
 # and edges every tool reads, `overview` is what repo_map hands back. The other
 # three (`html`, `graphml`, `cypher`) are for humans and other tools, and cost
@@ -701,7 +675,7 @@ def _unusable_sdk(version: str, detail: str) -> str:
     )
 
 
-def _require_sdk():
+def _require_sdk() -> Any:
     """Turn a missing *or unusable* optional dependency into an instruction.
 
     Two distinct failures, both of which must end in a sentence a user can act
@@ -1144,7 +1118,6 @@ def _auth_config(args):
         oidc_issuer=args.auth_oidc_issuer,
         audience=args.auth_audience,
         jwks_ttl=args.auth_jwks_ttl,
-        cimd=args.auth_cimd,
     )
 
 

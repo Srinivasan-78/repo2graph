@@ -1,21 +1,161 @@
 {
   "discovery": "git",
-  "files": 5637,
-  "edge:CONTAINS": 8888,
+  "skipped_gitignore": 0,
+  "skipped_binary": 1382,
+  "skipped_vendor": 72,
+  "skipped_secret": 4,
+  "files": 5629,
+  "edge:CONTAINS": 8879,
   "parsed": 2979,
   "parse_errors": 11,
-  "symbol:function": 32799,
-  "edge:DEFINES": 43779,
-  "edge:IMPORTS": 11579,
-  "symbol:class": 11106,
+  "symbol:function": 32803,
+  "edge:DEFINES": 43782,
+  "edge:IMPORTS": 12508,
+  "imports_resolved": 13906,
+  "symbol:class": 11105,
+  "imports_unresolved": 2833,
   "symbol:method": 10,
-  "edge:CALLS": 104418,
-  "edge:CALLS_EXTERNAL": 35777,
-  "ambiguous_calls": 18797,
-  "edge:INHERITS": 24012,
+  "files_with_parse_errors": 2,
+  "edge:CALLS": 189381,
+  "calls_scoped": 35938,
+  "calls_unique_global": 22060,
+  "calls_ambiguous": 35338,
+  "ambiguous_calls": 35338,
+  "edge:CALLS_EXTERNAL": 39633,
+  "calls_external": 39662,
+  "unresolved_bases": 2212,
+  "edge:INHERITS": 9148,
   "cochange_commits_skipped": 5,
   "edge:CO_CHANGE": 8,
-  "entrypoints": 25543,
-  "nodes": 54544,
-  "edges": 228461
+  "entrypoints": 23554,
+  "nodes": 55810,
+  "edges": 303339,
+  "parse_errors_summary": "Files with parse errors: 2  (0 C/C++ files used cpp fallback)",
+  "redacted_secret_chunks": 42,
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:django/contrib/sessions/backends/cache.py::SessionStore.create",
+      "label": "SessionStore.create",
+      "in_degree": 2141
+    },
+    {
+      "node_id": "sym:django/contrib/contenttypes/fields.py::create_generic_related_manager.GenericRelatedObjectManager.create",
+      "label": "create_generic_related_manager.GenericRelatedObjectManager.create",
+      "in_degree": 2140
+    },
+    {
+      "node_id": "sym:django/contrib/admin/filters.py::FieldListFilter.create",
+      "label": "FieldListFilter.create",
+      "in_degree": 2139
+    },
+    {
+      "node_id": "sym:django/contrib/sessions/backends/base.py::SessionBase.create",
+      "label": "SessionBase.create",
+      "in_degree": 2131
+    },
+    {
+      "node_id": "sym:django/apps/config.py::AppConfig.create",
+      "label": "AppConfig.create",
+      "in_degree": 2129
+    },
+    {
+      "node_id": "sym:django/test/testcases.py::SimpleTestCase.assertRaisesMessage",
+      "label": "SimpleTestCase.assertRaisesMessage",
+      "in_degree": 1937
+    },
+    {
+      "node_id": "sym:django/template/loader_tags.py::BlockNode.super",
+      "label": "BlockNode.super",
+      "in_degree": 1800
+    },
+    {
+      "node_id": "sym:django/db/models/query.py::QuerySet.filter",
+      "label": "QuerySet.filter",
+      "in_degree": 1758
+    },
+    {
+      "node_id": "sym:django/template/library.py::Library.filter",
+      "label": "Library.filter",
+      "in_degree": 1752
+    },
+    {
+      "node_id": "sym:django/utils/log.py::CallbackFilter.filter",
+      "label": "CallbackFilter.filter",
+      "in_degree": 1697
+    }
+  ],
+  "languages": {
+    "python": 2933,
+    "po": 1274,
+    "txt": 722,
+    "html": 373,
+    "json": 55,
+    "css": 46,
+    "javascript": 45,
+    "svg": 36,
+    "yml": 24,
+    "xml": 16,
+    "py-tpl": 14,
+    "md": 7,
+    "prj": 6,
+    "tpl": 4,
+    "rst": 4,
+    "yaml": 2,
+    "in": 2,
+    "kml": 2,
+    "conf": 2,
+    "bash": 2,
+    "png": 2,
+    "jsonl": 2,
+    "sample": 2,
+    "tmp": 2,
+    "map": 2,
+    "bat": 1,
+    "1": 1,
+    "graffle": 1,
+    "toml": 1,
+    "unkn": 1,
+    "jpg": 1,
+    "geojson": 1,
+    "csv": 1,
+    "vrt": 1,
+    "pristine": 1,
+    "thtml": 1,
+    "djtpl": 1,
+    "eml": 1,
+    "ignoreme": 1,
+    "eot": 1,
+    "unknown": 1,
+    "ini": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "dd6f6b1",
+  "co_change_hotspots": [
+    {
+      "file_a": "docs/internals/deprecation.txt",
+      "file_b": "docs/releases/6.2.txt",
+      "weight": 5
+    },
+    {
+      "file_a": "docs/releases/5.2.17.txt",
+      "file_b": "docs/releases/6.0.8.txt",
+      "weight": 5
+    },
+    {
+      "file_a": "django/core/validators.py",
+      "file_b": "tests/validators/tests.py",
+      "weight": 3
+    },
+    {
+      "file_a": "tests/admin_changelist/models.py",
+      "file_b": "tests/admin_changelist/tests.py",
+      "weight": 3
+    },
+    {
+      "file_a": "docs/ref/models/instances.txt",
+      "file_b": "docs/releases/6.1.txt",
+      "weight": 3
+    }
+  ]
 }

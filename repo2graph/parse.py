@@ -12,6 +12,25 @@ from typing import TypedDict, cast
 
 from tree_sitter import Node, Parser
 
+
+class ParseError(RuntimeError):
+    """Raised when parser strictness policy encounters parse errors."""
+
+    pass
+
+
+@dataclass
+class ImportDetail:
+    """Structured information about an import statement."""
+
+    raw: str
+    module: str
+    name: str | None = None
+    alias: str | None = None
+    is_relative: bool = False
+    relative_level: int = 0
+
+
 EXT_LANG = {
     ".py": "python",
     ".pyi": "python",
@@ -207,6 +226,19 @@ LANG_CFG["cpp"]["kind_map"] = dict(
     LANG_CFG["c"]["kind_map"], class_specifier="class", namespace_definition="namespace"
 )
 
+# Callee names that mean a dynamic/reflective call, scoped per language. A bare
+# "send", "call" or "apply" is an ordinary method name in most codebases
+# (queue.send, handler.call, ...), so this must never be one global set --
+# `_callee_name` reduces `queue.send(msg)` to "send" regardless of language.
+DYNAMIC_CALLEES: dict[str, frozenset[str]] = {
+    "python": frozenset({"getattr", "setattr", "eval", "exec", "__import__"}),
+    "javascript": frozenset({"eval", "apply", "call"}),
+    "typescript": frozenset({"eval", "apply", "call"}),
+    "tsx": frozenset({"eval", "apply", "call"}),
+    "ruby": frozenset({"send", "public_send", "instance_eval", "eval"}),
+    "php": frozenset({"call_user_func", "call_user_func_array", "eval"}),
+}
+
 DEFAULT_SKIP_DIRS = {
     ".git",
     ".hg",
@@ -247,6 +279,11 @@ class BuildConfig:
     include_vendor: bool = False
     chunk_large_files: bool = False
     max_nodes: int = 0
+    include_secrets: bool = False
+    secret_policy: str = "redact-match"
+    extra_secret_keywords: list[str] = field(default_factory=list)
+    extra_secret_dirs: list[str] = field(default_factory=list)
+    parse_policy: str = "best-effort"
 
 
 def _git_files(root: Path):
@@ -414,6 +451,16 @@ def discover(
                 key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
                 stats[key] += 1
             continue
+        # BuildLock (lock.py) deliberately places its lock file as a *sibling*
+        # of the output directory, not inside it, so the file survives the
+        # transactional dir-swap in export.py's dump_all. That means a build
+        # whose outdir lives directly under the scanned root sees its own
+        # in-progress lock file on disk -- skip it like any other dotfile
+        # rather than indexing a "r2glock"-language node for it.
+        if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
+            if stats is not None:
+                stats["skipped_dotfile"] += 1
+            continue
         try:
             st = abspath.lstat()
         except OSError:
@@ -432,6 +479,17 @@ def discover(
                 stats["skipped_too_large"] += 1
             continue
         rp = rel.as_posix()
+        if not config.include_secrets:
+            from .secrets import _is_secret_path
+
+            if _is_secret_path(
+                rp,
+                extra_keywords=config.extra_secret_keywords,
+                extra_dirs=config.extra_secret_dirs,
+            ):
+                if stats is not None:
+                    stats["skipped_secret"] += 1
+                continue
         if include_globs and not matches_any(rp, include_globs):
             continue
         if exclude_globs and matches_any(rp, exclude_globs):
@@ -472,6 +530,8 @@ class Symbol:
     docstring: str = ""
     calls: list[str] = field(default_factory=list)
     bases: list[str] = field(default_factory=list)
+    call_details: list[dict] = field(default_factory=list)
+    base_details: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -482,6 +542,7 @@ class ParsedFile:
     parse_errors: int = 0
     used_cpp: bool = False
     is_chunked: bool = False
+    import_details: list[ImportDetail] = field(default_factory=list)
 
 
 def _text(src: bytes, node) -> str:
@@ -695,21 +756,65 @@ def _base_clauses(node):
     return out
 
 
-def _bases(src: bytes, node, lang: str) -> list[str]:
-    out = []
+def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[dict]]:
+    """Extract supertype names along with their relationship subtype and raw expression."""
+    out: list[str] = []
+    details: list[dict] = []
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
-            out += [t.strip() for t in _split_bases(_text(src, n).strip("(): ")) if t.strip()]
+            raw_text = _text(src, n).strip("(): ")
+            for t in _split_bases(raw_text):
+                clean = t.strip()
+                if clean:
+                    out.append(clean)
+                    details.append({"name": clean, "subtype": "INHERITS", "raw": t})
     for clause in _base_clauses(node):
-        raw = _text(src, clause).replace(" with ", ",")
-        out += [c for c in (_clean_base(t) for t in _split_bases(raw)) if c]
-    seen, uniq = set(), []
-    for b in out:
+        ctype = clause.type
+        ptype = clause.parent.type if clause.parent is not None else ""
+        raw = _text(src, clause)
+        default_sub = "INHERITS"
+        if ctype in (
+            "implements_clause",
+            "super_interfaces",
+            "class_interface_clause",
+        ) or ptype in ("implements_clause", "super_interfaces", "class_interface_clause"):
+            default_sub = "IMPLEMENTS"
+        elif ctype in ("extends_clause", "superclass", "base_class_clause") or ptype in (
+            "extends_clause",
+            "superclass",
+            "base_class_clause",
+        ):
+            default_sub = "EXTENDS"
+
+        # Check for scala "with" mixin or comma separated clauses
+        if " with " in raw:
+            parts = raw.split(" with ")
+            first_c = _clean_base(parts[0])
+            if first_c:
+                out.append(first_c)
+                details.append({"name": first_c, "subtype": default_sub, "raw": parts[0]})
+            for p in parts[1:]:
+                mix_c = _clean_base(p)
+                if mix_c:
+                    out.append(mix_c)
+                    details.append({"name": mix_c, "subtype": "MIXES_IN", "raw": p})
+        else:
+            raw_clean = raw.replace(" with ", ",")
+            for t in _split_bases(raw_clean):
+                clean = _clean_base(t)
+                if clean:
+                    out.append(clean)
+                    details.append({"name": clean, "subtype": default_sub, "raw": t})
+    seen: set[str] = set()
+    uniq_names: list[str] = []
+    uniq_details: list[dict] = []
+    for b, d in zip(out, details):
         if b not in seen:
             seen.add(b)
-            uniq.append(b)
-    return uniq[:8]
+            uniq_names.append(b)
+            uniq_details.append(d)
+    return uniq_names[:8], uniq_details[:8]
 
 
 _cpp_available_cache: bool | None = None
@@ -750,6 +855,253 @@ def _cpp_available() -> bool:
         return False
     _cpp_available_cache = True
     return True
+
+
+def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
+    """Extract structured import metadata (modules, names, aliases, relative level)."""
+    raw_clean = raw.strip()
+    if not raw_clean:
+        return []
+
+    details: list[ImportDetail] = []
+    if lang == "python":
+        # from ... import ...
+        m = re.match(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)", raw_clean)
+        if m:
+            module = m.group(1) or ""
+            dots = len(module) - len(module.lstrip("."))
+            is_rel = dots > 0
+            names_part = m.group(2).replace("(", " ").replace(")", " ")
+            for p in names_part.split(","):
+                p = p.strip()
+                if not p:
+                    continue
+                if " as " in p:
+                    orig, alias = p.split(" as ", 1)
+                    orig = orig.strip()
+                    alias = alias.strip()
+                else:
+                    orig = p
+                    alias = None
+                if orig:
+                    details.append(
+                        ImportDetail(
+                            raw=raw_clean,
+                            module=module,
+                            name=orig,
+                            alias=alias,
+                            is_relative=is_rel,
+                            relative_level=dots,
+                        )
+                    )
+            return details
+        # import a as b, c as d
+        m2 = re.match(r"^import\s+([\w\.,\s]+)", raw_clean)
+        if m2:
+            for p in m2.group(1).split(","):
+                p = p.strip()
+                if not p:
+                    continue
+                if " as " in p:
+                    orig, alias = p.split(" as ", 1)
+                    orig = orig.strip()
+                    alias = alias.strip()
+                else:
+                    orig = p
+                    alias = None
+                if orig:
+                    details.append(
+                        ImportDetail(
+                            raw=raw_clean,
+                            module=orig,
+                            name=orig,
+                            alias=alias,
+                            is_relative=False,
+                            relative_level=0,
+                        )
+                    )
+            return details
+
+    elif lang in ("javascript", "typescript", "tsx"):
+        m = re.search(r"""(?:from\s+)?['"]([^'"]+)['"]""", raw_clean)
+        module = m.group(1) if m else ""
+        is_rel = module.startswith(".")
+        named_m = re.search(r"\{([^}]+)\}", raw_clean)
+        if named_m:
+            for p in named_m.group(1).split(","):
+                p = p.strip()
+                if not p:
+                    continue
+                if " as " in p:
+                    orig, alias = p.split(" as ", 1)
+                    orig = orig.strip()
+                    alias = alias.strip()
+                else:
+                    orig = p
+                    alias = None
+                if orig:
+                    details.append(
+                        ImportDetail(
+                            raw=raw_clean,
+                            module=module,
+                            name=orig,
+                            alias=alias,
+                            is_relative=is_rel,
+                        )
+                    )
+        ns_m = re.search(r"\*\s+as\s+(\w+)", raw_clean)
+        if ns_m:
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    name="*",
+                    alias=ns_m.group(1),
+                    is_relative=is_rel,
+                )
+            )
+        def_m = re.match(r"^import\s+(\w+)\s+from", raw_clean)
+        if def_m:
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    name="default",
+                    alias=def_m.group(1),
+                    is_relative=is_rel,
+                )
+            )
+        if not details and module:
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    name=None,
+                    alias=None,
+                    is_relative=is_rel,
+                )
+            )
+        return details
+
+    elif lang == "go":
+        m = re.search(r"""(?:(\w+|\.)\s+)?['"]([^'"]+)['"]""", raw_clean)
+        if m:
+            alias = m.group(1)
+            module = m.group(2)
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    alias=alias,
+                    is_relative=module.startswith("."),
+                )
+            )
+            return details
+
+    elif lang in ("java", "kotlin", "scala"):
+        m = re.search(r"import\s+(?:static\s+)?([\w\.\*]+)", raw_clean)
+        if m:
+            full = m.group(1)
+            parts = full.rsplit(".", 1)
+            if len(parts) == 2:
+                module, name = parts
+            else:
+                module, name = full, None
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    name=name,
+                    is_relative=False,
+                )
+            )
+            return details
+
+    elif lang in ("csharp", "php"):
+        # C# writes `alias = target` (using Foo = Bar.Baz); PHP writes
+        # `target as alias` (use Foo\Bar as Baz) -- the alias sits on opposite
+        # sides of the statement, so each language needs its own pattern.
+        body = re.sub(r"^(?:using|use)\s+(?:function\s+|const\s+|static\s+)?", "", raw_clean)
+        body = body.rstrip(";").strip()
+        if lang == "csharp":
+            m_eq = re.match(r"^(\w+)\s*=\s*([\w.\\]+)$", body)
+            module = m_eq.group(2) if m_eq else body
+            alias = m_eq.group(1) if m_eq else None
+        else:
+            m_as = re.match(r"^([\w.\\]+)\s+as\s+(\w+)$", body)
+            module = m_as.group(1) if m_as else body
+            alias = m_as.group(2) if m_as else None
+        details.append(
+            ImportDetail(
+                raw=raw_clean,
+                module=module,
+                name=module.split("\\")[-1].split(".")[-1],
+                alias=alias,
+                is_relative=False,
+            )
+        )
+        return details
+
+    elif lang in ("c", "cpp"):
+        m = re.search(r"""([<"])([^>"]+)[>"]""", raw_clean)
+        if m:
+            is_rel = m.group(1) == '"'
+            module = m.group(2)
+            details.append(
+                ImportDetail(
+                    raw=raw_clean,
+                    module=module,
+                    is_relative=is_rel,
+                )
+            )
+            return details
+
+    elif lang == "rust":
+        m = re.search(r"use\s+([\w:]+)(?:::\{([^}]+)\})?(?:\s+as\s+(\w+))?", raw_clean)
+        if m:
+            base_mod = m.group(1)
+            group_items = m.group(2)
+            alias = m.group(3)
+            if group_items:
+                for item in group_items.split(","):
+                    item = item.strip()
+                    if not item:
+                        continue
+                    if " as " in item:
+                        orig, it_alias = item.split(" as ", 1)
+                        orig = orig.strip()
+                        it_alias = it_alias.strip()
+                    else:
+                        orig = item
+                        it_alias = None
+                    details.append(
+                        ImportDetail(
+                            raw=raw_clean,
+                            module=base_mod,
+                            name=orig,
+                            alias=it_alias,
+                            is_relative=base_mod.startswith("crate")
+                            or base_mod.startswith("super"),
+                        )
+                    )
+            else:
+                parts = base_mod.rsplit("::", 1)
+                mod_name = parts[0] if len(parts) == 2 else base_mod
+                sym_name = parts[1] if len(parts) == 2 else None
+                details.append(
+                    ImportDetail(
+                        raw=raw_clean,
+                        module=mod_name,
+                        name=sym_name,
+                        alias=alias,
+                        is_relative=base_mod.startswith("crate") or base_mod.startswith("super"),
+                    )
+                )
+            return details
+
+    # Fallback default
+    details.append(ImportDetail(raw=raw_clean, module=raw_clean))
+    return details
 
 
 def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
@@ -816,6 +1168,12 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
     imports: list[str] = []
+    # `imports` is capped per-entry below to bound the exported artifact size.
+    # parse_import_details needs the untruncated text -- a multi-binding import
+    # (`import { a, ..., z } from "mod"`) longer than the cap loses its closing
+    # brace and module path, so every regex in parse_import_details misses and
+    # import_details silently comes back empty for that statement.
+    imports_full: list[str] = []
     final_errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
@@ -830,12 +1188,19 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             raw = _text(source, node).strip()
             if raw:
                 imports.append(raw[:300])
+                imports_full.append(raw)
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
             # so drop them here rather than accumulating dead data (ISS-02).
             if callee and owner is not None:
+                call_kind = "static"
+                if ntype in ("macro_invocation", "macro_call"):
+                    call_kind = "possible"
+                elif callee in DYNAMIC_CALLEES.get(lang, frozenset()):
+                    call_kind = "dynamic"
                 owner.calls.append(callee)
+                owner.call_details.append({"name": callee, "kind": call_kind})
         kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner
         if kind is not None:
@@ -851,6 +1216,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 else:
                     kind = "function"
             if kind and name:
+                bases_list, base_details = _bases_with_details(source, node, lang)
                 sym = Symbol(
                     name=name,
                     qualname=".".join(scope + (name,)),
@@ -860,8 +1226,34 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     parent=".".join(scope) or None,
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),
-                    bases=_bases(source, node, lang),
+                    bases=bases_list,
+                    base_details=base_details,
                 )
+                # Check for decorators on Python decorated_definition. This and
+                # the prev-sibling branch below must stay mutually exclusive:
+                # in tree-sitter-python a decorated function_definition's
+                # prev_sibling IS its decorator node, so running both branches
+                # recorded every Python decorator twice -- Counter(sym.calls)
+                # then reported count=2 on a single decorator CALLS edge.
+                if node.parent is not None and node.parent.type == "decorated_definition":
+                    for child in node.parent.children:
+                        if child.type == "decorator":
+                            dec_text = (
+                                _callee_name(source, child)
+                                or _text(source, child).strip().lstrip("@").split("(")[0].strip()
+                            )
+                            if dec_text:
+                                sym.calls.append(dec_text)
+                                sym.call_details.append({"name": dec_text, "kind": "decorator"})
+                else:
+                    # Java annotations or JS/TS decorators sit as the previous sibling.
+                    prev = node.prev_sibling
+                    if prev is not None and prev.type in ("annotation", "decorator"):
+                        ann_text = _text(source, prev).strip().lstrip("@").split("(")[0].strip()
+                        if ann_text:
+                            sym.calls.append(ann_text)
+                            sym.call_details.append({"name": ann_text, "kind": "decorator"})
+
                 symbols.append(sym)
                 child_scope, child_owner = scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
@@ -869,6 +1261,228 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         # reversed: the stack pops last-pushed first, so this keeps source order
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
+
+    # Parse import details from the untruncated text -- see imports_full above.
+    import_details: list[ImportDetail] = []
+    for raw in imports_full:
+        import_details.extend(parse_import_details(raw, lang))
+
     return ParsedFile(
-        lang=lang, symbols=symbols, imports=imports, parse_errors=final_errors, used_cpp=used_cpp
+        lang=lang,
+        symbols=symbols,
+        imports=imports,
+        parse_errors=final_errors,
+        used_cpp=used_cpp,
+        import_details=import_details,
     )
+
+
+def explain_path(
+    root: Path | str,
+    target: Path | str,
+    config: BuildConfig | None = None,
+    include_globs=None,
+    exclude_globs=None,
+) -> dict:
+    """Evaluate a path against the 10 inclusion/exclusion precedence rules.
+
+    Returns a dict with:
+        path: target path
+        relative_path: relative path to root
+        included: bool (True if the file would be indexed)
+        rule: string identifier of the determining rule
+        reason: human-readable explanation
+        precedence_step: step number (1-10) where the decision was reached
+    """
+    if config is None:
+        config = BuildConfig()
+    root_path = Path(root).resolve()
+    target_path = Path(target)
+    if not target_path.is_absolute():
+        target_path = root_path / target_path
+    # Resolve the parent only, not the leaf -- same fix as 8ddd010 ("check
+    # symlink before resolving output path"). discover() lstats the path as
+    # discovered (no resolution), so a symlink fails S_ISREG there and is
+    # dropped. Fully resolving here would follow the leaf symlink to its
+    # target before the lstat below ever runs, making that lstat see the
+    # target's stat (often a regular file) instead of the link's -- answering
+    # INCLUDED for a path discover() never indexes. ".."/"." still normalise
+    # and relative_to(root_path) still works because the parent is resolved.
+    target_path = target_path.parent.resolve() / target_path.name
+
+    try:
+        rel = target_path.relative_to(root_path)
+        rel_str = rel.as_posix()
+    except ValueError:
+        return {
+            "path": str(target_path),
+            "relative_path": str(target_path),
+            "included": False,
+            "rule": "outside_root",
+            "reason": f"Path '{target_path}' is outside repository root '{root_path}'",
+            "precedence_step": 0,
+        }
+
+    # Step 1: Target existence
+    if not target_path.exists():
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "not_found",
+            "reason": f"Path '{target_path}' does not exist on disk",
+            "precedence_step": 1,
+        }
+
+    # Step 2: Skip directories (DEFAULT_SKIP_DIRS | extra_exclude_dirs)
+    skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip_dirs.discard("vendor")
+    skip_part = next((part for part in rel.parts if part in skip_dirs), None)
+    if skip_part is not None:
+        cat = "dot-directory" if skip_part.startswith(".") else "vendor/build directory"
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "skip_dir",
+            "reason": f"Path component '{skip_part}' is in excluded {cat} filter (DEFAULT_SKIP_DIRS/--exclude-dir)",
+            "precedence_step": 2,
+        }
+
+    # Step 3: Sibling .r2glock internal lock files
+    if target_path.name.startswith(".") and target_path.name.endswith(".r2glock"):
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "internal_lock",
+            "reason": "Internal BuildLock artifact file",
+            "precedence_step": 3,
+        }
+
+    # Step 4: Git-ignore check (if in git repo)
+    git_dir = root_path / ".git"
+    if git_dir.exists():
+        try:
+            p = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.quotepath=false",
+                    "-C",
+                    str(root_path),
+                    "check-ignore",
+                    "-q",
+                    str(target_path),
+                ],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=5,
+            )
+            if p.returncode == 0:
+                return {
+                    "path": str(target_path),
+                    "relative_path": rel_str,
+                    "included": False,
+                    "rule": "gitignore",
+                    "reason": "Path is matched and ignored by .gitignore rules",
+                    "precedence_step": 4,
+                }
+        except Exception:
+            pass
+
+    # Step 5: Regular file check (stat.S_ISREG)
+    try:
+        st = target_path.lstat()
+    except OSError as exc:
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "stat_error",
+            "reason": f"Cannot stat file: {exc}",
+            "precedence_step": 5,
+        }
+    if not statmod.S_ISREG(st.st_mode):
+        ftype = "directory" if statmod.S_ISDIR(st.st_mode) else "special file (symlink/device/fifo)"
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "non_regular_file",
+            "reason": f"Path is a {ftype}, not a regular file",
+            "precedence_step": 5,
+        }
+
+    # Step 6: File size check
+    if st.st_size > config.max_file_bytes and not config.chunk_large_files:
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "too_large",
+            "reason": f"File size ({st.st_size} bytes) exceeds limit ({config.max_file_bytes} bytes); --chunk-large-files is disabled",
+            "precedence_step": 6,
+        }
+
+    # Step 7: Secret detection
+    if not config.include_secrets:
+        from .secrets import _is_secret_path
+
+        if _is_secret_path(
+            rel_str,
+            extra_keywords=config.extra_secret_keywords,
+            extra_dirs=config.extra_secret_dirs,
+        ):
+            return {
+                "path": str(target_path),
+                "relative_path": rel_str,
+                "included": False,
+                "rule": "secret_file",
+                "reason": "Path matches secret credential file pattern (use --include-secrets to override)",
+                "precedence_step": 7,
+            }
+
+    # Step 8: Include globs
+    if include_globs and not matches_any(rel_str, include_globs):
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "not_included",
+            "reason": f"Path does not match any --include glob: {include_globs}",
+            "precedence_step": 8,
+        }
+
+    # Step 9: Exclude globs
+    if exclude_globs and matches_any(rel_str, exclude_globs):
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "exclude_glob",
+            "reason": f"Path matches --exclude glob: {exclude_globs}",
+            "precedence_step": 9,
+        }
+
+    # Step 10: Binary check
+    if is_binary(target_path):
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "binary",
+            "reason": "File content detected as binary (contains null bytes in header)",
+            "precedence_step": 10,
+        }
+
+    # All criteria passed -> Included!
+    return {
+        "path": str(target_path),
+        "relative_path": rel_str,
+        "included": True,
+        "rule": "included",
+        "reason": "Path passed all exclusion checks and is eligible for indexing",
+        "precedence_step": 10,
+    }

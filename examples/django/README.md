@@ -6,7 +6,7 @@
 
 ## Revision
 
-Commit `f91c8897f568a8075f4f0c1c9dcc81b8ec798ef3` on `main`, analyzed 2026-09-17T15:45:24Z.
+Commit `dd6f6b1531984823e3dc56740dfa93f3ceb09357` on `main`, analyzed 2026-09-22T08:07:53Z.
 
 ## Why this repository?
 
@@ -20,7 +20,7 @@ The full repository at the pinned commit was indexed — no `--include`/`--exclu
 
 | Metric | Value |
 |---|---:|
-| Files indexed | 5,637 |
+| Files indexed | 5,629 |
 | Files parsed (code) | 2,979 |
 | Parse errors | 11 |
 
@@ -28,17 +28,17 @@ The full repository at the pinned commit was indexed — no `--include`/`--exclu
 
 | Metric | Value |
 |---|---:|
-| Nodes | 54,544 |
-| Edges | 228,461 |
-| Symbols (functions) | 32,799 |
-| Symbols (classes) | 11,106 |
-| CALLS edges | 104,418 |
-| CALLS_EXTERNAL edges | 35,777 |
-| IMPORTS edges | 11,579 |
-| INHERITS edges | 24,012 |
-| DEFINES edges | 43,779 |
-| Ambiguous calls (name matched >1 candidate) | 18,797 |
-| Entrypoints | 25,543 |
+| Nodes | 55,810 |
+| Edges | 303,339 |
+| Symbols (functions) | 32,803 |
+| Symbols (classes) | 11,105 |
+| CALLS edges | 189,381 |
+| CALLS_EXTERNAL edges | 39,633 |
+| IMPORTS edges | 12,508 |
+| INHERITS edges | 9,148 |
+| DEFINES edges | 43,782 |
+| Ambiguous calls (name matched >1 candidate) | 35,338 |
+| Entrypoints | 23,554 |
 
 ## Supported languages
 
@@ -60,7 +60,7 @@ the commit above and build it directly:
 
 ```bash
 git clone --filter=blob:none https://github.com/django/django /tmp/django
-cd /tmp/django && git checkout f91c8897f568a8075f4f0c1c9dcc81b8ec798ef3
+cd /tmp/django && git checkout dd6f6b1531984823e3dc56740dfa93f3ceb09357
 repo2graph build . -o .r2g
 repo2graph query "How does a request travel through Django middleware?" -o .r2g
 ```
@@ -84,7 +84,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-18,797 out of 104,418 total CALLS edges.
+35,338 out of 189,381 total CALLS edges.
 
 ## Reproduce
 

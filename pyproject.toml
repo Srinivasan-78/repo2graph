@@ -31,6 +31,7 @@ Homepage = "https://github.com/Srinivasan-78/repo2graph"
 Repository = "https://github.com/Srinivasan-78/repo2graph"
 Issues = "https://github.com/Srinivasan-78/repo2graph/issues"
 "MCP server" = "https://github.com/Srinivasan-78/repo2graph/blob/main/docs/mcp.md"
+"Quality Score" = "https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"
 
 [project.scripts]
 repo2graph = "repo2graph.cli:main"
@@ -45,19 +46,55 @@ where = ["."]
 include = ["repo2graph*"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5"]
+# pyyaml: tests/test_doc_consistency.py parses action.yml directly. It was
+# only ever present transitively (via pre-commit), so a clean `pip install
+# -e ".[dev]"` without pre-commit's own deps resolved had no yaml module.
+dev = ["pytest>=7", "pytest-cov>=4", "ruff>=0.5", "mypy>=1.11", "pre-commit>=3.5", "pyyaml>=6.0"]
 # Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
 # boost with zero extra dependencies when these are not installed.
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
-# Bounded below 2 on purpose: `serve()` drives the 1.x decorator API
-# (`@server.list_tools()` / `@server.call_tool()`), which mcp 2.x removed. An
-# unbounded `mcp>=1.0` resolves to 2.x today and crashes the server on start.
-# See docs/BACKLOG.md ("Port the MCP server to the 2.x SDK API").
+# Both SDK generations are supported: `serve()` branches on
+# `hasattr(Server, "list_tools")` and drives the 1.x decorator API or the 2.x
+# registration API accordingly, so 2.x no longer crashes the server on start.
+# The bound is `<3.0` -- an unreleased 3.x is the thing that has not been
+# tested, not 2.x. Keep this in sync with `SDK_SPEC` in repo2graph/mcp.py.
 mcp = ["mcp>=1.0,<3.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# branch=True is the point of measuring at all here: statement coverage counts
+# an `if` as covered when only the taken side ever ran, which is exactly the
+# question the suite could not answer about auth.py's refusal paths.
+[tool.coverage.run]
+source = ["repo2graph"]
+branch = true
+# Worker processes (build() above PARALLEL_MIN_FILES) need this or their
+# coverage is dropped on exit and the parallel path reads as dead code.
+concurrency = ["multiprocessing", "thread"]
+parallel = true
+sigterm = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# A floor, not a target. Measured at 86% (branch) across the 9-cell CI matrix,
+# so this leaves room for the legitimate variance -- the `rag` extra is not
+# installed in CI, and its tests skip -- while still failing a run that deletes
+# or strands a meaningful body of tested code. Raise it when the floor is
+# comfortably cleared; do not raise it to whatever today's number happens to be.
+fail_under = 80
+exclude_also = [
+    # Import-time fallbacks for optional extras. The `rag`/`mcp` branch that
+    # does not match the installed environment can never run in that run.
+    "except ImportError:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
 
 [tool.ruff]
 line-length = 100
@@ -74,16 +111,24 @@ ignore_missing_imports = true
 # Legacy modules are not annotated yet. They are listed explicitly rather than
 # excluded by a wildcard so that a *new* module is strict-checked by default and
 # has to be added here deliberately to escape it -- the opposite of an allowlist,
-# which would silently let new untyped code in. 223 errors remain across these
-# ten; see DONE.md for the ranked plan.
+# which would silently let new untyped code in.
+#
+# This list is the single source of truth for the strict scope: the Makefile
+# target and the pre-commit hook both check the whole package and defer to it,
+# so removing a module here is the one edit that tightens the check everywhere.
+#
+# 179 errors remain, concentrated in mcp (40), graph (39), parse (27) and
+# cli (23). query.py and export.py are done -- they were taken first because
+# everything else imports them, so their `Any` returns were what made callers
+# unprovable. See DONE.md for the ranked plan.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
-    "repo2graph.embed", "repo2graph.export", "repo2graph.fetch",
+    "repo2graph.embed", "repo2graph.fetch",
     "repo2graph.graph", "repo2graph.mcp", "repo2graph.parse",
-    "repo2graph.query", "repo2graph.viz", "repo2graph.langs",
+    "repo2graph.viz", "repo2graph.langs",
     "repo2graph.layout", "repo2graph.walker",
 ]
 disallow_untyped_defs = false

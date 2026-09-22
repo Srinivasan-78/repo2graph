@@ -2,15 +2,59 @@
   "query": "What are the major relationships around ext4's core structures?",
   "results": [
     {
-      "node_id": "file:include/linux/ecryptfs.h",
-      "path": "include/linux/ecryptfs.h",
+      "node_id": "sym:include/linux/kdev_t.h::new_encode_dev",
+      "path": "include/linux/kdev_t.h",
       "lang": "c",
-      "kind": "code",
-      "name": "include/linux/ecryptfs.h",
-      "start_line": 1,
-      "end_line": 107,
+      "kind": "function",
+      "name": "new_encode_dev",
+      "start_line": 39,
+      "end_line": 44,
       "why": "lexical",
-      "score": 13.75
+      "score": 8.634
+    },
+    {
+      "node_id": "sym:fs/ext4/ext4.h::ext4_dir_entry_2",
+      "path": "fs/ext4/ext4.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "ext4_dir_entry_2",
+      "start_line": 3810,
+      "end_line": 3810,
+      "why": "lexical",
+      "score": 8.227
+    },
+    {
+      "node_id": "sym:kernel/debug/debug_core.h::kgdb_state",
+      "path": "kernel/debug/debug_core.h",
+      "lang": "c",
+      "kind": "struct",
+      "name": "kgdb_state",
+      "start_line": 74,
+      "end_line": 74,
+      "why": "lexical",
+      "score": 7.939
+    },
+    {
+      "node_id": "sym:fs/ext4/dir.c::hash2pos",
+      "path": "fs/ext4/dir.c",
+      "lang": "c",
+      "kind": "function",
+      "name": "hash2pos",
+      "start_line": 362,
+      "end_line": 369,
+      "why": "lexical",
+      "score": 7.616
+    },
+    {
+      "node_id": "sym:include/linux/unicode.h::unicode_major",
+      "path": "include/linux/unicode.h",
+      "lang": "c",
+      "kind": "function",
+      "name": "unicode_major",
+      "start_line": 21,
+      "end_line": 24,
+      "why": "lexical",
+      "score": 7.526
     },
     {
       "node_id": "file:include/linux/zstd_lib.h",
@@ -21,39 +65,50 @@
       "start_line": 1,
       "end_line": 3161,
       "why": "lexical",
-      "score": 12.604
+      "score": 7.07
     },
     {
-      "node_id": "sym:include/linux/ecryptfs.h::ecryptfs_session_key",
-      "path": "include/linux/ecryptfs.h",
+      "node_id": "file:include/linux/kdev_t.h",
+      "path": "include/linux/kdev_t.h",
       "lang": "c",
-      "kind": "struct",
-      "name": "ecryptfs_session_key",
-      "start_line": 55,
-      "end_line": 65,
-      "why": "DEFINES out of ecryptfs.h",
+      "kind": "code",
+      "name": "include/linux/kdev_t.h",
+      "start_line": 1,
+      "end_line": 84,
+      "why": "DEFINES in of new_encode_dev",
       "score": 0.0
     },
     {
-      "node_id": "sym:include/linux/ecryptfs.h::ecryptfs_token_types",
-      "path": "include/linux/ecryptfs.h",
+      "node_id": "sym:include/linux/kdev_t.h::huge_encode_dev",
+      "path": "include/linux/kdev_t.h",
       "lang": "c",
-      "kind": "enum",
-      "name": "ecryptfs_token_types",
-      "start_line": 82,
-      "end_line": 82,
-      "why": "DEFINES out of ecryptfs.h",
+      "kind": "function",
+      "name": "huge_encode_dev",
+      "start_line": 53,
+      "end_line": 56,
+      "why": "CALLS in of new_encode_dev",
       "score": 0.0
     },
     {
-      "node_id": "sym:include/linux/zstd_lib.h::ZSTD_CCtx_s",
-      "path": "include/linux/zstd_lib.h",
+      "node_id": "sym:kernel/debug/debug_core.h::kgdb_state.pt_regs",
+      "path": "kernel/debug/debug_core.h",
       "lang": "c",
       "kind": "struct",
-      "name": "ZSTD_CCtx_s",
-      "start_line": 259,
-      "end_line": 259,
-      "why": "DEFINES out of zstd_lib.h",
+      "name": "kgdb_state.pt_regs",
+      "start_line": 25,
+      "end_line": 25,
+      "why": "DEFINES out of kgdb_state",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:fs/ext4/dir.c::hash2pos.file",
+      "path": "fs/ext4/dir.c",
+      "lang": "c",
+      "kind": "struct",
+      "name": "hash2pos.file",
+      "start_line": 362,
+      "end_line": 362,
+      "why": "DEFINES out of hash2pos",
       "score": 0.0
     }
   ]

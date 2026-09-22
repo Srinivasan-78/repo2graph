@@ -10,7 +10,7 @@
       "start_line": 4055,
       "end_line": 4086,
       "why": "lexical",
-      "score": 8.208
+      "score": 7.571
     },
     {
       "node_id": "file:pkg/scheduler/framework/plugins/dynamicresources/extendeddynamicresources.go",
@@ -21,7 +21,7 @@
       "start_line": 1,
       "end_line": 616,
       "why": "lexical",
-      "score": 8.115
+      "score": 7.179
     },
     {
       "node_id": "sym:staging/src/k8s.io/apiserver/pkg/endpoints/apiserver_test.go::handle",

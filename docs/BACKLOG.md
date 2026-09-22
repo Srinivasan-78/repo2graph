@@ -1,5 +1,10 @@
 # Backlog — deferred audit findings
 
+Work that was found, understood, and deliberately not done — each entry with the
+reason. This is the closest thing the project has to a roadmap, and the place to
+look for a first contribution: an item here has already been scoped and argued
+for, so picking one up starts from a decision rather than a blank page.
+
 ## Deferred by the 2026-09-17 enterprise-hardening audit
 
 Full detail, evidence and severity reasoning: `docs/SECURITY-AUDIT.md`. Two genuine gaps found by
@@ -10,15 +15,21 @@ edit alongside a security audit.
 
 | Item | Size | Why deferred |
 |---|---|---|
-| **No SBOM generated in CI** | S | `pip-audit --strict` is a vulnerability gate, not a bill-of-materials artifact. Adding a CycloneDX export (`cyclonedx-py` or `pip-audit --format cyclonedx-json`) to `dependency-audit.yml` is straightforward but changes a release-facing CI artifact. |
+| **No SBOM generated in CI** *(Shipped)* | S | `dependency-audit.yml` now has a "Generate CycloneDX SBOM" step (`pip-audit --format cyclonedx-json`) and uploads `sbom.cyclonedx.json` as an artifact. |
 | **No per-file tree-sitter parse timeout** | M | `MAX_BYTES` bounds file size, not parse time. `tree_sitter.Parser.set_timeout_micros` support varies across grammar bindings in `tree-sitter-language-pack`; a wrong per-language timeout risks truncated parses on legitimately large generated files with no fixture to prove the value is well-calibrated. |
-| **No independent byte-size cap on `git log --name-only` cochange output** | XS | `graph.py:563-566` bounds commit count and wall time, not output bytes. Low risk (a local repo's own history), but worth a sanity cap for defense in depth. |
+| **No independent byte-size cap on `git log --name-only` cochange output** *(Shipped)* | XS | `graph.py` now has `MAX_COCHANGE_BYTES` (10 MB) and streams the pipe through `_read_capped`, so `add_cochange` bounds output bytes independently of `MAX_COCHANGE_COMMITS`/`COCHANGE_TIMEOUT`. |
 | **Secret-path denylist (`query.py` `SECRET_KEYWORDS`/`SECRET_DIR_NAMES`) is not user-configurable** | S | Solid and independent of `.gitignore`, but a hardcoded `frozenset` — an org with nonstandard secret-file naming can't extend it without a code change. Needs a CLI flag / config file design, not a quick patch. |
-| **HTTP transport returns `str(exc)` verbatim to the client** | S | `http_server.py:247,332,338`. Not a confirmed secret-leak path today, but internal exception text (occasionally a local path) reaches an untrusted network caller. Wants a generic client-facing message with detail routed only to the (now-redacted) audit/error log. |
+| **HTTP transport returns `str(exc)` verbatim to the client** *(Shipped)* | S | The generic-`Exception` handlers already sent a fixed "Internal server error" message; the one remaining leak was the `SystemExit` branch in `_call_tool` (`http_server.py`, was line 617), which echoed `open_index`'s exit message — including the on-disk index path — straight to the caller. Now sends a fixed "Index unavailable"; the real message still reaches the (redacted) audit log via `error=str(exc)`. |
 | **No enforced cap on total graph nodes/edges/files** | M | `graph.py`'s `max_files` is opt-in, defaults unbounded. `Graph.nodes`/`edges` are fully in-memory with no size guard, unlike the already-streamed chunk emission path. |
-| **No explicit `attestations:` flag on the PyPI publish step** | XS | OIDC Trusted Publishing is correctly configured; whether `pypa/gh-action-pypi-publish` emits PEP 740 attestations by default at the pinned SHA wasn't verified from the YAML alone. Worth an explicit flag once confirmed safe to set. |
+| **No explicit `attestations:` flag on the PyPI publish step** *(Shipped)* | XS | `publish.yml`'s `pypa/gh-action-pypi-publish` step now passes `attestations: true` explicitly. |
 | **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: requires local code execution on the same host to exploit (a stronger position than repo2graph could additionally defend against), and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. See `docs/SECURITY-AUDIT.md` P3.1. |
 | **No benchmark above 3,000 files** | L | `docs/PERFORMANCE.md` has real measurements at 90 and 3,000 files; nothing was run at 50k/100k+ in this pass (time budget). Overlaps the pre-existing BACKLOG item below, "a fixture above `PARALLEL_MIN_FILES`." |
+
+Note: the SBOM, byte-cap, and attestations rows above were already shipped by the time of a
+2026-09-21 pass through this backlog — this file had drifted from the code. Only the `str(exc)`
+leak in the `SystemExit` branch was still genuinely open; it's fixed now. Treat every row in this
+file as a claim to verify against current code before acting on it, same as any other memory of
+past state.
 
 Route back to the work the 2026-09 whole-repo audit found but did not fix in the
 first batch. Full detail lives in `docs/BUILD_STATE.graphrag-2026-09.md`, the
@@ -135,23 +146,14 @@ itself off inside `_vectors_for` with nothing printed either way. Wanted: carry 
 fraction out of `_vectors_for` and have `--vectors` say `fused 0/8 candidates — re-run
 repo2graph embed` rather than quietly answering a lexical question. Small.
 
-**Port the MCP server to the 2.x SDK API.** The `mcp` extra is bounded to `mcp>=1.0,<2` *on
-purpose*, not as an accident of pinning. `repo2graph/mcp.py::serve()` is written against the 1.x
-decorator API — `@server.list_tools()` and `@server.call_tool()` on `mcp.server.Server`, plus
-`mcp.server.stdio.stdio_server` and `mcp.types.{Tool,TextContent}` — and mcp 2.x removed both
-decorator methods from `Server`. Because `import mcp` still succeeds on 2.x, the failure landed as
-a raw `AttributeError: 'Server' object has no attribute 'list_tools'` from inside `serve()` on
-every fresh `pip install "repo2graph[mcp]"` while the extra was unbounded. `_require_sdk()` now
-checks `REQUIRED_SERVER_API` against the `Server` class and exits with an instruction naming the
-installed version and `pip install "mcp>=1.0,<2"`, so the unsupported case is a sentence rather
-than a traceback — but it is still unsupported.
-
-To pick this up: re-express `serve()` against the 2.x registration API, leaving `dispatch()` — the
-only place any logic lives — untouched, so the three handlers and every bounds test still apply
-unchanged. Then widen the extra (or branch the wiring on `_sdk_version()`), relax
-`REQUIRED_SERVER_API` to whatever 2.x actually needs, and update the README's pin note. Nothing
-outside `serve()`, `_require_sdk()`, the `pyproject.toml` extra and that one README paragraph is
-coupled to the SDK version, and no test imports the SDK, so the blast radius is small.
+**Port the MCP server to the 2.x SDK API, as shipped.** `repo2graph/mcp.py::serve()` now branches
+on `supports_decorators = hasattr(Server, "list_tools")`: the 1.x decorator API
+(`@server.list_tools()` / `@server.call_tool()`) when present, and the 2.x registration API
+(`list_tools_2x`/`call_tool_2x` handlers) otherwise. `dispatch()` — the only place any logic lives
+— is untouched, so the three handlers and every bounds test apply unchanged to both SDK
+generations. The `mcp` extra is `mcp>=1.0,<3.0` (`pyproject.toml`, `SDK_SPEC` in `mcp.py`), and
+`_require_sdk()` still exits with a clear instruction rather than a traceback when neither API
+shape is present.
 
 ## Shipped in batch 1
 

@@ -6,7 +6,7 @@
 
 ## Revision
 
-Commit `41283216e55ebfb30fe61b9ae4bd034404584c57` on `master`, analyzed 2026-09-17T15:46:14Z.
+Commit `9edd58f895c58c3db484a9e39ab2e953baca4bca` on `master`, analyzed 2026-09-22T08:08:40Z.
 
 ## Why this repository?
 
@@ -28,23 +28,23 @@ Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, 
 |---|---:|
 | Files indexed | 1,022 |
 | Files parsed (code) | 969 |
-| Parse errors | 12,469 |
+| Parse errors | 12,473 |
 
 ## Graph statistics
 
 | Metric | Value |
 |---|---:|
-| Nodes | 20,641 |
-| Edges | 96,013 |
-| Symbols (functions) | 15,388 |
+| Nodes | 21,380 |
+| Edges | 115,984 |
+| Symbols (functions) | 15,390 |
 | Symbols (classes) | 956 |
-| CALLS edges | 42,395 |
-| CALLS_EXTERNAL edges | 27,313 |
-| IMPORTS edges | 9,634 |
-| INHERITS edges | 662 |
-| DEFINES edges | 14,968 |
-| Ambiguous calls (name matched >1 candidate) | 5,631 |
-| Entrypoints | 5,676 |
+| CALLS edges | 58,556 |
+| CALLS_EXTERNAL edges | 30,012 |
+| IMPORTS edges | 10,921 |
+| INHERITS edges | 484 |
+| DEFINES edges | 14,970 |
+| Ambiguous calls (name matched >1 candidate) | 12,487 |
+| Entrypoints | 5,269 |
 
 ## Supported languages
 
@@ -66,7 +66,7 @@ the commit above and build it directly:
 
 ```bash
 git clone --filter=blob:none https://github.com/tensorflow/tensorflow /tmp/tensorflow
-cd /tmp/tensorflow && git checkout 41283216e55ebfb30fe61b9ae4bd034404584c57
+cd /tmp/tensorflow && git checkout 9edd58f895c58c3db484a9e39ab2e953baca4bca
 repo2graph build . -o .r2g --include tensorflow/python/framework/** tensorflow/python/eager/** tensorflow/core/framework/** tensorflow/core/common_runtime/**
 repo2graph query "Where does a Python API cross into C++?" -o .r2g
 ```
@@ -90,7 +90,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-5,631 out of 42,395 total CALLS edges.
+12,487 out of 58,556 total CALLS edges.
 
 ## Reproduce
 

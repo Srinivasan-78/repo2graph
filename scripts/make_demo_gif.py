@@ -297,21 +297,6 @@ def take(lines: list[str], n: int) -> list[str]:
 BUILD_ARGS = ("build", "--exclude", "scripts/*", "--git-history", "300")
 
 
-def elide_map(lines: list[str], keep_head: int = 4) -> list[str]:
-    """Keep the head of a pack, then cut to the first cited block.
-
-    A pack leads with the repo map, which for a real repository is longer than
-    the frame -- so the citations, the part worth seeing, would never scroll
-    into view. The cut is marked with a literal `…` rather than hidden.
-    """
-    for i, line in enumerate(lines):
-        if line.startswith("### [cite:"):
-            if i <= keep_head + 1:
-                return lines
-            return [*lines[:keep_head], "", "…", "", *lines[i:]]
-    return lines
-
-
 # --- scenes -----------------------------------------------------------------
 def scene_rag(repo: Path, index: Path):
     """Ask a question, get cited code back -- the one-screen pitch.

@@ -24,6 +24,7 @@ from .export import (
 )
 from .events import SAFE_ERRORS, encodable, write_safe
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
+from .parse import ParseError
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -87,7 +88,32 @@ def cmd_build(args):
         )
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
-    from .parse import BuildConfig
+
+    # --- Harden the output path before any work begins ---
+    from .integrity import validate_outdir
+    from .lock import BuildLock, LockTimeoutError
+
+    try:
+        outdir = validate_outdir(
+            outdir,
+            repo_root=repo_path,
+            allow_symlink=getattr(args, "allow_symlink_out", False),
+            force=getattr(args, "force", False),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+    from .parse import BuildConfig, ParseError
+
+    include_secrets = getattr(args, "include_secrets", False)
+    if include_secrets:
+        from .events import emit
+
+        emit("secrets_inclusion_enabled", level="warning")
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            )
 
     config = BuildConfig(
         max_file_bytes=int(args.max_file_mb * 1_000_000),
@@ -95,6 +121,11 @@ def cmd_build(args):
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        include_secrets=include_secrets,
+        secret_policy=getattr(args, "secret_policy", "redact-match"),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        parse_policy=getattr(args, "parse_policy", "best-effort"),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -113,19 +144,27 @@ def cmd_build(args):
         prev_state = previous_state(outdir)
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
-    g = build(
-        repo_path,
-        include=args.include,
-        exclude=args.exclude,
-        git_history=args.git_history,
-        max_files=args.max_files,
-        jobs=args.jobs,
-        cache=cache,
-        max_call_candidates=args.max_call_candidates,
-        config=config,
-    )
-    chunks = None if args.no_chunks else iter_chunks(g)
-    written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    lock_timeout = getattr(args, "lock_timeout", 60.0)
+    try:
+        with BuildLock(outdir, timeout=lock_timeout):
+            g = build(
+                repo_path,
+                include=args.include,
+                exclude=args.exclude,
+                git_history=args.git_history,
+                max_files=args.max_files,
+                jobs=args.jobs,
+                cache=cache,
+                max_call_candidates=args.max_call_candidates,
+                config=config,
+            )
+            chunks = None if args.no_chunks else iter_chunks(g)
+            written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
+    except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except ParseError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
     if write_human_changelog:
         from datetime import date
 
@@ -145,31 +184,69 @@ def cmd_github(args):
     from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+
+    outdir = Path(args.out)
+
+    # --- Harden the output path before any work begins ---
+    from .integrity import validate_outdir
+    from .lock import BuildLock, LockTimeoutError
+
+    try:
+        outdir = validate_outdir(
+            outdir,
+            allow_symlink=getattr(args, "allow_symlink_out", False),
+            force=getattr(args, "force", False),
+        )
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+    include_secrets = getattr(args, "include_secrets", False)
+    if include_secrets:
+        from .events import emit
+
+        emit("secrets_inclusion_enabled", level="warning")
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            )
+
     config = BuildConfig(
         max_file_bytes=int(args.max_file_mb * 1_000_000),
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        include_secrets=include_secrets,
+        secret_policy=getattr(args, "secret_policy", "redact-match"),
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        parse_policy=getattr(args, "parse_policy", "best-effort"),
     )
-    meta = index_github(
-        args.repo,
-        Path(args.out),
-        ref=args.ref,
-        depth=args.depth,
-        git_history=args.git_history,
-        formats=args.formats,
-        include=args.include,
-        exclude=args.exclude,
-        max_files=args.max_files,
-        keep_clone=args.keep_clone,
-        token=args.token,
-        viz_nodes=args.viz_nodes,
-        jobs=args.jobs,
-        config=config,
-        max_call_candidates=args.max_call_candidates,
-        no_chunks=args.no_chunks,
-    )
+    lock_timeout = getattr(args, "lock_timeout", 60.0)
+    try:
+        with BuildLock(outdir, timeout=lock_timeout):
+            meta = index_github(
+                args.repo,
+                outdir,
+                ref=args.ref,
+                depth=args.depth,
+                git_history=args.git_history,
+                formats=args.formats,
+                include=args.include,
+                exclude=args.exclude,
+                max_files=args.max_files,
+                keep_clone=args.keep_clone,
+                token=args.token,
+                viz_nodes=args.viz_nodes,
+                jobs=args.jobs,
+                config=config,
+                max_call_candidates=args.max_call_candidates,
+                no_chunks=args.no_chunks,
+            )
+    except LockTimeoutError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except ParseError as exc:
+        raise SystemExit(f"error: {exc}") from None
     _emit(json.dumps(meta, indent=2))
 
 
@@ -271,7 +348,27 @@ def cmd_embed(args):
         widths = {len(v) for v in vectors.values()}
     dim = widths.pop() if widths else 0
 
-    n = write_vectors(npy, vectors, model_id, dim, chunk_ids, [hashes[cid] for cid in chunk_ids])
+    # Read build_id from manifest so vectors.meta.json records which build they
+    # correspond to; verify_artifacts and doctor use this to detect staleness.
+    build_id: str | None = None
+    try:
+        _mpath = artifact_path(out, "manifest.json")
+        if _mpath.exists():
+            _mdata = json.loads(_mpath.read_text(encoding="utf8", errors="replace"))
+            if isinstance(_mdata, dict):
+                build_id = _mdata.get("build_id") or None
+    except Exception:
+        pass
+
+    n = write_vectors(
+        npy,
+        vectors,
+        model_id,
+        dim,
+        chunk_ids,
+        [hashes[cid] for cid in chunk_ids],
+        build_id=build_id,
+    )
     register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
     reused = len(set(reuse) & set(vectors))
     _emit(
@@ -361,7 +458,15 @@ def _rag_index_dir(args) -> Path:
     if artifact_path(tpath, "manifest.json").exists():
         return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
-        g = build(tpath)
+        from .parse import BuildConfig
+
+        cfg = BuildConfig(
+            include_secrets=getattr(args, "include_secrets", False),
+            secret_policy=getattr(args, "secret_policy", "redact-match"),
+            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        )
+        g = build(tpath, config=cfg)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
         return out
     from .fetch import index_github, parse_spec
@@ -480,6 +585,21 @@ def cmd_rag(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args, out)
+    if getattr(args, "exclude_secrets", False):
+        if sys.stderr.isatty():
+            sys.stderr.write(
+                "warning: --exclude-secrets is deprecated; secret exclusion is now enabled by default\n"
+            )
+
+    include_secrets = getattr(args, "include_secrets", False)
+    exclude_secrets = (
+        args.answer
+        or getattr(args, "exclude_secrets", False)
+        or bool(
+            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
+        )
+    ) and not include_secrets
+
     pack = idx.pack_context(
         args.query,
         k=args.k,
@@ -487,11 +607,7 @@ def cmd_rag(args):
         budget_chars=args.budget,
         min_confidence=args.min_conf,
         expand_graph=not args.no_expand,
-        exclude_secrets=args.answer
-        or getattr(args, "exclude_secrets", False)
-        or bool(
-            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
-        ),
+        exclude_secrets=exclude_secrets,
         vectors=vectors,
         embedder=embedder,
         budget_tokens=getattr(args, "budget_tokens", None),
@@ -531,8 +647,99 @@ def cmd_map(args):
     )
 
 
+def format_stats_summary(data: dict) -> str:
+    lines = [
+        "repo2graph Index Quality & Coverage Summary",
+        "===========================================",
+        f"Files Discovered:        {data.get('files', 0)}",
+        f"Files Parsed:            {data.get('parsed', 0)}",
+        f"Parse Errors:            {data.get('parse_errors', 0)} (in {data.get('files_with_parse_errors', 0)} files)",
+        "",
+        "Graph Structure:",
+        f"  Nodes:                 {data.get('nodes', 0)}",
+        f"  Edges:                 {data.get('edges', 0)}",
+        "",
+        "Call Resolution Quality:",
+        f"  Scoped / Tiered:       {data.get('calls_scoped', 0)}",
+        f"  Unique Global:         {data.get('calls_unique_global', 0)}",
+        f"  Ambiguous:             {data.get('calls_ambiguous', data.get('ambiguous_calls', 0))}",
+        f"  External / Unresolved: {data.get('calls_external', 0)}",
+        "",
+        "Imports & Bases:",
+        f"  Imports Resolved:      {data.get('imports_resolved', 0)}",
+        f"  Imports External:      {data.get('imports_unresolved', 0)}",
+        f"  Unresolved Bases:      {data.get('unresolved_bases', 0)}",
+        "",
+        "Exclusions:",
+        f"  Dotfiles/Dirs:         {data.get('skipped_dotfile', 0)}",
+        f"  Vendor Dirs:           {data.get('skipped_vendor', 0)}",
+        f"  Secrets:               {data.get('skipped_secret', 0)}",
+        f"  Binary Files:          {data.get('skipped_binary', 0)}",
+        f"  Too Large:             {data.get('skipped_too_large', 0)}",
+        f"  Gitignored:            {data.get('skipped_gitignore', 0)}",
+    ]
+    return "\n".join(lines)
+
+
 def cmd_stats(args):
-    _emit(_require_index(Path(args.out), "stats.json").read_text(encoding="utf8"))
+    raw = _require_index(Path(args.out), "stats.json").read_text(encoding="utf8")
+    if getattr(args, "json", False) or getattr(args, "format", "json") == "json":
+        _emit(raw)
+    else:
+        try:
+            data = json.loads(raw)
+            _emit(format_stats_summary(data))
+        except Exception:
+            _emit(raw)
+
+
+def cmd_explain_path(args):
+    from .parse import BuildConfig, explain_path
+
+    repo_path = Path(args.repo)
+    if not repo_path.is_dir():
+        raise SystemExit(f"error: repository directory does not exist: {repo_path}")
+
+    config = BuildConfig(
+        include_vendor=getattr(args, "include_vendor", False),
+        include_secrets=getattr(args, "include_secrets", False),
+        chunk_large_files=getattr(args, "chunk_large_files", False),
+        extra_exclude_dirs=getattr(args, "extra_exclude_dirs", None) or [],
+        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
+        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+    )
+    res = explain_path(
+        repo_path,
+        args.path,
+        config=config,
+        include_globs=args.include or None,
+        exclude_globs=args.exclude or None,
+    )
+    if getattr(args, "json", False):
+        _emit(json.dumps(res, indent=2))
+    else:
+        status_str = "INCLUDED" if res["included"] else "EXCLUDED"
+        lines = [
+            f"Path:            {res['path']}",
+            f"Relative Path:   {res['relative_path']}",
+            f"Decision:        {status_str}",
+            f"Precedence Step: {res['precedence_step']}",
+            f"Rule:            {res['rule']}",
+            f"Reason:          {res['reason']}",
+        ]
+        _emit("\n".join(lines))
+    return 0
+
+
+def cmd_doctor(args):
+    from .doctor import run_doctor
+
+    report = run_doctor(args.path)
+    if getattr(args, "json", False):
+        _emit(json.dumps(report.to_dict(), indent=2))
+    else:
+        _emit(report.format_text())
+    return 0 if report.ok else 1
 
 
 def _nonneg(value: str) -> int:
@@ -675,6 +882,34 @@ def main(argv=None):
         default=0,
         help="parser processes; 0 = one per core (capped at 8), 1 = serial",
     )
+    common.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="index sensitive secret/credential files (default: off)",
+    )
+    common.add_argument(
+        "--secret-policy",
+        choices=("redact-match", "exclude-file", "warn-only", "off"),
+        default="redact-match",
+        help="content-aware secret scanning policy for chunks (default: redact-match)",
+    )
+    common.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to exclude as secret file/path (repeatable)",
+    )
+    common.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to exclude as secret path (repeatable)",
+    )
 
     b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
     b.add_argument("repo")
@@ -725,6 +960,33 @@ def main(argv=None):
         type=_nonneg,
         default=0,
         help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
+    )
+    b.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    b.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    b.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    b.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
     )
     b.set_defaults(func=cmd_build)
 
@@ -787,6 +1049,33 @@ def main(argv=None):
         default=0,
         help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
+    gh.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    gh.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    gh.add_argument(
+        "--lock-timeout",
+        type=float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    gh.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
     gh.set_defaults(func=cmd_github)
 
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
@@ -803,6 +1092,12 @@ def main(argv=None):
     )
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
+    q.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="include secret files in query results",
+    )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
@@ -848,6 +1143,18 @@ def main(argv=None):
         choices=("gemini", "openai", "anthropic", "ollama"),
         default=None,
         help="force a specific LLM provider for --answer",
+    )
+    r.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="include sensitive secret/credential files (default: off)",
+    )
+    r.add_argument(
+        "--secret-policy",
+        choices=("redact-match", "exclude-file", "warn-only", "off"),
+        default="redact-match",
+        help="content-aware secret scanning policy for chunks (default: redact-match)",
     )
     r.add_argument(
         "--exclude-secrets",
@@ -916,9 +1223,41 @@ def main(argv=None):
     )
     m.set_defaults(func=cmd_map)
 
-    s = sub.add_parser("stats", help="print index stats")
+    s = sub.add_parser("stats", help="print index stats and quality summary")
     s.add_argument("-o", "--out", default=".r2g")
+    s.add_argument("--json", action="store_true", help="output stats as JSON")
+    s.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="json",
+        help="output format: json (default) or text (human-readable quality summary)",
+    )
     s.set_defaults(func=cmd_stats)
+
+    ep = sub.add_parser("explain-path", help="explain why a file is included or excluded")
+    ep.add_argument("path", help="file path to evaluate")
+    ep.add_argument(
+        "-r", "--repo", default=".", help="repository root (default: current directory)"
+    )
+    ep.add_argument("--include", action="append", default=[], help="glob to include")
+    ep.add_argument("--exclude", action="append", default=[], help="glob to exclude")
+    ep.add_argument("--include-vendor", action="store_true", default=False)
+    ep.add_argument("--include-secrets", action="store_true", default=False)
+    ep.add_argument("--json", action="store_true", help="output explanation as JSON")
+    ep.set_defaults(func=cmd_explain_path)
+
+    d = sub.add_parser(
+        "doctor",
+        help="diagnose environment, dependencies, permissions, and index integrity",
+    )
+    d.add_argument(
+        "path",
+        nargs="?",
+        default=".",
+        help="repository or index path to diagnose (default: current directory)",
+    )
+    d.add_argument("--json", action="store_true", help="output report as JSON")
+    d.set_defaults(func=cmd_doctor)
 
     try:
         args = p.parse_args(argv)

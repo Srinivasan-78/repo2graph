@@ -13,7 +13,7 @@ workflow.
     artifact-name: repo-graph
 ```
 
-`@v1` follows every 1.x release. Pin an exact version (`@v1.4.0`) if you would
+`@v1` follows every 1.x release. Pin an exact version (`@v1.6.0`) if you would
 rather upgrade by hand.
 
 The action never calls an LLM: `--answer` is deliberately not exposed. It packs
@@ -65,7 +65,9 @@ the step.
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
-| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.5.4`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.6.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+| `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
+| `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
 
 ### Pinning the package instead of the checkout
 
@@ -77,7 +79,7 @@ Publishing with attested provenance:
 ```yaml
 - uses: Srinivasan-78/repo2graph@v1
   with:
-    version: repo2graph==1.5.4
+    version: repo2graph==1.6.0
 ```
 
 Any pip spec works (`repo2graph>=1.4,<2`, a `git+https://…@<ref>` URL, a local

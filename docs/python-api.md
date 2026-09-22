@@ -30,8 +30,9 @@ print(f"Wrote {len(written)} artifacts ({count} chunks) to .r2g")
 meta = index_github("psf/requests", outdir=Path("out/requests"), git_history=200)
 print(f"Indexed {meta['repo']} @ {meta['commit']}: {meta['nodes']} nodes, {meta['chunks']} chunks")
 
-# 4. Redraw the interactive HTML map from an existing index with a custom node cap
-write_html(LoadedGraph(Path(".r2g")), Path(".r2g/human/graph.html"), viz_nodes=80)
+# 4. Redraw the interactive HTML map from an existing index with a custom node cap.
+#    The parameter is `max_nodes` here; the CLI spells the same thing `--viz-nodes`.
+write_html(LoadedGraph(Path(".r2g")), Path(".r2g/human/graph.html"), max_nodes=80)
 ```
 
 ## Graph-aware retrieval

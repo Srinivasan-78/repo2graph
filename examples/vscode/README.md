@@ -6,7 +6,7 @@
 
 ## Revision
 
-Commit `8c7b66b0e3d9364afd5a59a7a9843f191d169fa1` on `main`, analyzed 2026-09-17T15:36:00Z.
+Commit `a11ec079d98444803ad16ce48bf7ccc4ecafca7d` on `main`, analyzed 2026-09-22T08:10:35Z.
 
 ## Why this repository?
 
@@ -26,24 +26,24 @@ Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, 
 | Metric | Value |
 |---|---:|
 | Files indexed | 6,000 |
-| Files parsed (code) | 5,488 |
+| Files parsed (code) | 5,486 |
 | Parse errors | 6 |
 
 ## Graph statistics
 
 | Metric | Value |
 |---|---:|
-| Nodes | 113,115 |
-| Edges | 431,453 |
-| Symbols (functions) | 13,076 |
-| Symbols (classes) | 7,577 |
-| CALLS edges | 223,594 |
-| CALLS_EXTERNAL edges | 25,166 |
-| IMPORTS edges | 75,900 |
-| INHERITS edges | 10,581 |
-| DEFINES edges | 88,981 |
-| Ambiguous calls (name matched >1 candidate) | 73,028 |
-| Entrypoints | 19,390 |
+| Nodes | 113,080 |
+| Edges | 656,158 |
+| Symbols (functions) | 13,168 |
+| Symbols (classes) | 7,550 |
+| CALLS edges | 450,921 |
+| CALLS_EXTERNAL edges | 25,902 |
+| IMPORTS edges | 75,885 |
+| INHERITS edges | 7,458 |
+| DEFINES edges | 88,767 |
+| Ambiguous calls (name matched >1 candidate) | 82,225 |
+| Entrypoints | 16,904 |
 
 ## Supported languages
 
@@ -64,7 +64,7 @@ the commit above and build it directly:
 
 ```bash
 git clone --filter=blob:none https://github.com/microsoft/vscode /tmp/vscode
-cd /tmp/vscode && git checkout 8c7b66b0e3d9364afd5a59a7a9843f191d169fa1
+cd /tmp/vscode && git checkout a11ec079d98444803ad16ce48bf7ccc4ecafca7d
 repo2graph build . -o .r2g --include src/vs/**
 repo2graph query "How does a command reach its handler?" -o .r2g
 ```
@@ -88,7 +88,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-73,028 out of 223,594 total CALLS edges.
+82,225 out of 450,921 total CALLS edges.
 
 ## Reproduce
 

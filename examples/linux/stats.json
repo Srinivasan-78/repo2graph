@@ -1,18 +1,96 @@
 {
   "discovery": "git",
+  "skipped_gitignore": 0,
+  "skipped_vendor": 219,
   "files": 3660,
   "edge:CONTAINS": 3876,
   "parsed": 3574,
-  "parse_errors": 14663,
-  "symbol:struct": 127710,
-  "edge:DEFINES": 125401,
-  "symbol:enum": 6503,
+  "parse_errors": 14631,
+  "files_with_parse_errors": 1356,
+  "symbol:struct": 127722,
+  "edge:DEFINES": 125428,
+  "symbol:enum": 6504,
   "edge:IMPORTS": 13949,
-  "symbol:function": 39944,
-  "edge:CALLS_EXTERNAL": 44350,
-  "edge:CALLS": 70079,
-  "ambiguous_calls": 227,
-  "entrypoints": 16471,
-  "nodes": 136182,
-  "edges": 257655
+  "imports_resolved": 13474,
+  "imports_unresolved": 665,
+  "symbol:function": 39954,
+  "cpp_fallback_files": 65,
+  "edge:CALLS_EXTERNAL": 44375,
+  "calls_external": 44537,
+  "edge:CALLS": 68785,
+  "calls_unique_global": 14329,
+  "calls_scoped": 47205,
+  "calls_ambiguous": 3155,
+  "ambiguous_calls": 3155,
+  "entrypoints": 16927,
+  "nodes": 136219,
+  "edges": 256413,
+  "parse_errors_summary": "Files with parse errors: 1356  (65 C/C++ files used cpp fallback)",
+  "top_hub_nodes": [
+    {
+      "node_id": "file:include/linux/ceph/types.h",
+      "label": "include/linux/ceph/types.h",
+      "in_degree": 804
+    },
+    {
+      "node_id": "sym:include/linux/err.h::IS_ERR",
+      "label": "IS_ERR",
+      "in_degree": 686
+    },
+    {
+      "node_id": "sym:kernel/locking/mutex.c::mutex_unlock",
+      "label": "mutex_unlock",
+      "in_degree": 614
+    },
+    {
+      "node_id": "sym:kernel/locking/rtmutex_api.c::mutex_unlock",
+      "label": "mutex_unlock",
+      "in_degree": 612
+    },
+    {
+      "node_id": "sym:include/linux/err.h::ERR_PTR",
+      "label": "ERR_PTR",
+      "in_degree": 603
+    },
+    {
+      "node_id": "sym:include/linux/mutex.h::mutex_lock",
+      "label": "mutex_lock",
+      "in_degree": 583
+    },
+    {
+      "node_id": "sym:include/linux/err.h::PTR_ERR",
+      "label": "PTR_ERR",
+      "in_degree": 481
+    },
+    {
+      "node_id": "sym:kernel/locking/mutex.c::mutex_lock",
+      "label": "mutex_lock",
+      "in_degree": 434
+    },
+    {
+      "node_id": "sym:kernel/locking/rtmutex_api.c::mutex_lock",
+      "label": "mutex_lock",
+      "in_degree": 432
+    },
+    {
+      "node_id": "sym:fs/ext4/ext4.h::EXT4_SB",
+      "label": "EXT4_SB",
+      "in_degree": 412
+    }
+  ],
+  "languages": {
+    "c": 3573,
+    "config": 9,
+    "freezer": 1,
+    "hz": 1,
+    "kexec": 1,
+    "locks": 1,
+    "preempt": 1,
+    "bash": 1,
+    "debug": 1,
+    "bc": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "f010036"
 }

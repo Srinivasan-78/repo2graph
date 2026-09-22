@@ -34,7 +34,7 @@ generation are all pure Python — no NetworkX, no vendored graph library with i
 tree. The only two required third-party packages, for the whole core pipeline, are `tree-sitter`
 and `tree-sitter-language-pack` — both parsers, nothing else. `sentence-transformers`/`numpy` (the
 `rag` extra) and the MCP SDK (the `mcp` extra) are optional and never import unless you ask for
-them; see [SECURITY.md](SECURITY.md) for why that boundary is treated as load-bearing,
+them; see [.github/SECURITY.md](.github/SECURITY.md) for why that boundary is treated as load-bearing,
 not incidental.
 
 ## Where it guesses, and why
@@ -44,9 +44,9 @@ deliberate trade-off — the alternative is a project-specific setup step per la
 exactly what repo2graph exists to avoid. That trade-off shows up in a few specific, bounded ways:
 
 - **`CALLS` is matched by name, not by type.** If two functions in the codebase share a name,
-  repo2graph uses heuristics (same-file, same-directory, and imports) to boost the confidence 
-  of the most likely candidates. If heuristics fail to break a tie, it draws up to `max_call_candidates` 
-  possible `CALLS` edges from a call site and gives each one equal confidence and `ambiguous=True`. 
+  repo2graph uses heuristics (same-file, same-directory, and imports) to boost the confidence
+  of the most likely candidates. If heuristics fail to break a tie, it draws up to `max_call_candidates`
+  possible `CALLS` edges from a call site and gives each one equal confidence and `ambiguous=True`.
   A single unambiguous match gets `confidence = 1.0`. If your use of the graph
   needs certainty rather than a ranked guess, filter to `confidence == 1.0` edges only.
 - **Import resolution is per-language**, matching each language's actual module/package
@@ -104,10 +104,16 @@ the same graph traversal, and loading the graph straight into Neo4j via `graph.c
 
 ```
 .r2g/
-├── human/   overview.md   graph.html   graph.graphml
+├── human/   overview.md   graph.html   graph.graphml   CHANGELOG.md
 └── agent/   overview.md   manifest.json   chunks.jsonl
-              nodes.jsonl   edges.jsonl   graph.cypher   stats.json
+            nodes.jsonl   edges.jsonl   graph.cypher   stats.json
+            index.state.json   parse.cache.json
+            index.json*   vectors.npy*   vectors.meta.json*
 ```
+
+`*` are conditional: `index.json` is written only by `repo2graph github`, and the two `vectors.*`
+files only by `repo2graph embed`. `index.state.json` and `parse.cache.json` are the incremental
+build's bookkeeping — the per-file sha256 set and the cached per-file symbol tables.
 
 The split exists because people and programs want different things from the same graph:
 `human/graph.html` is a self-contained, zero-dependency interactive picture; `agent/manifest.json`
@@ -124,7 +130,7 @@ Every file, every node and edge kind, and the exact chunk schema:
 ## Further reading
 
 - [docs/cli.md](docs/cli.md) — full CLI flag tables, budget accounting, retrieval internals.
-- [docs/mcp.md](docs/mcp.md) — the MCP server's contract: the three tools, client configs, the
+- [docs/mcp.md](docs/mcp.md) — the MCP server's contract: the five tools, client configs, the
   bounds it enforces that the CLI leaves to you.
 - [docs/reference.md](docs/reference.md) — every artifact, every node/edge kind, the chunk format,
   the full "where it guesses" per-language breakdown.

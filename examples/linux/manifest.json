@@ -1,5 +1,27 @@
 {
   "format": "repo2graph/1",
+  "build_id": "19793a93-0525-4c4a-9e80-55757e10c074",
+  "tool_version": "1.6.0",
+  "schema_version": 1,
+  "created_at": "2026-09-22T08:12:01.249569+00:00",
+  "source_revision": {
+    "commit": "f0100363d8c374bd8e9ea7c9ba02744f0b802ca4",
+    "short_commit": "f010036",
+    "branch": "master",
+    "dirty": false,
+    "remote_url": "https://github.com/torvalds/linux"
+  },
+  "checksums": {
+    "agent/nodes.jsonl": "sha256:eeac889102d4c3ea2d9371262c9cd1b6a0f28121b6945de694a62be9f4c81730",
+    "agent/edges.jsonl": "sha256:2d64c7cba0883cca27a8fcb0d3f677a93fb97fe6b0bfb8e4767701b71af2488d",
+    "agent/chunks.jsonl": "sha256:fc84bf4b57cc5debf4193082cb8e16040031d037f32bec60c7682618ccb7d627",
+    "human/overview.md": "sha256:71c8d435cec82e33b48160bd6858ec3b5a0e8e2c22114c4a5eef865a6a552f6c",
+    "agent/overview.md": "sha256:c3a4f47cf78c38cef7a6f98285ece0ffca4580de9a4da55c014a5c48446823a0",
+    "human/graph.html": "sha256:9db695e1754c50884021b302150ab87845d5df5feb62623f96cbc477e5943720",
+    "agent/stats.json": "sha256:4e6295a80c0a489e1172dead861129fc42a964708ed020c97b12bf6ce357329c",
+    "agent/index.state.json": "sha256:b9edb5493074f88ac407fe137b36012d19193f29c0aee3af15ad3e2c5fce9947",
+    "agent/parse.cache.json": "sha256:002d28948532146ab7c1c07049d63082fe97a26d9058d8c3566bb15e20182061"
+  },
   "repo": "linux",
   "written": [
     "agent/nodes.jsonl",
@@ -13,6 +35,7 @@
     "agent/parse.cache.json",
     "agent/manifest.json"
   ],
+  "secret_filter_policy": "redact-match",
   "sections": {
     "human": "for people: prose map and drawings",
     "agent": "for programs: the graph, the chunks, this manifest"
@@ -69,25 +92,51 @@
     "callers",
     "callees",
     "callees_external",
+    "caller_edges",
+    "callee_edges",
+    "base_edges",
     "text"
   ],
   "counts": {
     "discovery": "git",
+    "skipped_gitignore": 0,
+    "skipped_vendor": 219,
     "files": 3660,
     "edge:CONTAINS": 3876,
     "parsed": 3574,
-    "parse_errors": 14663,
-    "symbol:struct": 127710,
-    "edge:DEFINES": 125401,
-    "symbol:enum": 6503,
+    "parse_errors": 14631,
+    "files_with_parse_errors": 1356,
+    "symbol:struct": 127722,
+    "edge:DEFINES": 125428,
+    "symbol:enum": 6504,
     "edge:IMPORTS": 13949,
-    "symbol:function": 39944,
-    "edge:CALLS_EXTERNAL": 44350,
-    "edge:CALLS": 70079,
-    "ambiguous_calls": 227,
-    "entrypoints": 16471,
-    "nodes": 136182,
-    "edges": 257655
+    "imports_resolved": 13474,
+    "imports_unresolved": 665,
+    "symbol:function": 39954,
+    "cpp_fallback_files": 65,
+    "edge:CALLS_EXTERNAL": 44375,
+    "calls_external": 44537,
+    "edge:CALLS": 68785,
+    "calls_unique_global": 14329,
+    "calls_scoped": 47205,
+    "calls_ambiguous": 3155,
+    "ambiguous_calls": 3155,
+    "entrypoints": 16927,
+    "nodes": 136219,
+    "edges": 256413,
+    "parse_errors_summary": "Files with parse errors: 1356  (65 C/C++ files used cpp fallback)"
+  },
+  "quality_metrics": {
+    "files_discovered": 3660,
+    "files_parsed": 3574,
+    "parse_errors": 14631,
+    "files_with_parse_errors": 1356,
+    "imports_resolved": 13474,
+    "imports_unresolved": 665,
+    "calls_scoped": 47205,
+    "calls_unique_global": 14329,
+    "calls_ambiguous": 3155,
+    "calls_external": 44537
   },
   "entrypoints": [
     {
@@ -95,178 +144,179 @@
       "path": "kernel/bpf/syscall.c",
       "qualname": "__sys_bpf",
       "kind": "function",
-      "reach": 5327
+      "reach": 4527
     },
     {
       "id": "sym:kernel/kthread.c::kthreadd",
       "path": "kernel/kthread.c",
       "qualname": "kthreadd",
       "kind": "function",
-      "reach": 3802
+      "reach": 3096
     },
     {
-      "id": "sym:kernel/umh.c::call_usermodehelper_exec_async",
-      "path": "kernel/umh.c",
-      "qualname": "call_usermodehelper_exec_async",
+      "id": "sym:kernel/cgroup/cgroup.c::cgroup_post_fork",
+      "path": "kernel/cgroup/cgroup.c",
+      "qualname": "cgroup_post_fork",
       "kind": "function",
-      "reach": 3639
+      "reach": 3083
     },
     {
       "id": "sym:fs/ext4/fast_commit.c::ext4_fc_replay",
       "path": "fs/ext4/fast_commit.c",
       "qualname": "ext4_fc_replay",
       "kind": "function",
-      "reach": 3212
+      "reach": 3062
     },
     {
       "id": "sym:fs/ext4/extents.c::ext4_fallocate",
       "path": "fs/ext4/extents.c",
       "qualname": "ext4_fallocate",
       "kind": "function",
-      "reach": 3200
+      "reach": 3056
     },
     {
       "id": "sym:fs/ext4/inode.c::ext4_setattr",
       "path": "fs/ext4/inode.c",
       "qualname": "ext4_setattr",
       "kind": "function",
-      "reach": 3168
+      "reach": 3019
     },
     {
       "id": "sym:fs/ext4/inode.c::ext4_evict_inode",
       "path": "fs/ext4/inode.c",
       "qualname": "ext4_evict_inode",
       "kind": "function",
-      "reach": 3164
+      "reach": 3016
     },
     {
       "id": "sym:fs/ext4/inode.c::ext4_da_write_begin",
       "path": "fs/ext4/inode.c",
       "qualname": "ext4_da_write_begin",
       "kind": "function",
-      "reach": 3155
+      "reach": 3006
+    },
+    {
+      "id": "sym:kernel/umh.c::call_usermodehelper_exec_async",
+      "path": "kernel/umh.c",
+      "qualname": "call_usermodehelper_exec_async",
+      "kind": "function",
+      "reach": 2969
     },
     {
       "id": "sym:fs/ext4/inode.c::ext4_journalled_write_end",
       "path": "fs/ext4/inode.c",
       "qualname": "ext4_journalled_write_end",
       "kind": "function",
-      "reach": 3113
+      "reach": 2964
     },
     {
       "id": "sym:fs/ext4/verity.c::ext4_end_enable_verity",
       "path": "fs/ext4/verity.c",
       "qualname": "ext4_end_enable_verity",
       "kind": "function",
-      "reach": 3113
-    },
-    {
-      "id": "sym:fs/ext4/ialloc.c::__ext4_new_inode",
-      "path": "fs/ext4/ialloc.c",
-      "qualname": "__ext4_new_inode",
-      "kind": "function",
-      "reach": 3056
-    },
-    {
-      "id": "sym:kernel/power/main.c::state_store",
-      "path": "kernel/power/main.c",
-      "qualname": "state_store",
-      "kind": "function",
-      "reach": 3011
-    },
-    {
-      "id": "sym:kernel/power/autosleep.c::try_to_suspend",
-      "path": "kernel/power/autosleep.c",
-      "qualname": "try_to_suspend",
-      "kind": "function",
-      "reach": 3004
+      "reach": 2964
     },
     {
       "id": "sym:fs/ext4/inode.c::ext4_map_blocks",
       "path": "fs/ext4/inode.c",
       "qualname": "ext4_map_blocks",
       "kind": "function",
-      "reach": 2977
-    },
-    {
-      "id": "sym:kernel/cgroup/cpuset.c::cpuset_write_resmask",
-      "path": "kernel/cgroup/cpuset.c",
-      "qualname": "cpuset_write_resmask",
-      "kind": "function",
-      "reach": 2963
+      "reach": 2819
     },
     {
       "id": "sym:drivers/net/ethernet/intel/e1000/e1000_ethtool.c::e1000_diag_test",
       "path": "drivers/net/ethernet/intel/e1000/e1000_ethtool.c",
       "qualname": "e1000_diag_test",
       "kind": "function",
-      "reach": 2960
-    },
-    {
-      "id": "sym:kernel/cgroup/cgroup.c::css_free_rwork_fn",
-      "path": "kernel/cgroup/cgroup.c",
-      "qualname": "css_free_rwork_fn",
-      "kind": "function",
-      "reach": 2929
+      "reach": 2774
     },
     {
       "id": "sym:fs/ext4/extents-test.c::test_split_convert",
       "path": "fs/ext4/extents-test.c",
       "qualname": "test_split_convert",
       "kind": "function",
-      "reach": 2926
-    },
-    {
-      "id": "sym:kernel/sched/ext/ext.c::scx_root_enable_workfn",
-      "path": "kernel/sched/ext/ext.c",
-      "qualname": "scx_root_enable_workfn",
-      "kind": "function",
-      "reach": 2919
-    },
-    {
-      "id": "sym:kernel/sched/ext/sub.c::scx_sub_enable_workfn",
-      "path": "kernel/sched/ext/sub.c",
-      "qualname": "scx_sub_enable_workfn",
-      "kind": "function",
-      "reach": 2892
+      "reach": 2768
     },
     {
       "id": "sym:fs/ext4/extents-test.c::extents_kunit_init",
       "path": "fs/ext4/extents-test.c",
       "qualname": "extents_kunit_init",
       "kind": "function",
-      "reach": 2891
+      "reach": 2733
     },
     {
-      "id": "sym:kernel/sched/core.c::sched_cpu_deactivate",
-      "path": "kernel/sched/core.c",
-      "qualname": "sched_cpu_deactivate",
+      "id": "sym:kernel/sched/ext/ext.c::scx_root_enable_workfn",
+      "path": "kernel/sched/ext/ext.c",
+      "qualname": "scx_root_enable_workfn",
       "kind": "function",
-      "reach": 2866
+      "reach": 2730
+    },
+    {
+      "id": "sym:kernel/cgroup/cgroup.c::css_free_rwork_fn",
+      "path": "kernel/cgroup/cgroup.c",
+      "qualname": "css_free_rwork_fn",
+      "kind": "function",
+      "reach": 2725
+    },
+    {
+      "id": "sym:kernel/sched/ext/sub.c::scx_sub_enable_workfn",
+      "path": "kernel/sched/ext/sub.c",
+      "qualname": "scx_sub_enable_workfn",
+      "kind": "function",
+      "reach": 2725
     },
     {
       "id": "sym:fs/ext4/namei.c::ext4_mkdir",
       "path": "fs/ext4/namei.c",
       "qualname": "ext4_mkdir",
       "kind": "function",
-      "reach": 2863
-    },
-    {
-      "id": "sym:kernel/sched/core.c::sched_cpu_activate",
-      "path": "kernel/sched/core.c",
-      "qualname": "sched_cpu_activate",
-      "kind": "function",
-      "reach": 2860
+      "reach": 2708
     },
     {
       "id": "sym:fs/ext4/namei.c::ext4_symlink",
       "path": "fs/ext4/namei.c",
       "qualname": "ext4_symlink",
       "kind": "function",
-      "reach": 2851
+      "reach": 2696
+    },
+    {
+      "id": "sym:fs/ext4/inode.c::ext4_page_mkwrite",
+      "path": "fs/ext4/inode.c",
+      "qualname": "ext4_page_mkwrite",
+      "kind": "function",
+      "reach": 2694
+    },
+    {
+      "id": "sym:kernel/trace/trace_eprobe.c::__trace_eprobe_create",
+      "path": "kernel/trace/trace_eprobe.c",
+      "qualname": "__trace_eprobe_create",
+      "kind": "function",
+      "reach": 2685
+    },
+    {
+      "id": "sym:kernel/cgroup/cpuset.c::cpuset_write_resmask",
+      "path": "kernel/cgroup/cpuset.c",
+      "qualname": "cpuset_write_resmask",
+      "kind": "function",
+      "reach": 2665
+    },
+    {
+      "id": "sym:kernel/trace/bpf_trace.c::bpf_uprobe_multi_link_attach",
+      "path": "kernel/trace/bpf_trace.c",
+      "qualname": "bpf_uprobe_multi_link_attach",
+      "kind": "function",
+      "reach": 2646
+    },
+    {
+      "id": "sym:kernel/livepatch/core.c::klp_enable_patch",
+      "path": "kernel/livepatch/core.c",
+      "qualname": "klp_enable_patch",
+      "kind": "function",
+      "reach": 2630
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "max_call_candidates": 5,
   "how_to_read": [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
@@ -280,5 +330,36 @@
     "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call."
-  ]
+  ],
+  "usage_hints": {
+    "tool_decision_tree": {
+      "orient_first": "Call repo_map once to get languages, hub files and entry points before any other tool.",
+      "search_by_question": "Use repo_search for natural-language questions; it returns cited chunks plus graph neighbours.",
+      "trace_relationships": "Use repo_neighbours with a node_id to hop through callers, callees, base classes and defining files.",
+      "node_id_format": "sym:pkg/relative/path.py::function_name -- read the 'id' field off nodes.jsonl or a chunk's node_id directly; or take a chunk's caller_edges/callee_edges/base_edges target (which is a bare path::qualname) and prefix 'sym:' to construct one."
+    },
+    "confidence_semantics": {
+      "1.0": "Certain: the call name resolved to exactly one definition.",
+      "lt_1.0": "Ambiguous: the name matched multiple candidates, fanned out to up to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 when correctness matters more than recall. IMPORTS, DEFINES and INHERITS edges carry no confidence key -- they are never ambiguous."
+    },
+    "edge_type_meanings": {
+      "CONTAINS": "repo -> dir -> file",
+      "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+      "IMPORTS": "file -> file (internal: true) or file -> module",
+      "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+      "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+      "INHERITS": "symbol -> base class or interface",
+      "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+    },
+    "what_is_not_indexed": [
+      "binary files",
+      "files over 1.5 MB",
+      "vendor/build folders",
+      "dotfiles",
+      ".gitignore entries",
+      "secret / credential files",
+      "dynamic dispatch -- code that decides at runtime which function to call"
+    ],
+    "dynamic_calls_note": "No CALLS edge does not prove no call happens at runtime. Dynamic dispatch, reflection and generated code are invisible to a parser -- hedge answers about them accordingly."
+  }
 }

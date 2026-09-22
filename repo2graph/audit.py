@@ -24,10 +24,8 @@ path the retrieval layer refuses to return is also a path this layer refuses to
 log -- one definition, not two that drift.
 """
 
-import hashlib
 import json
 import os
-import re
 import sys
 import threading
 import time
@@ -35,175 +33,41 @@ from dataclasses import dataclass
 from typing import Any, Literal, TextIO
 
 from .events import emit, timestamp, write_safe
+from .secrets import (
+    CONTENT_SECRET_PATTERNS,
+    ENTROPY_MIN_LEN,
+    MAX_SANITIZE_DEPTH,
+    MAX_VALUE_CHARS,
+    REDACTION_HASH_CHARS,
+    SECRET_KEY_RE,
+    _fingerprint,
+    _looks_like_a_secret,
+    redact,
+    sanitize_params,
+    sanitize_value,
+)
 
-# How much of a redacted value's hash is kept. Enough to correlate two
-# occurrences, far too little to attack the original.
-REDACTION_HASH_CHARS = 8
-# Values longer than this are truncated in the log regardless of content: a
-# model can paste a whole file into an argument, and an audit line is a record
-# of the call, not a copy of its payload.
-MAX_VALUE_CHARS = 512
-# Strings at least this long made only of token-ish characters are treated as
-# credentials even if nothing about their key says so.
-ENTROPY_MIN_LEN = 24
-# How deep sanitisation follows nested containers before it stops and says so.
-# No real tool argument is a dict twelve levels down; a caller-supplied one
-# that is has stopped being an argument and become a way to exhaust the
-# interpreter's C stack. Recursion here is driven entirely by untrusted input,
-# and the RecursionError it raises escapes `record()` into call paths that do
-# not expect an audit write to fail -- an auth rejection has no `try` around it
-# at all -- so the bound is part of the contract, not an optimisation.
-MAX_SANITIZE_DEPTH = 12
-
+SECRET_VALUE_PATTERNS = CONTENT_SECRET_PATTERNS
 LEVELS = ("none", "errors", "all")
 
-# Field names whose *value* is a credential whatever it looks like.
-SECRET_KEY_RE = re.compile(
-    r"(pass(word|wd)?|secret|token|api[-_]?key|auth|credential|private[-_]?key"
-    r"|session|cookie|bearer|signature|access[-_]?key)",
-    re.I,
-)
-
-# Value shapes that are credentials wherever they appear. Ordered most specific
-# first; the first match wins and names what was found.
-SECRET_VALUE_PATTERNS = (
-    ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}\b")),
-    ("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
-    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
-    ("google_key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
-    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    (
-        "jwt",
-        re.compile(
-            r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\."
-            r"[A-Za-z0-9_-]{8,}\b"
-        ),
-    ),
-    ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
-    (
-        "assignment",
-        re.compile(
-            r"(?i)\b(?:pass(?:word|wd)?|secret|token|api[-_]?key)"
-            r"\s*[=:]\s*\S{6,}"
-        ),
-    ),
-)
-
-
-def _fingerprint(value: str) -> str:
-    """A short, stable, non-reversible tag for a redacted value."""
-    digest = hashlib.blake2b(value.encode("utf8", "surrogateescape"), digest_size=16).hexdigest()
-    return digest[:REDACTION_HASH_CHARS]
-
-
-def redact(value: str, why: str) -> str:
-    """Replace a secret with a tag that is still useful in an investigation.
-
-    Args:
-        value: The secret.
-        why: What matched, e.g. "github_token" or "key:password".
-
-    Returns:
-        e.g. `"[redacted:github_token len=40 fp=1a2b3c4d]"`. The length and
-        fingerprint let an investigator correlate occurrences and spot a
-        rotation without the log ever holding the value itself.
-    """
-    return f"[redacted:{why} len={len(value)} fp={_fingerprint(value)}]"
-
-
-def _looks_like_a_secret(value: str) -> str | None:
-    """Name the credential shape `value` matches, or None."""
-    for name, pattern in SECRET_VALUE_PATTERNS:
-        if pattern.search(value):
-            return name
-    # A long unbroken run of token characters with no whitespace is the generic
-    # shape of a credential — but only when the mix is stronger than an
-    # ordinary identifier. `_` is in the class, so a snake_case name of
-    # ENTROPY_MIN_LEN+ with one digit (`iss25`, `python3`) used to match.
-    # Those are the pinpoint `repo_search` queries worth logging. No
-    # base64/hex credential is lowercase-and-underscore only: those use
-    # mixed case or the `+/=` padding alphabet. Vendor prefixes (AKIA,
-    # ghp_, sk-, eyJ…) are caught above, before this gate.
-    if len(value) >= ENTROPY_MIN_LEN and re.fullmatch(r"[A-Za-z0-9+/=_-]+", value):
-        if re.fullmatch(r"[a-z0-9_]+", value):
-            return None
-        digits = sum(c.isdigit() for c in value)
-        letters = sum(c.isalpha() for c in value)
-        if digits and letters:
-            return "high_entropy"
-    return None
-
-
-def sanitize_value(key: str, value: Any, *, depth: int = 0) -> Any:
-    """Redact one parameter value, recursing into containers.
-
-    Args:
-        key: The field name this value arrived under; matched against
-            SECRET_KEY_RE so a credential in an obviously-named field is caught
-            even when its shape is unremarkable.
-        value: Any JSON-compatible value.
-        depth: How many containers deep this call already is. Callers leave it
-            at 0; only the recursion below passes anything else.
-
-    Returns:
-        The value with anything secret-looking replaced, and long strings cut.
-        A container nested past MAX_SANITIZE_DEPTH becomes
-        `"[truncated:depth]"` -- the record still exists and still says that
-        something was there, which is the whole point of the log.
-    """
-    # The ceiling is tested only where the recursion actually happens, so a
-    # scalar sitting at the limit is still redacted normally. Truncating those
-    # too would throw away the one thing at that depth worth reading.
-    if isinstance(value, dict):
-        if depth >= MAX_SANITIZE_DEPTH:
-            return "[truncated:depth]"
-        return {k: sanitize_value(str(k), v, depth=depth + 1) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        if depth >= MAX_SANITIZE_DEPTH:
-            return "[truncated:depth]"
-        return [sanitize_value(key, v, depth=depth + 1) for v in value]
-    if isinstance(value, bool) or value is None or isinstance(value, (int, float)):
-        return value
-    if isinstance(value, str):
-        text = value
-    else:
-        # str() runs caller-supplied __str__/__repr__, which can raise. An
-        # audit logger that dies on an awkward argument loses the record of
-        # exactly the call worth having a record of.
-        try:
-            text = str(value)
-        except Exception:
-            return f"[unprintable:{type(value).__name__}]"
-
-    if SECRET_KEY_RE.search(key or ""):
-        return redact(text, f"key:{key}")
-    shape = _looks_like_a_secret(text)
-    if shape:
-        return redact(text, shape)
-    # A path the retrieval layer would refuse to return must not be logged
-    # either: the same definition governs both, so they cannot drift apart.
-    from .query import _is_secret_path
-
-    if ("/" in text or "\\" in text) and _is_secret_path(text):
-        return f"[redacted:secret_path fp={_fingerprint(text)}]"
-    if len(text) > MAX_VALUE_CHARS:
-        return text[:MAX_VALUE_CHARS] + f"…[+{len(text) - MAX_VALUE_CHARS} chars]"
-    return text
-
-
-def sanitize_params(params: Any) -> dict[str, Any]:
-    """Sanitize a whole tool-argument mapping.
-
-    Args:
-        params: The arguments a caller sent, or anything else.
-
-    Returns:
-        A dict safe to write to a log that will be kept and shipped onward.
-    """
-    if not isinstance(params, dict):
-        return {"_": sanitize_value("", params)} if params else {}
-    return {str(k): sanitize_value(str(k), v) for k, v in params.items()}
+__all__ = [
+    "AuditConfig",
+    "AuditLogger",
+    "CONTENT_SECRET_PATTERNS",
+    "ENTROPY_MIN_LEN",
+    "LEVELS",
+    "MAX_SANITIZE_DEPTH",
+    "MAX_VALUE_CHARS",
+    "REDACTION_HASH_CHARS",
+    "SECRET_KEY_RE",
+    "SECRET_VALUE_PATTERNS",
+    "_fingerprint",
+    "_looks_like_a_secret",
+    "redact",
+    "sanitize_params",
+    "sanitize_value",
+    "timer",
+]
 
 
 # Whether this process has already said that advisory locking is unavailable.

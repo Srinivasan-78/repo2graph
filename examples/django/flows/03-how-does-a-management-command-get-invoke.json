@@ -2,17 +2,6 @@
   "query": "How does a management command get invoked?",
   "results": [
     {
-      "node_id": "sym:django/core/management/commands/makemessages.py::Command",
-      "path": "django/core/management/commands/makemessages.py",
-      "lang": "python",
-      "kind": "class",
-      "name": "Command",
-      "start_line": 199,
-      "end_line": 779,
-      "why": "lexical",
-      "score": 20.591
-    },
-    {
       "node_id": "sym:django/contrib/auth/management/commands/changepassword.py::Command",
       "path": "django/contrib/auth/management/commands/changepassword.py",
       "lang": "python",
@@ -21,7 +10,7 @@
       "start_line": 12,
       "end_line": 82,
       "why": "lexical",
-      "score": 19.582
+      "score": 18.24
     },
     {
       "node_id": "sym:tests/user_commands/management/commands/common_args.py::Command",
@@ -32,16 +21,71 @@
       "start_line": 6,
       "end_line": 16,
       "why": "lexical",
-      "score": 18.086
+      "score": 16.705
     },
     {
-      "node_id": "sym:django/core/management/commands/makemessages.py::Command.settings_available",
-      "path": "django/core/management/commands/makemessages.py",
+      "node_id": "sym:django/contrib/auth/management/commands/createsuperuser.py::Command",
+      "path": "django/contrib/auth/management/commands/createsuperuser.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 26,
+      "end_line": 321,
+      "why": "lexical",
+      "score": 16.281
+    },
+    {
+      "node_id": "sym:tests/user_commands/management/commands/no_translations.py::Command",
+      "path": "tests/user_commands/management/commands/no_translations.py",
+      "lang": "python",
+      "kind": "class",
+      "name": "Command",
+      "start_line": 5,
+      "end_line": 8,
+      "why": "lexical",
+      "score": 15.211
+    },
+    {
+      "node_id": "file:django/contrib/auth/management/commands/changepassword.py",
+      "path": "django/contrib/auth/management/commands/changepassword.py",
+      "lang": "python",
+      "kind": "code",
+      "name": "django/contrib/auth/management/commands/changepassword.py",
+      "start_line": 1,
+      "end_line": 83,
+      "why": "DEFINES in of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:django/contrib/auth/management/commands/changepassword.py::Command._get_pass",
+      "path": "django/contrib/auth/management/commands/changepassword.py",
       "lang": "python",
       "kind": "function",
-      "name": "Command.settings_available",
-      "start_line": 489,
-      "end_line": 496,
+      "name": "Command._get_pass",
+      "start_line": 17,
+      "end_line": 21,
+      "why": "DEFINES out of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "file:tests/user_commands/management/commands/common_args.py",
+      "path": "tests/user_commands/management/commands/common_args.py",
+      "lang": "python",
+      "kind": "code",
+      "name": "tests/user_commands/management/commands/common_args.py",
+      "start_line": 1,
+      "end_line": 17,
+      "why": "DEFINES in of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:tests/user_commands/management/commands/common_args.py::Command.handle",
+      "path": "tests/user_commands/management/commands/common_args.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "Command.handle",
+      "start_line": 15,
+      "end_line": 16,
       "why": "DEFINES out of Command",
       "score": 0.0
     }
