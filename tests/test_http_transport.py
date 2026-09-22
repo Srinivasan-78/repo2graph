@@ -1100,3 +1100,49 @@ def test_missing_index_without_repo_returns_503_actionable_error(tmp_path):
         assert "Build one first with: repo2graph build" in payload["error"]["message"]
     finally:
         transport.stop()
+
+
+# ------------------------------------------------- host path disclosure ----
+
+
+def test_a_missing_index_does_not_tell_the_caller_where_it_looked(tmp_path):
+    """503 must not carry the host's filesystem layout.
+
+    `open_index` raises SystemExit with a message written for an operator at a
+    terminal, naming the absolute index directory twice. Relaying str(exc) put
+    that in a JSON-RPC error -- and therefore into the context window of any
+    agent driving this server -- which is the disclosure `_public_repo_label`
+    already refuses one endpoint over. The operator's detail belongs in the
+    audit log, which is server-side.
+    """
+    from repo2graph.http_server import INDEX_UNAVAILABLE
+
+    missing = tmp_path / "host-layout" / "no_index_here"
+    missing.mkdir(parents=True)
+    stream = io.StringIO()
+    transport = HTTPTransport(
+        missing,
+        None,
+        host="127.0.0.1",
+        port=0,
+        audit=AuditLogger(AuditConfig(level="all"), stream=stream),
+    )
+    transport.start()
+    try:
+        server = Server(transport, stream)
+        status, body = server.call("repo_map")
+    finally:
+        transport.stop()
+
+    assert status == 503
+    message = body["error"]["message"]
+    assert message == INDEX_UNAVAILABLE
+    # Neither the full path nor either distinctive segment of it.
+    assert str(missing) not in message
+    assert "host-layout" not in message
+    assert "no_index_here" not in message
+
+    # The operator still gets the detail, server-side.
+    audited = [r for r in server.audit_lines() if r.get("outcome") == "error"]
+    assert len(audited) == 1
+    assert "no_index_here" in audited[0]["error"]

@@ -15,6 +15,22 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
+- **The HTTP transport no longer tells a caller where its index lives.** Found
+  by an audit of the transport, not reported. When no index exists,
+  `open_index` raises `SystemExit` with a message written for an operator at a
+  terminal that names the absolute index directory — twice — and `_call_tool`
+  relayed `str(exc)` verbatim as the 503 body, so a caller (and the context
+  window of any agent driving the server) received the host's filesystem
+  layout. That is the disclosure `_public_repo_label` already refuses one
+  endpoint over. The 503 stays actionable per #265 but uses placeholders
+  (`repo2graph build <repo> -o <index-dir>`); the real directory goes to the
+  audit log, which is server-side. The rest of the transport audit found no
+  further issues: token comparison is constant-time, algorithm confusion is
+  refused by an RSA-only table plus a `kty` check, `Host`/`Origin` are
+  validated before the body is read, response headers are sanitised against
+  splitting, bodies are `Content-Length`-only and size-capped with a
+  `RecursionError` guard on deeply nested JSON, and the non-loopback bind
+  guard fails closed.
 - **Quadratic blowup scanning for PEM private keys (denial of service).** Found
   by a ReDoS pass over `secrets.py`, not reported. The `private_key` pattern was
   `BEGIN` followed by a lazy `[\s\S]*?` to an *optional* `END`, so every `BEGIN`

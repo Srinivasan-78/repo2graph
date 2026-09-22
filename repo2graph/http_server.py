@@ -165,6 +165,17 @@ UNAUTHORIZED = 401
 # not a malformed RPC frame. 403 is what a client acts on.
 FORBIDDEN = 403
 
+# What a caller is told when there is no index to serve. Actionable, per #265,
+# but with placeholders where the underlying SystemExit puts the absolute
+# index directory: that message is written for an operator at a terminal, and
+# a caller over HTTP must not be handed the host's filesystem layout. The real
+# directory goes to the audit log, which is server-side.
+INDEX_UNAVAILABLE = (
+    "No repo2graph index is available on this server. "
+    "Build one first with: repo2graph build <repo> -o <index-dir>. "
+    "The server log names the directory that was checked."
+)
+
 
 def _public_repo_label(repo: Any) -> str | None:
     """Basename of `repo` for the unauthenticated discovery document.
@@ -621,16 +632,23 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 # open_index exits rather than raises when there is no index and
                 # nothing safe to build from. Over HTTP that is a 503, not a
                 # dead process: the server stays up and says what is wrong.
-                err_msg = str(exc).strip() or "Index unavailable"
+                #
+                # What it says is not str(exc). That message is written for the
+                # operator at a terminal and names the absolute index directory
+                # -- twice -- so relaying it verbatim hands a caller the host's
+                # filesystem layout, and hands an agent's context window the
+                # same. It is the exact disclosure `_public_repo_label` exists
+                # to prevent one endpoint over. The detail stays in the audit
+                # log, which is server-side and is where an operator looks.
                 self.audit.record(
                     tool=name,
                     params=arguments,
                     identity=identity.subject,
                     outcome="error",
                     duration_ms=elapsed.ms,
-                    error=err_msg,
+                    error=str(exc).strip() or "Index unavailable",
                 )
-                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, err_msg))
+                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, INDEX_UNAVAILABLE))
                 return
             except Exception as exc:
                 self.audit.record(
