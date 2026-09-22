@@ -77,6 +77,7 @@ def test_languages_documented():
         "swift": r"\bSwift\b",
         "scala": r"\bScala\b",
         "bash": r"\bBash\b",
+        "lua": r"\bLua\b",
     }
 
     assert set(families) == set(LANG_CFG), (
