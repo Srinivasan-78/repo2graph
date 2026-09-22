@@ -359,7 +359,14 @@ def test_ac8_new_action_inputs_default_to_baseline_behaviour():
     """AC-8: the three inputs this run may add must default to "off"."""
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         inputs = parse_action_block(fh.read(), "inputs")
-    off_defaults = {"embed": "false", "embed-model": "", "query-budget-tokens": ""}
+    off_defaults = {
+        "embed": "false",
+        "embed-model": "",
+        "query-budget-tokens": "",
+        "incremental": "false",
+        "parse-policy": "lenient",
+        "max-call-candidates": "5",
+    }
     for name, expected in off_defaults.items():
         if name in inputs:
             assert inputs[name].get("default") == expected, (name, inputs[name])
