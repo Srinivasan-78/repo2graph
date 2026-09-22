@@ -7,10 +7,16 @@ the [examples/](../examples/) corpus specifically.
 
 ## Methodology
 
-- **What ran:** `python scripts/generate_examples.py --all`, on this project's own development
-  machine (Windows, Python 3.13.15), on 2026-09-17. Every number below is read straight out of
+- **What ran:** `python scripts/generate_examples.py --all`, on 2026-09-22, via
+  [`.github/workflows/examples.yml`](../.github/workflows/examples.yml) on a GitHub-hosted
+  `ubuntu-latest` runner (Python 3.12). Every number below is read straight out of
   [`benchmarks/results.json`](../benchmarks/results.json) and each example's own `metadata.json` —
   nothing here is hand-typed or estimated.
+- **Why CI rather than a workstation:** the run before this one was done on a Windows development
+  machine, where `git checkout` refuses paths over the historical `MAX_PATH` limit (see
+  [docs/limitations.md](limitations.md#windows-filename-length-limits-can-silently-shrink-a-checkout)).
+  A Linux runner has no such limit, so the checkout the numbers describe is the complete one. It
+  also makes the run reproducible by anyone with a fork, which a single workstation is not.
 - **What "clone" measures:** wall-clock time for `git clone --filter=blob:none` (plus
   `sparse-checkout` for the four scoped repositories) through `git checkout` of the pinned commit —
   the network phase. See [examples/repositories.yaml](../examples/repositories.yaml) for each
@@ -32,17 +38,32 @@ the [examples/](../examples/) corpus specifically.
 
 | Repository | Scope | Files indexed | Clone | Build | Nodes | Edges |
 |---|---|---:|---:|---:|---:|---:|
-| [Django](../examples/django/) | full | 5,637 | 8.3s | 46.5s | 54,544 | 228,461 |
-| [Kubernetes](../examples/kubernetes/) | scoped | 1,082 | 4.7s | 14.5s | 14,197 | 83,525 |
-| [TensorFlow](../examples/tensorflow/) | scoped | 1,022 | 4.2s | 13.0s | 20,641 | 96,013 |
-| [VS Code](../examples/vscode/) | scoped, capped at 6,000 files | 6,000 | 14.6s | 86.9s | 113,115 | 431,453 |
-| [Linux kernel](../examples/linux/) | scoped | 3,660 | 8.0s | 62.2s | 136,182 | 257,655 |
+| [Django](../examples/django/) | full | 5,629 | 4.6s | 33.9s | 55,810 | 303,339 |
+| [Kubernetes](../examples/kubernetes/) | scoped | 1,084 | 2.8s | 12.6s | 14,451 | 110,246 |
+| [TensorFlow](../examples/tensorflow/) | scoped | 1,022 | 2.6s | 15.8s | 21,380 | 115,984 |
+| [VS Code](../examples/vscode/) | scoped, capped at 6,000 files | 6,000 | 8.3s | 71.3s | 113,080 | 656,158 |
+| [Linux kernel](../examples/linux/) | scoped | 3,660 | 3.3s | 77.5s | 136,219 | 256,413 |
 
-Files-per-second on the build phase alone ranges from ~70 (VS Code — TypeScript, high `CALLS`
-ambiguity, more edges per file) to ~120 (Django — Python, moderate ambiguity) to ~260
-(Kubernetes/TensorFlow — Go and a scoped C++/Python slice) on this machine; see
-[docs/limitations.md](limitations.md) for why file count alone does not predict build time (parse
-error rate and call-name ambiguity both matter more than raw file count).
+Files-per-second on the build phase alone ranges from ~47 (the Linux kernel — C, by far the highest
+parse-error rate) through ~65–86 (TensorFlow, VS Code, Kubernetes) to ~166 (Django — Python, clean
+parses, no macro expansion); see [docs/limitations.md](limitations.md) for why file count alone does
+not predict build time (parse error rate and call-name ambiguity both matter more than raw file
+count).
+
+### What changed against the previous run
+
+The corpus before this one was generated on 2026-09-17 with repo2graph 1.5.1, and node counts moved
+very little between the two — but **edge counts rose sharply**: Django 228,461 → 303,339, VS Code
+431,453 → 656,158, Kubernetes 83,525 → 110,246, TensorFlow 96,013 → 115,984. That is the scoped call
+resolution shipped after 1.5.1 doing its job: call sites that previously found no in-repo candidate
+and became a single `CALLS_EXTERNAL` edge now resolve through the same-class, same-file,
+imported-symbol and same-module tiers into real `CALLS` edges. The Linux kernel is the exception
+(257,655 → 256,413, essentially flat), which is what C with no method dispatch and prefix-disciplined
+naming should look like.
+
+Two caveats on comparing the two runs directly: each is pinned to a *different* upstream commit, and
+this one ran on Linux CI rather than Windows. Neither difference is large enough to explain a 52%
+edge increase on VS Code, but they mean these are two measurements, not a controlled A/B.
 
 Full per-repository statistics — node/edge type breakdowns, parse error counts, ambiguous-call
 rates — are in each example's `README.md` and `stats.json`; the cross-repository comparison is in
@@ -56,7 +77,7 @@ claim: `repo2graph/graph.py`, `repo2graph/parse.py` and `repo2graph/export.py` �
 client, and `scripts/generate_examples.py` clones into a scratch directory *before* calling
 `build()`, never during or after. `repo2graph rag --answer` is the one command in this whole project
 that makes an outbound network call during analysis, and it is opt-in and separately documented —
-see [docs/cli.md](cli.md#-answer-sends-your-code-to-someone-elses-computer). None of the example
+see [docs/cli.md](cli.md#answer-sends-your-code-elsewhere). None of the example
 generation described here touches it.
 
 ## Security of benchmark execution

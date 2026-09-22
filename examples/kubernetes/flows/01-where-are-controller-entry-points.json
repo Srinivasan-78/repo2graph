@@ -10,7 +10,7 @@
       "start_line": 224,
       "end_line": 311,
       "why": "lexical",
-      "score": 8.81
+      "score": 7.807
     },
     {
       "node_id": "file:pkg/scheduler/framework/plugins/helper/shape_score.go",
@@ -21,7 +21,7 @@
       "start_line": 1,
       "end_line": 53,
       "why": "lexical",
-      "score": 7.28
+      "score": 6.813
     },
     {
       "node_id": "sym:pkg/scheduler/framework/plugins/helper/shape_score.go::BuildBrokenLinearFunction",
@@ -32,7 +32,7 @@
       "start_line": 40,
       "end_line": 52,
       "why": "lexical",
-      "score": 6.874
+      "score": 6.379
     },
     {
       "node_id": "sym:pkg/controller/ttl/ttl_controller.go::Controller",
@@ -43,7 +43,7 @@
       "start_line": 56,
       "end_line": 78,
       "why": "lexical",
-      "score": 6.411
+      "score": 6.154
     },
     {
       "node_id": "sym:pkg/scheduler/framework/plugins/helper/shape_score.go::FunctionShape",

@@ -100,10 +100,10 @@ Concretely:
 
 ```bash
 # Pin explicitly, everywhere this matters:
-uvx --from "repo2graph[mcp]==1.5.1" repo2graph-mcp /path/to/project
+uvx --from "repo2graph[mcp]==1.6.0" repo2graph-mcp /path/to/project
 
 # Or, mirrored internally:
-pip install --index-url https://pypi.internal.example.com/simple/ "repo2graph[mcp]==1.5.1"
+pip install --index-url https://pypi.internal.example.com/simple/ "repo2graph[mcp]==1.6.0"
 ```
 
 `uv.lock` is committed in this repository specifically so that anyone building from source gets the
@@ -127,7 +127,7 @@ Being explicit about the boundary, per §53 of the brief:
   denylists documented in `docs/SECURITY-AUDIT.md`.** A `.env` file is excluded by path; a
   credential accidentally committed inside `app_config.py` with an unremarkable variable name is
   not caught by anything repo2graph does — this is inherent to path/shape-based detection, not a
-  bug to fix, and is exactly why `docs/PRIVACY.md` and `SECURITY.md` avoid claiming complete
+  bug to fix, and is exactly why `docs/PRIVACY.md` and `.github/SECURITY.md` avoid claiming complete
   secret protection.
 
 ## Enterprise deployment checklist

@@ -30,10 +30,12 @@ If you never pass `--answer`, this code path is not reachable.
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**: all three tools (`repo_map`,
-`repo_search`, `repo_neighbours`) exclude secrets always, with no flag to turn it off. A human
-running the CLI directly chose to see `.env` in local output; an agent calling the MCP server
-unattended does not get that choice, so the server doesn't offer it. See
+The **MCP server goes further and makes this unconditional**. Of its five tools, the three that
+can return repository content — `repo_map`, `repo_search`, `repo_neighbours` — exclude secrets
+always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
+`repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
+directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
+get that choice, so the server doesn't offer it. See
 [docs/mcp.md](../docs/mcp.md#three-promises-the-server-keeps-that-the-cli-leaves-to-you) for the
 other two guarantees the server holds itself to (hard-capped output, hard-capped work per call) —
 relevant if you're running it where an untrusted caller can pick the arguments.
@@ -64,11 +66,23 @@ blindly).
 This section is about the supply chain — what stops a bad commit from reaching the `main` branch
 or a released package, independent of anything the tool does at runtime:
 
-- **Signed commits are required on `main`.** Branch protection enforces
-  `required_signatures`; an unsigned commit cannot land, merge commit included.
-- **Force-pushes and branch deletion are blocked on `main`.**
-- **A required status check gates every merge:** `reuse` (SPDX/license-header compliance via
-  [REUSE.toml](../REUSE.toml)).
+- **Force-pushes and branch deletion are blocked on `main`.** The `default-branch-protection`
+  ruleset carries `non_fast_forward` and `deletion`, so history on `main` is append-only and the
+  branch cannot be removed.
+- **Every change reaches `main` through a pull request**, with review threads required to be
+  resolved and stale approvals dismissed on push.
+- **Twelve status checks gate every merge**, all of which must pass before the PR is mergeable:
+  `tests` across the full matrix (`ubuntu-latest`, `windows-latest`, `macos-latest` × Python 3.10,
+  3.11, 3.12), plus `packaging` (the no-extra refusal and a real stdio MCP round trip),
+  `action` (the composite Action run against this repository) and `windows-cp1252-pipe` (the
+  non-UTF-8 console regression leg). `reuse` — SPDX/licence-header compliance via
+  [REUSE.toml](../REUSE.toml) — runs on every push in `provenance.yml` but is not one of the
+  required contexts.
+
+  Commit signing is *not* currently enforced by the ruleset. It was, until 2026-09-21; treat an
+  unsigned commit on `main` as expected rather than as evidence of a bypass, and verify the live
+  rule set rather than this list if you are relying on it:
+  `gh api repos/Srinivasan-78/repo2graph/rules/branches/main --jq '[.[].type]'`.
 - **GitHub Actions are pinned to full commit SHAs, not tags**, across every workflow in
   `.github/workflows/`, so a compromised or re-tagged upstream action can't silently change what CI
   runs. The reverse is not true for consumers of *this* repository's own Action: `@v1` is a moving

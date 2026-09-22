@@ -10,7 +10,7 @@
       "start_line": 104,
       "end_line": 183,
       "why": "lexical",
-      "score": 9.015
+      "score": 8.184
     },
     {
       "node_id": "sym:src/vs/platform/diagnostics/node/diagnosticsService.ts::DiagnosticsService.reportWorkspaceStats.WorkspaceStatsMetadataClassification",
@@ -21,7 +21,7 @@
       "start_line": 645,
       "end_line": 652,
       "why": "lexical",
-      "score": 8.735
+      "score": 8.072
     },
     {
       "node_id": "file:src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
@@ -32,7 +32,7 @@
       "start_line": 1,
       "end_line": 165,
       "why": "lexical",
-      "score": 8.581
+      "score": 7.555
     },
     {
       "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command.constructor",
@@ -46,17 +46,6 @@
       "score": 0.0
     },
     {
-      "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command.register",
-      "path": "src/vs/editor/browser/editorExtensions.ts",
-      "lang": "typescript",
-      "kind": "method",
-      "name": "Command.register",
-      "start_line": 121,
-      "end_line": 166,
-      "why": "DEFINES out of Command",
-      "score": 0.0
-    },
-    {
       "node_id": "sym:src/vs/editor/browser/editorExtensions.ts::Command._registerMenuItem",
       "path": "src/vs/editor/browser/editorExtensions.ts",
       "lang": "typescript",
@@ -65,6 +54,50 @@
       "start_line": 168,
       "end_line": 180,
       "why": "DEFINES out of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/editor/browser/coreCommands.ts::EditorHandlerCommand",
+      "path": "src/vs/editor/browser/coreCommands.ts",
+      "lang": "typescript",
+      "kind": "class",
+      "name": "EditorHandlerCommand",
+      "start_line": 2130,
+      "end_line": 2151,
+      "why": "INHERITS in of Command",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts::CodeTunnelCliOutput",
+      "path": "src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "lang": "typescript",
+      "kind": "type",
+      "name": "CodeTunnelCliOutput",
+      "start_line": 14,
+      "end_line": 14,
+      "why": "DEFINES out of codeTunnelCliProcess.ts",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts::ICodeTunnelCliRun",
+      "path": "src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "lang": "typescript",
+      "kind": "interface",
+      "name": "ICodeTunnelCliRun",
+      "start_line": 17,
+      "end_line": 22,
+      "why": "DEFINES out of codeTunnelCliProcess.ts",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts::CodeTunnelSpawn",
+      "path": "src/vs/platform/remoteTunnel/node/codeTunnelCliProcess.ts",
+      "lang": "typescript",
+      "kind": "type",
+      "name": "CodeTunnelSpawn",
+      "start_line": 28,
+      "end_line": 28,
+      "why": "DEFINES out of codeTunnelCliProcess.ts",
       "score": 0.0
     }
   ]

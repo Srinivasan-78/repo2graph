@@ -10,7 +10,7 @@
       "start_line": 32,
       "end_line": 236,
       "why": "lexical",
-      "score": 9.144
+      "score": 8.467
     },
     {
       "node_id": "sym:tensorflow/core/common_runtime/eager/placement_utils.h::tensorflow.eager",
@@ -21,7 +21,7 @@
       "start_line": 25,
       "end_line": 46,
       "why": "lexical",
-      "score": 7.981
+      "score": 7.395
     },
     {
       "node_id": "sym:tensorflow/core/common_runtime/eager/custom_device_test.cc::tensorflow.eager.TestCustomDevice",

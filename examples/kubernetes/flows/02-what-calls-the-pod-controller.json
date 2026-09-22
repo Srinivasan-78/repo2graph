@@ -10,7 +10,7 @@
       "start_line": 91,
       "end_line": 155,
       "why": "lexical",
-      "score": 6.517
+      "score": 6.284
     },
     {
       "node_id": "sym:pkg/controller/resourceclaim/controller.go::Controller",
@@ -21,18 +21,29 @@
       "start_line": 103,
       "end_line": 157,
       "why": "lexical",
-      "score": 6.414
+      "score": 6.171
     },
     {
-      "node_id": "sym:pkg/controller/endpoint/endpoints_controller.go::Controller",
-      "path": "pkg/controller/endpoint/endpoints_controller.go",
+      "node_id": "sym:pkg/controller/volume/attachdetach/cache/desired_state_of_world.go::pod",
+      "path": "pkg/controller/volume/attachdetach/cache/desired_state_of_world.go",
       "lang": "go",
       "kind": "type",
-      "name": "Controller",
-      "start_line": 139,
-      "end_line": 187,
+      "name": "pod",
+      "start_line": 180,
+      "end_line": 186,
       "why": "lexical",
-      "score": 6.263
+      "score": 6.018
+    },
+    {
+      "node_id": "sym:pkg/scheduler/framework/plugins/dynamicresources/dynamicresources_test.go::update",
+      "path": "pkg/scheduler/framework/plugins/dynamicresources/dynamicresources_test.go",
+      "lang": "go",
+      "kind": "function",
+      "name": "update",
+      "start_line": 4566,
+      "end_line": 4584,
+      "why": "CALLS in of pod",
+      "score": 0.0
     }
   ]
 }

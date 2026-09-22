@@ -205,11 +205,25 @@ To submit:
    `maintainers` is the only required field.
 
 Once a score is assigned, Glama issues a badge URL containing the server's
-generated slug. Add it in two places:
+generated slug. It belongs in two places:
 
-- `README.md`, in the top badge row.
-- `pyproject.toml`, as `project.urls."Quality Score"`.
+- `README.md`, in the "Listed on" column of the badge table — **done**; the
+  badge resolves, so a score has been assigned.
+- `pyproject.toml`, as `project.urls."Quality Score"` — **done**; it shows on
+  the PyPI sidebar from the next release onward.
 
-**Neither is added yet**, because no score has been assigned and a badge
-pointing at a nonexistent score renders as a broken image — worse than no badge.
-Add both in the same commit as the first score.
+The reason to check both rather than assume: a badge pointing at a nonexistent
+score renders as a broken image, which is worse than no badge. Confirm the URL
+returns 200 before adding it anywhere:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  https://glama.ai/mcp/servers/Srinivasan-78/repo2graph/badges/score.svg
+```
+
+The same rule applies to the other two directory badges in that column
+([mcpservers.org](https://mcpservers.org/servers/srinivasan-78/repo2graph) and
+the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=repo2graph)).
+The registry entry is published by `publish.yml` from `server.json`; if the
+version it reports lags the current release, that is a release step that did not
+run, not a documentation problem.

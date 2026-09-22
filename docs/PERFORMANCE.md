@@ -1,16 +1,26 @@
 # Performance
 
 Measured, not estimated. Every number below came from actually running `repo2graph build`,
-`query`, and `rag` on this machine (Windows, Python 3.13.15) against real inputs, on
-2026-09-17. Re-run the commands under each table yourself before relying on these numbers for
-capacity planning on different hardware.
+`query`, and `rag` on this machine (Windows, Python 3.13.15) against real inputs. Re-run the
+commands under each table yourself before relying on these numbers for capacity planning on
+different hardware.
+
+Each row carries its own measurement date, because they do not age at the same rate: the
+synthetic fixture is regenerated identically every time, while the self-build row tracks this
+repository and therefore drifts upward with every release.
 
 ## What was measured
 
-| Repo | Files | Discovery | Wall time (full build) | Nodes | Edges | Chunks |
-|---|---:|---|---:|---:|---:|---:|
-| repo2graph itself | 90 (39 parsed as Python; rest non-code) | `git`, `--git-history 200` | 4.3s | 1,472 | 6,350 | 1,653 |
-| Synthetic (generated) | 3,000 Python files | `os.walk` (no git) | 18.6s | 18,033 | 33,030 | 15,000 |
+| Repo | Measured | Files | Discovery | Wall time (full build) | Nodes | Edges | Chunks |
+|---|---|---:|---|---:|---:|---:|---:|
+| repo2graph itself | 2026-09-22 | 195 (68 parsed as code; rest non-code) | `git`, `--git-history 200` | 3.2s | 2,552 | 11,118 | 2,915 |
+| Synthetic (generated) | 2026-09-17 | 3,000 Python files | `os.walk` (no git) | 18.6s | 18,033 | 33,030 | 15,000 |
+
+The self-build row is the median of three consecutive runs and includes interpreter startup. It
+replaces a 2026-09-17 measurement of the same command against a smaller tree (90 files, 1,472
+nodes, 6,350 edges, 1,653 chunks, 4.3s) — the repository roughly doubled in indexed size between
+the two dates, which is why a file count in a table like this is worth re-measuring rather than
+citing.
 
 **How the synthetic repo was built:** 3,000 small, uniform Python files (one class with two
 methods, one module-level function, two imports, one constant, spread across 30 flat package

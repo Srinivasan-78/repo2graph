@@ -1,5 +1,27 @@
 {
   "format": "repo2graph/1",
+  "build_id": "726b1a34-7e30-4cc3-88f9-2d8c177a0cd0",
+  "tool_version": "1.6.0",
+  "schema_version": 1,
+  "created_at": "2026-09-22T08:10:00.445970+00:00",
+  "source_revision": {
+    "commit": "a11ec079d98444803ad16ce48bf7ccc4ecafca7d",
+    "short_commit": "a11ec07",
+    "branch": "main",
+    "dirty": false,
+    "remote_url": "https://github.com/microsoft/vscode"
+  },
+  "checksums": {
+    "agent/nodes.jsonl": "sha256:4806e16a5fb79bb5cc783fd6f73b1dae8f0e977c46588a4cadecdd64903311f4",
+    "agent/edges.jsonl": "sha256:de88ed6e44cb830b5eff78df73e157f01ada8ef6433005fedef24de065c89e2f",
+    "agent/chunks.jsonl": "sha256:1345c514ab71492b8b23c823d6038d9168da26575c61c413f5a71db4194acfaa",
+    "human/overview.md": "sha256:d1474d4c8ef36d6cb6b186e72f8e98d48e0bf79c77a8b2c8975aef82a95ba845",
+    "agent/overview.md": "sha256:5115d15bebc32549d76507d9f55fe87acf4169385015317021a4234de0c6bd13",
+    "human/graph.html": "sha256:ffda7d6b1d3fcc8b2b32c3da2cbbb026ffcca0e13cac74774a3a87edc3066e65",
+    "agent/stats.json": "sha256:a22606ff11293fbc6d8a0986c4d31f6d12a5cec84b5f03f29f3822eb49dcd62d",
+    "agent/index.state.json": "sha256:5f6a28442d444991d3b3491605ad4cbcf9a00964c4fdf31f9d251785e63b8434",
+    "agent/parse.cache.json": "sha256:53b1f3f7e78c63e243ffe0d699558bbef3f3f41ea66ed8e44ac3834952dcca3d"
+  },
   "repo": "vscode",
   "written": [
     "agent/nodes.jsonl",
@@ -13,6 +35,7 @@
     "agent/parse.cache.json",
     "agent/manifest.json"
   ],
+  "secret_filter_policy": "redact-match",
   "sections": {
     "human": "for people: prose map and drawings",
     "agent": "for programs: the graph, the chunks, this manifest"
@@ -69,208 +92,240 @@
     "callers",
     "callees",
     "callees_external",
+    "caller_edges",
+    "callee_edges",
+    "base_edges",
     "text"
   ],
   "counts": {
     "discovery": "git",
+    "skipped_gitignore": 0,
+    "skipped_dotfile": 115,
+    "skipped_vendor": 468,
+    "skipped_too_large": 1,
+    "skipped_binary": 174,
+    "skipped_secret": 5,
     "files": 6000,
-    "edge:CONTAINS": 7231,
-    "parsed": 5488,
+    "edge:CONTAINS": 7225,
+    "parsed": 5486,
     "parse_errors": 6,
-    "symbol:class": 7577,
-    "edge:DEFINES": 88981,
-    "symbol:method": 56615,
+    "symbol:class": 7550,
+    "edge:DEFINES": 88767,
+    "symbol:method": 56301,
     "symbol:enum": 1174,
-    "symbol:function": 13076,
-    "edge:IMPORTS": 75900,
-    "symbol:interface": 9086,
-    "symbol:type": 3578,
-    "edge:CALLS": 223594,
-    "edge:CALLS_EXTERNAL": 25166,
-    "ambiguous_calls": 73028,
-    "edge:INHERITS": 10581,
-    "entrypoints": 19390,
-    "nodes": 113115,
-    "edges": 431453
+    "symbol:function": 13168,
+    "edge:IMPORTS": 75885,
+    "imports_resolved": 56413,
+    "symbol:interface": 9105,
+    "symbol:type": 3594,
+    "imports_unresolved": 22543,
+    "files_with_parse_errors": 4,
+    "edge:CALLS": 450921,
+    "calls_scoped": 137142,
+    "edge:CALLS_EXTERNAL": 25902,
+    "calls_external": 26558,
+    "calls_ambiguous": 82225,
+    "ambiguous_calls": 82225,
+    "calls_unique_global": 14749,
+    "edge:INHERITS": 7458,
+    "unresolved_bases": 258,
+    "entrypoints": 16904,
+    "nodes": 113080,
+    "edges": 656158,
+    "parse_errors_summary": "Files with parse errors: 4  (0 C/C++ files used cpp fallback)",
+    "redacted_secret_chunks": 1
+  },
+  "quality_metrics": {
+    "files_discovered": 6000,
+    "files_parsed": 5486,
+    "parse_errors": 6,
+    "files_with_parse_errors": 4,
+    "imports_resolved": 56413,
+    "imports_unresolved": 22543,
+    "calls_scoped": 137142,
+    "calls_unique_global": 14749,
+    "calls_ambiguous": 82225,
+    "calls_external": 26558
   },
   "entrypoints": [
-    {
-      "id": "sym:src/vs/workbench/browser/actions/windowActions.ts::BaseOpenRecentAction.run",
-      "path": "src/vs/workbench/browser/actions/windowActions.ts",
-      "qualname": "BaseOpenRecentAction.run",
-      "kind": "method",
-      "reach": 13867
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/voiceClient/voiceSessionController.ts::VoiceSessionController.constructor",
-      "path": "src/vs/workbench/contrib/chat/browser/voiceClient/voiceSessionController.ts",
-      "qualname": "VoiceSessionController.constructor",
-      "kind": "method",
-      "reach": 13857
-    },
-    {
-      "id": "sym:src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts::AgentFeedbackEditorInputContribution.constructor",
-      "path": "src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts",
-      "qualname": "AgentFeedbackEditorInputContribution.constructor",
-      "kind": "method",
-      "reach": 13845
-    },
-    {
-      "id": "sym:src/vs/sessions/contrib/chat/browser/chatView.ts::ChatView.constructor",
-      "path": "src/vs/sessions/contrib/chat/browser/chatView.ts",
-      "qualname": "ChatView.constructor",
-      "kind": "method",
-      "reach": 13813
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.contribution.ts::run",
-      "path": "src/vs/workbench/contrib/chat/browser/aiCustomization/aiCustomizationManagement.contribution.ts",
-      "qualname": "run",
-      "kind": "method",
-      "reach": 13811
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts::InlineChatController.constructor",
-      "path": "src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts",
-      "qualname": "InlineChatController.constructor",
-      "kind": "method",
-      "reach": 13810
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWidget.ts::AgentsVoiceWidget.constructor",
-      "path": "src/vs/workbench/contrib/agentsVoice/browser/agentsVoiceWidget.ts",
-      "qualname": "AgentsVoiceWidget.constructor",
-      "kind": "method",
-      "reach": 13801
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/actions/chatContinueInAction.ts::CreateRemoteAgentJobAction.run",
-      "path": "src/vs/workbench/contrib/chat/browser/actions/chatContinueInAction.ts",
-      "qualname": "CreateRemoteAgentJobAction.run",
-      "kind": "method",
-      "reach": 13754
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/actions/chatActions.ts::OpenChatGlobalAction.run",
-      "path": "src/vs/workbench/contrib/chat/browser/actions/chatActions.ts",
-      "qualname": "OpenChatGlobalAction.run",
-      "kind": "method",
-      "reach": 13734
-    },
     {
       "id": "sym:src/vs/workbench/api/common/extHost.api.impl.ts::createApiFactoryAndRegisterActors",
       "path": "src/vs/workbench/api/common/extHost.api.impl.ts",
       "qualname": "createApiFactoryAndRegisterActors",
       "kind": "function",
-      "reach": 13218
+      "reach": 24009
     },
     {
-      "id": "sym:src/vs/sessions/contrib/chat/browser/newChatWidget.ts::NewChatWidget.constructor",
-      "path": "src/vs/sessions/contrib/chat/browser/newChatWidget.ts",
-      "qualname": "NewChatWidget.constructor",
+      "id": "sym:src/vs/editor/browser/view.ts::View.constructor",
+      "path": "src/vs/editor/browser/view.ts",
+      "qualname": "View.constructor",
       "kind": "method",
-      "reach": 13207
+      "reach": 23800
     },
     {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts::ChatWidget.constructor",
-      "path": "src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts",
-      "qualname": "ChatWidget.constructor",
+      "id": "sym:src/vs/workbench/contrib/chat/browser/chatDebug/chatDebugEditor.ts::ChatDebugEditor.createEditor",
+      "path": "src/vs/workbench/contrib/chat/browser/chatDebug/chatDebugEditor.ts",
+      "qualname": "ChatDebugEditor.createEditor",
       "kind": "method",
-      "reach": 13138
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/input/chatInputPart.ts::ChatInputPart.constructor",
-      "path": "src/vs/workbench/contrib/chat/browser/widget/input/chatInputPart.ts",
-      "qualname": "ChatInputPart.constructor",
-      "kind": "method",
-      "reach": 13133
-    },
-    {
-      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/automationsView.ts::AutomationCardsSection.constructor",
-      "path": "src/vs/sessions/contrib/sessions/browser/views/automationsView.ts",
-      "qualname": "AutomationCardsSection.constructor",
-      "kind": "method",
-      "reach": 12977
-    },
-    {
-      "id": "sym:src/vs/platform/agentHost/node/agentHostMain.ts::startAgentHost",
-      "path": "src/vs/platform/agentHost/node/agentHostMain.ts",
-      "qualname": "startAgentHost",
-      "kind": "function",
-      "reach": 12963
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/comments/browser/commentsController.ts::CommentController.constructor",
-      "path": "src/vs/workbench/contrib/comments/browser/commentsController.ts",
-      "qualname": "CommentController.constructor",
-      "kind": "method",
-      "reach": 12937
-    },
-    {
-      "id": "sym:src/vs/platform/agentHost/node/agentHostServerMain.ts::main",
-      "path": "src/vs/platform/agentHost/node/agentHostServerMain.ts",
-      "qualname": "main",
-      "kind": "function",
-      "reach": 12907
-    },
-    {
-      "id": "sym:src/vs/base/browser/ui/actionbar/actionbar.ts::ActionBar.constructor",
-      "path": "src/vs/base/browser/ui/actionbar/actionbar.ts",
-      "qualname": "ActionBar.constructor",
-      "kind": "method",
-      "reach": 12890
-    },
-    {
-      "id": "sym:src/vs/editor/contrib/inlineCompletions/browser/model/inlineCompletionsSource.ts::InlineCompletionsSource.fetch",
-      "path": "src/vs/editor/contrib/inlineCompletions/browser/model/inlineCompletionsSource.ts",
-      "qualname": "InlineCompletionsSource.fetch",
-      "kind": "method",
-      "reach": 12866
-    },
-    {
-      "id": "sym:src/vs/platform/agentHost/node/agentService.ts::AgentService.constructor",
-      "path": "src/vs/platform/agentHost/node/agentService.ts",
-      "qualname": "AgentService.constructor",
-      "kind": "method",
-      "reach": 12866
-    },
-    {
-      "id": "sym:src/vs/sessions/contrib/chat/browser/sessionWorkspacePicker.ts::WorkspacePicker.constructor",
-      "path": "src/vs/sessions/contrib/chat/browser/sessionWorkspacePicker.ts",
-      "qualname": "WorkspacePicker.constructor",
-      "kind": "method",
-      "reach": 12846
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts::ChatMarkdownContentPart.constructor",
-      "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts",
-      "qualname": "ChatMarkdownContentPart.constructor",
-      "kind": "method",
-      "reach": 12841
-    },
-    {
-      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts::SessionsList.constructor",
-      "path": "src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts",
-      "qualname": "SessionsList.constructor",
-      "kind": "method",
-      "reach": 12831
-    },
-    {
-      "id": "sym:src/vs/workbench/contrib/chat/browser/chatEditing/notebook/chatEditingNotebookEditorIntegration.ts::ChatEditingNotebookEditorWidgetIntegration.constructor",
-      "path": "src/vs/workbench/contrib/chat/browser/chatEditing/notebook/chatEditingNotebookEditorIntegration.ts",
-      "qualname": "ChatEditingNotebookEditorWidgetIntegration.constructor",
-      "kind": "method",
-      "reach": 12829
+      "reach": 23741
     },
     {
       "id": "sym:src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts::NativeEditContext.constructor",
       "path": "src/vs/editor/browser/controller/editContext/native/nativeEditContext.ts",
       "qualname": "NativeEditContext.constructor",
       "kind": "method",
-      "reach": 12811
+      "reach": 23721
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentHostMain.ts::startAgentHost",
+      "path": "src/vs/platform/agentHost/node/agentHostMain.ts",
+      "qualname": "startAgentHost",
+      "kind": "function",
+      "reach": 23712
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentService.ts::AgentService.constructor",
+      "path": "src/vs/platform/agentHost/node/agentService.ts",
+      "qualname": "AgentService.constructor",
+      "kind": "method",
+      "reach": 23700
+    },
+    {
+      "id": "sym:src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts::TextAreaEditContext.constructor",
+      "path": "src/vs/editor/browser/controller/editContext/textArea/textAreaEditContext.ts",
+      "qualname": "TextAreaEditContext.constructor",
+      "kind": "method",
+      "reach": 23690
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/comments/browser/commentsController.ts::CommentController.constructor",
+      "path": "src/vs/workbench/contrib/comments/browser/commentsController.ts",
+      "qualname": "CommentController.constructor",
+      "kind": "method",
+      "reach": 23674
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentHostServerMain.ts::main",
+      "path": "src/vs/platform/agentHost/node/agentHostServerMain.ts",
+      "qualname": "main",
+      "kind": "function",
+      "reach": 23661
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatPetWidget.ts::ChatPetWidget.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatPetWidget.ts",
+      "qualname": "ChatPetWidget.constructor",
+      "kind": "method",
+      "reach": 23657
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/chatEditing/chatEditingActions.ts::run",
+      "path": "src/vs/workbench/contrib/chat/browser/chatEditing/chatEditingActions.ts",
+      "qualname": "run",
+      "kind": "method",
+      "reach": 23646
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/chat/browser/chatView.ts::ChatView.constructor",
+      "path": "src/vs/sessions/contrib/chat/browser/chatView.ts",
+      "qualname": "ChatView.constructor",
+      "kind": "method",
+      "reach": 23644
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts::AgentFeedbackEditorInputContribution.constructor",
+      "path": "src/vs/sessions/contrib/agentFeedback/browser/agentFeedbackEditorInputContribution.ts",
+      "qualname": "AgentFeedbackEditorInputContribution.constructor",
+      "kind": "method",
+      "reach": 23619
+    },
+    {
+      "id": "sym:src/vs/code/electron-main/app.ts::CodeApplication.startup",
+      "path": "src/vs/code/electron-main/app.ts",
+      "qualname": "CodeApplication.startup",
+      "kind": "method",
+      "reach": 23615
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/promptSyntax/newPromptFileActions.ts::AbstractNewPromptFileAction.run",
+      "path": "src/vs/workbench/contrib/chat/browser/promptSyntax/newPromptFileActions.ts",
+      "qualname": "AbstractNewPromptFileAction.run",
+      "kind": "method",
+      "reach": 23615
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts::SessionsList.constructor",
+      "path": "src/vs/sessions/contrib/sessions/browser/views/sessionsList.ts",
+      "qualname": "SessionsList.constructor",
+      "kind": "method",
+      "reach": 23612
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/sessions/browser/views/sessionsViewActions.ts::run",
+      "path": "src/vs/sessions/contrib/sessions/browser/views/sessionsViewActions.ts",
+      "qualname": "run",
+      "kind": "method",
+      "reach": 23604
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/inlineChat/browser/inlineChatZoneWidget.ts::InlineChatZoneWidget.constructor",
+      "path": "src/vs/workbench/contrib/inlineChat/browser/inlineChatZoneWidget.ts",
+      "qualname": "InlineChatZoneWidget.constructor",
+      "kind": "method",
+      "reach": 23600
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/common/plugins/agentPluginServiceImpl.ts::AgentPluginService.constructor",
+      "path": "src/vs/workbench/contrib/chat/common/plugins/agentPluginServiceImpl.ts",
+      "qualname": "AgentPluginService.constructor",
+      "kind": "method",
+      "reach": 23598
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/codeEditor/browser/toggleColumnSelection.ts::ToggleColumnSelectionAction.run",
+      "path": "src/vs/workbench/contrib/codeEditor/browser/toggleColumnSelection.ts",
+      "qualname": "ToggleColumnSelectionAction.run",
+      "kind": "method",
+      "reach": 23598
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts::ChatMarkdownContentPart.constructor",
+      "path": "src/vs/workbench/contrib/chat/browser/widget/chatContentParts/chatMarkdownContentPart.ts",
+      "qualname": "ChatMarkdownContentPart.constructor",
+      "kind": "method",
+      "reach": 23590
+    },
+    {
+      "id": "sym:src/vs/sessions/contrib/chat/browser/sessionChatInputToolbar.ts::SessionChatInputToolbar.constructor",
+      "path": "src/vs/sessions/contrib/chat/browser/sessionChatInputToolbar.ts",
+      "qualname": "SessionChatInputToolbar.constructor",
+      "kind": "method",
+      "reach": 23582
+    },
+    {
+      "id": "sym:src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts::InlineChatController.constructor",
+      "path": "src/vs/workbench/contrib/inlineChat/browser/inlineChatController.ts",
+      "qualname": "InlineChatController.constructor",
+      "kind": "method",
+      "reach": 23579
+    },
+    {
+      "id": "sym:src/vs/platform/agentHost/node/agentSideEffects.ts::AgentSideEffects.constructor",
+      "path": "src/vs/platform/agentHost/node/agentSideEffects.ts",
+      "qualname": "AgentSideEffects.constructor",
+      "kind": "method",
+      "reach": 23576
+    },
+    {
+      "id": "sym:src/vs/editor/contrib/inlineCompletions/browser/view/inlineEdits/inlineEditsViews/inlineEditsSideBySideView.ts::InlineEditsSideBySideView.constructor",
+      "path": "src/vs/editor/contrib/inlineCompletions/browser/view/inlineEdits/inlineEditsViews/inlineEditsSideBySideView.ts",
+      "qualname": "InlineEditsSideBySideView.constructor",
+      "kind": "method",
+      "reach": 23566
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "max_call_candidates": 5,
   "how_to_read": [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
@@ -284,5 +339,36 @@
     "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call."
-  ]
+  ],
+  "usage_hints": {
+    "tool_decision_tree": {
+      "orient_first": "Call repo_map once to get languages, hub files and entry points before any other tool.",
+      "search_by_question": "Use repo_search for natural-language questions; it returns cited chunks plus graph neighbours.",
+      "trace_relationships": "Use repo_neighbours with a node_id to hop through callers, callees, base classes and defining files.",
+      "node_id_format": "sym:pkg/relative/path.py::function_name -- read the 'id' field off nodes.jsonl or a chunk's node_id directly; or take a chunk's caller_edges/callee_edges/base_edges target (which is a bare path::qualname) and prefix 'sym:' to construct one."
+    },
+    "confidence_semantics": {
+      "1.0": "Certain: the call name resolved to exactly one definition.",
+      "lt_1.0": "Ambiguous: the name matched multiple candidates, fanned out to up to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 when correctness matters more than recall. IMPORTS, DEFINES and INHERITS edges carry no confidence key -- they are never ambiguous."
+    },
+    "edge_type_meanings": {
+      "CONTAINS": "repo -> dir -> file",
+      "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+      "IMPORTS": "file -> file (internal: true) or file -> module",
+      "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+      "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+      "INHERITS": "symbol -> base class or interface",
+      "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+    },
+    "what_is_not_indexed": [
+      "binary files",
+      "files over 1.5 MB",
+      "vendor/build folders",
+      "dotfiles",
+      ".gitignore entries",
+      "secret / credential files",
+      "dynamic dispatch -- code that decides at runtime which function to call"
+    ],
+    "dynamic_calls_note": "No CALLS edge does not prove no call happens at runtime. Dynamic dispatch, reflection and generated code are invisible to a parser -- hedge answers about them accordingly."
+  }
 }

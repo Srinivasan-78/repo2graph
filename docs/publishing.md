@@ -92,12 +92,12 @@ $$\text{prepare-release} \longrightarrow \text{publish} \longrightarrow \text{re
 ### Option 2: Local bump + Tag push
 If you prefer bumping locally before pushing:
 ```bash
-python scripts/bump_version.py 1.5.2   # or patch / minor / major
-git commit -am "chore(release): bump version to 1.5.2"
-git tag v1.5.2
+python scripts/bump_version.py 1.6.1   # or patch / minor / major
+git commit -am "chore(release): bump version to 1.6.1"
+git tag v1.6.1
 git push origin main --follow-tags
 ```
-Pushing tag `v1.5.2` automatically triggers `publish.yml` to publish and release.
+Pushing tag `v1.6.1` automatically triggers `publish.yml` to publish and release.
 
 Verify:
 

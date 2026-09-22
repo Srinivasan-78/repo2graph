@@ -6,7 +6,7 @@
 
 ## Revision
 
-Commit `24512b5e734ed10a309fd9795a5e7c305acd52d9` on `master`, analyzed 2026-09-17T15:45:51Z.
+Commit `50b66f3c122cb1553cd4d46d4eba81a101e05b50` on `master`, analyzed 2026-09-22T08:08:15Z.
 
 ## Why this repository?
 
@@ -27,25 +27,25 @@ Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, 
 
 | Metric | Value |
 |---|---:|
-| Files indexed | 1,082 |
-| Files parsed (code) | 1,005 |
+| Files indexed | 1,084 |
+| Files parsed (code) | 1,007 |
 | Parse errors | 260 |
 
 ## Graph statistics
 
 | Metric | Value |
 |---|---:|
-| Nodes | 14,197 |
-| Edges | 83,525 |
-| Symbols (functions) | 5,275 |
+| Nodes | 14,451 |
+| Edges | 110,246 |
+| Symbols (functions) | 5,287 |
 | Symbols (classes) | 0 |
-| CALLS edges | 37,612 |
-| CALLS_EXTERNAL edges | 25,407 |
-| IMPORTS edges | 8,665 |
+| CALLS edges | 62,630 |
+| CALLS_EXTERNAL edges | 27,056 |
+| IMPORTS edges | 8,693 |
 | INHERITS edges | 0 |
-| DEFINES edges | 10,502 |
-| Ambiguous calls (name matched >1 candidate) | 5,192 |
-| Entrypoints | 3,516 |
+| DEFINES edges | 10,526 |
+| Ambiguous calls (name matched >1 candidate) | 10,948 |
+| Entrypoints | 3,017 |
 
 ## Supported languages
 
@@ -67,7 +67,7 @@ the commit above and build it directly:
 
 ```bash
 git clone --filter=blob:none https://github.com/kubernetes/kubernetes /tmp/kubernetes
-cd /tmp/kubernetes && git checkout 24512b5e734ed10a309fd9795a5e7c305acd52d9
+cd /tmp/kubernetes && git checkout 50b66f3c122cb1553cd4d46d4eba81a101e05b50
 repo2graph build . -o .r2g --include cmd/kube-controller-manager/** pkg/controller/** pkg/scheduler/** pkg/registry/core/pod/** staging/src/k8s.io/apiserver/pkg/endpoints/**
 repo2graph query "How does a request flow through the API server?" -o .r2g
 ```
@@ -91,7 +91,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 Call edges are matched by name, not by type — see
 [docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
-5,192 out of 37,612 total CALLS edges.
+10,948 out of 62,630 total CALLS edges.
 
 ## Reproduce
 

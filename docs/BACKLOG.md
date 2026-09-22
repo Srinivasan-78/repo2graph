@@ -1,5 +1,10 @@
 # Backlog — deferred audit findings
 
+Work that was found, understood, and deliberately not done — each entry with the
+reason. This is the closest thing the project has to a roadmap, and the place to
+look for a first contribution: an item here has already been scoped and argued
+for, so picking one up starts from a decision rather than a blank page.
+
 ## Deferred by the 2026-09-17 enterprise-hardening audit
 
 Full detail, evidence and severity reasoning: `docs/SECURITY-AUDIT.md`. Two genuine gaps found by

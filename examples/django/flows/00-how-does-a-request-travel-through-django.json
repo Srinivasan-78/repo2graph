@@ -2,15 +2,15 @@
   "query": "How does a request travel through Django middleware?",
   "results": [
     {
-      "node_id": "sym:tests/middleware/test_security.py::SecurityMiddlewareTest.middleware",
-      "path": "tests/middleware/test_security.py",
+      "node_id": "sym:tests/test_client/tests.py::async_middleware_urlconf.middleware",
+      "path": "tests/test_client/tests.py",
       "lang": "python",
       "kind": "function",
-      "name": "SecurityMiddlewareTest.middleware",
-      "start_line": 7,
-      "end_line": 10,
+      "name": "async_middleware_urlconf.middleware",
+      "start_line": 59,
+      "end_line": 61,
       "why": "lexical",
-      "score": 13.725
+      "score": 13.872
     },
     {
       "node_id": "sym:tests/test_client/tests.py::middleware_urlconf.middleware",
@@ -21,18 +21,7 @@
       "start_line": 50,
       "end_line": 52,
       "why": "lexical",
-      "score": 13.622
-    },
-    {
-      "node_id": "sym:tests/test_client/tests.py::async_middleware_urlconf.middleware",
-      "path": "tests/test_client/tests.py",
-      "lang": "python",
-      "kind": "function",
-      "name": "async_middleware_urlconf.middleware",
-      "start_line": 59,
-      "end_line": 61,
-      "why": "lexical",
-      "score": 13.584
+      "score": 13.331
     },
     {
       "node_id": "sym:tests/template_tests/test_response.py::custom_urlconf_middleware.middleware",
@@ -43,7 +32,7 @@
       "start_line": 31,
       "end_line": 33,
       "why": "lexical",
-      "score": 13.545
+      "score": 13.273
     },
     {
       "node_id": "sym:tests/middleware_exceptions/middleware.py::async_payment_middleware.middleware",
@@ -54,50 +43,17 @@
       "start_line": 120,
       "end_line": 123,
       "why": "lexical",
-      "score": 13.291
+      "score": 12.946
     },
     {
-      "node_id": "sym:tests/auth_tests/test_remote_user.py::sync_middleware.middleware",
-      "path": "tests/auth_tests/test_remote_user.py",
+      "node_id": "sym:tests/test_client/tests.py::async_middleware_urlconf",
+      "path": "tests/test_client/tests.py",
       "lang": "python",
       "kind": "function",
-      "name": "sync_middleware.middleware",
-      "start_line": 24,
-      "end_line": 25,
-      "why": "lexical",
-      "score": 13.281
-    },
-    {
-      "node_id": "sym:tests/middleware/test_security.py::SecurityMiddlewareTest",
-      "path": "tests/middleware/test_security.py",
-      "lang": "python",
-      "kind": "class",
-      "name": "SecurityMiddlewareTest",
-      "start_line": 6,
-      "end_line": 311,
+      "name": "async_middleware_urlconf",
+      "start_line": 58,
+      "end_line": 63,
       "why": "DEFINES in of middleware",
-      "score": 0.0
-    },
-    {
-      "node_id": "sym:tests/middleware/test_security.py::SecurityMiddlewareTest.response",
-      "path": "tests/middleware/test_security.py",
-      "lang": "python",
-      "kind": "function",
-      "name": "SecurityMiddlewareTest.response",
-      "start_line": 16,
-      "end_line": 24,
-      "why": "CALLS out of middleware",
-      "score": 0.0
-    },
-    {
-      "node_id": "sym:tests/middleware/test_security.py::SecurityMiddlewareTest.process_request",
-      "path": "tests/middleware/test_security.py",
-      "lang": "python",
-      "kind": "function",
-      "name": "SecurityMiddlewareTest.process_request",
-      "start_line": 39,
-      "end_line": 43,
-      "why": "CALLS in of middleware",
       "score": 0.0
     },
     {
@@ -108,6 +64,17 @@
       "name": "middleware_urlconf",
       "start_line": 49,
       "end_line": 54,
+      "why": "DEFINES in of middleware",
+      "score": 0.0
+    },
+    {
+      "node_id": "sym:tests/template_tests/test_response.py::custom_urlconf_middleware",
+      "path": "tests/template_tests/test_response.py",
+      "lang": "python",
+      "kind": "function",
+      "name": "custom_urlconf_middleware",
+      "start_line": 30,
+      "end_line": 35,
       "why": "DEFINES in of middleware",
       "score": 0.0
     }

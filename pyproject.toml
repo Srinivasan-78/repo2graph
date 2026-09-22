@@ -31,6 +31,7 @@ Homepage = "https://github.com/Srinivasan-78/repo2graph"
 Repository = "https://github.com/Srinivasan-78/repo2graph"
 Issues = "https://github.com/Srinivasan-78/repo2graph/issues"
 "MCP server" = "https://github.com/Srinivasan-78/repo2graph/blob/main/docs/mcp.md"
+"Quality Score" = "https://glama.ai/mcp/servers/Srinivasan-78/repo2graph"
 
 [project.scripts]
 repo2graph = "repo2graph.cli:main"

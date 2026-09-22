@@ -1,5 +1,12 @@
 # Reference: what is in the index, and what it means
 
+Every file a build writes, every node and edge kind it can contain, the chunk
+schema, the languages it parses, and the places it is guessing rather than
+knowing. This is the page to read when you are consuming `.r2g` from your own
+code and need to know exactly what a field means. For how to *produce* it, see
+[the CLI reference](cli.md); for how the pipeline works, see
+[TECHNICAL.md](../TECHNICAL.md).
+
 ## The `.r2g` folder
 
 The output is split in two, because people and programs want different things.
@@ -11,6 +18,7 @@ The output is split in two, because people and programs want different things.
 | `overview.md` | the map written out in words. Read this first. |
 | `graph.html` | the picture. One self-contained file; open it in a browser. |
 | `graph.graphml` | the map in a format drawing programs understand (yEd, Gephi). It opens already laid out, so it does not look like a hairball. Also reads in NetworkX and igraph. |
+| `CHANGELOG.md` | what changed against the previous build in this same `--out`, headed by the two commit SHAs and the build date: new and removed nodes, new and removed edges, and "new hotspots" — nodes that gained 3 or more in-degree since the last build. On a first build it says so instead. The GitHub Action condenses it into its job summary's "Graph delta" section. |
 
 ### `agent/` — for programs and AI helpers
 
@@ -53,8 +61,8 @@ project stand out without you looking for them.
 | `CONTAINS` | project holds folder, folder holds file |
 | `DEFINES` | a file creates a function or class, or one function creates another inside it |
 | `IMPORTS` | a file borrows from another file (`internal: true`) or from an outside library |
-| `CALLS` | one function uses another. Carries `count`, `confidence`, `resolution_kind`, `candidate_count`, `scope_distance`, and `call_kind`. |
-| `CALLS_EXTERNAL` | a function uses something from outside the project |
+| `CALLS` | one function uses another. Carries `count`, `confidence`, `ambiguous`, `resolution_kind`, `candidate_count`, `scope_distance` and `call_kind`. |
+| `CALLS_EXTERNAL` | a function uses something from outside the project. Carries `count`, `resolution_kind`, `candidate_count` and `call_kind`. |
 | `INHERITS` | inheritance or interface implementation. Carries `subtype` (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) and `raw_base`. |
 | `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
 
@@ -117,9 +125,35 @@ door can eventually get to. A big `reach` means a main path through the project.
 
 ## Languages
 
-Python, JavaScript, TypeScript and TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP,
-Kotlin, Swift, Scala and Bash get the full treatment: functions, classes and
-calls.
+Sixteen grammars get the full treatment — functions, classes and calls — across
+28 file extensions:
+
+| Grammar | Extensions |
+|---|---|
+| `python` | `.py` `.pyi` |
+| `javascript` | `.js` `.jsx` `.mjs` `.cjs` |
+| `typescript` | `.ts` `.mts` `.cts` |
+| `tsx` | `.tsx` |
+| `go` | `.go` |
+| `rust` | `.rs` |
+| `java` | `.java` |
+| `ruby` | `.rb` |
+| `c` | `.c` `.h` |
+| `cpp` | `.cc` `.cpp` `.cxx` `.hh` `.hpp` |
+| `csharp` | `.cs` |
+| `php` | `.php` |
+| `kotlin` | `.kt` |
+| `swift` | `.swift` |
+| `scala` | `.scala` |
+| `bash` | `.sh` `.bash` |
+
+`.h` maps to `c`; a C++ header that uses `.h` rather than `.hpp` is parsed with
+the C grammar, which is the usual reason a C++ project shows parse errors in
+headers it considers perfectly valid.
+
+Two more extension groups are recognised but not parsed for symbols — they become
+file nodes carrying one chunk each: configuration (`.json` `.toml` `.yaml` `.yml`
+`.ini` `.cfg`) and prose (`.md` `.mdx` `.rst` `.txt` `.adoc`).
 
 Files in any other language still appear on the map as files in their folders, so
 nothing goes missing. Teaching it a new language means adding one entry to
@@ -146,9 +180,11 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   | 7 | `unresolved_external` | *(not set)* | no in-repo candidate at all; recorded on a `CALLS_EXTERNAL` edge, not `CALLS` |
 
   Every `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`,
-  and `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
-  `CALLS_EXTERNAL` carries `resolution_kind` (always `unresolved_external`) and
-  `candidate_count` (always `0`), but no `scope_distance` or `confidence`.
+  `ambiguous` (true once tier 6 splits confidence across candidates) and
+  `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
+  `CALLS_EXTERNAL` carries `resolution_kind` (always `unresolved_external`),
+  `candidate_count` (always `0`), `count` and `call_kind` — but no
+  `scope_distance`, `confidence` or `ambiguous`.
 
   **A method's own name is never resolved outright.** The receiver is not
   recorded, so inside `Report.to_dict` the calls `self.to_dict()` and

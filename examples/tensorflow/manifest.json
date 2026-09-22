@@ -1,5 +1,27 @@
 {
   "format": "repo2graph/1",
+  "build_id": "0da26708-a406-45fb-b379-a9daa6eb4edf",
+  "tool_version": "1.6.0",
+  "schema_version": 1,
+  "created_at": "2026-09-22T08:08:34.133465+00:00",
+  "source_revision": {
+    "commit": "9edd58f895c58c3db484a9e39ab2e953baca4bca",
+    "short_commit": "9edd58f",
+    "branch": "master",
+    "dirty": false,
+    "remote_url": "https://github.com/tensorflow/tensorflow"
+  },
+  "checksums": {
+    "agent/nodes.jsonl": "sha256:d3e99fb7adb088f6e714cdf8e045582ae831b5a881005cd05bf0f80908c5be0c",
+    "agent/edges.jsonl": "sha256:081cde0cc6a9cc570858a8c5c10929c83f850604a7696eb0a9f95036e7c8614a",
+    "agent/chunks.jsonl": "sha256:1b48bcb3f48fa8fa043ed1a4b9648b0c41a9b72b81f05e24a2517a87f7cbea34",
+    "human/overview.md": "sha256:db6fc575af5f75d7f881e5bb3de1e2d58d9199f9c86b851b704ef5f727d0a86f",
+    "agent/overview.md": "sha256:0d696110aa98f7b361e6954b78082b96130ce8153bdc076264ac50af6d2e0dbf",
+    "human/graph.html": "sha256:dab32373e4561fe5f0c56cdb6e8430dcf39edd826b781292f188d0a15800e2b6",
+    "agent/stats.json": "sha256:8df1a505bf439e0d9f2f06f1313fc84edb6060c7df05702c16e431115e1e6b01",
+    "agent/index.state.json": "sha256:ef53a8915148b8cd6516c326d817dee72915ed08c3e7462d7302be28275f9744",
+    "agent/parse.cache.json": "sha256:5a78cffaf2473b49f6a4f0687e7a8c88d1a07c0bcae1cc36871d370ec18ad277"
+  },
   "repo": "tensorflow",
   "written": [
     "agent/nodes.jsonl",
@@ -13,6 +35,7 @@
     "agent/parse.cache.json",
     "agent/manifest.json"
   ],
+  "secret_filter_policy": "redact-match",
   "sections": {
     "human": "for people: prose map and drawings",
     "agent": "for programs: the graph, the chunks, this manifest"
@@ -69,207 +92,235 @@
     "callers",
     "callees",
     "callees_external",
+    "caller_edges",
+    "callee_edges",
+    "base_edges",
     "text"
   ],
   "counts": {
     "discovery": "git",
+    "skipped_gitignore": 0,
+    "skipped_vendor": 7,
     "files": 1022,
     "edge:CONTAINS": 1041,
     "parsed": 969,
-    "parse_errors": 12469,
+    "parse_errors": 12473,
     "symbol:namespace": 466,
-    "edge:DEFINES": 14968,
-    "symbol:function": 15388,
+    "edge:DEFINES": 14970,
+    "symbol:function": 15390,
     "symbol:class": 956,
-    "edge:IMPORTS": 9634,
+    "edge:IMPORTS": 10921,
+    "imports_resolved": 3915,
+    "imports_unresolved": 7117,
+    "files_with_parse_errors": 325,
     "symbol:struct": 384,
+    "cpp_fallback_files": 6,
     "symbol:enum": 43,
-    "edge:CALLS_EXTERNAL": 27313,
-    "edge:CALLS": 42395,
-    "edge:INHERITS": 662,
-    "ambiguous_calls": 5631,
-    "entrypoints": 5676,
-    "nodes": 20641,
-    "edges": 96013
+    "edge:CALLS_EXTERNAL": 30012,
+    "calls_external": 36484,
+    "edge:CALLS": 58556,
+    "calls_ambiguous": 12487,
+    "ambiguous_calls": 12487,
+    "edge:INHERITS": 484,
+    "calls_unique_global": 3822,
+    "calls_scoped": 24989,
+    "unresolved_bases": 466,
+    "entrypoints": 5269,
+    "nodes": 21380,
+    "edges": 115984,
+    "parse_errors_summary": "Files with parse errors: 325  (6 C/C++ files used cpp fallback)"
+  },
+  "quality_metrics": {
+    "files_discovered": 1022,
+    "files_parsed": 969,
+    "parse_errors": 12473,
+    "files_with_parse_errors": 325,
+    "imports_resolved": 3915,
+    "imports_unresolved": 7117,
+    "calls_scoped": 24989,
+    "calls_unique_global": 3822,
+    "calls_ambiguous": 12487,
+    "calls_external": 36484
   },
   "entrypoints": [
-    {
-      "id": "sym:tensorflow/python/framework/experimental/def_function.py::Function.__call__",
-      "path": "tensorflow/python/framework/experimental/def_function.py",
-      "qualname": "Function.__call__",
-      "kind": "function",
-      "reach": 1640
-    },
-    {
-      "id": "sym:tensorflow/python/framework/experimental/unified_api.cc::PYBIND11_MODULE",
-      "path": "tensorflow/python/framework/experimental/unified_api.cc",
-      "qualname": "PYBIND11_MODULE",
-      "kind": "function",
-      "reach": 1640
-    },
     {
       "id": "sym:tensorflow/core/common_runtime/eager/execute_test.cc::tensorflow.TEST",
       "path": "tensorflow/core/common_runtime/eager/execute_test.cc",
       "qualname": "tensorflow.TEST",
       "kind": "function",
-      "reach": 1629
+      "reach": 2459
     },
     {
       "id": "sym:tensorflow/core/common_runtime/eager/context_test.cc::tensorflow.TEST_F",
       "path": "tensorflow/core/common_runtime/eager/context_test.cc",
       "qualname": "tensorflow.TEST_F",
       "kind": "function",
-      "reach": 1627
+      "reach": 2448
     },
     {
       "id": "sym:tensorflow/core/common_runtime/eager/execute.cc::tensorflow.EagerLocalExecuteAsync",
       "path": "tensorflow/core/common_runtime/eager/execute.cc",
       "qualname": "tensorflow.EagerLocalExecuteAsync",
       "kind": "function",
-      "reach": 1597
+      "reach": 2408
     },
     {
-      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST",
-      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
-      "qualname": "tensorflow.TEST",
+      "id": "sym:tensorflow/core/common_runtime/eager/execute_node.h::tensorflow",
+      "path": "tensorflow/core/common_runtime/eager/execute_node.h",
+      "qualname": "tensorflow",
       "kind": "function",
-      "reach": 1568
+      "reach": 2320
     },
     {
-      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST_F",
-      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
-      "qualname": "tensorflow.TEST_F",
+      "id": "sym:tensorflow/core/common_runtime/eager/kernel_and_device_test.cc::tensorflow.BM_KernelAndDeviceRun",
+      "path": "tensorflow/core/common_runtime/eager/kernel_and_device_test.cc",
+      "qualname": "tensorflow.BM_KernelAndDeviceRun",
       "kind": "function",
-      "reach": 1553
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/function.cc::tensorflow.CallOp.ComputeAsync",
-      "path": "tensorflow/core/common_runtime/function.cc",
-      "qualname": "tensorflow.CallOp.ComputeAsync",
-      "kind": "function",
-      "reach": 1410
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/eager/kernel_and_device.cc::tensorflow.Init",
-      "path": "tensorflow/core/common_runtime/eager/kernel_and_device.cc",
-      "qualname": "tensorflow.Init",
-      "kind": "function",
-      "reach": 1157
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/function_test.cc::tensorflow.TEST_F",
-      "path": "tensorflow/core/common_runtime/function_test.cc",
-      "qualname": "tensorflow.TEST_F",
-      "kind": "function",
-      "reach": 1146
-    },
-    {
-      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST",
-      "path": "tensorflow/core/framework/model_test.cc",
-      "qualname": "tensorflow.data.model.TEST",
-      "kind": "function",
-      "reach": 1106
-    },
-    {
-      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST_F",
-      "path": "tensorflow/core/framework/model_test.cc",
-      "qualname": "tensorflow.data.model.TEST_F",
-      "kind": "function",
-      "reach": 1083
-    },
-    {
-      "id": "sym:tensorflow/core/framework/model_test.cc::tensorflow.data.model.TEST_P",
-      "path": "tensorflow/core/framework/model_test.cc",
-      "qualname": "tensorflow.data.model.TEST_P",
-      "kind": "function",
-      "reach": 1072
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/process_function_library_runtime_test.cc::tensorflow.TEST_F",
-      "path": "tensorflow/core/common_runtime/process_function_library_runtime_test.cc",
-      "qualname": "tensorflow.TEST_F",
-      "kind": "function",
-      "reach": 1011
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc::tensorflow.TEST",
-      "path": "tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc",
-      "qualname": "tensorflow.TEST",
-      "kind": "function",
-      "reach": 996
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/eager/placement_utils_test.cc::tensorflow.TEST",
-      "path": "tensorflow/core/common_runtime/eager/placement_utils_test.cc",
-      "qualname": "tensorflow.TEST",
-      "kind": "function",
-      "reach": 962
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/ring_gatherer.cc::tensorflow.Run",
-      "path": "tensorflow/core/common_runtime/ring_gatherer.cc",
-      "qualname": "tensorflow.Run",
-      "kind": "function",
-      "reach": 960
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/eager/context_distributed_manager.cc::tensorflow.InitializeLocalOnlyContext",
-      "path": "tensorflow/core/common_runtime/eager/context_distributed_manager.cc",
-      "qualname": "tensorflow.InitializeLocalOnlyContext",
-      "kind": "function",
-      "reach": 958
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/executor_test.cc::tensorflow.BM_executor",
-      "path": "tensorflow/core/common_runtime/executor_test.cc",
-      "qualname": "tensorflow.BM_executor",
-      "kind": "function",
-      "reach": 954
-    },
-    {
-      "id": "sym:tensorflow/core/common_runtime/single_threaded_executor_test.cc::tensorflow.data.BM_executor",
-      "path": "tensorflow/core/common_runtime/single_threaded_executor_test.cc",
-      "qualname": "tensorflow.data.BM_executor",
-      "kind": "function",
-      "reach": 954
+      "reach": 2295
     },
     {
       "id": "sym:tensorflow/core/common_runtime/eager/execute_node_test.cc::tensorflow.TEST",
       "path": "tensorflow/core/common_runtime/eager/execute_node_test.cc",
       "qualname": "tensorflow.TEST",
       "kind": "function",
-      "reach": 943
+      "reach": 2282
     },
     {
-      "id": "sym:tensorflow/core/common_runtime/constant_folding_test.cc::tensorflow.TEST_F",
-      "path": "tensorflow/core/common_runtime/constant_folding_test.cc",
+      "id": "sym:tensorflow/core/common_runtime/function_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/function_test.cc",
       "qualname": "tensorflow.TEST_F",
       "kind": "function",
-      "reach": 941
+      "reach": 2242
     },
     {
-      "id": "sym:tensorflow/core/common_runtime/executor_test.cc::tensorflow.TEST_F",
-      "path": "tensorflow/core/common_runtime/executor_test.cc",
+      "id": "sym:tensorflow/core/common_runtime/eager/context_distributed_manager.cc::tensorflow.InitializeLocalOnlyContext",
+      "path": "tensorflow/core/common_runtime/eager/context_distributed_manager.cc",
+      "qualname": "tensorflow.InitializeLocalOnlyContext",
+      "kind": "function",
+      "reach": 2218
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eager/shape_inference.cc::tensorflow.eager.RunShapeInference",
+      "path": "tensorflow/core/common_runtime/eager/shape_inference.cc",
+      "qualname": "tensorflow.eager.RunShapeInference",
+      "kind": "function",
+      "reach": 2212
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/process_function_library_runtime_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/process_function_library_runtime_test.cc",
       "qualname": "tensorflow.TEST_F",
       "kind": "function",
-      "reach": 940
+      "reach": 2164
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/lower_functional_ops.cc::tensorflow.Run",
+      "path": "tensorflow/core/common_runtime/lower_functional_ops.cc",
+      "qualname": "tensorflow.Run",
+      "kind": "function",
+      "reach": 2161
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/replicate_per_replica_nodes_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 2156
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 2152
     },
     {
       "id": "sym:tensorflow/core/common_runtime/lower_case_op_test.cc::tensorflow.TEST",
       "path": "tensorflow/core/common_runtime/lower_case_op_test.cc",
       "qualname": "tensorflow.TEST",
       "kind": "function",
-      "reach": 939
+      "reach": 2135
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/shape_refiner_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/shape_refiner_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 2135
     },
     {
       "id": "sym:tensorflow/core/common_runtime/lower_if_op_test.cc::tensorflow.TEST",
       "path": "tensorflow/core/common_runtime/lower_if_op_test.cc",
       "qualname": "tensorflow.TEST",
       "kind": "function",
-      "reach": 938
+      "reach": 2134
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/quantize_training_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/quantize_training_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 2133
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/function.cc::tensorflow.CallOp.ComputeAsync",
+      "path": "tensorflow/core/common_runtime/function.cc",
+      "qualname": "tensorflow.CallOp.ComputeAsync",
+      "kind": "function",
+      "reach": 2132
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/graph_constructor_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/graph_constructor_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 2127
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/direct_session_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/direct_session_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 2125
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/inline_function_utils_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/inline_function_utils_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 2125
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/ring_reducer_test.cc::tensorflow.RingReducerTest.RunTest",
+      "path": "tensorflow/core/common_runtime/ring_reducer_test.cc",
+      "qualname": "tensorflow.RingReducerTest.RunTest",
+      "kind": "function",
+      "reach": 2123
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/eval_const_tensor_test.cc::tensorflow.TEST_F",
+      "path": "tensorflow/core/common_runtime/eval_const_tensor_test.cc",
+      "qualname": "tensorflow.TEST_F",
+      "kind": "function",
+      "reach": 2122
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/hierarchical_tree_broadcaster_test.cc::tensorflow.HierarchicalTreeBroadcasterTest.RunTest",
+      "path": "tensorflow/core/common_runtime/hierarchical_tree_broadcaster_test.cc",
+      "qualname": "tensorflow.HierarchicalTreeBroadcasterTest.RunTest",
+      "kind": "function",
+      "reach": 2122
+    },
+    {
+      "id": "sym:tensorflow/core/common_runtime/optimize_function_graph_utils_test.cc::tensorflow.TEST",
+      "path": "tensorflow/core/common_runtime/optimize_function_graph_utils_test.cc",
+      "qualname": "tensorflow.TEST",
+      "kind": "function",
+      "reach": 2122
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",
+  "max_call_candidates": 5,
   "how_to_read": [
     "Start with overview.md: it names the languages, the hub files and the most called symbols.",
     "To trace a flow, start at a node with entrypoint: true \u2014 nothing in the repo calls it \u2014 and follow CALLS edges forward; nodes.jsonl also carries `reach`, the number of symbols an entry point can reach, for the busiest 200 of them.",
@@ -283,5 +334,36 @@
     "Call resolution is name-based; ambiguous names fan out to up to 5 edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call."
-  ]
+  ],
+  "usage_hints": {
+    "tool_decision_tree": {
+      "orient_first": "Call repo_map once to get languages, hub files and entry points before any other tool.",
+      "search_by_question": "Use repo_search for natural-language questions; it returns cited chunks plus graph neighbours.",
+      "trace_relationships": "Use repo_neighbours with a node_id to hop through callers, callees, base classes and defining files.",
+      "node_id_format": "sym:pkg/relative/path.py::function_name -- read the 'id' field off nodes.jsonl or a chunk's node_id directly; or take a chunk's caller_edges/callee_edges/base_edges target (which is a bare path::qualname) and prefix 'sym:' to construct one."
+    },
+    "confidence_semantics": {
+      "1.0": "Certain: the call name resolved to exactly one definition.",
+      "lt_1.0": "Ambiguous: the name matched multiple candidates, fanned out to up to 5 CALLS edges at 1/n confidence each. Filter to confidence == 1.0 when correctness matters more than recall. IMPORTS, DEFINES and INHERITS edges carry no confidence key -- they are never ambiguous."
+    },
+    "edge_type_meanings": {
+      "CONTAINS": "repo -> dir -> file",
+      "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+      "IMPORTS": "file -> file (internal: true) or file -> module",
+      "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+      "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
+      "INHERITS": "symbol -> base class or interface",
+      "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history"
+    },
+    "what_is_not_indexed": [
+      "binary files",
+      "files over 1.5 MB",
+      "vendor/build folders",
+      "dotfiles",
+      ".gitignore entries",
+      "secret / credential files",
+      "dynamic dispatch -- code that decides at runtime which function to call"
+    ],
+    "dynamic_calls_note": "No CALLS edge does not prove no call happens at runtime. Dynamic dispatch, reflection and generated code are invisible to a parser -- hedge answers about them accordingly."
+  }
 }

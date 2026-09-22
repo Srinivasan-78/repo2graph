@@ -1,9 +1,11 @@
 name: Dependabot triage
 
-# Used to auto-merge minor/patch dependabot PRs with no human review -- main's
-# branch protection requires only the `reuse` license-compliance check, so
-# "auto-merge" here meant zero eyes on the diff before it landed. This now
-# only labels and flags the update type; a human decides whether to merge.
+# Used to auto-merge minor/patch dependabot PRs with no human review -- at the
+# time, main's branch protection required only the `reuse` license-compliance
+# check, so "auto-merge" here meant zero eyes on the diff before it landed.
+# (The required contexts are now the full test matrix plus packaging, action
+# and windows-cp1252-pipe; `reuse` is no longer among them.) This now only
+# labels and flags the update type; a human decides whether to merge.
 on: pull_request
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
