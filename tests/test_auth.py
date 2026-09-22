@@ -917,3 +917,205 @@ def test_client_metadata_document_is_self_describing():
         assert doc[field], field
     assert "authorization_code" in doc["grant_types"]
     json.dumps(doc)  # must be serialisable as-is
+
+
+# ----------------------------------------------------------- refusals & edge cases ----
+
+
+def test_b64url_decode_invalid():
+    with pytest.raises(AuthError, match="malformed token encoding"):
+        auth.b64url_decode("!!!invalid_base64!!!")
+
+
+def test_rsa_verify_degenerate_and_unsupported_inputs():
+    assert not rsa_verify(KEY["n"], KEY["e"], b"sig", b"msg", "unsupported_hash")
+    assert not rsa_verify(0, KEY["e"], b"sig", b"msg", "sha256")
+    assert not rsa_verify(KEY["n"], 0, b"sig", b"msg", "sha256")
+    assert not rsa_verify(-1, KEY["e"], b"sig", b"msg", "sha256")
+    assert not rsa_verify(KEY["n"], KEY["e"], b"short", b"msg", "sha256")
+    # Small modulus k < len(tail) + 11
+    assert not rsa_verify(15, 3, b"\x00", b"msg", "sha256")
+
+
+def test_jwks_cache_discovery_missing_jwks_uri():
+    cache = JWKSCache(
+        "https://test.issuer",
+        opener=lambda url: {"issuer": "https://test.issuer"},
+    )
+    with pytest.raises(AuthError, match="issuer discovery document has no jwks_uri"):
+        cache.key_for("some-kid")
+
+
+def test_jwks_cache_document_missing_keys_list():
+    def opener(url):
+        if "openid-configuration" in url:
+            return {"issuer": "https://test.issuer", "jwks_uri": "https://test.issuer/jwks"}
+        return {"not_keys": "invalid"}
+
+    cache = JWKSCache("https://test.issuer", opener=opener)
+    with pytest.raises(AuthError, match="issuer JWKS has no key list"):
+        cache.key_for("some-kid")
+
+
+def test_jwks_cache_negative_cache_expiration():
+    clock_val = [100.0]
+
+    def fake_clock():
+        return clock_val[0]
+
+    cache = JWKSCache(ISSUER, opener=FakeIssuer(), clock=fake_clock)
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache.key_for("nonexistent-1")
+    assert cache._is_negative("nonexistent-1", 100.0)
+
+    # Advance clock past min_refresh_interval
+    clock_val[0] += cache.min_refresh_interval + 1.0
+    assert not cache._is_negative("nonexistent-1", clock_val[0])
+
+
+def test_jwks_cache_miss_eviction_and_install_clearing():
+    from repo2graph.auth import MAX_NEGATIVE_KIDS
+
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+    for i in range(MAX_NEGATIVE_KIDS + 10):
+        cache._remember_miss(f"kid-{i}", float(i))
+    assert len(cache._misses) <= MAX_NEGATIVE_KIDS
+    assert "kid-0" not in cache._misses
+    assert f"kid-{MAX_NEGATIVE_KIDS + 9}" in cache._misses
+
+    # Test _install clearing seen keys from _misses
+    cache._misses["test-key-1"] = 100.0
+    cache._install({"test-key-1": {"kid": "test-key-1"}}, "https://issuer/jwks", 150.0)
+    assert "test-key-1" not in cache._misses
+
+
+def test_jwks_cache_in_flight_concurrency_branches():
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache._keys = {"existing": {"kid": "existing"}}
+    cache._fetched_at = 1.0  # stale
+    cache._in_flight = threading.Event()
+
+    # Cached key returned immediately even if stale when in-flight fetch is active
+    assert cache.key_for("existing") == {"kid": "existing"}
+
+    # Unknown key refused when in-flight fetch is already active
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache.key_for("missing")
+
+    # When _keys is empty, key_for waits on _in_flight
+    cache2 = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache2._keys = {}
+    cache2._fetched_at = 0.0
+    ev = threading.Event()
+    cache2._in_flight = ev
+
+    def trigger():
+        time.sleep(0.02)
+        cache2._keys = {"waited-kid": {"kid": "waited-kid"}}
+        ev.set()
+
+    t = threading.Thread(target=trigger)
+    t.start()
+    found = cache2.key_for("waited-kid")
+    t.join()
+    assert found == {"kid": "waited-kid"}
+
+    # Waiter finishes but key still not found
+    cache3 = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache3._keys = {}
+    cache3._fetched_at = 0.0
+    ev3 = threading.Event()
+    cache3._in_flight = ev3
+
+    def trigger3():
+        time.sleep(0.02)
+        cache3._keys = {"other-kid": {"kid": "other-kid"}}
+        ev3.set()
+
+    t3 = threading.Thread(target=trigger3)
+    t3.start()
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache3.key_for("waited-kid-absent")
+    t3.join()
+
+
+def test_fetch_json_errors(monkeypatch):
+    with pytest.raises(AuthError, match="issuer URLs must be https"):
+        auth._fetch_json("http://insecure.example.com")
+
+    with pytest.raises(AuthError, match="could not reach the issuer"):
+        auth._fetch_json("https://127.0.0.1:9")
+
+    class FakeLargeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, n):
+            return b"x" * (auth.MAX_JWKS_BYTES + 2)
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: FakeLargeResp())
+    with pytest.raises(AuthError, match="implausibly large"):
+        auth._fetch_json("https://valid.example.com")
+
+    class FakeInvalidJsonResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, n):
+            return b"not json {"
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: FakeInvalidJsonResp())
+    with pytest.raises(AuthError, match="not valid JSON"):
+        auth._fetch_json("https://valid.example.com")
+
+
+def test_decode_jwt_malformed_components():
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+
+    # Not json
+    with pytest.raises(AuthError, match="token header or payload is not JSON"):
+        decode_jwt(f"{b64u(b'not json')}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    # Not object (e.g. integer)
+    with pytest.raises(AuthError, match="token header or payload is not an object"):
+        decode_jwt(f"{b64u(b'123')}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    with pytest.raises(AuthError, match="token header or payload is not an object"):
+        decode_jwt(f"{b64u(b'{}')}.{b64u(b'[1, 2]')}.sig", cache, ISSUER, None)
+
+    # Missing kid
+    h_nokid = b64u(json.dumps({"alg": "RS256"}).encode("utf8"))
+    with pytest.raises(AuthError, match="token header has no kid"):
+        decode_jwt(f"{h_nokid}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    # Non-RSA kty
+    h_ec = b64u(json.dumps({"alg": "RS256", "kid": "ec-key"}).encode("utf8"))
+    p = b64u(json.dumps({"iss": ISSUER, "exp": time.time() + 100}).encode("utf8"))
+    cache._keys["ec-key"] = {"kid": "ec-key", "kty": "EC"}
+    cache._fetched_at = time.monotonic()
+    with pytest.raises(AuthError, match="unsupported key type"):
+        decode_jwt(f"{h_ec}.{p}.sig", cache, ISSUER, None)
+
+    # Non-numeric exp
+    token_badexp = sign(claims(exp="not-a-number"))
+    with pytest.raises(AuthError, match="token exp claim is not a number"):
+        decode_jwt(token_badexp, cache, ISSUER, None)
+
+    # Non-numeric nbf
+    token_badnbf = sign(claims(nbf="not-a-number"))
+    with pytest.raises(AuthError, match="token nbf claim is not a number"):
+        decode_jwt(token_badnbf, cache, ISSUER, None)
+
+
+def test_authenticator_unconfigured_refusal():
+    who = Authenticator(AuthConfig(token="secret"))
+    who.config.oidc_issuer = "https://example.com"
+    who._jwks = None
+    with pytest.raises(AuthError, match="invalid bearer token"):
+        who.authenticate("Bearer nonmatching")
