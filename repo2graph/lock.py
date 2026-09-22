@@ -88,19 +88,17 @@ class BuildLock:
         start_time = time.monotonic()
 
         while True:
-            # Check for stale lock metadata before opening
-            if self._try_reclaim_stale():
-                pass
-
             fh = None
             try:
                 fh = open(self.lock_file, "a+", encoding="utf8")
-                if self._try_os_lock(fh):
+                if self._try_os_lock(fh) and self._still_the_lock_file(fh):
                     self._fh = fh
                     self._write_metadata(fh)
                     self._acquired = True
                     return
-                # Lock held by another process
+                # Held by another process, or the name stopped pointing at the
+                # file we locked. Either way this attempt did not win.
+                self._release_os_lock(fh)
                 fh.close()
             except OSError:
                 if fh is not None:
@@ -114,7 +112,7 @@ class BuildLock:
                 holder_info = self._read_holder_metadata()
                 raise LockTimeoutError(
                     f"Timed out after {self.timeout:.1f}s waiting for build lock on {self.lock_file}. "
-                    f"Currently held by: {holder_info}"
+                    f"Currently held by: {holder_info}{self._staleness_hint()}"
                 )
 
             time.sleep(LOCK_RETRY_INTERVAL)
@@ -125,6 +123,10 @@ class BuildLock:
             return
 
         try:
+            # Whether the name still points at our file has to be decided
+            # while the descriptor is open; afterwards there is nothing left
+            # to compare it against.
+            ours = self._still_the_lock_file(self._fh)
             self._release_os_lock(self._fh)
         finally:
             try:
@@ -134,8 +136,12 @@ class BuildLock:
             self._fh = None
             self._acquired = False
             try:
-                if self.lock_file.exists():
-                    self.lock_file.unlink()
+                # Only unlink a name that still refers to the file we locked.
+                # Unlinking unconditionally deletes whatever is at the path,
+                # which after a reclaim is somebody else's live lock -- and
+                # removing it lets a third builder in alongside them.
+                if ours:
+                    self.lock_file.unlink(missing_ok=True)
             except OSError:
                 pass
 
@@ -150,6 +156,34 @@ class BuildLock:
         exc_tb: TracebackType | None,
     ) -> None:
         self.release()
+
+    def _still_the_lock_file(self, fh: TextIO) -> bool:
+        """Whether `fh` is still the file this lock's *name* refers to.
+
+        `flock`/`msvcrt.locking` attach to an open file, not to a path, so a
+        lock survives its own name being unlinked -- and a lock taken on an
+        already-unlinked file conflicts with nobody. That gives two ways for
+        two builders to both believe they hold this lock:
+
+        * `release()` unlinks the path. A waiter that opened the path just
+          before that unlink then locks the now-nameless file successfully,
+          while the next process along creates a fresh file at the same path
+          and locks that one too.
+        * any reclaim that unlinks a lock file out from under a live holder
+          has the same effect (which is why the age-based reclaim is gone).
+
+        Since `dump_all`'s directory swap runs under this lock, two holders
+        means two concurrent swaps of one index. Comparing the descriptor's
+        identity against the path closes the window: a mismatch means we
+        locked something that is no longer the lock, so the attempt is
+        discarded and retried.
+        """
+        try:
+            locked = os.fstat(fh.fileno())
+            named = os.stat(self.lock_file)
+        except OSError:
+            return False
+        return (locked.st_dev, locked.st_ino) == (named.st_dev, named.st_ino)
 
     def _try_os_lock(self, fh: TextIO) -> bool:
         """Attempt non-blocking OS lock."""
@@ -218,33 +252,34 @@ class BuildLock:
             pass
         return {"file": str(self.lock_file)}
 
-    def _try_reclaim_stale(self) -> bool:
-        """If lock file has an unalive holder PID or is older than stale threshold, attempt removal."""
+    def _staleness_hint(self) -> str:
+        """A diagnostic suffix for the timeout message, or "".
+
+        `stale_threshold` used to drive an unlink: a lock file older than the
+        threshold was deleted and re-created, which displaced a *live* holder
+        and let two builders run `dump_all`'s directory swap over one index.
+        Nothing here reclaims any more -- the OS lock is the only authority on
+        whether this lock is held, and it is released by the kernel when its
+        holder dies, so a lock file left by a crash is already acquirable.
+        What the threshold is still good for is telling an operator that the
+        holder has been sitting on it implausibly long.
+        """
         try:
-            if not self.lock_file.exists():
-                return False
-            mtime = self.lock_file.stat().st_mtime
-            age = time.time() - mtime
-            meta = self._read_holder_metadata()
-            pid = meta.get("pid")
-            host = meta.get("host")
-
-            is_stale = False
-            # If same host and process is dead, it is definitely stale
-            if host and host == platform.node() and isinstance(pid, int):
-                if not _is_pid_alive(pid):
-                    is_stale = True
-
-            # If age exceeds stale threshold
-            if age > self.stale_threshold:
-                is_stale = True
-
-            if is_stale:
-                try:
-                    self.lock_file.unlink(missing_ok=True)
-                    return True
-                except OSError:
-                    return False
-        except Exception:
-            pass
-        return False
+            age = time.time() - self.lock_file.stat().st_mtime
+        except OSError:
+            return ""
+        if age <= self.stale_threshold:
+            return ""
+        meta = self._read_holder_metadata()
+        pid = meta.get("pid")
+        alive = (
+            _is_pid_alive(pid)
+            if isinstance(pid, int) and meta.get("host") == platform.node()
+            else None
+        )
+        state = "still running" if alive else "not running on this host"
+        return (
+            f" The lock has been held for {age / 60:.0f} minutes and its holder is {state}; "
+            f"if that process is wedged, stop it rather than deleting the lock file -- "
+            f"deleting it while a build is live allows a second build into the same index."
+        )

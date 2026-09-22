@@ -13,6 +13,31 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two builders could both hold the build lock.** `BuildLock` reclaimed a lock
+  whose file was older than `stale_threshold` (1 hour) by unlinking it —
+  regardless of whether the holder was alive. `_write_metadata` runs once, at
+  acquire, so the file's mtime measures how long the holder has been *working*,
+  not whether it is stuck: any build slower than the threshold was joined by a
+  second one. Because `flock`/`msvcrt.locking` attach to an open file rather
+  than a path, the second builder's lock on the freshly created file conflicted
+  with nobody, and `dump_all`'s directory swap then ran twice over one index.
+  A second, narrower instance of the same shape: `release()` unlinked the path
+  unconditionally, so a waiter that opened the path just before that unlink
+  locked a now-nameless file while the next process created and locked a new
+  one. The OS lock is now the only authority on whether the lock is held — it
+  is released by the kernel when its holder dies, so a lock file left by a
+  crash is already acquirable and never needed reclaiming. `acquire()`
+  additionally verifies that the descriptor it locked is still the file the
+  path names, and `release()` only unlinks a name that still refers to its own
+  file. `stale_threshold` now enriches the timeout diagnostic instead of
+  licensing a takeover.
+- **A failed index swap that also failed to roll back said nothing useful.**
+  `_atomic_dir_swap` swallowed the restore error and re-raised the original, so
+  an operator was left with a missing index and a `.<name>.backup.<pid>`
+  directory they had no reason to look in. The raised error now names it.
+
 ### Security
 
 - **Index files are read under a size ceiling.** `embed._npy_read` and

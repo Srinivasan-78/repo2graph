@@ -280,24 +280,66 @@ class TestBuildLock:
         assert meta2["file"] == str(lock.lock_file)
         lock.lock_file.unlink()
 
-    def test_try_reclaim_stale_unlink_error(self, tmp_path, monkeypatch):
+    # Replaces test_try_reclaim_stale_unlink_error, which covered a branch of
+    # the age-based reclaim. That reclaim unlinked the lock file of a holder
+    # that was merely slow, which displaced it and let a second builder run
+    # dump_all's directory swap over the same index concurrently. The OS lock
+    # is now the only authority, so there is no reclaim left to cover; these
+    # pin what replaced it.
+
+    def test_an_aged_lock_is_not_stolen_from_a_live_holder(self, tmp_path):
+        """A build slower than the stale threshold keeps its lock.
+
+        `_write_metadata` runs once, at acquire, so mtime measures how long
+        the holder has been working -- not whether it is stuck. Reclaiming on
+        that alone meant any build over the threshold was joined by a second.
+        """
         import time
+        from repo2graph.lock import BuildLock, LockTimeoutError
+
+        idx = tmp_path / "idx"
+        holder = BuildLock(idx, stale_threshold=1.0)
+        holder.acquire()
+        try:
+            past = time.time() - 10_000.0
+            os.utime(holder.lock_file, (past, past))
+
+            second = BuildLock(idx, stale_threshold=1.0, timeout=0.5)
+            with pytest.raises(LockTimeoutError) as exc:
+                second.acquire()
+            assert not second._acquired
+            # The age becomes a diagnostic rather than a licence to take over.
+            assert "held for" in str(exc.value)
+        finally:
+            holder.release()
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows refuses to unlink an open file, which is why this race is POSIX-only",
+    )
+    def test_releasing_does_not_unlink_a_lock_file_that_is_not_ours(self, tmp_path):
+        """release() must not delete whatever happens to sit at the path.
+
+        If the name was replaced while we held our file, the thing at the path
+        is another holder's live lock; removing it would admit a third builder.
+        """
         from repo2graph.lock import BuildLock
 
         idx = tmp_path / "idx"
-        lock = BuildLock(idx)
-        lock.lock_file.write_text("{}", encoding="utf8")
-        past = time.time() - 10000.0
-        os.utime(lock.lock_file, (past, past))
+        mine = BuildLock(idx)
+        mine.acquire()
 
-        def fake_unlink(*args, **kwargs):
-            raise OSError("permission denied")
+        # Stand in for "someone replaced the name": point the lock path at a
+        # different file than the descriptor we hold.
+        impostor = mine.lock_file.parent / "impostor"
+        impostor.write_text("another holder", encoding="utf8")
+        mine.lock_file.unlink()
+        impostor.rename(mine.lock_file)
 
-        monkeypatch.setattr(Path, "unlink", fake_unlink)
-        assert not lock._try_reclaim_stale()
-        # Restore real unlink so tmp_path cleans up
-        monkeypatch.undo()
-        lock.lock_file.unlink()
+        mine.release()
+
+        assert mine.lock_file.exists(), "release() deleted a lock file it did not own"
+        assert mine.lock_file.read_text(encoding="utf8") == "another holder"
 
     def test_unix_os_lock_and_release(self, tmp_path, monkeypatch):
         import types
