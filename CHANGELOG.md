@@ -13,6 +13,64 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Added
+
+- **`repo2graph explain`** — three subcommands that answer "why did the graph say
+  that?" without reading JSONL by hand. `explain edge <src> <dst>` reports every
+  edge between two nodes in either direction, with each edge's own attributes and
+  both endpoints' file locations, and says *which* node is missing when there is
+  no edge. `explain node <id>` gives a node's metadata, in/out degree and chunks.
+  `explain retrieval <query>` traces a query end to end: tokens, the BM25 short
+  list with per-candidate matched terms and which of them became seeds, every
+  graph hop walked out of those seeds, and the final chunks tagged `seed` or
+  `expanded_neighbor`. All three take `--json` (Issue #309).
+- **Lua**, the seventeenth grammar with full treatment — functions, classes and
+  calls — bringing the extension count to 29 (Issue #77).
+- **In-repo import resolution for eight more languages.** `IMPORTS` edges now
+  resolve to files for Rust, C#, PHP, Kotlin, Scala, Swift, Ruby and Bash, where
+  before only Python, JS/TS, Go, Java and C/C++ did. Rust understands `crate::`,
+  `super::`, `self::` and the crate name read out of `Cargo.toml`'s `[package]`;
+  PHP maps PSR-4-ish `App\` prefixes onto `app/` and `src/`; Ruby distinguishes
+  `require_relative` from `require`; Bash resolves `source`/`.` against the
+  sourcing file's directory (Issue #355).
+- **Structured import extraction for Swift, Ruby and Bash**, so those languages
+  contribute modules, names and aliases to `ImportDetail` rather than only a raw
+  string (Issue #343).
+- **`repo2graph completion [bash|zsh|fish]`**, printing the shell setup line for
+  tab completion. Completion itself comes from `argcomplete`, a new optional
+  extra: `pip install "repo2graph[completion]"`. Nothing is required for the CLI
+  to work without it (Issue #356).
+- **An official `Dockerfile`** — multi-stage, non-root (10000:10000), and
+  compatible with a read-only root filesystem and `--cap-drop=ALL`, matching the
+  hardening `docs/ENTERPRISE_DEPLOYMENT.md` already asked operators to apply
+  (Issue #327).
+- **`--cochange-min`**, and CO_CHANGE edges that carry their own provenance. The
+  co-change threshold was a hardcoded 3; it is now a flag, and every emitted edge
+  records `cochange_count`, `sampled_commits` and `min_pairs` so a reader can see
+  what evidence produced it and at what setting. `stats.json` gains
+  `cochange_sampled_commits` and `cochange_min_pairs`. The docstring on
+  `add_cochange` now states the whole formula — depth cap, `--no-merges`, the
+  25-file bulk-commit filter, path filtering and the threshold — in one place
+  (Issue #280).
+- **`--allow-auto-build`** for `repo2graph-mcp`, which re-enables auto-building a
+  missing index in HTTP mode. See the note under Changed (Issue #265).
+- **Four new GitHub Action inputs.** `incremental`, `parse-policy` and
+  `max-call-candidates` expose build flags that were previously CLI-only (Issues
+  #346, #311). `commit-force` makes the push to `commit-branch` a plain push
+  instead of a force-push; alongside it, the action now refuses outright to push
+  from a fork pull request and warns on `pull_request`/`pull_request_target`,
+  with the reasoning written up in `docs/ACTION_SECURITY.md` (Issue #310).
+
+### Changed
+
+- **HTTP mode no longer auto-builds a missing index.** Read-only network tool
+  calls could previously trigger parser execution, file writes and git
+  interactions on a server an operator had only pointed at a directory. A tool
+  call against an unindexed directory now returns 503 with instructions instead.
+  **Upgrade note:** an HTTP deployment that relied on the first tool call
+  building the index must either pre-build it or pass `--allow-auto-build`.
+  Local stdio mode is unchanged — it still builds on first use (Issue #265).
+
 ### Fixed
 
 - **`explain retrieval` traced a walk the retrieval never made.** It called
