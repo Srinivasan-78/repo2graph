@@ -16,8 +16,15 @@ strings.
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 import pytest
 
@@ -30,8 +37,12 @@ import version_surfaces as vs  # noqa: E402
 
 
 def declared_version() -> str:
-    with open(REPO_ROOT / "pyproject.toml", "rb") as fh:
-        return tomllib.load(fh)["project"]["version"]
+    content = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf8")
+    if tomllib is not None:
+        return tomllib.loads(content)["project"]["version"]
+    m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', content)
+    assert m is not None, "could not find version in pyproject.toml"
+    return m.group(1)
 
 
 def test_every_surface_matches_something_in_every_file_it_claims():

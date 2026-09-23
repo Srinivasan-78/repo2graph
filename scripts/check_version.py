@@ -18,8 +18,16 @@ is how the documented `@v1` survived the 2.0.0 release.
 """
 
 import pathlib
+import re
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -28,8 +36,16 @@ from version_surfaces import ROOT, findings  # noqa: E402
 
 def main() -> int:
     """Compare every recorded version; return 1 on any disagreement."""
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf8"))
-    want = pyproject["project"]["version"]
+    content = (ROOT / "pyproject.toml").read_text(encoding="utf8")
+    if tomllib is not None:
+        pyproject = tomllib.loads(content)
+        want = pyproject["project"]["version"]
+    else:
+        m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', content)
+        if not m:
+            print("error: could not determine version from pyproject.toml", file=sys.stderr)
+            return 1
+        want = m.group(1)
 
     results = findings(want)
     wrong = [(path, pattern, got, exp) for path, pattern, got, exp in results if got != exp]
