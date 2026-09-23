@@ -101,10 +101,10 @@ REUSE/SPDX license compliance is a required CI status check, not a suggestion.
 
 *Remaining risk:* no SBOM artifact is generated (P2.4 in the audit) — `pip-audit` output is a
 vulnerability report, not a bill of materials a downstream consumer can ingest independently. The
-`@v1` release tag is a moving convenience pointer, not an integrity pin (P3.7) — now documented in
+`@v2` release tag is a moving convenience pointer, not an integrity pin (P3.7) — now documented in
 `SECURITY.md`.
 
-*Control:* enterprise consumers of the GitHub Action should pin to a commit SHA, not `@v1`, exactly
+*Control:* enterprise consumers of the GitHub Action should pin to a commit SHA, not `@v2`, exactly
 as this repo's own workflows pin their third-party dependencies.
 
 ## Deployment

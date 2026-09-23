@@ -71,6 +71,15 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy repo2graph
+      # Every version surface must agree with pyproject.toml. This was a
+      # pre-commit hook and a publish.yml step and nothing in between, so it
+      # only ran for contributors who had installed pre-commit -- and otherwise
+      # first fired at release time, which is exactly the "burnt version number"
+      # its own docstring says it exists to avoid. It is also what catches the
+      # documented `@vN` tag and the `repo2graph==X.Y.Z` pin examples going
+      # stale, which is how the README told users to pin `@v1` for a while after
+      # 2.0.0 shipped.
+      - run: python scripts/check_version.py
       # Branch coverage, gated at a floor. The baseline that BACKLOG item 7 said
       # was missing now exists: see [tool.coverage] in pyproject.toml for the
       # measured number and why the floor sits below it.

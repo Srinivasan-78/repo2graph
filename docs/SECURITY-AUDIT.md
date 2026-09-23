@@ -260,9 +260,9 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
    raises `GraphLimitExceeded` if the limit is exceeded during build.
 6. **No `docs/PERFORMANCE.md` prior to this audit.** Fixed — see that file, now with real
    measurements rather than claims.
-7. **Release tag `@v1` is a moving pointer, not an integrity pin.** `publish.yml`'s release
+7. **Release tag `@v2` is a moving pointer, not an integrity pin.** `publish.yml`'s release
    stage force-pushes `v1` to the latest release SHA — a deliberate, documented convenience so
-   consumers can write `uses: .../repo2graph@v1`, but it means `@v1` itself carries no supply-chain
+   consumers can write `uses: .../repo2graph@v2`, but it means `@v2` itself carries no supply-chain
    integrity guarantee the way a SHA pin does. `SECURITY.md` now says so explicitly.
 8. **No explicit `attestations:` flag on the PyPI publish step.** OIDC Trusted Publishing is
    correctly configured (no long-lived token), but whether `pypa/gh-action-pypi-publish` emits PEP

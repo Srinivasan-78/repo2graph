@@ -150,6 +150,19 @@ jobs:
           git config user.name "$bot_name"
           git config user.email "$bot_email"
 
+          # Asked for, not restated. This list used to be five hand-typed paths
+          # while bump_version.py rewrote more than five, and a --files that
+          # misses a path is the worst failure available here: a release commit
+          # that bumps some surfaces and not others, on a tag PyPI will not let
+          # you reuse. scripts/version_surfaces.py is the one table both the
+          # bump and the check read, so it is what this asks.
+          read -ra release_files <<< "$(python scripts/version_surfaces.py --files)"
+          if [ "${#release_files[@]}" -lt 5 ]; then
+            echo "::error::version_surfaces.py --files returned ${#release_files[@]} paths"
+            exit 1
+          fi
+          echo "Release commit covers: ${release_files[*]}"
+
           # Create the release commit via the GitHub API instead of `git commit` +
           # push: a runner-made commit is never marked Verified even when pushed
           # with an authenticated App token, and the release branch requires
@@ -161,7 +174,7 @@ jobs:
             --branch "$branch" \
             --base "$RELEASE_BASE" \
             --message "chore(release): bump version to $version" \
-            --files pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock)
+            --files "${release_files[@]}")
           echo "Created verified commit $commit_sha on $branch"
 
           # bump_version.py's edits are already captured in the commit created
@@ -169,7 +182,7 @@ jobs:
           # `git pull origin "$RELEASE_BASE"` after merge below (which re-fetches
           # the bumped content properly, via the merge) doesn't fail with "local
           # changes would be overwritten".
-          git checkout -- pyproject.toml server.json repo2graph/__init__.py CHANGELOG.md uv.lock
+          git checkout -- "${release_files[@]}"
 
           # Create PR if not already existing
           pr_url=$(gh pr list --head "$branch" --base "$RELEASE_BASE" --json url -q '.[0].url' || true)
