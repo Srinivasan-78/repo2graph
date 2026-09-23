@@ -112,9 +112,15 @@ inputs:
     required: false
     default: "false"
   parse-policy:
-    description: "Policy for AST parse errors: lenient, warn, strict (default: lenient)"
+    # `best-effort`, not `lenient`: these are passed straight to
+    # `repo2graph build --parse-policy`, whose argparse `choices` are
+    # (best-effort, warn, strict). `lenient` was never one of them -- it only
+    # looked harmless because the step below drops the value when it equals the
+    # default, so the documented default was the one value that never reached
+    # the CLI. Any correction to that guard would have started forwarding it.
+    description: "Policy for AST parse errors: best-effort, warn, strict (default: best-effort)"
     required: false
-    default: "lenient"
+    default: "best-effort"
   max-call-candidates:
     description: "Maximum call edge candidates to retain per ambiguous call site (default: 5)"
     required: false
@@ -217,7 +223,7 @@ runs:
         if [ "$inc_mode" = "true" ]; then
           args+=(--incremental)
         fi
-        if [ -n "${R2G_PARSE_POLICY:-}" ] && [ "$R2G_PARSE_POLICY" != "lenient" ]; then
+        if [ -n "${R2G_PARSE_POLICY:-}" ] && [ "$R2G_PARSE_POLICY" != "best-effort" ]; then
           args+=(--parse-policy "$R2G_PARSE_POLICY")
         fi
         if [ -n "${R2G_MAX_CALL_CANDIDATES:-}" ] && [ "$R2G_MAX_CALL_CANDIDATES" != "5" ]; then

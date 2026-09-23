@@ -1558,7 +1558,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     """CO_CHANGE edges from files edited together in the last N commits.
 
     Formula and semantics:
-    - History depth: Scans up to `commits` commits (capped at MAX_COCHANGE_COMMITS = 1000).
+    - History depth: Scans up to `commits` commits (capped at MAX_COCHANGE_COMMITS = 5000).
     - Merge handling: `--no-merges` skips merge commits to avoid false co-change correlations.
     - Noise filter: Commits touching > 25 files are skipped as bulk refactors/noise.
     - Path filtering: Only paths matching `file_index` (current indexed tree) are paired.

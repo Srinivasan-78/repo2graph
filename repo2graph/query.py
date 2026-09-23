@@ -88,6 +88,13 @@ DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # pack_context(), can never narrow what `repo2graph query` has always returned.
 ALL_EDGE_DIRS: dict[str, tuple[str, ...]] = {}
 
+# retrieve()'s default budget, named so a caller that has to reproduce its seed
+# loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
+# shared with pack_context's identically valued default: the two mean different
+# things by budget_chars and must stay separately adjustable (AGENTS.md, "Two
+# budget models coexist").
+RETRIEVE_BUDGET_CHARS = 24000
+
 # Token accounting. 4 characters per token is the usual English/code rule of
 # thumb; it under-counts dense code and CJK, which is why pack_context takes a
 # `count_tokens=` hook a caller can point at a real tokenizer.
@@ -535,7 +542,7 @@ class Index:
         query: str,
         k: int = 8,
         hops: int = 1,
-        budget_chars: int = 24000,
+        budget_chars: int = RETRIEVE_BUDGET_CHARS,
         *,
         min_confidence: float | None = None,
         vectors: Mapping[Any, Vector] | None = None,

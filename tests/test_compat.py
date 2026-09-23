@@ -364,12 +364,57 @@ def test_ac8_new_action_inputs_default_to_baseline_behaviour():
         "embed-model": "",
         "query-budget-tokens": "",
         "incremental": "false",
-        "parse-policy": "lenient",
+        "parse-policy": "best-effort",
         "max-call-candidates": "5",
     }
     for name, expected in off_defaults.items():
         if name in inputs:
             assert inputs[name].get("default") == expected, (name, inputs[name])
+
+
+def _cli_choices(command: str, flag: str, sentinel: str = "\x00not-a-value") -> tuple:
+    """The argparse `choices` a subcommand declares for `flag`.
+
+    Read off the live parser rather than re-stated here, so this test asks the
+    CLI what it accepts instead of asserting a second copy of the list against
+    the first. The parser is reached by handing it a value nothing can match
+    and keeping the object argparse reports the error on -- `main` builds its
+    parser inline and never returns it.
+    """
+    captured: dict = {}
+    real_error = argparse.ArgumentParser.error
+
+    def spy(self, message):
+        captured.setdefault("p", self)
+        real_error(self, message)
+
+    argparse.ArgumentParser.error = spy  # type: ignore[method-assign]
+    try:
+        with pytest.raises(SystemExit):
+            main([command, flag, sentinel])
+    finally:
+        argparse.ArgumentParser.error = real_error  # type: ignore[method-assign]
+    for action in captured["p"]._actions:
+        if flag in action.option_strings:
+            return tuple(action.choices or ())
+    raise AssertionError(f"{command} has no {flag}")
+
+
+def test_action_parse_policy_values_are_values_the_cli_accepts():
+    """`parse-policy` is forwarded verbatim to `repo2graph build
+    --parse-policy`, whose argparse `choices` reject anything else. The input
+    shipped `lenient` as its default and its documented enum; `lenient` is not
+    a choice, and only the step's "drop the value when it equals the default"
+    guard kept it from ever reaching the CLI."""
+    with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
+        spec = parse_action_block(fh.read(), "inputs")["parse-policy"]
+    choices = _cli_choices("build", "--parse-policy")
+    assert spec["default"] in choices, (spec["default"], choices)
+    # Every enum value named in the description must exist too, or the docs
+    # send an operator to a value the build rejects.
+    described = set(re.findall(r"[a-z]+(?:-[a-z]+)*", spec["description"].split(":", 1)[1]))
+    assert set(choices) <= described, (choices, described)
+    assert described <= set(choices) | {"default"}, (described, choices)
 
 
 # ==========================================================================

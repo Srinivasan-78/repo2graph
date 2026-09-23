@@ -15,6 +15,26 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **`explain retrieval` traced a walk the retrieval never made.** It called
+  `Index.expand()` without `edge_dirs`, so it inherited `DEFAULT_EDGE_DIRS`
+  (`DEFINES: ("in",)`, `IMPORTS: ("out",)`, `INHERITS: ("out",)`) while the
+  `Index.retrieve()` it printed twelve lines later passes `ALL_EDGE_DIRS` — the
+  narrowing AGENTS.md already documents, in a new caller. The command reported
+  `Runner.run → Runner DEFINES in` for a chunk that came back labelled
+  `DEFINES out of main.py`, and dropped every DEFINES-out / IMPORTS-in /
+  INHERITS-in hop from the trace entirely. Its seed list was also
+  `list(a set)`, so the traced order — which is part of the traversal, since
+  `expand()` walks its frontier in order under a per-hop cap — changed with
+  `PYTHONHASHSEED`: three runs of one command, three answers. The seed loop now
+  also honours `budget_chars` the way `retrieve()` does, so `selected_as_seed`
+  cannot disagree with the seeds actually used on a large index.
+- **The action's `parse-policy` input offered a value the CLI rejects.** It was
+  documented and defaulted as `lenient`; `repo2graph build --parse-policy`
+  accepts only `best-effort`, `warn`, `strict`. It survived because the step
+  drops the value when it equals the default, so the one invalid value was also
+  the one that never reached the CLI — any correction to that guard would have
+  started forwarding it. Now `best-effort` throughout, with a test that reads
+  the accepted values off the live parser rather than restating them.
 - **Two builders could both hold the build lock.** `BuildLock` reclaimed a lock
   whose file was older than `stale_threshold` (1 hour) by unlinking it —
   regardless of whether the holder was alive. `_write_metadata` runs once, at
@@ -37,6 +57,18 @@ makes keeping it current a release-blocking step rather than a good intention.
   `_atomic_dir_swap` swallowed the restore error and re-raised the original, so
   an operator was left with a missing index and a `.<name>.backup.<pid>`
   directory they had no reason to look in. The raised error now names it.
+- **The official image had no `git`.** `python:3.12-slim` does not ship it, and
+  repo2graph shells out to git rather than reimplementing it: `walker.discover`
+  prefers `git ls-files` and falls back to an `os.walk` that does not honour
+  `.gitignore`, so the documented `docker run … repo2graph build /repo`
+  indexed a different file set than every other way of running the same build,
+  `--git-history` produced nothing, and `doctor` failed its own `check_git`.
+  The runtime stage now installs git, and declares `safe.directory` through
+  `GIT_CONFIG_*` rather than a config file, since the documented run is
+  `--read-only` and mounts a host checkout owned by another uid.
+- **`add_cochange`'s new formula docstring named the wrong cap.** It said
+  `MAX_COCHANGE_COMMITS = 1000`; the constant is 5000, which is also what
+  `docs/cli.md` tells operators.
 
 ### Security
 

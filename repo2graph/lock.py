@@ -122,6 +122,13 @@ class BuildLock:
         if not self._acquired or self._fh is None:
             return
 
+        # Bound before the `try`, because the `finally` reads it: an exception
+        # raised on the line that assigns it (`fileno()` on a handle somebody
+        # else closed raises ValueError, which `_still_the_lock_file` does not
+        # catch) would otherwise turn into a NameError in the `finally` and
+        # mask it. False is the safe value -- it leaves a lock file behind,
+        # which no longer means anything now the OS lock is the only authority.
+        ours = False
         try:
             # Whether the name still points at our file has to be decided
             # while the descriptor is open; afterwards there is nothing left
@@ -277,7 +284,14 @@ class BuildLock:
             if isinstance(pid, int) and meta.get("host") == platform.node()
             else None
         )
-        state = "still running" if alive else "not running on this host"
+        # Three states, not two: `alive is None` means the holder is on another
+        # host (or wrote no pid), which this process cannot check. Reporting
+        # that as "not running" invites exactly the manual deletion the rest of
+        # this message argues against.
+        if alive is None:
+            state = "on another host, so its liveness cannot be checked from here"
+        else:
+            state = "still running" if alive else "no longer running"
         return (
             f" The lock has been held for {age / 60:.0f} minutes and its holder is {state}; "
             f"if that process is wedged, stop it rather than deleting the lock file -- "

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from .query import Index, tokenize
+from .query import ALL_EDGE_DIRS, RETRIEVE_BUDGET_CHARS, Index, tokenize
 
 
 def explain_edge(outdir: Path, src: str, dst: str) -> dict[str, Any]:
@@ -91,8 +91,18 @@ def explain_retrieval(
     k: int = 5,
     hops: int = 1,
     min_confidence: float | None = None,
+    budget_chars: int = RETRIEVE_BUDGET_CHARS,
 ) -> dict[str, Any]:
-    """Trace query tokenization, seed ranking, graph expansion, and final chunk selection."""
+    """Trace query tokenization, seed ranking, graph expansion, and final chunk selection.
+
+    Every step here has to reproduce `Index.retrieve`'s, because the chunks it
+    claims to explain come from `Index.retrieve` twenty lines down. Three things
+    that must not drift: the seed loop stops on `budget_chars` as well as on
+    `k`, the seeds stay in score order (`expand` walks its frontier in order
+    under a per-hop cap, so a reordered seed list is a different traversal), and
+    the expansion passes `ALL_EDGE_DIRS` — see AGENTS.md, "A new default on a
+    shared traversal helper narrows its existing callers".
+    """
     idx = Index(outdir)
     query_terms = tokenize(query)
 
@@ -102,6 +112,9 @@ def explain_retrieval(
 
     seeds_info = []
     seen_seed_nodes: set[str] = set()
+    primary_seeds: list[str] = []
+    used = 0
+    seeding = True
     for rank, (score, chunk_idx) in enumerate(seed_chunks, 1):
         c = idx.chunks[chunk_idx]
         nid = c["node_id"]
@@ -109,9 +122,18 @@ def explain_retrieval(
         text = (c.get("text") or "").lower()
         qual = (c.get("qualname") or "").lower()
         matched = [t for t in query_terms if t in text or t in qual]
-        is_primary = nid not in seen_seed_nodes and len(seen_seed_nodes) < k
-        if is_primary:
-            seen_seed_nodes.add(nid)
+        chunk_len = len(c.get("text") or "")
+        is_primary = False
+        if seeding and nid not in seen_seed_nodes:
+            if primary_seeds and used + chunk_len > budget_chars:
+                seeding = False
+            else:
+                is_primary = True
+                seen_seed_nodes.add(nid)
+                primary_seeds.append(nid)
+                used += chunk_len
+                if len(primary_seeds) >= k or used >= budget_chars:
+                    seeding = False
 
         seeds_info.append(
             {
@@ -126,12 +148,14 @@ def explain_retrieval(
             }
         )
 
-    # Graph expansion from primary seed nodes
-    primary_seeds = list(seen_seed_nodes)
+    # Graph expansion from primary seed nodes, in seed order and with the same
+    # direction policy retrieve() uses. Sorting or set-ordering the seeds here
+    # would trace a walk that never happened.
     expansion_order = idx.expand(
         primary_seeds,
         hops=hops,
         min_confidence=0.0 if min_confidence is None else min_confidence,
+        edge_dirs=ALL_EDGE_DIRS,
     )
 
     expansion_steps = []
@@ -153,6 +177,7 @@ def explain_retrieval(
         query,
         k=k,
         hops=hops,
+        budget_chars=budget_chars,
         min_confidence=min_confidence,
     )
 
@@ -267,7 +292,13 @@ def format_explain_retrieval(data: dict[str, Any]) -> str:
         "",
         f"Candidate seeds ({len(data['seeds'])} short-listed):",
     ]
-    for s in data["seeds"][: data["k"]]:
+    # The whole short list, not `[:k]`. The header counts every candidate, and
+    # the `*` column is the point of the section: a selected seed can sit below
+    # rank k (each one has to be the first chunk of a *distinct* node), so
+    # truncating to k both contradicted the count above it and hid seeds the
+    # expansion below then walks from. The list is `k * 3` long by
+    # construction, so printing it all is bounded.
+    for s in data["seeds"]:
         selected = "*" if s["selected_as_seed"] else " "
         lines.append(
             f" {selected} Rank {s['rank']:2d} | Score: {s['score']:.4f} | {s['node_id']} | matches: {s['matched_terms']}"
