@@ -276,6 +276,25 @@ class TestVerifyArtifacts:
         assert report.status in ("corrupt",)
         assert any("mismatch" in e.lower() or "Checksum" in e for e in report.errors)
 
+    def test_map_refreshes_graph_html_checksum(self, tmp_path):
+        from repo2graph.integrity import compute_file_checksum, verify_artifacts
+
+        repo = write_simple_repo(tmp_path)
+        out = tmp_path / "idx"
+        main(["build", str(repo), "-o", str(out)])
+
+        manifest_path = artifact_path(out, "manifest.json")
+        old_manifest = json.loads(manifest_path.read_text(encoding="utf8"))
+        old_checksum = old_manifest["checksums"]["human/graph.html"]
+
+        main(["map", "-o", str(out), "--viz-nodes", "0"])
+
+        new_checksum = compute_file_checksum(artifact_path(out, "graph.html"))
+        new_manifest = json.loads(manifest_path.read_text(encoding="utf8"))
+        assert new_checksum != old_checksum
+        assert new_manifest["checksums"]["human/graph.html"] == new_checksum
+        assert verify_artifacts(out).status == "valid"
+
     def test_missing_critical_file_reports_partial(self, tmp_path):
         from repo2graph.integrity import verify_artifacts
 

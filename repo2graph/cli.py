@@ -634,6 +634,7 @@ def cmd_map(args):
     _require_index(out, "edges.jsonl")
     html = make_path(out, "graph.html")
     data = write_html(LoadedGraph(out), html, args.viz_nodes)
+    register_written(out, [artifact_rel("graph.html")])
     _emit(
         json.dumps(
             {
