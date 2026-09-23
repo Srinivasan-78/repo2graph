@@ -19,9 +19,20 @@ import re
 import shutil
 import subprocess
 import sys
-import tomllib
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+
+from version_surfaces import ROOT, bumped_paths, rewrite  # noqa: E402
+
+__all__ = ["bumped_paths"]  # re-exported for `--files`; see docs/publishing.md
 
 
 def parse_semver(v: str) -> tuple[int, int, int]:
@@ -175,50 +186,6 @@ def compute_next_version(current: str, bump_type: str) -> str:
         return b.lstrip("v")
 
 
-def bump_pyproject(new_ver: str) -> None:
-    path = ROOT / "pyproject.toml"
-    content = path.read_text(encoding="utf8")
-    new_content, count = re.subn(
-        r'^(version\s*=\s*)"[^"]+"',
-        rf'\g<1>"{new_ver}"',
-        content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if count == 0:
-        raise RuntimeError("Failed to locate version in pyproject.toml")
-    path.write_text(new_content, encoding="utf8", newline="\n")
-
-
-def bump_server_json(new_ver: str) -> None:
-    path = ROOT / "server.json"
-    if not path.is_file():
-        return
-    content = path.read_text(encoding="utf8")
-    new_content, count = re.subn(
-        r'("version"\s*:\s*)"[^"]+"',
-        rf'\g<1>"{new_ver}"',
-        content,
-    )
-    if count == 0:
-        raise RuntimeError("Failed to locate version in server.json")
-    path.write_text(new_content, encoding="utf8", newline="\n")
-
-
-def bump_init(new_ver: str) -> None:
-    path = ROOT / "repo2graph" / "__init__.py"
-    content = path.read_text(encoding="utf8")
-    new_content, count = re.subn(
-        r'(__version__\s*=\s*)"[^"]+"',
-        rf'\g<1>"{new_ver}"',
-        content,
-        count=1,
-    )
-    if count == 0:
-        raise RuntimeError("Failed to locate __version__ in repo2graph/__init__.py")
-    path.write_text(new_content, encoding="utf8", newline="\n")
-
-
 def bump_changelog(new_ver: str) -> None:
     path = ROOT / "CHANGELOG.md"
     if not path.is_file():
@@ -260,15 +227,33 @@ def bump_changelog(new_ver: str) -> None:
 
 
 def sync_lockfile() -> None:
+    """Regenerate `uv.lock` for the bumped version. Fatal on failure.
+
+    This used to warn and carry on. It cannot any more: `publish.yml`'s pypi job
+    installs with `uv export --locked`, which fails rather than re-resolving when
+    the lock disagrees with `pyproject.toml` -- and it runs *after* the tag is
+    cut and the bump commit is merged. A warning here buys a hard failure at the
+    one point in the pipeline where backing out is expensive. `rewrite()` has
+    already put the new version in the lock, so this normalises a file that is
+    otherwise generated, rather than being the only thing that writes it.
+    """
     uv = shutil.which("uv")
-    if uv:
-        try:
-            subprocess.run([uv, "lock"], cwd=str(ROOT), check=True, capture_output=True)
-            print("Synchronized uv.lock")
-        except subprocess.CalledProcessError as e:
-            print(
-                f"Warning: `uv lock` failed: {e.stderr.decode('utf8', 'replace')}", file=sys.stderr
-            )
+    if uv is None:
+        raise RuntimeError(
+            "`uv` is not on PATH, so uv.lock cannot be regenerated. publish.yml's "
+            "pypi job installs with `uv export --locked` and will fail after the tag "
+            "is cut. Install uv (`pip install uv`) and re-run."
+        )
+    try:
+        subprocess.run([uv, "lock"], cwd=str(ROOT), check=True, capture_output=True, timeout=300)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"`uv lock` failed, so uv.lock is out of sync with the bumped pyproject.toml: "
+            f"{exc.stderr.decode('utf8', 'replace').strip()}"
+        ) from None
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("`uv lock` timed out after 300s") from None
+    print("Synchronized uv.lock")
 
 
 def main() -> int:
@@ -277,15 +262,27 @@ def main() -> int:
     else:
         target_arg = sys.argv[1]
 
-    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf8"))
-    current_ver = pyproject["project"]["version"]
+    content = (ROOT / "pyproject.toml").read_text(encoding="utf8")
+    if tomllib is not None:
+        pyproject = tomllib.loads(content)
+        current_ver = pyproject["project"]["version"]
+    else:
+        m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', content)
+        if not m:
+            print("error: could not determine version from pyproject.toml", file=sys.stderr)
+            return 1
+        current_ver = m.group(1)
 
     new_ver = compute_next_version(current_ver, target_arg)
     print(f"Bumping version: {current_ver} -> {new_ver}")
 
-    bump_pyproject(new_ver)
-    bump_server_json(new_ver)
-    bump_init(new_ver)
+    # Every version surface at once, from the table check_version.py reads, so
+    # the two cannot disagree about what a bump covers. This replaces three
+    # per-file bumpers that knew about pyproject, server.json and __init__.py
+    # and nothing else -- which is why the documented `@vN` tag and the
+    # `repo2graph==X.Y.Z` pin examples stayed a major version behind.
+    changed = rewrite(new_ver)
+    print(f"Rewrote {len(changed)} file(s): {', '.join(changed)}")
     bump_changelog(new_ver)
     sync_lockfile()
 

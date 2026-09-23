@@ -6,14 +6,14 @@ workflow.
 ```yaml
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
-- uses: Srinivasan-78/repo2graph@v1
+- uses: Srinivasan-78/repo2graph@v2
   with:
     path: .              # or: repo: some-org/other-repo
     git-history: "500"
     artifact-name: repo-graph
 ```
 
-`@v1` follows every 1.x release. Pin an exact version (`@v1.6.0`) if you would
+`@v2` follows every 2.x release. Pin an exact version (`@v2.0.0`) if you would
 rather upgrade by hand.
 
 The action never calls an LLM: `--answer` is deliberately not exposed. It packs
@@ -66,7 +66,7 @@ the step.
 | `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
 | `commit-force` | `true` | Whether to force-push when pushing to `commit-branch`. Set to `false` for standard fast-forward push. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
-| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.6.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==2.0.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
 | `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
 | `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
 | `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
@@ -81,9 +81,9 @@ from PyPI instead, which is the artifact `publish.yml` builds under Trusted
 Publishing with attested provenance:
 
 ```yaml
-- uses: Srinivasan-78/repo2graph@v1
+- uses: Srinivasan-78/repo2graph@v2
   with:
-    version: repo2graph==1.6.0
+    version: repo2graph==2.0.0
 ```
 
 Any pip spec works (`repo2graph>=1.4,<2`, a `git+https://…@<ref>` URL, a local
@@ -140,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           commit-branch: graph  # DANGEROUS: untrusted code can trigger branch push
 ```
@@ -159,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           artifact-name: pr-graph
           # commit-branch omitted! No write access required
@@ -176,7 +176,7 @@ Never point `commit-branch` at a primary or protected branch (e.g. `main`, `deve
 By default, `commit-branch` creates an orphan branch with a single root commit and uses `--force` (`commit-force: true`) so the graph branch remains clean and minimal.
 If your compliance or security policy disallows force pushes, set `commit-force: false` to require standard fast-forward pushes:
 ```yaml
-- uses: Srinivasan-78/repo2graph@v1
+- uses: Srinivasan-78/repo2graph@v2
   with:
     commit-branch: graph
     commit-force: "false"
@@ -188,7 +188,7 @@ When indexing private remote repositories via `repo`:
 - Never commit personal access tokens in workflow files or CLI arguments.
 - Pass repository secrets via the `token` input:
   ```yaml
-  - uses: Srinivasan-78/repo2graph@v1
+  - uses: Srinivasan-78/repo2graph@v2
     with:
       repo: my-org/private-repo
       token: ${{ secrets.READ_ONLY_REPO_PAT }}
@@ -221,7 +221,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           path: .
           git-history: "500"

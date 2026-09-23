@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           artifact-name: pr-graph  # Uploads artifact for review
           # commit-branch is NOT set here
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           git-history: "500"
           commit-branch: graph
@@ -122,7 +122,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: Srinivasan-78/repo2graph@v1
+      - uses: Srinivasan-78/repo2graph@v2
         with:
           commit-branch: graph
 ```

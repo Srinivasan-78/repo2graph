@@ -29,11 +29,17 @@ repos:
   - repo: local
     hooks:
       - id: version-consistency
-        name: pyproject, __init__ and server.json must agree on the version
+        name: every version surface must agree with pyproject.toml
         entry: python scripts/check_version.py
         language: system
         pass_filenames: false
-        files: ^(pyproject\.toml|server\.json|repo2graph/__init__\.py)$
+        # The file list is scripts/version_surfaces.py's `paths`, plus the table
+        # and the two scripts that read it. Narrower than "run always" so an
+        # unrelated commit does not pay for it, but it must cover the *documented*
+        # surfaces too: a commit that edits only README.md can stale the `@vN`
+        # tag, and the old regex named three files and would not have fired.
+        files: >-
+          ^(pyproject\.toml|server\.json|uv\.lock|repo2graph/__init__\.py|README\.md|\.github/SECURITY\.md|docs/(github-action|ACTION_SECURITY|SECURITY-AUDIT|PRODUCTION_READINESS|ENTERPRISE_DEPLOYMENT)\.md|scripts/(version_surfaces|check_version|bump_version)\.py)$
 
       - id: mypy-strict
         # Strict, and green, on the modules that are annotated. The legacy

@@ -82,22 +82,31 @@ $$\text{prepare-release} \longrightarrow \text{publish} \longrightarrow \text{re
 1. In GitHub, go to **Actions** → **Publish** → click **Run workflow** (no typing or inputs needed).
 2. The workflow automatically:
    - Scans commits and `CHANGELOG.md` since the previous release tag to auto-determine `major`, `minor`, or `patch`.
-   - Updates `pyproject.toml`, `server.json`, `repo2graph/__init__.py`, and `uv.lock`.
+   - Rewrites **every** version surface listed in `scripts/version_surfaces.py`:
+     `pyproject.toml`, `server.json` (twice), `repo2graph/__init__.py`, `uv.lock`, and the
+     documented ones — the `@vN` tag in every `uses:` example, the exact-tag and
+     `repo2graph==X.Y.Z` pin examples, and the prose naming the release line the floating
+     tag tracks. That table is also what `scripts/check_version.py` verifies and what
+     `publish.yml` asks for its `--files` list, so a surface cannot be known to the bump
+     and not the check.
    - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`.
    - Commits and pushes the version bump to `main` and creates Git tag `v<version>`.
    - Runs tests, builds wheels/sdist, and publishes to PyPI via Trusted Publishing.
    - Waits for PyPI CDN and publishes `server.json` to the MCP Registry.
-   - Creates the GitHub Release with changelog notes and advances the floating `v1` tag.
+   - Creates the GitHub Release with changelog notes and advances the floating `vN` tag.
 
 ### Option 2: Local bump + Tag push
 If you prefer bumping locally before pushing:
 ```bash
-python scripts/bump_version.py 1.6.1   # or patch / minor / major
-git commit -am "chore(release): bump version to 1.6.1"
-git tag v1.6.1
+python scripts/bump_version.py 2.0.1   # or patch / minor / major
+python scripts/check_version.py             # every surface agrees (CI runs this too)
+git commit -am "chore(release): bump version to 2.0.1" -- $(python scripts/version_surfaces.py --files)
+git tag v2.0.1
 git push origin main --follow-tags
 ```
-Pushing tag `v1.6.1` automatically triggers `publish.yml` to publish and release.
+
+`bump_version.py` needs `uv` on PATH and now fails without it, rather than warning: `publish.yml`'s pypi job installs with `uv export --locked`, so a lock left out of sync aborts the release *after* the tag is cut.
+Pushing tag `v2.0.1` automatically triggers `publish.yml` to publish and release.
 
 Verify:
 

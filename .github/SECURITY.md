@@ -85,10 +85,10 @@ or a released package, independent of anything the tool does at runtime:
   `gh api repos/Srinivasan-78/repo2graph/rules/branches/main --jq '[.[].type]'`.
 - **GitHub Actions are pinned to full commit SHAs, not tags**, across every workflow in
   `.github/workflows/`, so a compromised or re-tagged upstream action can't silently change what CI
-  runs. The reverse is not true for consumers of *this* repository's own Action: `@v1` is a moving
+  runs. The reverse is not true for consumers of *this* repository's own Action: `@v2` is a moving
   convenience pointer (`publish.yml` force-pushes it to the latest release on every tag), not an
   integrity pin — enterprise consumers who want a SHA-level guarantee should pin
-  `Srinivasan-78/repo2graph@<commit-sha>` rather than `@v1`, the same way this repo's own workflows
+  `Srinivasan-78/repo2graph@<commit-sha>` rather than `@v2`, the same way this repo's own workflows
   pin their dependencies.
 - **Dependabot** watches `pyproject.toml`/`uv.lock` and the pinned Action SHAs for known
   vulnerabilities; `uv.lock` is committed, so every install — local, CI, or a hosted MCP build — is

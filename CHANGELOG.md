@@ -73,6 +73,30 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **The version bump covered five files; the version was written in eleven.**
+  `bump_version.py` rewrote `pyproject.toml`, `server.json`,
+  `repo2graph/__init__.py`, `CHANGELOG.md` and `uv.lock`, and
+  `check_version.py` verified the first three. Neither knew about the
+  *documented* surfaces, so after 2.0.0 shipped the README still told users to
+  write `uses: Srinivasan-78/repo2graph@v1` and described `@v1` as following
+  "every 1.x release" — a live instruction to pin to a dead release line — while
+  `docs/ENTERPRISE_DEPLOYMENT.md`, which tells operators to pin rather than
+  float, showed `repo2graph[mcp]==1.6.0`. 29 stale sites across 7 files, now
+  corrected to 2.0.0.
+  The list is one table, `scripts/version_surfaces.py`, read by the bump, by the
+  check, and by `publish.yml`'s `--files` (previously five hand-typed paths, one
+  place for the same drift to recur). It is an allowlist, not a glob:
+  `benchmarks/results.json` and `examples/*/manifest.json` record which version
+  *produced* an artifact, and `docs/github-action.md`'s `repo2graph>=1.4,<2`
+  illustrates the form of a range spec — a bump must leave all of those alone,
+  which is asserted. A surface whose pattern matches nothing is now an error
+  rather than a silent pass, since that is how the `@v1` drift went unnoticed.
+  `check_version.py` also runs in CI now; it was a pre-commit hook and a
+  release-time step and nothing in between, so it only fired for contributors
+  who had installed pre-commit, and otherwise first fired at the point its own
+  docstring calls "a burnt version number that PyPI will not let you reuse".
+  `bump_version.py` now fails rather than warns when `uv` is missing, because
+  the pypi job installs with `uv export --locked`.
 - **`explain retrieval` traced a walk the retrieval never made.** It called
   `Index.expand()` without `edge_dirs`, so it inherited `DEFAULT_EDGE_DIRS`
   (`DEFINES: ("in",)`, `IMPORTS: ("out",)`, `INHERITS: ("out",)`) while the
