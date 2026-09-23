@@ -217,6 +217,159 @@ class TestBuildLock:
         assert fresh._acquired
         fresh.release()
 
+    def test_is_pid_alive_paths(self, monkeypatch):
+        from repo2graph.lock import _is_pid_alive
+
+        assert not _is_pid_alive(-1)
+        assert not _is_pid_alive(0)
+        assert _is_pid_alive(os.getpid())
+        assert not _is_pid_alive(99999999)
+
+        # Test Unix path
+        monkeypatch.setattr("sys.platform", "linux")
+
+        def fake_kill(pid, sig):
+            if pid == 100:
+                raise ProcessLookupError()
+            elif pid == 200:
+                raise PermissionError()
+            elif pid == 300:
+                raise OSError()
+            return None
+
+        monkeypatch.setattr("os.kill", fake_kill)
+        assert not _is_pid_alive(100)
+        assert _is_pid_alive(200)
+        assert not _is_pid_alive(300)
+        assert _is_pid_alive(400)
+
+    def test_release_when_not_acquired(self, tmp_path):
+        from repo2graph.lock import BuildLock
+
+        lock = BuildLock(tmp_path / "idx")
+        # Should be a no-op
+        lock.release()
+        assert not lock._acquired
+
+    def test_stale_lock_threshold_reclaimed(self, tmp_path):
+        import time
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        lock = BuildLock(idx, stale_threshold=1.0)
+        lock.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock.lock_file.write_text("{}", encoding="utf8")
+        past = time.time() - 100.0
+        os.utime(lock.lock_file, (past, past))
+
+        fresh = BuildLock(idx, stale_threshold=1.0, timeout=2.0)
+        fresh.acquire()
+        assert fresh._acquired
+        fresh.release()
+
+    def test_read_holder_metadata_edge_cases(self, tmp_path):
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        lock = BuildLock(idx)
+        meta = lock._read_holder_metadata()
+        assert meta["file"] == str(lock.lock_file)
+
+        lock.lock_file.write_text("invalid json", encoding="utf8")
+        meta2 = lock._read_holder_metadata()
+        assert meta2["file"] == str(lock.lock_file)
+        lock.lock_file.unlink()
+
+    # Replaces test_try_reclaim_stale_unlink_error, which covered a branch of
+    # the age-based reclaim. That reclaim unlinked the lock file of a holder
+    # that was merely slow, which displaced it and let a second builder run
+    # dump_all's directory swap over the same index concurrently. The OS lock
+    # is now the only authority, so there is no reclaim left to cover; these
+    # pin what replaced it.
+
+    def test_an_aged_lock_is_not_stolen_from_a_live_holder(self, tmp_path):
+        """A build slower than the stale threshold keeps its lock.
+
+        `_write_metadata` runs once, at acquire, so mtime measures how long
+        the holder has been working -- not whether it is stuck. Reclaiming on
+        that alone meant any build over the threshold was joined by a second.
+        """
+        import time
+        from repo2graph.lock import BuildLock, LockTimeoutError
+
+        idx = tmp_path / "idx"
+        holder = BuildLock(idx, stale_threshold=1.0)
+        holder.acquire()
+        try:
+            past = time.time() - 10_000.0
+            os.utime(holder.lock_file, (past, past))
+
+            second = BuildLock(idx, stale_threshold=1.0, timeout=0.5)
+            with pytest.raises(LockTimeoutError) as exc:
+                second.acquire()
+            assert not second._acquired
+            # The age becomes a diagnostic rather than a licence to take over.
+            assert "held for" in str(exc.value)
+        finally:
+            holder.release()
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="Windows refuses to unlink an open file, which is why this race is POSIX-only",
+    )
+    def test_releasing_does_not_unlink_a_lock_file_that_is_not_ours(self, tmp_path):
+        """release() must not delete whatever happens to sit at the path.
+
+        If the name was replaced while we held our file, the thing at the path
+        is another holder's live lock; removing it would admit a third builder.
+        """
+        from repo2graph.lock import BuildLock
+
+        idx = tmp_path / "idx"
+        mine = BuildLock(idx)
+        mine.acquire()
+
+        # Stand in for "someone replaced the name": point the lock path at a
+        # different file than the descriptor we hold.
+        impostor = mine.lock_file.parent / "impostor"
+        impostor.write_text("another holder", encoding="utf8")
+        mine.lock_file.unlink()
+        impostor.rename(mine.lock_file)
+
+        mine.release()
+
+        assert mine.lock_file.exists(), "release() deleted a lock file it did not own"
+        assert mine.lock_file.read_text(encoding="utf8") == "another holder"
+
+    def test_unix_os_lock_and_release(self, tmp_path, monkeypatch):
+        import types
+        from repo2graph.lock import BuildLock
+
+        monkeypatch.setattr("sys.platform", "linux")
+        mock_fcntl = types.ModuleType("fcntl")
+        mock_fcntl.LOCK_EX = 2  # type: ignore
+        mock_fcntl.LOCK_NB = 4  # type: ignore
+        mock_fcntl.LOCK_UN = 8  # type: ignore
+
+        def fake_flock(fd, op):
+            pass
+
+        mock_fcntl.flock = fake_flock  # type: ignore
+        monkeypatch.setitem(sys.modules, "fcntl", mock_fcntl)
+
+        lock = BuildLock(tmp_path / "idx")
+        lock.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock.lock_file, "w") as fh:
+            assert lock._try_os_lock(fh)
+            lock._release_os_lock(fh)
+
+            def error_flock(fd, op):
+                raise OSError("error")
+
+            mock_fcntl.flock = error_flock  # type: ignore
+            assert not lock._try_os_lock(fh)
+            lock._release_os_lock(fh)
+
 
 # ============================================================================
 # verify_artifacts — integrity report
@@ -347,6 +500,74 @@ class TestVerifyArtifacts:
         # build_id mismatch → stale
         assert report.status in ("stale",)
         assert any("build_id" in w or "differs" in w for w in report.warnings)
+
+    # GHSA-6wrx-c2rg-mvm9. The manifest is untrusted input: this project ships
+    # indexes on a `graph` branch, as Action artifacts and in examples/, and
+    # `doctor` on a received index is the documented way to check one. That is
+    # exactly when a checksum key becomes attacker-chosen.
+
+    @staticmethod
+    def _index_naming(tmp_path, key):
+        """An index whose manifest declares one checksum, for `key`."""
+        idx = tmp_path / "idx"
+        (idx / "agent").mkdir(parents=True)
+        for name in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl"):
+            (idx / "agent" / name).write_text("", encoding="utf8")
+        (idx / "agent" / "manifest.json").write_text(
+            json.dumps(
+                {"format": "repo2graph/1", "checksums": {key: "sha256:" + "0" * 64}},
+            ),
+            encoding="utf8",
+        )
+        return idx
+
+    @pytest.mark.parametrize("shape", ["absolute", "dotdot"])
+    def test_manifest_cannot_name_a_path_outside_the_index(self, tmp_path, shape):
+        """An absolute or escaping key must be refused before anything is read.
+
+        `out / rel_path` discards `out` when rel_path is absolute, so the loop
+        used to hash any file the process could reach and put the real digest
+        in `errors` -- a hash-disclosure oracle -- while a missing file
+        reported differently from a mismatching one, probing for existence.
+        """
+        from repo2graph.integrity import verify_artifacts
+
+        secret = tmp_path / "outside_the_index.txt"
+        # write_bytes, not write_text: text mode translates "\n" to "\r\n" on
+        # Windows, which would change the file's digest and make the literal
+        # pinned below vacuous on exactly the platform this repo's CI adds a
+        # leg for.
+        secret.write_bytes(b"SUPER SECRET CONTENT\n")
+        key = str(secret.resolve()) if shape == "absolute" else "../outside_the_index.txt"
+        idx = self._index_naming(tmp_path, key)
+
+        report = verify_artifacts(idx)
+
+        assert report.status == "corrupt"
+        assert report.checked_files == 0, "the outside file was read"
+        assert any("outside the index" in e for e in report.errors), report.errors
+        # sha256 of b"SUPER SECRET CONTENT\n", pinned as a literal. The digest
+        # must appear nowhere, as a mismatch or a "cannot read" message alike.
+        digest = "86e4ec134d254afcc457f8ca82c501eebb296f9a6449c1ab2cc87e4f5814dea3"
+        joined = " ".join(report.errors)
+        assert digest not in joined
+        assert "SUPER SECRET" not in joined
+
+    def test_a_relative_manifest_key_is_still_checked(self, tmp_path):
+        """The guard must reject escapes only -- an ordinary key still verifies.
+
+        Without this, a containment check that rejected everything would look
+        exactly as green as one that works.
+        """
+        from repo2graph.integrity import verify_artifacts
+
+        idx = self._index_naming(tmp_path, "agent/nodes.jsonl")
+
+        report = verify_artifacts(idx)
+
+        assert report.checked_files == 1
+        assert report.status == "corrupt"  # the planted hash is deliberately wrong
+        assert any("Checksum mismatch for agent/nodes.jsonl" in e for e in report.errors)
 
 
 # ============================================================================

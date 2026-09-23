@@ -7,6 +7,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The `drift` job only. 05:00 Monday sits between self-index (04:00) and
+  # dependency-audit (06:00) so the three weekly jobs do not contend.
+  schedule:
+    - cron: "0 5 * * 1"
 
 concurrency:
   # A newer push to the same PR makes the older matrix run redundant. Pushes
@@ -20,6 +24,8 @@ permissions:
 
 jobs:
   tests:
+    # The scheduled run exists for `drift` alone; this job is what gates a PR.
+    if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
     # Every job in this file carries a timeout. The bound exists to catch a
     # *hang* -- without one a wedged job runs to GitHub's 6-hour default -- not
@@ -40,7 +46,28 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - run: pip install -e ".[dev,mcp]"
+      # Install the dependency graph that was reviewed, not whatever PyPI
+      # resolves this morning. uv.lock is committed and docs/ENTERPRISE_DEPLOYMENT.md
+      # tells operators it pins "the exact dependency graph that was reviewed" --
+      # until now CI was the one place not building it, so the matrix was not
+      # reproducible and a changed upstream release reached it with no review
+      # gate. It showed: test_cpp_parse.py::test_iss126_cpp_fallback_line_numbers_match_original
+      # passed, failed on windows/3.10 for a commit touching only lock.py and
+      # export.py, then passed again on re-run, because tree-sitter-language-pack
+      # is floored at >=0.7 with no cap. `drift` below is what still watches
+      # upstream.
+      #
+      # uv is version-pinned for the same reason everything else here is SHA-pinned.
+      - run: pip install "uv==0.12.15"
+      # --locked fails if uv.lock has drifted from pyproject.toml rather than
+      # quietly re-resolving, so a dependency change that skipped `uv lock` is a
+      # red CI run and not a silent difference between the lockfile and the run.
+      - name: Export the locked dependency set
+        run: uv export --locked --no-emit-project --extra dev --extra mcp -o requirements-ci.txt
+      # The export carries a --hash for every artifact, so pip verifies each
+      # download against the lockfile instead of trusting the registry.
+      - run: pip install --require-hashes -r requirements-ci.txt
+      - run: pip install -e . --no-deps
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy repo2graph
@@ -49,7 +76,59 @@ jobs:
       # measured number and why the floor sits below it.
       - run: pytest -q --cov=repo2graph --cov-report=term-missing
 
+      - name: Real embedder smoke test
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        env:
+          R2G_TEST_REAL_EMBEDDER: "1"
+        # Locked like the rest of the cell. `pip install ".[rag]"` also
+        # reinstalled the project non-editable over the editable install above.
+        run: |
+          uv export --locked --no-emit-project --extra rag -o requirements-rag.txt
+          pip install --require-hashes -r requirements-rag.txt
+          pytest -q tests/test_vectors.py -k test_real_sentence_transformers_smoke_test
+
+  drift:
+    name: Upstream drift (unlocked)
+    # What the locked matrix gives up: it no longer notices that a new release
+    # of a dependency breaks this project. That signal is worth keeping, just
+    # not on the path that gates every PR -- a PR should fail for what the PR
+    # changed. So the same suite runs weekly against a fresh resolution, and a
+    # failure here means "upstream moved", which is a different question from
+    # "this change is wrong" and wants a different answer.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      # Deliberately not the full 9 cells: this is a canary, not a gate. Both
+      # ends of the supported Python range on the two platforms whose native
+      # wheels differ most -- the flake that prompted this was windows/3.10.
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # No lockfile on purpose: this job's whole value is resolving what a new
+      # user would get today.
+      - run: pip install -e ".[dev,mcp]"
+      - run: pytest -q
+
+      - name: Show what was actually resolved
+        # Runs even on failure: the resolved versions are the first thing
+        # anyone triaging this job needs, and re-running it would resolve
+        # something else by then.
+        if: always()
+        run: pip freeze
+
   packaging:
+    # The schedule trigger exists for `drift` alone.
+    if: github.event_name != 'schedule'
     # Reproduces how third-party hosts install and start this server, which the
     # rest of the suite cannot: it imports `repo2graph.mcp` directly, and never
     # installs the package *without* an extra or spawns the real console script.
@@ -68,7 +147,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install uv
-        run: pip install uv
+        run: pip install "uv==0.12.15"
 
       - name: uv.lock must be current
         # A stale lockfile makes `uv sync` fail outright, so it would break the
@@ -102,6 +181,8 @@ jobs:
           uv run python scripts/mcp_roundtrip.py
 
   windows-cp1252-pipe:
+    # The schedule trigger exists for `drift` alone.
+    if: github.event_name != 'schedule'
     # The regression class this project keeps hitting: not "does Windows work",
     # but "does Windows work when stdout is a *pipe*". An interactive console is
     # UTF-8 capable and hides the bug; a redirect gives a cp1252 TextIOWrapper,
@@ -154,6 +235,8 @@ jobs:
           test -s piped.out || { echo "piped output was empty"; exit 1; }
 
   action:
+    # The schedule trigger exists for `drift` alone.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

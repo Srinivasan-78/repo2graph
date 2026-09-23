@@ -136,13 +136,49 @@ int real_fn(void) {
 """
 
 
-def test_iss126_cpp_fallback_line_numbers_match_original(tmp_path):
-    """ISS-126: used_cpp=True must still cite the on-disk file, not cpp -P rows."""
+def _require_working_cpp(path: Path) -> None:
+    """Skip unless this machine can actually run the fallback on `path`.
+
+    `shutil.which("cpp") is not None` is not that condition and was the reason
+    this test flaked: on macOS `/usr/bin/cpp` always exists (it shells out to
+    the Xcode toolchain), and the two spawns `parse_source` makes -- the
+    `cpp --version` probe on a 5s timeout, then `cpp -w -P -undef` on a 10s one
+    -- can each fail or time out on a loaded runner. Both failures are
+    swallowed into `used_cpp=False`, so the assertion below reported "ISS-126
+    regressed" for an environment that simply could not preprocess. One macOS
+    cell failed on a commit touching neither parse.py nor the test, while the
+    other two Python versions on the same image passed, and a plain re-run went
+    green.
+
+    Running the real argv here rather than probing `--version` means the skip
+    covers the preprocessor invocation the parser makes, not a cheaper proxy
+    for it. What the test still asserts, whenever cpp works, is unchanged.
+    """
     if shutil.which("cpp") is None:
         pytest.skip("cpp preprocessor not available")
+    try:
+        probe = subprocess.run(
+            ["cpp", "-w", "-P", "-undef", str(path)],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"cpp on PATH but not usable here: {exc}")
+    if probe.returncode != 0:
+        pytest.skip(f"cpp exited {probe.returncode} on the fixture")
+    # parse_source discards output over 2x the input; a cpp that ignores -P and
+    # emits line markers can cross that, and then the fallback never engages.
+    if len(probe.stdout) > 2 * len(_ISS126_MACRO_C.encode("utf8")):
+        pytest.skip("cpp output exceeds the size parse_source will accept")
 
+
+def test_iss126_cpp_fallback_line_numbers_match_original(tmp_path):
+    """ISS-126: used_cpp=True must still cite the on-disk file, not cpp -P rows."""
     path = tmp_path / "macro.c"
     path.write_text(_ISS126_MACRO_C, encoding="utf8")
+    _require_working_cpp(path)
+
     orig_lines = _lines(_ISS126_MACRO_C)
     # Fixture is a detector only if the preprocessed span (rows 2-4) is not
     # the function in the original file. Hand-counted, not from parse_source.

@@ -859,6 +859,21 @@ class FakeResponse:
         pass
 
 
+class FakeOpener:
+    """Stand-in for `answer._OPENER`, delegating to a urlopen-shaped callable.
+
+    `stream_answer` goes through an opener rather than `urlopen` so that its
+    redirect handler cannot be bypassed (`_SameOriginRedirect`); patching the
+    opener is what keeps these tests off the network.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **kw):
+        return self._fn(req, *a, **kw)
+
+
 def clear_provider_env(monkeypatch):
     for name in (
         "GEMINI_API_KEY",
@@ -889,9 +904,9 @@ def test_ac28_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
             ]
         )
 
-    # patched on the module object, so an implementation calling
-    # urllib.request.urlopen(...) at call time picks the fake up.
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    # patched on the module object, so an implementation resolving _OPENER at
+    # call time picks the fake up.
+    monkeypatch.setattr(answer, "_OPENER", FakeOpener(fake_urlopen))
 
     sink = io.StringIO()
     text = answer.stream_answer(PACK, out=sink)
@@ -1133,7 +1148,7 @@ def test_stream_answer_empty_or_error_body(monkeypatch):
     def fake_urlopen(req, *a, **kw):
         return FakeResponse([b'{"error": "model \'llama3.1\' not found"}\n'])
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(answer, "_OPENER", FakeOpener(fake_urlopen))
 
     with pytest.raises(SystemExit) as exc:
         answer.stream_answer(PACK, out=io.StringIO())
@@ -1417,7 +1432,7 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(answer, "_OPENER", FakeOpener(fake_urlopen))
 
     class BrokenPipeStream:
         def write(self, s):

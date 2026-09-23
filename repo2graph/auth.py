@@ -21,10 +21,14 @@ Security properties this module is responsible for, none of them optional:
 
 * Token comparison is constant time (`hmac.compare_digest`). A `==` on a secret
   leaks its length and prefix to anyone who can time the response.
-* `alg` comes from the *key*, never from the token. A token claiming
-  `{"alg": "none"}` or `{"alg": "HS256"}` against an RSA JWKS is the classic
-  JWT forgery, and the only defence is refusing to let the attacker pick the
-  algorithm.
+* Algorithm confusion is refused by an RSA-only `ALGORITHMS` table plus an
+  enforced `kty == "RSA"` check. When the JWK declares `alg` (RFC 7517 makes
+  that field optional), that value selects the hash and a token claiming a
+  different one is refused. When the JWK omits `alg`, the token may choose
+  among the RSA entries only -- `{"alg": "none"}` and `{"alg": "HS256"}` still
+  miss the table. Adding a non-RSA algorithm to `ALGORITHMS` would reintroduce
+  the classic forgery; the table and the `kty` check are the defence, not a
+  claim that the token header is ignored.
 * A key's declared purpose is honoured. RFC 7517 §4.2/§4.3 make `use` and
   `key_ops` the issuer's own statement of what a key is for, and a JWKS
   routinely publishes encryption keys alongside signing ones. A key marked
@@ -74,9 +78,11 @@ DIGEST_INFO_PREFIX = {
     "sha384": bytes.fromhex("3041300d060960864801650304020205000430"),
     "sha512": bytes.fromhex("3051300d060960864801650304020305000440"),
 }
-# Signing algorithms this server will accept, and the hash each one uses. RSA
-# only: an HMAC algorithm in this table would let a token signed with the
-# *public* key validate, which is the other classic JWT forgery.
+# Signing algorithms this server will accept, and the hash each one uses.
+# RSA only -- adding a non-RSA entry here breaks the forgery defence: an
+# HMAC algorithm would let a token signed with the *public* key validate,
+# which is the other classic JWT confusion attack. The `kty == "RSA"`
+# check in decode_jwt is the other half of the same coupling.
 ALGORITHMS = {"RS256": "sha256", "RS384": "sha384", "RS512": "sha512"}
 
 
@@ -234,10 +240,27 @@ class JWKSCache:
             raise AuthError("issuer discovery document has no jwks_uri")
         # The issuer in the discovery document must be the issuer we asked for,
         # or a compromised DNS answer could point us at someone else's keys.
+        # RFC 8414 §3.2 makes `issuer` REQUIRED, so an absent field is a
+        # malformed document rather than a waiver of this check -- treating it
+        # as one let any document opt out of the comparison by omission.
         declared = str(doc.get("issuer") or "").rstrip("/")
-        if declared and declared != self.issuer:
+        if not declared:
+            raise AuthError("issuer discovery document has no issuer")
+        if declared != self.issuer:
             raise AuthError(
                 f"issuer mismatch: asked {self.issuer!r}, document declares {declared!r}"
+            )
+        # `jwks_uri` is the trust anchor for every authentication decision this
+        # server makes, so it does not get to name a host other than the issuer
+        # we were configured with. RFC 8414 does not strictly require
+        # same-origin, but accepting the field at face value means one field in
+        # a document fetched over the network relocates where the keys come
+        # from. Relax to the registrable domain only if a real issuer needs it.
+        want = urllib.parse.urlsplit(self.issuer)
+        got = urllib.parse.urlsplit(uri)
+        if (got.scheme, got.netloc.lower()) != (want.scheme, want.netloc.lower()):
+            raise AuthError(
+                f"jwks_uri origin {got.scheme}://{got.netloc} does not match issuer {self.issuer!r}"
             )
         self._jwks_uri = uri
         return uri
@@ -391,6 +414,47 @@ class JWKSCache:
         return found
 
 
+class _HTTPSOnlyRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse any redirect hop that leaves https.
+
+    The scheme check in `_fetch_json` covers the URL it is handed and nothing
+    after it: `urlopen` follows redirects itself, and CPython's
+    `HTTPRedirectHandler` accepts targets whose scheme is in
+    `('http', 'https', 'ftp', '')`. So an issuer -- or anyone who can answer
+    for it -- returns a `302` from the discovery document or the `jwks_uri` to
+    `http://`, and the signing keys every authentication decision rests on
+    travel in clear. That is not only disclosure: an on-path attacker who
+    answers the downgraded request substitutes their own modulus and can then
+    satisfy every remaining check in this module -- `alg`, `use`/`key_ops`,
+    `iss`, `aud`, `exp`, and a genuinely valid signature over their own key --
+    to authenticate as any `sub` they choose.
+
+    Returning None stops urllib, which raises `HTTPError`; that is an
+    `OSError`, so `_fetch_json`'s existing handler reports it as an
+    `AuthError` like any other transport failure.
+    """
+
+    max_redirections = 3
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        if urllib.parse.urlsplit(newurl).scheme != "https":
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# Built once, at import. A bare `urlopen` would use the default opener and with
+# it the permissive redirect handler this exists to replace.
+_OPENER = urllib.request.build_opener(_HTTPSOnlyRedirect)
+
+
 def _fetch_json(url: str) -> Any:
     """GET `url` and parse the JSON body. The only network call in this package.
 
@@ -401,7 +465,8 @@ def _fetch_json(url: str) -> Any:
         The parsed JSON body.
 
     Raises:
-        AuthError: On a non-https URL, a transport failure, or a bad body.
+        AuthError: On a non-https URL, a non-https redirect hop, a transport
+            failure, or a bad body.
     """
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https":
@@ -410,7 +475,7 @@ def _fetch_json(url: str) -> Any:
         raise AuthError(f"issuer URLs must be https, got {parts.scheme!r}")
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+        with _OPENER.open(request, timeout=HTTP_TIMEOUT) as response:
             raw = response.read(MAX_JWKS_BYTES + 1)
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise AuthError(f"could not reach the issuer: {exc}") from None
@@ -449,12 +514,14 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise AuthError("token header or payload is not an object")
 
-    alg = header.get("alg")
-    hash_name = ALGORITHMS.get(str(alg))
-    if hash_name is None:
+    token_alg = header.get("alg")
+    token_hash = ALGORITHMS.get(str(token_alg))
+    if token_hash is None:
         # Covers alg:none and every HMAC algorithm. Accepting HS256 against an
-        # RSA JWKS would let anyone sign a token with the *public* key.
-        raise AuthError(f"unsupported token algorithm {alg!r}")
+        # RSA JWKS would let anyone sign a token with the *public* key. This
+        # lookup is the floor: a token whose alg is not in ALGORITHMS is
+        # refused even when the JWK later names a supported RSA algorithm.
+        raise AuthError(f"unsupported token algorithm {token_alg!r}")
     kid = header.get("kid")
     if not kid:
         raise AuthError("token header has no kid")
@@ -475,10 +542,17 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     ops = key.get("key_ops")
     if isinstance(ops, list) and "verify" not in ops:
         raise AuthError("signing key does not permit the verify operation")
-    # The algorithm is taken from the key when the key declares one, never from
-    # the token: the attacker controls the token and must not choose the maths.
-    if key.get("alg") and ALGORITHMS.get(str(key["alg"])) != hash_name:
-        raise AuthError("token algorithm does not match the signing key")
+    # Prefer the JWK's alg when RFC 7517's optional field is present.
+    # The token header chooses the hash only if the key omitted alg.
+    key_alg = key.get("alg")
+    if key_alg:
+        hash_name = ALGORITHMS.get(str(key_alg))
+        if hash_name is None:
+            raise AuthError(f"unsupported key algorithm {key_alg!r}")
+        if token_hash != hash_name:
+            raise AuthError("token algorithm does not match the signing key")
+    else:
+        hash_name = token_hash
 
     # `.get`, not `key["n"]`: a key set advertising {"kty": "RSA"} with no
     # modulus raises KeyError here, and a KeyError is not an AuthError -- it

@@ -63,11 +63,15 @@ the step.
 | `embed` | `false` | Also embed the chunks for meaning-based search. Installs the `rag` extra and downloads a model, so it is off by default. When `true` the pack is packed with `--vectors`. |
 | `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step get this model, so the two always agree. |
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
-| `commit-branch` | `""` | Also force-push the map to this orphan branch. Blank pushes nothing. |
+| `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
+| `commit-force` | `true` | Whether to force-push when pushing to `commit-branch`. Set to `false` for standard fast-forward push. |
 | `token` | `""` | Token that can read `repo` when the target is private. |
 | `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==1.6.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
 | `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
 | `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
+| `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
+| `parse-policy` | `best-effort` | Policy for AST parse errors: `best-effort`, `warn`, `strict`. |
+| `max-call-candidates` | `5` | Maximum call edge candidates to retain per ambiguous call site. |
 
 ### Pinning the package instead of the checkout
 
@@ -102,15 +106,96 @@ getting the checkout — you now get what you asked for.
 | `pack-file` | Path to the GraphRAG pack written for `query`. Empty when `query` is blank. |
 | `pack-chars` | How long that pack is, in characters. `0` when `query` is blank. |
 
-## Permissions
+## Permissions & Least Privilege
 
-Reading is enough for the default setup. `commit-branch` pushes a branch, so that
-one needs write:
+Follow the principle of least privilege:
+- **Default usage (read-only):** When building and uploading artifacts, the action requires only read access to repository contents:
+  ```yaml
+  permissions:
+    contents: read
+  ```
+- **Branch publishing:** Write permissions are **only** needed if you configure `commit-branch`:
+  ```yaml
+  permissions:
+    contents: write
+  ```
 
+## Security Guardrails & Best Practices
+
+### 1. Never use `commit-branch` or `contents: write` on untrusted Pull Requests
+
+Granting `contents: write` to workflows triggered by `pull_request` (or worse, `pull_request_target`) exposes your repository to unauthorized branch updates or token extraction:
+- The action automatically **refuses to push** if it detects execution inside a pull request originating from a fork repository (`github.event.pull_request.head.repo.fork == true`).
+- For pull requests, always prefer `artifact-name: repo-graph` to inspect artifacts via GitHub Actions summary and artifact downloads without write permissions.
+
+#### Insecure Example (DO NOT USE)
 ```yaml
+# INSECURE: Grants write token on untrusted pull requests and force-pushes
+name: Unsafe PR Graph
+on: pull_request_target  # DANGEROUS with write permissions!
 permissions:
   contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Srinivasan-78/repo2graph@v1
+        with:
+          commit-branch: graph  # DANGEROUS: untrusted code can trigger branch push
 ```
+
+#### Secure Recommended Example
+```yaml
+# SECURE: Read-only on PRs; uploads artifacts for inspection
+name: Pull Request Graph
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Srinivasan-78/repo2graph@v1
+        with:
+          artifact-name: pr-graph
+          # commit-branch omitted! No write access required
+```
+
+### 2. Use a dedicated orphan branch, never a protected branch
+
+Never point `commit-branch` at a primary or protected branch (e.g. `main`, `develop`, `master`):
+- Point it at a dedicated orphan branch (e.g. `graph`, `repo-graph`, or `docs/graph`).
+- Configure branch protection rules on your repository to prevent accidental pushes to protected branches.
+
+### 3. Safe Force-Pushes with `commit-force`
+
+By default, `commit-branch` creates an orphan branch with a single root commit and uses `--force` (`commit-force: true`) so the graph branch remains clean and minimal.
+If your compliance or security policy disallows force pushes, set `commit-force: false` to require standard fast-forward pushes:
+```yaml
+- uses: Srinivasan-78/repo2graph@v1
+  with:
+    commit-branch: graph
+    commit-force: "false"
+```
+
+### 4. Handling Private Repositories
+
+When indexing private remote repositories via `repo`:
+- Never commit personal access tokens in workflow files or CLI arguments.
+- Pass repository secrets via the `token` input:
+  ```yaml
+  - uses: Srinivasan-78/repo2graph@v1
+    with:
+      repo: my-org/private-repo
+      token: ${{ secrets.READ_ONLY_REPO_PAT }}
+  ```
+- Use fine-grained Personal Access Tokens (PATs) scoped to **read-only contents** on the specific target repository.
+
+For the detailed threat model, permission matrix, and full security guide, see [docs/ACTION_SECURITY.md](ACTION_SECURITY.md).
 
 ## Keep a fresh map next to your own code
 

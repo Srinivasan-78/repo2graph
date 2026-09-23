@@ -14,10 +14,13 @@ unenforced `aud` -- each of which leaves the happy path working perfectly.
 
 import base64
 import hashlib
+import http.client
 import json
 import random
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -98,11 +101,11 @@ def int_b64u(value: int) -> str:
 
 
 def jwks_doc(kid=KID, key=KEY, alg="RS256"):
-    return {
-        "keys": [
-            {"kty": "RSA", "kid": kid, "alg": alg, "n": int_b64u(key["n"]), "e": int_b64u(key["e"])}
-        ]
-    }
+    """A one-key JWKS. Pass `alg=None` to omit the field (RFC 7517)."""
+    entry = {"kty": "RSA", "kid": kid, "n": int_b64u(key["n"]), "e": int_b64u(key["e"])}
+    if alg is not None:
+        entry["alg"] = alg
+    return {"keys": [entry]}
 
 
 _ABSENT = object()
@@ -286,6 +289,53 @@ def test_hmac_algorithm_confusion_is_refused():
     jwks, _ = cache()
     with pytest.raises(AuthError, match="unsupported token algorithm"):
         decode_jwt(f"{header}.{payload}.{b64u(sig)}", jwks, ISSUER, AUDIENCE)
+
+
+def test_declared_jwk_alg_rejects_a_token_override():
+    """A JWK that names RS384 must not let the token pick RS256's hash (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="RS384")))
+    with pytest.raises(AuthError, match="does not match the signing key"):
+        decode_jwt(sign(claims(), alg="RS256", hash_name="sha256"), jwks, ISSUER, AUDIENCE)
+
+
+def test_unsupported_jwk_alg_is_refused_even_if_token_is_rsa():
+    """A declared-but-unknown JWK alg must not fall back to the token (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="HS256")))
+    with pytest.raises(AuthError, match="unsupported key algorithm"):
+        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+
+
+def test_declared_jwk_alg_drives_the_verify_hash(monkeypatch):
+    """When the JWK names RS384, verification hashes with SHA-384 (#207)."""
+    seen = []
+    real = auth.rsa_verify
+
+    def spy(n, e, signature, message, hash_name):
+        seen.append(hash_name)
+        return real(n, e, signature, message, hash_name)
+
+    monkeypatch.setattr(auth, "rsa_verify", spy)
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg="RS384")))
+    got = decode_jwt(sign(claims(), alg="RS384", hash_name="sha384"), jwks, ISSUER, AUDIENCE)
+    assert got["sub"] == "user-42"
+    assert seen == ["sha384"]
+
+
+def test_jwk_without_alg_accepts_token_rs256():
+    """RFC 7517 makes JWK alg optional; the token may still pick RS256 (#207)."""
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg=None)))
+    got = decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
+    assert got["sub"] == "user-42"
+
+
+@pytest.mark.parametrize("alg", ["none", "HS256"])
+def test_alg_none_and_hs256_are_refused_when_jwk_omits_alg(alg):
+    """Omitting JWK alg must not let the token pick a non-RSA algorithm (#207)."""
+    header = b64u(json.dumps({"alg": alg, "kid": KID}).encode())
+    payload = b64u(json.dumps(claims()).encode())
+    jwks, _ = cache(FakeIssuer(jwks=jwks_doc(alg=None)))
+    with pytest.raises(AuthError, match="unsupported token algorithm"):
+        decode_jwt(f"{header}.{payload}.", jwks, ISSUER, AUDIENCE)
 
 
 def test_an_expired_token_is_refused():
@@ -713,6 +763,139 @@ def test_plain_http_issuers_are_refused(monkeypatch):
         auth._fetch_json("http://issuer.example.com/.well-known/openid-configuration")
 
 
+# --------------------------------------------------- discovery hardening ----
+#
+# GHSA-f896-f643-87cf and GHSA-mqm8-mc66-wjvj. Both are about where the signing
+# keys come from rather than how a token is checked: every other guarantee in
+# this module is conditional on the key set being the issuer's.
+
+
+class FakeOpener:
+    """Stand-in for `auth._OPENER`, delegating to a urlopen-shaped callable.
+
+    `_fetch_json` goes through an opener rather than `urlopen` so that
+    `_HTTPSOnlyRedirect` cannot be bypassed; patching the opener is what keeps
+    these tests off the network.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+
+    def open(self, req, *a, **kw):
+        return self._fn(req, *a, **kw)
+
+
+def _serves(doc):
+    """An opener that answers discovery with `doc` and refuses anything else.
+
+    The AssertionError is the point of the helper: it proves the key fetch is
+    never reached, so a rejection happened before anything was sourced from
+    the host the document named.
+    """
+
+    def opener(url):
+        if url.endswith("/.well-known/openid-configuration"):
+            return doc
+        raise AssertionError(f"must not fetch {url}")
+
+    return opener
+
+
+def test_a_jwks_uri_on_another_host_is_refused():
+    """One field in a fetched document must not relocate the trust anchor."""
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"issuer": ISSUER, "jwks_uri": "https://evil.example.com/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="jwks_uri origin"):
+        jwks.key_for(KID)
+
+
+def test_a_jwks_uri_downgraded_to_http_is_refused():
+    """Same host, cleartext scheme: still not where these keys come from."""
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"issuer": ISSUER, "jwks_uri": "http://issuer.example.com/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="jwks_uri origin"):
+        jwks.key_for(KID)
+
+
+def test_a_discovery_document_without_an_issuer_is_refused():
+    """RFC 8414 §3.2 makes `issuer` REQUIRED.
+
+    Absence used to skip the mismatch check entirely, so a document opted out
+    of being compared by leaving the field off.
+    """
+    jwks = JWKSCache(
+        ISSUER,
+        300.0,
+        opener=_serves({"jwks_uri": f"{ISSUER}/jwks"}),
+        clock=Clock(),
+    )
+    with pytest.raises(AuthError, match="no issuer"):
+        jwks.key_for(KID)
+
+
+def test_a_redirect_off_https_is_refused():
+    """urlopen follows redirects; CPython's handler allows http, https and ftp.
+
+    Without this the scheme check in `_fetch_json` covers the first hop only,
+    and a 302 to http:// puts the signing keys on the wire in clear -- where
+    an on-path attacker substitutes their own modulus and mints tokens that
+    pass every remaining check in the module.
+    """
+    handler = auth._HTTPSOnlyRedirect()
+    req = urllib.request.Request(f"{ISSUER}/jwks")
+    headers = http.client.HTTPMessage()
+
+    for target in (
+        "http://issuer.example.com/jwks",
+        "ftp://issuer.example.com/jwks",
+        "//issuer.example.com/jwks",
+    ):
+        assert handler.redirect_request(req, None, 302, "Found", headers, target) is None, target
+
+    onward = handler.redirect_request(
+        req, None, 302, "Found", headers, "https://issuer.example.com/keys"
+    )
+    assert onward is not None and onward.full_url == "https://issuer.example.com/keys"
+
+
+def test_fetch_json_goes_through_the_guarded_opener(monkeypatch):
+    """The handler only helps if `_fetch_json` stops using the default opener.
+
+    A bare `urlopen` would silently keep the permissive redirect handler, so
+    pin the call site rather than only the handler's own logic.
+    """
+    used = []
+
+    class FakeOpener:
+        def open(self, request, timeout=None):
+            used.append((request.full_url, timeout))
+            raise urllib.error.URLError("stop here")
+
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener())
+    with pytest.raises(AuthError, match="could not reach the issuer"):
+        auth._fetch_json(f"{ISSUER}/jwks")
+
+    assert used == [(f"{ISSUER}/jwks", auth.HTTP_TIMEOUT)]
+
+
+def test_the_guarded_opener_replaces_the_permissive_handler():
+    """build_opener drops its default only because ours subclasses it."""
+    installed = [
+        h for h in auth._OPENER.handlers if isinstance(h, urllib.request.HTTPRedirectHandler)
+    ]
+    assert len(installed) == 1
+    assert isinstance(installed[0], auth._HTTPSOnlyRedirect)
+    assert auth._HTTPSOnlyRedirect.max_redirections == 3
+
+
 # ------------------------------------------------------- authenticator ----
 
 
@@ -870,3 +1053,208 @@ def test_client_metadata_document_is_self_describing():
         assert doc[field], field
     assert "authorization_code" in doc["grant_types"]
     json.dumps(doc)  # must be serialisable as-is
+
+
+# ----------------------------------------------------------- refusals & edge cases ----
+
+
+def test_b64url_decode_invalid():
+    with pytest.raises(AuthError, match="malformed token encoding"):
+        auth.b64url_decode("!!!invalid_base64!!!")
+
+
+def test_rsa_verify_degenerate_and_unsupported_inputs():
+    assert not rsa_verify(KEY["n"], KEY["e"], b"sig", b"msg", "unsupported_hash")
+    assert not rsa_verify(0, KEY["e"], b"sig", b"msg", "sha256")
+    assert not rsa_verify(KEY["n"], 0, b"sig", b"msg", "sha256")
+    assert not rsa_verify(-1, KEY["e"], b"sig", b"msg", "sha256")
+    assert not rsa_verify(KEY["n"], KEY["e"], b"short", b"msg", "sha256")
+    # Small modulus k < len(tail) + 11
+    assert not rsa_verify(15, 3, b"\x00", b"msg", "sha256")
+
+
+def test_jwks_cache_discovery_missing_jwks_uri():
+    cache = JWKSCache(
+        "https://test.issuer",
+        opener=lambda url: {"issuer": "https://test.issuer"},
+    )
+    with pytest.raises(AuthError, match="issuer discovery document has no jwks_uri"):
+        cache.key_for("some-kid")
+
+
+def test_jwks_cache_document_missing_keys_list():
+    def opener(url):
+        if "openid-configuration" in url:
+            return {"issuer": "https://test.issuer", "jwks_uri": "https://test.issuer/jwks"}
+        return {"not_keys": "invalid"}
+
+    cache = JWKSCache("https://test.issuer", opener=opener)
+    with pytest.raises(AuthError, match="issuer JWKS has no key list"):
+        cache.key_for("some-kid")
+
+
+def test_jwks_cache_negative_cache_expiration():
+    clock_val = [100.0]
+
+    def fake_clock():
+        return clock_val[0]
+
+    cache = JWKSCache(ISSUER, opener=FakeIssuer(), clock=fake_clock)
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache.key_for("nonexistent-1")
+    assert cache._is_negative("nonexistent-1", 100.0)
+
+    # Advance clock past min_refresh_interval
+    clock_val[0] += cache.min_refresh_interval + 1.0
+    assert not cache._is_negative("nonexistent-1", clock_val[0])
+
+
+def test_jwks_cache_miss_eviction_and_install_clearing():
+    from repo2graph.auth import MAX_NEGATIVE_KIDS
+
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+    for i in range(MAX_NEGATIVE_KIDS + 10):
+        cache._remember_miss(f"kid-{i}", float(i))
+    assert len(cache._misses) <= MAX_NEGATIVE_KIDS
+    assert "kid-0" not in cache._misses
+    assert f"kid-{MAX_NEGATIVE_KIDS + 9}" in cache._misses
+
+    # Test _install clearing seen keys from _misses
+    cache._misses["test-key-1"] = 100.0
+    cache._install({"test-key-1": {"kid": "test-key-1"}}, "https://issuer/jwks", 150.0)
+    assert "test-key-1" not in cache._misses
+
+
+def test_jwks_cache_in_flight_concurrency_branches():
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache._keys = {"existing": {"kid": "existing"}}
+    cache._fetched_at = 1.0  # stale
+    cache._in_flight = threading.Event()
+
+    # Cached key returned immediately even if stale when in-flight fetch is active
+    assert cache.key_for("existing") == {"kid": "existing"}
+
+    # Unknown key refused when in-flight fetch is already active
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache.key_for("missing")
+
+    # When _keys is empty, key_for waits on _in_flight
+    cache2 = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache2._keys = {}
+    cache2._fetched_at = 0.0
+    ev = threading.Event()
+    cache2._in_flight = ev
+
+    def trigger():
+        time.sleep(0.02)
+        cache2._keys = {"waited-kid": {"kid": "waited-kid"}}
+        ev.set()
+
+    t = threading.Thread(target=trigger)
+    t.start()
+    found = cache2.key_for("waited-kid")
+    t.join()
+    assert found == {"kid": "waited-kid"}
+
+    # Waiter finishes but key still not found
+    cache3 = JWKSCache(ISSUER, opener=FakeIssuer())
+    cache3._keys = {}
+    cache3._fetched_at = 0.0
+    ev3 = threading.Event()
+    cache3._in_flight = ev3
+
+    def trigger3():
+        time.sleep(0.02)
+        cache3._keys = {"other-kid": {"kid": "other-kid"}}
+        ev3.set()
+
+    t3 = threading.Thread(target=trigger3)
+    t3.start()
+    with pytest.raises(AuthError, match="unknown signing key"):
+        cache3.key_for("waited-kid-absent")
+    t3.join()
+
+
+def test_fetch_json_errors(monkeypatch):
+    with pytest.raises(AuthError, match="issuer URLs must be https"):
+        auth._fetch_json("http://insecure.example.com")
+
+    with pytest.raises(AuthError, match="could not reach the issuer"):
+        auth._fetch_json("https://127.0.0.1:9")
+
+    class FakeLargeResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, n):
+            return b"x" * (auth.MAX_JWKS_BYTES + 2)
+
+    # Patched on the opener, not on urlopen: `_fetch_json` goes through
+    # `_OPENER` so its https-only redirect handler cannot be bypassed, and a
+    # urlopen patch would leave this reaching the real network.
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener(lambda req, timeout: FakeLargeResp()))
+    with pytest.raises(AuthError, match="implausibly large"):
+        auth._fetch_json("https://valid.example.com")
+
+    class FakeInvalidJsonResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, n):
+            return b"not json {"
+
+    monkeypatch.setattr(auth, "_OPENER", FakeOpener(lambda req, timeout: FakeInvalidJsonResp()))
+    with pytest.raises(AuthError, match="not valid JSON"):
+        auth._fetch_json("https://valid.example.com")
+
+
+def test_decode_jwt_malformed_components():
+    cache = JWKSCache(ISSUER, opener=FakeIssuer())
+
+    # Not json
+    with pytest.raises(AuthError, match="token header or payload is not JSON"):
+        decode_jwt(f"{b64u(b'not json')}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    # Not object (e.g. integer)
+    with pytest.raises(AuthError, match="token header or payload is not an object"):
+        decode_jwt(f"{b64u(b'123')}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    with pytest.raises(AuthError, match="token header or payload is not an object"):
+        decode_jwt(f"{b64u(b'{}')}.{b64u(b'[1, 2]')}.sig", cache, ISSUER, None)
+
+    # Missing kid
+    h_nokid = b64u(json.dumps({"alg": "RS256"}).encode("utf8"))
+    with pytest.raises(AuthError, match="token header has no kid"):
+        decode_jwt(f"{h_nokid}.{b64u(b'{}')}.sig", cache, ISSUER, None)
+
+    # Non-RSA kty
+    h_ec = b64u(json.dumps({"alg": "RS256", "kid": "ec-key"}).encode("utf8"))
+    p = b64u(json.dumps({"iss": ISSUER, "exp": time.time() + 100}).encode("utf8"))
+    cache._keys["ec-key"] = {"kid": "ec-key", "kty": "EC"}
+    cache._fetched_at = time.monotonic()
+    with pytest.raises(AuthError, match="unsupported key type"):
+        decode_jwt(f"{h_ec}.{p}.sig", cache, ISSUER, None)
+
+    # Non-numeric exp
+    token_badexp = sign(claims(exp="not-a-number"))
+    with pytest.raises(AuthError, match="token exp claim is not a number"):
+        decode_jwt(token_badexp, cache, ISSUER, None)
+
+    # Non-numeric nbf
+    token_badnbf = sign(claims(nbf="not-a-number"))
+    with pytest.raises(AuthError, match="token nbf claim is not a number"):
+        decode_jwt(token_badnbf, cache, ISSUER, None)
+
+
+def test_authenticator_unconfigured_refusal():
+    who = Authenticator(AuthConfig(token="secret"))
+    who.config.oidc_issuer = "https://example.com"
+    who._jwks = None
+    with pytest.raises(AuthError, match="invalid bearer token"):
+        who.authenticate("Bearer nonmatching")

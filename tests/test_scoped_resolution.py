@@ -790,3 +790,254 @@ def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch)
     with pytest.raises(ParseError):
         graph_mod.parse_all(files, 2)
     assert serial_reads == []
+
+
+def test_swift_ruby_and_bash_import_details():
+    """Verify parse_import_details extracts clean module and name for Swift, Ruby, and Bash (#343)."""
+    (sw1,) = parse_import_details("import Foundation", "swift")
+    assert sw1.module == "Foundation"
+    assert sw1.name is None
+
+    (sw2,) = parse_import_details("import class UIKit.UIView", "swift")
+    assert sw2.module == "UIKit.UIView"
+    assert sw2.name == "UIView"
+
+    (sw3,) = parse_import_details("@testable import MyModule", "swift")
+    assert sw3.module == "MyModule"
+    assert sw3.name is None
+
+    (rb1,) = parse_import_details('require "json"', "ruby")
+    assert rb1.module == "json"
+    assert rb1.name == "json"
+
+    (rb2,) = parse_import_details('require_relative "utils/helper"', "ruby")
+    assert rb2.module == "utils/helper"
+    assert rb2.name == "helper"
+
+    (rb3,) = parse_import_details('load "foo.rb"', "ruby")
+    assert rb3.module == "foo.rb"
+    assert rb3.name == "foo.rb"
+
+    (sh1,) = parse_import_details("source ./lib.sh", "bash")
+    assert sh1.module == "./lib.sh"
+    assert sh1.name == "lib.sh"
+
+    (sh2,) = parse_import_details(". ./other.sh", "bash")
+    assert sh2.module == "./other.sh"
+    assert sh2.name == "other.sh"
+
+
+def test_ruby_and_bash_parse_source_imports():
+    """Verify parse_source captures Ruby require calls and Bash source commands in imports (#343)."""
+    rb_src = b'require "json"\nrequire_relative "utils"\ndef run\n  puts "hello"\nend\n'
+    rb_pf = parse_source(rb_src, "ruby")
+    assert 'require "json"' in rb_pf.imports
+    assert 'require_relative "utils"' in rb_pf.imports
+    assert {d.module for d in rb_pf.import_details} == {"json", "utils"}
+
+    sh_src = b'source ./lib.sh\n. ./other.sh\necho "done"\n'
+    sh_pf = parse_source(sh_src, "bash")
+    assert "source ./lib.sh" in sh_pf.imports
+    assert ". ./other.sh" in sh_pf.imports
+    assert {d.module for d in sh_pf.import_details} == {"./lib.sh", "./other.sh"}
+
+
+def test_resolve_import_multilanguage_heuristics():
+    """Verify resolve_import resolves in-repo files for Rust, C#, PHP, Kotlin, Scala, Swift, Ruby, and Bash (#158)."""
+    # 1. Rust
+    rust_files = {
+        "Cargo.toml",
+        "src/main.rs",
+        "src/config.rs",
+        "src/models/user.rs",
+        "src/models/mod.rs",
+        "src/utils.rs",
+    }
+    rust_ctx = dict(graph_mod.path_index(rust_files), rust_crate="my_crate")
+    # crate::
+    assert (
+        graph_mod.resolve_import("crate::config", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/config.rs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "crate::config::Settings", "src/main.rs", "rust", rust_files, rust_ctx
+        )
+        == "src/config.rs"
+    )
+    assert (
+        graph_mod.resolve_import("crate::models::user", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/models/user.rs"
+    )
+    # my_crate:: (crate name from Cargo.toml)
+    assert (
+        graph_mod.resolve_import("my_crate::config", "src/main.rs", "rust", rust_files, rust_ctx)
+        == "src/config.rs"
+    )
+    # super::
+    assert (
+        graph_mod.resolve_import(
+            "super::config", "src/models/user.rs", "rust", rust_files, rust_ctx
+        )
+        == "src/config.rs"
+    )
+    # external
+    assert (
+        graph_mod.resolve_import("serde::Serialize", "src/main.rs", "rust", rust_files, rust_ctx)
+        is None
+    )
+
+    # 2. C#
+    cs_files = {
+        "src/Services/UserService.cs",
+        "src/Models/User.cs",
+        "Program.cs",
+    }
+    cs_ctx = graph_mod.path_index(cs_files)
+    assert (
+        graph_mod.resolve_import("Services.UserService", "Program.cs", "csharp", cs_files, cs_ctx)
+        == "src/Services/UserService.cs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "Services.UserService.Execute", "Program.cs", "csharp", cs_files, cs_ctx
+        )
+        == "src/Services/UserService.cs"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "System.Collections.Generic", "Program.cs", "csharp", cs_files, cs_ctx
+        )
+        is None
+    )
+
+    # 3. PHP
+    php_files = {
+        "app/Models/User.php",
+        "src/Services/AuthService.php",
+        "index.php",
+    }
+    php_ctx = graph_mod.path_index(php_files)
+    assert (
+        graph_mod.resolve_import(r"App\Models\User", "index.php", "php", php_files, php_ctx)
+        == "app/Models/User.php"
+    )
+    assert (
+        graph_mod.resolve_import(r"Services\AuthService", "index.php", "php", php_files, php_ctx)
+        == "src/Services/AuthService.php"
+    )
+    assert (
+        graph_mod.resolve_import(
+            r"Illuminate\Support\Collection", "index.php", "php", php_files, php_ctx
+        )
+        is None
+    )
+
+    # 4. Kotlin
+    kt_files = {
+        "src/main/kotlin/com/example/app/User.kt",
+        "src/main/kotlin/com/example/app/service/AuthService.kt",
+    }
+    kt_ctx = graph_mod.path_index(kt_files)
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.User",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        == "src/main/kotlin/com/example/app/User.kt"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.service.AuthService",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        == "src/main/kotlin/com/example/app/service/AuthService.kt"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "kotlinx.coroutines.launch",
+            "src/main/kotlin/com/example/app/Main.kt",
+            "kotlin",
+            kt_files,
+            kt_ctx,
+        )
+        is None
+    )
+
+    # 5. Scala
+    scala_files = {
+        "src/main/scala/com/example/app/Server.scala",
+    }
+    scala_ctx = graph_mod.path_index(scala_files)
+    assert (
+        graph_mod.resolve_import(
+            "com.example.app.Server", "Main.scala", "scala", scala_files, scala_ctx
+        )
+        == "src/main/scala/com/example/app/Server.scala"
+    )
+
+    # 6. Swift
+    swift_files = {
+        "Sources/NetworkKit/NetworkClient.swift",
+        "Sources/App/main.swift",
+    }
+    swift_ctx = graph_mod.path_index(swift_files)
+    assert (
+        graph_mod.resolve_import(
+            "NetworkKit", "Sources/App/main.swift", "swift", swift_files, swift_ctx
+        )
+        == "Sources/NetworkKit/NetworkClient.swift"
+    )
+    assert (
+        graph_mod.resolve_import(
+            "Foundation", "Sources/App/main.swift", "swift", swift_files, swift_ctx
+        )
+        is None
+    )
+
+    # 7. Ruby
+    rb_files = {
+        "lib/app/client.rb",
+        "lib/app/helper.rb",
+        "main.rb",
+    }
+    rb_ctx = graph_mod.path_index(rb_files)
+    assert (
+        graph_mod.resolve_import("./lib/app/helper", "main.rb", "ruby", rb_files, rb_ctx)
+        == "lib/app/helper.rb"
+    )
+    assert (
+        graph_mod.resolve_import("app/client", "main.rb", "ruby", rb_files, rb_ctx)
+        == "lib/app/client.rb"
+    )
+    assert graph_mod.resolve_import("json", "main.rb", "ruby", rb_files, rb_ctx) is None
+
+    # 8. Bash
+    sh_files = {
+        "scripts/common.sh",
+        "scripts/deploy.sh",
+    }
+    sh_ctx = graph_mod.path_index(sh_files)
+    assert (
+        graph_mod.resolve_import("./common.sh", "scripts/deploy.sh", "bash", sh_files, sh_ctx)
+        == "scripts/common.sh"
+    )
+    assert (
+        graph_mod.resolve_import("scripts/common.sh", "deploy.sh", "bash", sh_files, sh_ctx)
+        == "scripts/common.sh"
+    )
+    assert graph_mod.resolve_import("ls", "scripts/deploy.sh", "bash", sh_files, sh_ctx) is None
+
+
+def test_repo_context_cargo_toml(tmp_path: Path):
+    """Verify repo_context parses crate name from Cargo.toml."""
+    cargo = tmp_path / "Cargo.toml"
+    cargo.write_text('[package]\nname = "my-awesome-crate"\nversion = "0.1.0"\n', encoding="utf8")
+    ctx = graph_mod.repo_context(tmp_path)
+    assert ctx.get("rust_crate") == "my_awesome_crate"

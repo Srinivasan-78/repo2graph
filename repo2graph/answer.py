@@ -12,6 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Iterator
+from typing import Any
 
 HTTP_TIMEOUT = 300
 ERROR_SNIFF_LINES = 8  # unparsable lines kept, to explain an empty answer
@@ -404,6 +405,54 @@ def _disclose(name: str, env: str, url: str, n_chars: int) -> None:
     _flush(sys.stderr)
 
 
+class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
+    """Keep a provider redirect on its origin, and never let it downgrade.
+
+    The request carries the API key in a header -- `Authorization`,
+    `x-api-key` or `x-goog-api-key`, depending on the provider -- and CPython's
+    redirect handler forwards every header except `content-length` and
+    `content-type` to the new target, whatever host and whatever scheme it
+    names. A provider answering `302 http://somewhere-else` is therefore handed
+    the credential, in clear, by a client that had no say in it.
+
+    It would also make `_disclose` untrue. That function prints the provider
+    and hostname to stderr before the first byte precisely so the operator
+    knows where their repository context is going; a redirect that relocates
+    the request makes the printed hostname the one place it did *not* go.
+
+    An http -> https upgrade on the same host is allowed: OLLAMA_HOST is
+    legitimately plain http, and moving that to TLS is never the attack.
+    Returning None stops urllib with an `HTTPError`, which the caller already
+    handles.
+    """
+
+    max_redirections = 3
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        old = urllib.parse.urlsplit(req.full_url)
+        new = urllib.parse.urlsplit(newurl)
+        if new.netloc.lower() != old.netloc.lower():
+            return None
+        if new.scheme not in ("http", "https"):
+            return None
+        if old.scheme == "https" and new.scheme != "https":
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+# Module-level so a test can swap it; `urlopen` would rebuild the default
+# opener, and with it the permissive redirect handler replaced above.
+_OPENER = urllib.request.build_opener(_SameOriginRedirect)
+
+
 def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     """Ask the configured provider and stream the answer out. Returns the text."""
     spec = pick_provider(env, provider=provider)
@@ -423,9 +472,9 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     parts: list[str] = []
     raw_tail: list[bytes] = []
     lines: _BoundedLines | None = None
-    # urlopen is looked up on the module at call time, so a test can swap it.
+    # _OPENER is looked up on the module at call time, so a test can swap it.
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with _OPENER.open(req, timeout=HTTP_TIMEOUT) as resp:
             lines = _BoundedLines(resp, MAX_ANSWER_BYTES)
             for raw in lines:
                 piece = _delta(spec["name"], raw)

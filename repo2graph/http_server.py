@@ -165,6 +165,30 @@ UNAUTHORIZED = 401
 # not a malformed RPC frame. 403 is what a client acts on.
 FORBIDDEN = 403
 
+# What a caller is told when there is no index to serve. Actionable, per #265,
+# but with placeholders where the underlying SystemExit puts the absolute
+# index directory: that message is written for an operator at a terminal, and
+# a caller over HTTP must not be handed the host's filesystem layout. The real
+# directory goes to the audit log, which is server-side.
+INDEX_UNAVAILABLE = (
+    "No repo2graph index is available on this server. "
+    "Build one first with: repo2graph build <repo> -o <index-dir>. "
+    "The server log names the directory that was checked."
+)
+
+
+def _public_repo_label(repo: Any) -> str | None:
+    """Basename of `repo` for the unauthenticated discovery document.
+
+    `GET /.well-known/mcp-server-metadata` skips auth, so an absolute host
+    path must never appear. Both `/` and `\\` count as separators so a
+    Windows-style path cannot leak on a POSIX host either.
+    """
+    if not repo:
+        return None
+    name = str(repo).rstrip("/\\").replace("\\", "/").rsplit("/", 1)[-1]
+    return name or None
+
 
 def server_metadata(
     repo: Any,
@@ -178,10 +202,12 @@ def server_metadata(
     Lets a registry or client learn what this server does without opening a
     session. Deliberately says nothing about repository *content* -- only that
     an index exists and when it was built -- because this endpoint is
-    unauthenticated by necessity.
+    unauthenticated by necessity. `repo` is the basename only; the absolute
+    path would locate the project on the host.
 
     Args:
-        repo: Repository path the server was pointed at, or None.
+        repo: Repository path the server was pointed at, or None. Only the
+            basename is published.
         index_present: Whether a readable index exists right now.
         auth_modes: The modes from `AuthConfig.modes`.
         index_built_at: ISO-8601 build time, or None when there is no index.
@@ -206,7 +232,7 @@ def server_metadata(
         ),
         "tools": tools,
         "auth_modes": list(auth_modes),
-        "repo": str(repo) if repo else None,
+        "repo": _public_repo_label(repo),
         "index_present": bool(index_present),
         "index_built_at": index_built_at,
     }
@@ -606,15 +632,23 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 # open_index exits rather than raises when there is no index and
                 # nothing safe to build from. Over HTTP that is a 503, not a
                 # dead process: the server stays up and says what is wrong.
+                #
+                # What it says is not str(exc). That message is written for the
+                # operator at a terminal and names the absolute index directory
+                # -- twice -- so relaying it verbatim hands a caller the host's
+                # filesystem layout, and hands an agent's context window the
+                # same. It is the exact disclosure `_public_repo_label` exists
+                # to prevent one endpoint over. The detail stays in the audit
+                # log, which is server-side and is where an operator looks.
                 self.audit.record(
                     tool=name,
                     params=arguments,
                     identity=identity.subject,
                     outcome="error",
                     duration_ms=elapsed.ms,
-                    error=str(exc),
+                    error=str(exc).strip() or "Index unavailable",
                 )
-                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, "Index unavailable"))
+                self._send_json(503, _rpc_error(rpc_id, INTERNAL_ERROR, INDEX_UNAVAILABLE))
                 return
             except Exception as exc:
                 self.audit.record(

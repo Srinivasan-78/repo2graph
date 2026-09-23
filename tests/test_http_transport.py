@@ -392,6 +392,23 @@ def test_discovery_is_reachable_without_a_credential(make_server):
     assert status == 200 and doc["auth_modes"] == ["bearer"]
 
 
+def test_unauthenticated_metadata_omits_absolute_repo_path(make_server):
+    """ISS-198: discovery is public; the host path must not appear even with auth configured."""
+    abs_repo = "/srv/repos/acme-billing-service"
+    server = make_server(AuthConfig(token="s3cret"), repo=abs_repo)
+    status, doc = server.get("/.well-known/mcp-server-metadata")
+    assert status == 200
+    raw = json.dumps(doc)
+    assert abs_repo not in raw
+    assert "/srv/repos" not in raw
+    assert doc["repo"] == "acme-billing-service"
+    assert not str(doc["repo"]).startswith("/")
+    assert "\\" not in str(doc["repo"])
+    assert doc["auth_modes"] == ["bearer"]
+    assert "index_present" in doc
+    assert "index_built_at" in doc
+
+
 def test_the_metadata_document_discloses_no_repository_content(make_server):
     """It is unauthenticated, so it must describe shape and nothing else."""
     server = make_server()
@@ -587,10 +604,31 @@ def test_the_server_opens_no_outbound_socket_without_oidc(make_server, monkeypat
 def test_server_metadata_is_pure_and_needs_no_server():
     """The document builder is callable without starting anything."""
     doc = server_metadata("/tmp/repo", True, ["bearer"], "2026-09-16T00:00:00Z")
-    assert doc["repo"] == "/tmp/repo"
+    assert doc["repo"] == "repo"
+    assert "/tmp/repo" not in json.dumps(doc)
     assert doc["index_present"] is True
     assert doc["auth_modes"] == ["bearer"]
     json.dumps(doc)
+
+
+def test_server_metadata_never_includes_an_absolute_repo_path():
+    """ISS-198: unauthenticated discovery used to return str(repo) verbatim."""
+    from pathlib import Path
+
+    abs_repo = Path("/srv/repos/acme-billing-service")
+    doc = server_metadata(abs_repo, True, ["bearer"], "2026-09-16T00:00:00Z")
+    raw = json.dumps(doc)
+    assert str(abs_repo) not in raw
+    assert doc["repo"] == "acme-billing-service"
+    assert not str(doc["repo"]).startswith("/")
+    assert doc["index_present"] is True
+    assert doc["auth_modes"] == ["bearer"]
+
+    win = server_metadata(r"C:\srv\repos\acme-billing-service", False, ["none"])
+    assert win["repo"] == "acme-billing-service"
+    assert r"C:\srv" not in json.dumps(win)
+    assert win["index_present"] is False
+    assert win["auth_modes"] == ["none"]
 
 
 def test_iss152_head_healthz(make_server):
@@ -1032,3 +1070,79 @@ def test_iss249_the_handler_pins_its_protocol_version_deliberately():
 
     assert "protocol_version" in MCPRequestHandler.__dict__
     assert MCPRequestHandler.protocol_version == "HTTP/1.0"
+
+
+def test_missing_index_without_repo_returns_503_actionable_error(tmp_path):
+    """When no index exists and auto-build is off, HTTP mode returns 503 with instructions (#265)."""
+    empty_idx = tmp_path / "absent_index"
+    transport = HTTPTransport(empty_idx, repo=None, host="127.0.0.1", port=0)
+    transport.start()
+    try:
+        url = f"http://127.0.0.1:{transport.port}/mcp"
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "repo_map", "arguments": {}},
+            }
+        ).encode()
+        req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                status = resp.status
+                payload = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            payload = json.loads(exc.read())
+        assert status == 503
+        assert "error" in payload
+        assert "Build one first with: repo2graph build" in payload["error"]["message"]
+    finally:
+        transport.stop()
+
+
+# ------------------------------------------------- host path disclosure ----
+
+
+def test_a_missing_index_does_not_tell_the_caller_where_it_looked(tmp_path):
+    """503 must not carry the host's filesystem layout.
+
+    `open_index` raises SystemExit with a message written for an operator at a
+    terminal, naming the absolute index directory twice. Relaying str(exc) put
+    that in a JSON-RPC error -- and therefore into the context window of any
+    agent driving this server -- which is the disclosure `_public_repo_label`
+    already refuses one endpoint over. The operator's detail belongs in the
+    audit log, which is server-side.
+    """
+    from repo2graph.http_server import INDEX_UNAVAILABLE
+
+    missing = tmp_path / "host-layout" / "no_index_here"
+    missing.mkdir(parents=True)
+    stream = io.StringIO()
+    transport = HTTPTransport(
+        missing,
+        None,
+        host="127.0.0.1",
+        port=0,
+        audit=AuditLogger(AuditConfig(level="all"), stream=stream),
+    )
+    transport.start()
+    try:
+        server = Server(transport, stream)
+        status, body = server.call("repo_map")
+    finally:
+        transport.stop()
+
+    assert status == 503
+    message = body["error"]["message"]
+    assert message == INDEX_UNAVAILABLE
+    # Neither the full path nor either distinctive segment of it.
+    assert str(missing) not in message
+    assert "host-layout" not in message
+    assert "no_index_here" not in message
+
+    # The operator still gets the detail, server-side.
+    audited = [r for r in server.audit_lines() if r.get("outcome") == "error"]
+    assert len(audited) == 1
+    assert "no_index_here" in audited[0]["error"]

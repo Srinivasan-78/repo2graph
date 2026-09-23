@@ -269,11 +269,32 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run test suite before building
+      # The locked dependency graph, for the same reason ci.yml switched to it:
+      # a bare `pip install -e ".[dev,mcp]"` resolves whatever PyPI serves at
+      # the moment of the run, so this gate could fail on an upstream release
+      # nobody reviewed -- and failing *here* aborts a release that is already
+      # tagged and has an open, merged bump commit behind it. That is a worse
+      # place to discover upstream drift than a PR run, and `drift` in ci.yml
+      # is the job that exists to discover it. uv is version-pinned like every
+      # other tool in this file; --locked fails rather than re-resolving if
+      # uv.lock has drifted from pyproject.toml; --require-hashes makes pip
+      # verify each download against the lockfile.
+      #
+      # The export lands in RUNNER_TEMP, not the checkout: `python -m build`
+      # runs against this same tree a step later, and a stray file in it is a
+      # file that can end up inside the sdist.
+      - name: Install the locked dependency set
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,mcp]"
-          python -m pytest -q
+          python -m pip install "uv==0.12.15"
+          uv export --locked --no-emit-project --extra dev --extra mcp \
+            -o "$RUNNER_TEMP/requirements-publish.txt"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-publish.txt"
+          python -m pip install -e . --no-deps
+
+      - name: Run test suite before building
+        run: python -m pytest -q
 
       - name: Build sdist and wheel
         run: |

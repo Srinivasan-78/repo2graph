@@ -36,9 +36,10 @@ Two supported shapes, both real:
 
 ## Container hardening
 
-If you run `repo2graph-mcp` in a container (recommended for the HTTP-shared shape):
+If you run `repo2graph-mcp` in a container (recommended for the HTTP-shared shape), you can build the official `Dockerfile` provided in this repository, which is already configured for these requirements:
 
 ```bash
+docker build -t your-repo2graph-image .
 docker run --rm \
   --read-only \
   --cap-drop=ALL \
@@ -119,10 +120,17 @@ Being explicit about the boundary, per §53 of the brief:
 - **Sandboxing the MCP server does not protect against a compromised host.** If the machine running
   the container is already compromised, no application-layer or container-layer control here
   changes that — this is a statement about defense in depth, not a claim that containment is total.
-- **No SSRF protection, redirect control, or destination allowlisting** on the `--answer` or
-  `--auth-oidc-issuer` network paths beyond "https-only" and a size/timeout cap on the JWKS fetch
-  (`auth.py:262-278`). If your threat model requires egress allowlisting, enforce it at the network
-  layer (an egress proxy, a Kubernetes `NetworkPolicy`), not by assuming the application does it.
+- **No general SSRF protection or destination allowlisting** on the `--answer` or
+  `--auth-oidc-issuer` network paths. Both constrain redirects, which is narrower than an
+  allowlist and not a substitute for one. `--auth-oidc-issuer` requires `https` on every hop,
+  caps redirects at 3 (`auth.py:411`), and requires `jwks_uri` to share the configured issuer's
+  scheme and host (`auth.py:250-258`), so the JWKS fetch cannot be downgraded or relocated.
+  `--answer` keeps a provider redirect on the same origin and refuses an https-to-http
+  downgrade (`answer.py:407`), because the request carries your API key in a header that
+  CPython would otherwise forward to whatever host the redirect names. Neither path restricts
+  where *you* point it. If your threat model requires egress allowlisting, enforce it at the
+  network layer (an egress proxy, a Kubernetes `NetworkPolicy`), not by assuming the
+  application does it.
 - **No secret-scanning of arbitrary repository content beyond the path-shape and audit-log-value
   denylists documented in `docs/SECURITY-AUDIT.md`.** A `.env` file is excluded by path; a
   credential accidentally committed inside `app_config.py` with an unremarkable variable name is

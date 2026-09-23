@@ -87,6 +87,10 @@ inputs:
     description: "Push the output to this orphan branch (blank = no push)"
     required: false
     default: ""
+  commit-force:
+    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: true)"
+    required: false
+    default: "true"
   version:
     description: "pip spec to install repo2graph from (blank = install the action checkout itself)"
     required: false
@@ -103,6 +107,24 @@ inputs:
     description: "Policy for inline content secrets: redact-match, exclude-file, warn-only, off (default: redact-match)"
     required: false
     default: "redact-match"
+  incremental:
+    description: "Enable incremental graph builds using the parse cache (default: false)"
+    required: false
+    default: "false"
+  parse-policy:
+    # `best-effort`, not `lenient`: these are passed straight to
+    # `repo2graph build --parse-policy`, whose argparse `choices` are
+    # (best-effort, warn, strict). `lenient` was never one of them -- it only
+    # looked harmless because the step below drops the value when it equals the
+    # default, so the documented default was the one value that never reached
+    # the CLI. Any correction to that guard would have started forwarding it.
+    description: "Policy for AST parse errors: best-effort, warn, strict (default: best-effort)"
+    required: false
+    default: "best-effort"
+  max-call-candidates:
+    description: "Maximum call edge candidates to retain per ambiguous call site (default: 5)"
+    required: false
+    default: "5"
 
 outputs:
   out:
@@ -179,6 +201,9 @@ runs:
         R2G_EXCLUDE: ${{ inputs.exclude }}
         R2G_INCLUDE_SECRETS: ${{ inputs.include-secrets }}
         R2G_SECRET_POLICY: ${{ inputs.secret-policy }}
+        R2G_INCREMENTAL: ${{ inputs.incremental }}
+        R2G_PARSE_POLICY: ${{ inputs.parse-policy }}
+        R2G_MAX_CALL_CANDIDATES: ${{ inputs.max-call-candidates }}
         SUMMARY_FILE: ${{ runner.temp }}/summary.json
       run: |
         set -euo pipefail
@@ -193,6 +218,16 @@ runs:
         inc_sec="$(printf '%s' "$R2G_INCLUDE_SECRETS" | tr '[:upper:]' '[:lower:]')"
         if [ "$inc_sec" = "true" ]; then
           args+=(--include-secrets)
+        fi
+        inc_mode="$(printf '%s' "${R2G_INCREMENTAL:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$inc_mode" = "true" ]; then
+          args+=(--incremental)
+        fi
+        if [ -n "${R2G_PARSE_POLICY:-}" ] && [ "$R2G_PARSE_POLICY" != "best-effort" ]; then
+          args+=(--parse-policy "$R2G_PARSE_POLICY")
+        fi
+        if [ -n "${R2G_MAX_CALL_CANDIDATES:-}" ] && [ "$R2G_MAX_CALL_CANDIDATES" != "5" ]; then
+          args+=(--max-call-candidates "$R2G_MAX_CALL_CANDIDATES")
         fi
         if [ -n "$R2G_SECRET_POLICY" ] && [ "$R2G_SECRET_POLICY" != "redact-match" ]; then
           args+=(--secret-policy "$R2G_SECRET_POLICY")
@@ -349,8 +384,18 @@ runs:
         GITHUB_TOKEN: ${{ github.token }}
         R2G_OUT: ${{ inputs.out }}
         R2G_BRANCH: ${{ inputs.commit-branch }}
+        R2G_COMMIT_FORCE: ${{ inputs.commit-force }}
+        EVENT_NAME: ${{ github.event_name }}
+        IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
       run: |
         set -euo pipefail
+        if [ "${IS_FORK:-}" = "true" ]; then
+          echo "::error::Refusing to push graph to branch from a fork pull request. Use artifact-name instead or run on push events."
+          exit 1
+        fi
+        if [ "${EVENT_NAME:-}" = "pull_request" ] || [ "${EVENT_NAME:-}" = "pull_request_target" ]; then
+          echo "::warning::Pushing graph to branch during ${EVENT_NAME} events may expose tokens or overwrite branches unintentionally. Recommended: run on push to default branch."
+        fi
         tmp="$(mktemp -d)"
         cp -r "$R2G_OUT/." "$tmp/"
         cd "$tmp"
@@ -365,4 +410,9 @@ runs:
         # readable via `ps`/`/proc/$PID/cmdline` by any process on the host.
         git config --local http.https://github.com/.extraheader \
           "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
-        git push -q --force origin "$R2G_BRANCH"
+        force_flag="$(printf '%s' "${R2G_COMMIT_FORCE:-true}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$force_flag" = "false" ]; then
+          git push -q origin "$R2G_BRANCH"
+        else
+          git push -q --force origin "$R2G_BRANCH"
+        fi

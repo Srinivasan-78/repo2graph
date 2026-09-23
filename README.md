@@ -100,7 +100,7 @@ click a node to inspect its code and neighbours.
 
 <a id="install"></a>
 
-## 🚀 Three ways to run repo2graph
+## 🚀 Four ways to run repo2graph
 
 Same graph, same chunk format, same `.r2g` output — pick the interface for where you're
 standing right now.
@@ -110,6 +110,7 @@ standing right now.
 <th align="center">🐍&nbsp; Python / CLI</th>
 <th align="center">⚙️&nbsp; GitHub Action</th>
 <th align="center">🔌&nbsp; MCP server</th>
+<th align="center">🐳&nbsp; Docker</th>
 </tr>
 <tr>
 <td valign="top">
@@ -131,6 +132,13 @@ A fresh graph committed next to your code on every push, zero Python setup.
 Give Claude, Cursor or any MCP client live, cited access to the codebase.
 
 **[Jump in ↓](#mcp-server)**
+
+</td>
+<td valign="top">
+
+Enterprise-ready, read-only, non-root container deployment.
+
+**[Jump in ↓](#docker)**
 
 </td>
 </tr>
@@ -240,6 +248,26 @@ pair — see **[docs/mcp.md](docs/mcp.md)** for config file locations per platfo
 That is the hop grep cannot do: one symbol in, and its definer, its callers and its callees come
 back with file and line — the relationship, not a text match that happens to contain the name.
 
+<a id="docker"></a>
+
+### 🐳 4. Docker
+
+For enterprise and shared deployments, an official `Dockerfile` is provided. It's a multi-stage build running as a non-root user (10000:10000), fully compatible with a read-only root filesystem and dropped capabilities.
+
+```bash
+docker build -t repo2graph .
+docker run --rm \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges \
+  --network=none \
+  -v /path/to/repo:/repo:ro \
+  -v repo2graph-index:/repo/.r2g \
+  repo2graph build /repo -o /repo/.r2g
+```
+
+See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full container hardening and HTTP server instructions.
+
 ## ✨ Key features
 
 | | |
@@ -247,7 +275,7 @@ back with file and line — the relationship, not a text match that happens to c
 | **Deterministic graph, not embeddings-only search** | Callers, callees, imports and class hierarchies resolved from the actual AST — not a nearest-neighbour guess. |
 | **Hybrid retrieval** | BM25 + graph-neighbour expansion by default; optional dense vector fusion (`repo2graph embed`) with zero required extra dependencies. |
 | **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
-| <a id="languages"></a>**16 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala and Bash get functions/classes/calls — 28 file extensions in all. Everything else still appears as files on the map. |
+| <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. |
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
 | **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
@@ -348,6 +376,8 @@ resolution limits).
 | `repo2graph stats -o .r2g [--format text]` | Node/edge/function counts for an existing index; `--format text` for a quality summary. |
 | `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
 | `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
+| `repo2graph explain <edge|node|retrieval>` | Explain graph edges, node metadata, and retrieval ranking decisions. |
+| `repo2graph completion [shell]` | Print shell tab completion setup script (`bash`, `zsh`, `fish`). |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
 **Environment variables** (only read by `rag --answer`, in this precedence order):

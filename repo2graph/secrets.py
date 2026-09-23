@@ -104,6 +104,20 @@ SECRET_KEY_RE = re.compile(
     re.I,
 )
 
+# Field names that match SECRET_KEY_RE by substring but describe a *shape*
+# rather than hold a credential -- `auth_modes` is ("none",)/("token",)/
+# ("oidc",) and `budget_tokens` is a count. Redacting them cost the audit log
+# the two fields an operator most wants when reading it back: which auth was
+# in force, and how large the request was.
+#
+# An allowlist, not a narrower SECRET_KEY_RE: loosening the pattern to exclude
+# `auth_modes` would also stop matching names nobody has written yet, and the
+# failure mode there is a credential in a log. Every entry is an exact,
+# lowercased field name, and adding one is a deliberate statement that this
+# field's value is never sensitive. Note the values are not blindly trusted
+# either -- they still go through the shape, URL and path checks below.
+NON_SECRET_KEYS = frozenset({"auth_modes", "budget_tokens", "result_tokens", "max_tokens"})
+
 # Sensitive HTTP headers to redact in logs.
 SENSITIVE_HEADERS = frozenset(
     {
@@ -121,6 +135,20 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
     r"(?i)([?&](?:token|key|api[-_]?key|secret|password|auth|access[-_]?token)=)([^&#]+)"
 )
 
+# A PEM block is matched as two separate anchors, paired in `_pem_spans`.
+# Writing it as one pattern -- BEGIN, then a lazy `[\s\S]*?` to an optional
+# END -- is quadratic: every BEGIN whose END is missing re-scans the entire
+# remaining text before the optional group gives up. Repository content is
+# attacker-supplied on every build and `max_file_bytes` defaults to 1.5 MB, so
+# a single file of repeated BEGIN lines cost minutes of CPU per build.
+PEM_BEGIN_RE = re.compile(r"-----BEGIN [-A-Z0-9_ ]*PRIVATE KEY-----")
+PEM_END_RE = re.compile(r"-----END [-A-Z0-9_ ]*PRIVATE KEY-----")
+
+# Types whose spans are computed by a dedicated pass rather than by running
+# their entry below over the text. The entry is still the shape test used by
+# `_looks_like_a_secret`.
+PAIRED_TYPES = frozenset({"private_key"})
+
 # Content scanning patterns: (type_name, regex)
 CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -128,18 +156,42 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack_token", re.compile(r"\bxox[abprs]-[-0-9A-Za-z]{10,}\b")),
     ("openai_key", re.compile(r"\bsk-[-A-Za-z0-9_]{20,}\b")),
     ("google_key", re.compile(r"\bAIza[-0-9A-Za-z_]{35}\b")),
-    (
-        "private_key",
-        re.compile(
-            r"-----BEGIN [-A-Z0-9_ ]*PRIVATE KEY-----(?:[\s\S]*?-----END [-A-Z0-9_ ]*PRIVATE KEY-----)?"
-        ),
-    ),
+    ("private_key", PEM_BEGIN_RE),
     (
         "jwt",
         re.compile(r"\beyJ[-A-Za-z0-9_]{10,}\.eyJ[-A-Za-z0-9_]{10,}\.[-A-Za-z0-9_]+\b"),
     ),
     ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
 )
+
+
+def _pem_spans(text: str) -> list[tuple[int, int]]:
+    """Span of every PEM private-key block, in one linear pass.
+
+    Each BEGIN takes the first END that follows it, exactly as the old lazy
+    pattern did, and an unterminated BEGIN yields just its own header -- which
+    is what the old optional group produced. The difference is cost: the ENDs
+    are collected once and consumed by a cursor that only moves forward, so
+    input with no END at all is O(n) instead of O(n*k).
+    """
+    ends = [m.end() for m in PEM_END_RE.finditer(text)]
+    spans: list[tuple[int, int]] = []
+    next_end = 0
+    consumed_to = 0  # mirror finditer: never start a match inside an earlier one
+    for begin in PEM_BEGIN_RE.finditer(text):
+        if begin.start() < consumed_to:
+            continue
+        while next_end < len(ends) and ends[next_end] <= begin.end():
+            next_end += 1
+        if next_end < len(ends):
+            spans.append((begin.start(), ends[next_end]))
+            consumed_to = ends[next_end]
+            next_end += 1
+        else:
+            spans.append((begin.start(), begin.end()))
+            consumed_to = begin.end()
+    return spans
+
 
 # URL pattern with embedded credentials: postgres://user:password@host
 DB_URL_RE = re.compile(
@@ -236,28 +288,37 @@ def _is_secret_path(
     return False
 
 
-def scan_content_secrets(text: str) -> list[tuple[str, int, int, str]]:
+def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     """Scan string for known credential patterns.
 
+    The matched bytes are deliberately *not* returned. Every caller either
+    counts the findings or reports their types, so carrying the plaintext would
+    build a list of live credentials that exists only to be discarded -- one
+    `emit(..., findings=findings)` away from being the leak this module exists
+    to prevent. A caller that genuinely needs the bytes already holds `text`
+    and can slice the span itself.
+
     Returns:
-        List of (secret_type, start_idx, end_idx, matched_secret_text).
+        List of (secret_type, start_idx, end_idx) spans into `text`.
     """
     if not text:
         return []
 
-    findings: list[tuple[str, int, int, str]] = []
+    findings: list[tuple[str, int, int]] = []
 
-    # 1. Standard patterns (AWS, GitHub, Slack, OpenAI, Google, PEM, JWT)
+    # 1. Standard patterns (AWS, GitHub, Slack, OpenAI, Google, JWT)
     for stype, pattern in CONTENT_SECRET_PATTERNS:
+        if stype in PAIRED_TYPES:
+            continue  # spans come from the dedicated pass below
         for m in pattern.finditer(text):
-            findings.append((stype, m.start(), m.end(), m.group(0)))
+            findings.append((stype, m.start(), m.end()))
+
+    # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
+    findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
 
     # 2. Database URLs with credentials
     for m in DB_URL_RE.finditer(text):
-        password = m.group(2)
-        start = m.start(2)
-        end = m.end(2)
-        findings.append(("DATABASE_PASSWORD", start, end, password))
+        findings.append(("DATABASE_PASSWORD", m.start(2), m.end(2)))
 
     # 3. High-entropy assignments
     for m in ASSIGNMENT_RE.finditer(text):
@@ -267,7 +328,7 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int, str]]:
             digits = sum(c.isdigit() for c in secret)
             letters = sum(c.isalpha() for c in secret)
             if digits and letters:
-                findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2), secret))
+                findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
 
     # Sort by start index
     findings.sort(key=lambda x: x[1])
@@ -295,16 +356,19 @@ def redact_content(text: str, policy: str = "redact-match") -> tuple[str, int]:
     out = text
     count = 0
     # Deduplicate overlapping spans
-    filtered_findings: list[tuple[str, int, int, str]] = []
+    filtered_findings: list[tuple[str, int, int]] = []
     last_end = -1
-    for stype, start, end, matched in findings:
+    for stype, start, end in findings:
         if start >= last_end:
-            filtered_findings.append((stype, start, end, matched))
+            filtered_findings.append((stype, start, end))
             last_end = end
 
-    for stype, start, end, matched in reversed(filtered_findings):
-        # Line-preserving rule: preserve exact count of newlines
-        nl_count = matched.count("\n")
+    for stype, start, end in reversed(filtered_findings):
+        # Line-preserving rule: preserve exact count of newlines. Count them in
+        # the original `text` over the span's bounds -- `out` is rewritten
+        # back-to-front, so this span is still untouched there either way, and
+        # str.count(sub, start, end) never materialises the secret substring.
+        nl_count = text.count("\n", start, end)
         repl = f"[REDACTED:{stype}]" + ("\n" * nl_count)
         out = out[:start] + repl + out[end:]
         count += 1
@@ -431,8 +495,10 @@ def sanitize_value(
             except Exception:
                 return f"[unprintable:{type(value).__name__}]"
 
-        # Check key name
-        if SECRET_KEY_RE.search(key or ""):
+        # Check key name. NON_SECRET_KEYS names the handful that match by
+        # substring but describe a shape rather than hold one; they fall
+        # through to the value checks below rather than skipping them.
+        if SECRET_KEY_RE.search(key or "") and (key or "").lower() not in NON_SECRET_KEYS:
             return redact(text, f"key:{key}")
 
         # Check URL

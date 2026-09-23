@@ -11,6 +11,7 @@ explicitly by the test.
 
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -804,3 +805,121 @@ def test_r4_explicit_vectors_still_builds_one(mini_index, use_stub_embedder, cap
     assert main(["rag", MINI_QUERY, "-o", str(mini_index), "--vectors"]) == 0
     capsys.readouterr()
     assert len(use_stub_embedder.made) == before + 1
+
+
+@pytest.mark.skipif(
+    not os.environ.get("R2G_TEST_REAL_EMBEDDER"),
+    reason="Real embedder smoke test requires R2G_TEST_REAL_EMBEDDER=1",
+)
+def test_real_sentence_transformers_smoke_test(mini_index):
+    """Smoke test against the real sentence-transformers wrapper."""
+    from repo2graph import embed
+    from repo2graph.query import Index
+
+    try:
+        real_emb = embed.default_embedder()
+    except RuntimeError:
+        pytest.skip("rag extra is not installed")
+
+    idx_before = Index(mini_index)
+    chunks = idx_before.chunks[:2]
+    vectors = embed.build_vectors(chunks, real_emb, batch=2)
+
+    model_id = embed.model_id_of(real_emb)
+    dim = embed.dim_of(real_emb)
+    chunk_ids = [c["id"] for c in chunks]
+    text_hashes = [embed.text_hash(c) for c in chunks]
+
+    agent_dir = mini_index / "agent"
+    agent_dir.mkdir(exist_ok=True)
+    target = agent_dir / VEC_NPY
+
+    embed.write_vectors(target, vectors, model_id, dim, chunk_ids, text_hashes)
+
+    idx = Index(mini_index)
+    assert idx.vectors is not None
+
+    ok, reason = idx.fuse_ok(real_emb)
+    assert ok is True
+    assert reason == ""
+
+
+# --------------------------------------------------------------------------
+# Bounded reads: an index may have been built elsewhere
+#
+# `doctor` on a received index is the documented way to check one, and indexes
+# travel on a `graph` branch, as Action artifacts and in examples/. That makes
+# every byte count in these files attacker-chosen, and a plain `.read()` an
+# allocation somebody else picks.
+# --------------------------------------------------------------------------
+
+
+def test_read_bounded_refuses_a_file_over_the_limit(tmp_path):
+    from repo2graph.integrity import read_bounded
+
+    f = tmp_path / "big.bin"
+    f.write_bytes(b"x" * 100)
+
+    assert read_bounded(f, 100) == b"x" * 100  # exactly at the limit is fine
+    with pytest.raises(ValueError, match="over the 99-byte limit"):
+        read_bounded(f, 99)
+
+
+def test_an_oversized_vectors_npy_is_refused_before_it_is_read(tmp_path, monkeypatch):
+    """The ceiling must bind before the bytes are materialised."""
+    from repo2graph import embed, integrity
+
+    npy = tmp_path / "vectors.npy"
+    embed.write_vectors(npy, {"a": [0.1, 0.2], "b": [0.3, 0.4]}, "stub-model", 2, ["a", "b"])
+    assert npy.stat().st_size > 16
+
+    monkeypatch.setattr(integrity, "MAX_VECTORS_BYTES", 16)
+    with pytest.raises(ValueError, match="over the 16-byte limit"):
+        embed._npy_read(npy)
+
+
+def test_an_oversized_vectors_meta_is_refused(tmp_path, monkeypatch):
+    """The sidecar is read *before* the array, so it needs its own ceiling.
+
+    A limit on vectors.npy alone would leave the whole allocation reachable
+    through this file instead.
+    """
+    from repo2graph import embed, integrity
+
+    npy = tmp_path / "vectors.npy"
+    embed.write_vectors(npy, {"a": [0.1, 0.2]}, "stub-model", 2, ["a"])
+
+    monkeypatch.setattr(integrity, "MAX_METADATA_BYTES", 8)
+    with pytest.raises(ValueError, match="over the 8-byte limit"):
+        embed.load_vectors(npy)
+
+
+def test_an_oversized_manifest_is_a_corrupt_index_not_a_crash(tmp_path, monkeypatch):
+    from repo2graph import integrity
+
+    idx = tmp_path / "idx"
+    (idx / "agent").mkdir(parents=True)
+    for name in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl"):
+        (idx / "agent" / name).write_text("", encoding="utf8")
+    (idx / "agent" / "manifest.json").write_text(
+        json.dumps({"format": "repo2graph/1", "checksums": {}}), encoding="utf8"
+    )
+
+    monkeypatch.setattr(integrity, "MAX_METADATA_BYTES", 8)
+    report = integrity.verify_artifacts(idx)
+
+    assert report.status == "corrupt"
+    assert any("Corrupt manifest.json" in e for e in report.errors), report.errors
+
+
+def test_a_normal_vectors_pair_still_round_trips_under_the_real_limits(tmp_path):
+    """The guard must reject oversized files only -- not every file."""
+    from repo2graph import embed
+
+    npy = tmp_path / "vectors.npy"
+    embed.write_vectors(npy, {"a": [0.1, 0.2], "b": [0.3, 0.4]}, "stub-model", 2, ["a", "b"])
+
+    vectors, meta = embed.load_vectors(npy)
+
+    assert sorted(vectors) == ["a", "b"]
+    assert meta["dim"] == 2

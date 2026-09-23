@@ -509,8 +509,15 @@ def check_vectors(path: Path) -> CheckResult:
         )
 
     try:
-        with open(meta_file, "r", encoding="utf-8") as f:
-            meta = json.load(f)
+        from .integrity import MAX_METADATA_BYTES, read_bounded
+
+        # `doctor` is the documented way to check an index built elsewhere, so
+        # this sidecar's size is attacker-chosen; see integrity.read_bounded.
+        meta = json.loads(
+            read_bounded(meta_file, MAX_METADATA_BYTES, what="vectors.meta.json").decode(
+                "utf8", "replace"
+            )
+        )
         model_id = meta.get("model_id", "unknown")
         dim = meta.get("dim", 0)
         chunk_ids = meta.get("chunk_ids", [])

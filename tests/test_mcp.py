@@ -1736,3 +1736,34 @@ def test_iss244_audit_log_fsync_is_opt_in_from_the_command_line(
     assert mcp.main(argv) == 0
     assert len(seen) == 1
     assert seen[0].fsync is expected
+
+
+def test_http_auto_build_disabled_by_default(mini_repo, monkeypatch):
+    """HTTP mode disables auto-build by default unless --allow-auto-build is passed (#265)."""
+    mcp = mcp_module()
+    from repo2graph import http_server as http_mod
+
+    seen_repos = []
+
+    class FakeTransport:
+        _thread = None
+
+        def __init__(self, index_dir, repo=None, *a, **kw):
+            seen_repos.append(repo)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
+
+    # Default in HTTP mode: repo is None (disabled)
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert seen_repos[-1] is None
+
+    # Explicit --allow-auto-build: repo is passed
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--allow-auto-build"]) == 0
+    assert seen_repos[-1] == mini_repo

@@ -64,7 +64,7 @@ project stand out without you looking for them.
 | `CALLS` | one function uses another. Carries `count`, `confidence`, `ambiguous`, `resolution_kind`, `candidate_count`, `scope_distance` and `call_kind`. |
 | `CALLS_EXTERNAL` | a function uses something from outside the project. Carries `count`, `resolution_kind`, `candidate_count` and `call_kind`. |
 | `INHERITS` | inheritance or interface implementation. Carries `subtype` (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) and `raw_base`. |
-| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more) |
+| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more by default; configurable via `--cochange-min`). Carries `count`, `cochange_count`, `sampled_commits`, `min_pairs`. |
 
 A small corner of a real map looks like this:
 
@@ -125,8 +125,8 @@ door can eventually get to. A big `reach` means a main path through the project.
 
 ## Languages
 
-Sixteen grammars get the full treatment — functions, classes and calls — across
-28 file extensions:
+Seventeen grammars get the full treatment — functions, classes and calls — across
+29 file extensions:
 
 | Grammar | Extensions |
 |---|---|
@@ -146,6 +146,7 @@ Sixteen grammars get the full treatment — functions, classes and calls — acr
 | `swift` | `.swift` |
 | `scala` | `.scala` |
 | `bash` | `.sh` `.bash` |
+| `lua` | `.lua` |
 
 `.h` maps to `c`; a C++ header that uses `.h` rather than `.hpp` is parsed with
 the C grammar, which is the usual reason a C++ project shows parse errors in

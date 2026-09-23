@@ -58,6 +58,7 @@ EXT_LANG = {
     ".swift": "swift",
     ".sh": "bash",
     ".bash": "bash",
+    ".lua": "lua",
 }
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
@@ -206,6 +207,12 @@ LANG_CFG: dict[str, LangConfig] = {
     "bash": {
         "kind_map": {"function_definition": "function"},
         "call_types": {"command"},
+        "import_types": set(),
+        "doc": "line",
+    },
+    "lua": {
+        "kind_map": {"function_declaration": "function"},
+        "call_types": {"function_call"},
         "import_types": set(),
         "doc": "line",
     },
@@ -1078,6 +1085,31 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                 )
             return details
 
+    elif lang == "swift":
+        m = re.match(
+            r"^(?:@\w+\s+)?import\s+(?:(?:typealias|struct|class|enum|protocol|let|var|func)\s+)?([\w.]+)",
+            raw_clean,
+        )
+        if m:
+            mod = m.group(1)
+            name = mod.rsplit(".", 1)[-1] if "." in mod else None
+            details.append(ImportDetail(raw=raw_clean, module=mod, name=name))
+            return details
+
+    elif lang == "ruby":
+        m = re.search(r"""(?:require|require_relative|load)\s*\(?\s*['"]([^'"]+)['"]""", raw_clean)
+        if m:
+            mod = m.group(1)
+            details.append(ImportDetail(raw=raw_clean, module=mod, name=mod.rsplit("/", 1)[-1]))
+            return details
+
+    elif lang == "bash":
+        m = re.match(r"""^(?:source|\.)\s+['"]?([^'"\s]+)['"]?""", raw_clean)
+        if m:
+            mod = m.group(1)
+            details.append(ImportDetail(raw=raw_clean, module=mod, name=mod.rsplit("/", 1)[-1]))
+            return details
+
     # Fallback default
     details.append(ImportDetail(raw=raw_clean, module=raw_clean))
     return details
@@ -1168,6 +1200,24 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             if raw:
                 imports.append(raw[:300])
                 imports_full.append(raw)
+        elif lang == "ruby" and ntype == "call":
+            callee = _callee_name(source, node)
+            if callee in ("require", "require_relative", "load"):
+                raw = _text(source, node).strip()
+                if raw:
+                    imports.append(raw[:300])
+                    imports_full.append(raw)
+        elif lang == "bash" and ntype == "command":
+            cmd_name = _callee_name(source, node)
+            if not cmd_name and node.children:
+                first = _text(source, node.children[0]).strip()
+                if first == ".":
+                    cmd_name = "."
+            if cmd_name in ("source", "."):
+                raw = _text(source, node).strip()
+                if raw:
+                    imports.append(raw[:300])
+                    imports_full.append(raw)
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,

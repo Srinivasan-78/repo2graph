@@ -129,7 +129,13 @@ compromised host OS (no application-layer control defends against that — see
    directory gets indexed.
 5. **MCP process → network.** No outbound call in default mode. The one exception,
    `--auth-oidc-issuer`, is explicit, https-only, size-capped (`MAX_JWKS_BYTES`), and
-   timeout-bound (`auth.py:262-278`).
+   timeout-bound (`auth.py:452-481`). "https-only" covers every redirect hop, not just
+   the first: `urlopen` follows redirects on its own and CPython's handler accepts
+   `http`, `https` and `ftp`, so fetches go through an opener whose redirect handler
+   refuses any non-`https` target (`_HTTPSOnlyRedirect`, `auth.py:411`) —
+   GHSA-mqm8-mc66-wjvj. The destination is constrained too: `jwks_uri` must share the
+   configured issuer's scheme and host, so a discovery document cannot relocate the
+   trust anchor (`auth.py:250-258`) — GHSA-f896-f643-87cf.
 6. **MCP process → git.** Every git invocation is an argv list, never `shell=True`, always
    timeout-bound, `stdin=DEVNULL`.
 7. **CLI process → LLM provider.** Only `rag --answer`, explicitly opt-in, hostname printed to
@@ -287,10 +293,13 @@ if an org-level "send secrets to fork PRs" setting is ever enabled.
 - `exclude_secrets=True` is unconditional and hardcoded in every handler.
 - HTTP transport refuses to bind beyond loopback with no auth configured:
   `http_server.py:426-430`.
-- Real RS256-only JWT verification: `alg` taken from the key not the token (blocks `alg:none`/
-  HS256 confusion), constant-time bearer comparison (`hmac.compare_digest`), `iss`/`aud`/`exp`/
-  `nbf` enforced, unknown-`kid` JWKS refetch capped per kid and per refresh
-  interval (not per request), with the fetch performed outside the cache lock.
+- Real RSA-only JWT verification: RSA-only algorithm table and enforced `kty`
+  block `alg:none`/HS256 confusion; a declared JWK `alg` pins the hash and a
+  mismatched token is refused; when the JWK omits `alg` (RFC 7517), the token
+  may choose among RS256/RS384/RS512 only. Constant-time bearer comparison
+  (`hmac.compare_digest`), `iss`/`aud`/`exp`/`nbf` enforced, unknown-`kid`
+  JWKS refetch capped per kid and per refresh interval (not per request), with
+  the fetch performed outside the cache lock.
 - No outbound network in default mode; OIDC fetch only fires when explicitly configured, and is
   https-only, size-capped, timeout-bound.
 

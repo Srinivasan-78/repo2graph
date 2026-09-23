@@ -13,6 +13,8 @@ repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
 repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph explain-path <path> explain file inclusion/exclusion precedence
+repo2graph explain <edge|node|retrieval> explain edges, nodes, or retrieval
+repo2graph completion [shell] print shell completion setup script
 repo2graph version           print the version (also -v / --version)
 ```
 
@@ -35,6 +37,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
+| `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
@@ -405,3 +408,48 @@ Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `include
 tells them apart, `precedence_step` is `10` either way.
 
 
+## `explain` — graph and retrieval inspection
+
+Explain connections, node properties, and retrieval decisions:
+
+```bash
+# Explain relationship between two nodes
+repo2graph explain edge "file:src/main.py" "file:src/util.py" -o .r2g
+
+# Inspect node metadata and incoming/outgoing edges
+repo2graph explain node "sym:src/main.py::Runner.run" -o .r2g
+
+# Trace retrieval ranking, candidate seeds, and graph expansion
+repo2graph explain retrieval "how does authentication work" -o .r2g -k 5 --hops 1
+```
+
+All explain subcommands support `--json` for machine-readable output.
+
+
+## `completion` — shell tab completion
+
+Prints shell completion configuration for `bash`, `zsh`, or `fish`.
+Tab completion relies on `argcomplete`, available via the `completion` extra:
+
+```bash
+pip install "repo2graph[completion]"
+```
+
+### Setup
+
+**Bash:**
+```bash
+eval "$(repo2graph completion bash)"
+# or: eval "$(register-python-argcomplete repo2graph)"
+```
+
+**Zsh:**
+```zsh
+autoload -U bashcompinit && bashcompinit
+eval "$(repo2graph completion zsh)"
+```
+
+**Fish:**
+```fish
+repo2graph completion fish | source
+```
