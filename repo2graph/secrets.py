@@ -33,6 +33,8 @@ SECRET_EXTS = frozenset(
         ".jks",
         ".secret",
         ".secrets",
+        ".keytab",
+        ".ppk",
     }
 )
 
@@ -72,6 +74,8 @@ SECRET_EXACT_NAMES = frozenset(
     {
         ".netrc",
         ".npmrc",
+        ".pypirc",
+        ".terraformrc",
         ".dockercfg",
         ".git-credentials",
         ".pgpass",
@@ -93,6 +97,17 @@ SECRET_DIR_NAMES = frozenset(
         "secrets",
         "credentials",
     }
+)
+
+# Specific multi-segment vendor config paths that hold credentials, but whose
+# bare final component is too generic to blocklist outright -- "config.json"
+# or "hosts.yml" alone are ordinary filenames elsewhere in a repo. Matched as
+# a path *suffix* (whole path, or preceded by "/"), lowercase, "/"-normalized.
+SECRET_PATH_SUFFIXES = (
+    ".docker/config.json",
+    ".m2/settings.xml",
+    ".gradle/gradle.properties",
+    ".config/gh/hosts.yml",
 )
 
 SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
@@ -150,12 +165,33 @@ PEM_END_RE = re.compile(r"-----END [-A-Z0-9_ ]*PRIVATE KEY-----")
 PAIRED_TYPES = frozenset({"private_key"})
 
 # Content scanning patterns: (type_name, regex)
+#
+# Ordering matters where two patterns can match the *same* span: `sk-ant-...`
+# satisfies both `anthropic_key` and the looser `openai_key` (its tail is a
+# subset of `openai_key`'s character class, so both regexes consume the same
+# run and land on identical (start, end)). `scan_content_secrets` appends
+# matches in tuple order and the sort below is stable, so listing the more
+# specific vendor pattern first is what makes the redaction marker say
+# `anthropic_key` instead of the generic, technically-also-true `openai_key`.
 CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("github_fine_grained_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{16,}\b")),
+    ("gitlab_token", re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b")),
     ("slack_token", re.compile(r"\bxox[abprs]-[-0-9A-Za-z]{10,}\b")),
+    ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b")),
     ("openai_key", re.compile(r"\bsk-[-A-Za-z0-9_]{20,}\b")),
     ("google_key", re.compile(r"\bAIza[-0-9A-Za-z_]{35}\b")),
+    ("google_oauth_client_secret", re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{20,}\b")),
+    ("stripe_key", re.compile(r"\b(?:sk|rk)_live_[A-Za-z0-9]{20,}\b")),
+    ("stripe_webhook_secret", re.compile(r"\bwhsec_[A-Za-z0-9]{20,}\b")),
+    ("npm_token", re.compile(r"\bnpm_[A-Za-z0-9]{20,}\b")),
+    ("pypi_token", re.compile(r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{20,}\b")),
+    ("huggingface_token", re.compile(r"\bhf_[A-Za-z0-9]{20,}\b")),
+    ("digitalocean_token", re.compile(r"\bdop_v1_[a-f0-9]{20,}\b")),
+    ("shopify_token", re.compile(r"\bshp(?:at|ss)_[a-fA-F0-9]{20,}\b")),
+    ("sendgrid_key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
+    ("telegram_bot_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
     ("private_key", PEM_BEGIN_RE),
     (
         "jwt",
@@ -233,6 +269,13 @@ def _is_secret_path(
         return False
     p = str(path).replace("\\", "/").lower()
     parts = p.strip("/").split("/")
+
+    stripped = p.strip("/")
+    if any(
+        stripped == suffix or stripped.endswith("/" + suffix)
+        for suffix in SECRET_PATH_SUFFIXES
+    ):
+        return True
 
     single_segment_extra = (
         {
@@ -323,8 +366,14 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     # 3. High-entropy assignments
     for m in ASSIGNMENT_RE.finditer(text):
         secret = m.group(2)
-        # Avoid redacting simple identifiers, empty or trivial values
-        if not re.fullmatch(r"[a-z0-9_]+", secret):
+        # Reject simple identifiers / words -- but only *purely alphabetic*
+        # ones (plus underscore). The guard used to be `[a-z0-9_]+`, which
+        # also matches lowercase hex/alphanumeric secrets (an md5 hash, a
+        # lowercase API key) and skipped them before the digits-and-letters
+        # check below ever ran (#338). A word like `default_option` still has
+        # no digit and is still excluded; `abcdef12345678901234567890123456`
+        # now reaches the check and is flagged.
+        if not re.fullmatch(r"[a-z_]+", secret):
             digits = sum(c.isdigit() for c in secret)
             letters = sum(c.isalpha() for c in secret)
             if digits and letters:
