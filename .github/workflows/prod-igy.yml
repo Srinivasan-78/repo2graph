@@ -14,8 +14,14 @@ name: prod-igy
 # point to it: it fires only on the events below, takes no instruction from the
 # pull request, and cannot run more than PRODIGY_AI_MAX_RUNS_PER_PR times.
 'on':
+  # `edited` deliberately absent: it fires whenever a PR's title or body
+  # changes, which the author controls (including a fork author) and can
+  # pull at will. The job holds pull-requests: write, issues: write and an
+  # API key, so a trigger the author can re-fire on demand is model spend
+  # and API surface the author rate-controls, not this workflow. `opened`,
+  # `synchronize` and `reopened` are unaffected.
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -56,6 +62,15 @@ jobs:
       pull-requests: write
       issues: write
       checks: read  # check-run results for the PR head
+    env:
+      # Promoted from the app-token step's own `env:` (#375): that step's
+      # `if:` read these from a block declared on the same step, which works
+      # but depends on evaluation-order behaviour GitHub documents loosely.
+      # A job-level env removes the question -- every step's `if:` and `env:`
+      # sees the same resolved value, in the same context expressions always
+      # use for job-level env.
+      HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+      HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
 
     steps:
       # Generate prod-igy installation token if GitHub App credentials exist
@@ -66,9 +81,29 @@ jobs:
         with:
           app-id: ${{ secrets.PRODIGY_APP_ID }}
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Scope the minted token down from the App's full installation
+          # grant to exactly what this job's own `permissions:` block above
+          # allows -- an app token otherwise inherits every permission the
+          # installation has, regardless of what the job declares.
+          permission-contents: read
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read
+
+      # The GITHUB_TOKEN fallback below is silent otherwise: a revoked or
+      # unconfigured App key means every comment posts as github-actions[bot]
+      # with nothing in the run log to say so.
+      - name: Report posting identity
         env:
-          HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
-          HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Routed through env:, never interpolated straight into `run:` --
+          # the same rule examples.yml's header comment cites for issue #108.
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ -n "$APP_TOKEN" ]; then
+            echo "::notice::prod-igy is posting as the GitHub App installation token"
+          else
+            echo "::notice::prod-igy is posting as github-actions[bot] (GITHUB_TOKEN fallback: no App credentials configured or token generation failed)"
+          fi
 
       # Sparse checkout of the BASE repo: the trusted script only. Nothing from
       # the PR head is ever checked out, so fork-authored code never executes
@@ -76,6 +111,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: |
             .github/scripts/prod-igy.js
           sparse-checkout-cone-mode: false
