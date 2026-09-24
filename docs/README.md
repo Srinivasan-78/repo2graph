@@ -82,6 +82,9 @@ the reproduction command documented:
 - **[.github/SECURITY.md](../.github/SECURITY.md)** — the security model: what makes network
   calls, what is opt-in, how secrets are excluded, and how the repository itself is protected.
   (The root `SECURITY.md` is a redirect stub kept only so old links don't 404.)
+- **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — a trust boundary and a supported/not-recommended
+  verdict for each of the six deployment shapes (trusted-local CLI through multi-tenant HTTP),
+  plus a worked hardened reverse-proxy example, token/OIDC rotation, and artifact retention.
 - **[docs/PRIVACY.md](PRIVACY.md)** — what leaves your machine, what's cached, what's logged.
 - **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
 - **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP
