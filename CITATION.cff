@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://citation-file-format.github.io/1.2.0/schema.json
+#
+# Kept in sync with `pyproject.toml` by hand today; `tests/test_doc_consistency.py`'s
+# `test_citation_cff_matches_pyproject` fails the build if `version` drifts, so the two
+# cannot silently disagree. Bump this file's `version` in the same change that bumps
+# `pyproject.toml`'s.
+cff-version: 1.2.0
+message: "If you use repo2graph in your research, please cite it as below."
+title: repo2graph
+abstract: >-
+  AST-driven code graphs and zero-dependency GraphRAG for AI coding agents,
+  serving cited source over the Model Context Protocol within a hard token budget.
+type: software
+authors:
+  - given-names: Srinivasan
+    family-names: Vijayaraghavan
+repository-code: "https://github.com/Srinivasan-78/repo2graph"
+url: "https://github.com/Srinivasan-78/repo2graph"
+license: MIT
+version: 2.0.0
+keywords:
+  - code-graph
+  - graphrag
+  - retrieval-augmented-generation
+  - tree-sitter
+  - model-context-protocol
+  - static-analysis
