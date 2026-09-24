@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-24
+
 ### Added
 
 - **`repo2graph explain`** — three subcommands that answer "why did the graph say

@@ -195,7 +195,7 @@ step, no Python setup on the runner:
     artifact-name: repo-graph
 ```
 
-`@v2` follows every 2.x release; pin an exact tag (`@v2.0.0`) to upgrade by hand instead. It never
+`@v2` follows every 2.x release; pin an exact tag (`@v2.1.0`) to upgrade by hand instead. It never
 calls an LLM — `--answer` is deliberately not exposed — and it writes a job-summary table (hub
 files, CO_CHANGE hotspots, the graph delta since the last build) straight from the artifacts, so
 the shape of the map shows up in the run without downloading anything.
