@@ -21,6 +21,7 @@ from .parse import (
     Symbol,
     discover,
     parse_source,
+    sniff_header_lang,
 )
 
 # Under this many files a process pool costs more to start than it saves.
@@ -801,6 +802,8 @@ def _read_and_parse(item):
         raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
+    if lang == "c" and abspath.suffix.lower() == ".h":
+        lang = sniff_header_lang(raw)
     policy = getattr(config, "parse_policy", "best-effort")
     pf = None
     try:
@@ -971,6 +974,8 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         except OSError:
             results[rel] = (rel, lang, None)
             continue
+        if lang == "c" and abspath.suffix.lower() == ".h":
+            lang = sniff_header_lang(raw)
         digest = hashlib.sha256(raw).hexdigest()
         entry = cache.get(rel)
         read = None
@@ -1174,6 +1179,10 @@ def build(
         g.file_hashes[rel] = digest
         g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
+        if ext == ".h":
+            # Auditable record of the #377 content sniff: how many `.h` files
+            # were kept on the C grammar vs. promoted to cpp.
+            g.stats["header_files_as_cpp" if lang == "cpp" else "header_files_as_c"] += 1
         ftype = (
             "code"
             if lang
@@ -1408,7 +1417,18 @@ def build(
                 bd = base_details_map.get(base, {})
                 raw_base = bd.get("raw", base)
                 subtype = bd.get("subtype", "INHERITS")
-                clean_base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
+                # #341: strip C++/Rust "::" and PHP "\" scope/namespace
+                # separators too, not just Python/Java "." -- otherwise a
+                # namespaced base like `NS::Base` or `\App\Models\Base` never
+                # matches the bare name `by_name` indexes symbols under.
+                clean_base = (
+                    base.split("[")[0]
+                    .split("<")[0]
+                    .split("::")[-1]
+                    .split("\\")[-1]
+                    .split(".")[-1]
+                    .strip()
+                )
 
                 base_cands = by_name.get(clean_base, [])
                 local_base = [c for c in base_cands if g.nodes[c].get("path") == rel]
@@ -1477,7 +1497,13 @@ def mark_entrypoints(g: Graph):
     called, out = set(), defaultdict(list)
     for e in g.edges:
         if e["type"] == "CALLS":
-            called.add(e["dst"])
+            # #342: a self-recursive function's own CALLS edge (src == dst)
+            # must not disqualify it from being an entrypoint root -- nothing
+            # *else* calls it. `out` still records the self-edge so `_reach`
+            # sees it; it is just harmless there since `start` is already
+            # in `seen` before the BFS looks at its own outgoing edges.
+            if e["src"] != e["dst"]:
+                called.add(e["dst"])
             out[e["src"]].append(e["dst"])
     nested = {
         e["dst"]

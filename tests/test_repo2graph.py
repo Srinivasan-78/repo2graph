@@ -3043,6 +3043,81 @@ def test_callee_name_macro_and_fn_pointers():
     assert "my_macro" in pf_rs.symbols[0].calls
 
 
+def test_iss344_callee_name_resolves_php_namespace_separator():
+    """#344: a PHP namespaced call must resolve to its bare function name.
+
+    `\\App\\Utils\\compute()` is a fully-qualified call outside any class; its
+    `function` field text carries the leading namespace segments, and without
+    "\\" in _callee_name's separator tuple those segments survived into the
+    recorded callee, which then never matched `graph.py`'s by-bare-name index.
+    """
+    src = b"<?php\nfunction test() {\n    \\App\\Utils\\compute();\n    Sub\\helper();\n}\n"
+    pf = parse_source(src, "php")
+    calls = pf.symbols[0].calls
+    assert calls == ["compute", "helper"]
+
+
+def test_iss341_inherits_edges_for_cpp_scope_and_php_namespace_bases(tmp_path):
+    """#341: `::`- and `\\`-qualified base classes must resolve to their node.
+
+    Uses class names outside COMMON_STDLIB_BASES (`Base`/`Model`/... are
+    deliberately unresolved unless local/imported -- unrelated to this bug)
+    so the assertion isolates the separator-stripping fix.
+    """
+    cpp_dir = tmp_path / "cpp"
+    cpp_dir.mkdir()
+    (cpp_dir / "ns.h").write_text("namespace NS { class Widget {}; }\n")
+    (cpp_dir / "derived.cpp").write_text('#include "ns.h"\nclass Sub : public NS::Widget {};\n')
+    g_cpp = build(cpp_dir)
+    assert ("sym:derived.cpp::Sub", "sym:ns.h::NS.Widget") in edges_of(g_cpp, "INHERITS")
+
+    php_dir = tmp_path / "php"
+    php_dir.mkdir()
+    (php_dir / "model.php").write_text("<?php\nnamespace App\\Models;\nclass BaseModel {}\n")
+    (php_dir / "derived.php").write_text(
+        "<?php\nclass Derived extends \\App\\Models\\BaseModel {}\n"
+    )
+    g_php = build(php_dir)
+    assert ("sym:derived.php::Derived", "sym:model.php::BaseModel") in edges_of(g_php, "INHERITS")
+
+
+def test_iss342_self_recursive_function_is_still_an_entrypoint_root(tmp_path):
+    """#342: a self-CALLS edge (src == dst) must not disqualify a root.
+
+    `entry` calls only itself and has no external caller, so it must still be
+    marked `entrypoint`. `helper`, called by `other`, must not be -- proving
+    the fix did not also stop *external* calls from marking a destination.
+    """
+    (tmp_path / "m.py").write_text(
+        "def entry():\n    return entry()\n\n\ndef helper():\n    pass\n\n\ndef other():\n    helper()\n"
+    )
+    g = build(tmp_path)
+    entry = {nid for nid, n in g.nodes.items() if n.get("entrypoint")}
+    assert "sym:m.py::entry" in entry
+    assert "sym:m.py::helper" not in entry
+    assert ("sym:m.py::entry", "sym:m.py::entry") in edges_of(g, "CALLS")
+
+
+def test_iss377_header_content_sniff_picks_c_or_cpp(tmp_path):
+    """#377: `.h` must be parsed as cpp when its content says so, else c."""
+    (tmp_path / "c_style.h").write_text(
+        "struct Point { int x; int y; };\nvoid move_point(struct Point *p);\n"
+    )
+    (tmp_path / "cpp_style.h").write_text(
+        "#include <string>\nnamespace ns { class Foo { public: void bar(); }; }\n"
+    )
+    g = build(tmp_path)
+    assert g.nodes["file:c_style.h"]["lang"] == "c"
+    assert g.nodes["file:cpp_style.h"]["lang"] == "cpp"
+    # A C .h yields no class node under the C grammar; the cpp-sniffed one does.
+    assert "sym:cpp_style.h::ns.Foo" in g.nodes
+    assert not any(
+        n.get("path") == "c_style.h" and n.get("kind") == "class" for n in g.nodes.values()
+    )
+    assert g.stats["header_files_as_c"] == 1
+    assert g.stats["header_files_as_cpp"] == 1
+
+
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
     """Verify atomic_write automatically creates missing parent directories."""
     from repo2graph.layout import atomic_write
