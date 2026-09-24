@@ -2,6 +2,60 @@
 
 Everything the CLI does is available as a library.
 
+## The stable surface
+
+These six calls are the public, versioned API — the CLI, the GitHub Action and the MCP server are
+all thin wrappers over exactly these. Anything else in `repo2graph/` (a leading-underscore name, or
+a module not listed here) is internal and can change shape between releases without that counting
+as a breaking change.
+
+| Task | Call | Module |
+|---|---|---|
+| Build | `build(root, ...)` | `repo2graph.graph` (also `repo2graph.build`) |
+| Load an index | `Index(outdir)` | `repo2graph.query` |
+| Retrieve | `Index.retrieve(query, ...)` | `repo2graph.query` |
+| Pack context | `Index.pack_context(query, ...)` | `repo2graph.query` |
+| Export | `dump_all(g, chunks=..., outdir=..., ...)` | `repo2graph.export` |
+| Validate artifacts | `verify_artifacts(outdir)` | `repo2graph.integrity` |
+
+`repo2graph.schema` carries `TypedDict` definitions for the shapes these calls read and return —
+`NodeRecord`, `EdgeRecord`, `ChunkRecord`, `RetrievalResult`, `PackResult`, `ManifestRecord` and
+friends — for annotating your own code against a `nodes.jsonl`/`edges.jsonl`/`chunks.jsonl`/
+`manifest.json` line or a `retrieve()`/`pack_context()` result. They document a contract; the
+functions above keep returning plain `dict`s at runtime, so import the types for your own
+annotations rather than expecting an isinstance check:
+
+```python
+from repo2graph.schema import ChunkRecord, RetrievalResult, PackResult
+from repo2graph.query import Index
+
+idx = Index(".r2g")
+results: list[RetrievalResult] = idx.retrieve("how does session auth work?")
+pack: PackResult = idx.pack_context("how does session auth work?")
+
+def cite(chunk: ChunkRecord) -> str:
+    return f"{chunk['path']}:{chunk['start_line']}-{chunk['end_line']}"
+```
+
+`tests/test_schema.py` builds a real index and checks that every field a `TypedDict` here declares
+required actually shows up on a real record — so a field renamed in `chunks.py`/`export.py` without
+a matching edit to `repo2graph/schema.py` fails CI rather than silently drifting.
+
+## Validating a received index
+
+`repo2graph doctor` on a directory calls this internally; use it directly when you have an index
+you did not build yourself (an artifact download, a `graph` branch checkout) and want a status
+before trusting it:
+
+```python
+from repo2graph.integrity import verify_artifacts
+
+report = verify_artifacts(".r2g")
+print(report.status)  # "valid" | "corrupt" | "stale" | "incompatible" | "partial"
+if not report.is_valid:
+    print(report.errors, report.warnings)
+```
+
 ## Build, export, fetch, draw
 
 ```python
