@@ -10,6 +10,10 @@ is the policy and the reporting route, [PRIVACY.md](PRIVACY.md) is what happens 
 [ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md) covers running it for an organization. This
 one covers *why* those say what they say.
 
+Its operator-facing companion is [deployment-security.md](deployment-security.md), which takes the
+trust boundaries below as given and issues a supported / not-recommended verdict for each of the
+six shapes repo2graph can be run in.
+
 ---
 
 ## 1. Assets

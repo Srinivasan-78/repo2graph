@@ -97,6 +97,10 @@ the reproduction command documented:
 - **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — assets, trust boundaries, what an attacker could
   try against each surface, what stops it, and what is explicitly out of scope. Every open security
   gap is named with its issue number.
+- **[docs/deployment-security.md](deployment-security.md)** — a trust boundary and a
+  supported/not-recommended verdict for each of the six deployment shapes (trusted-local CLI
+  through multi-tenant HTTP), plus a worked hardened reverse-proxy example, token/OIDC rotation,
+  and artifact retention.
 - **[docs/PRIVACY.md](PRIVACY.md)** — whether source ever leaves the machine (one path does, three
   others open a connection carrying none of it), what is written where — including the three
   locations outside `-o` — what is logged, and how to delete all of it.
