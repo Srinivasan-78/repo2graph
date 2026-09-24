@@ -1,0 +1,129 @@
+{
+  "discovery": "git",
+  "skipped_gitignore": 21,
+  "skipped_dotfile": 1,
+  "skipped_binary": 12,
+  "skipped_too_large": 6,
+  "files": 204,
+  "edge:CONTAINS": 227,
+  "parsed": 74,
+  "parse_errors": 0,
+  "symbol:function": 1875,
+  "edge:DEFINES": 1984,
+  "edge:IMPORTS": 760,
+  "imports_unresolved": 592,
+  "imports_resolved": 558,
+  "symbol:class": 111,
+  "edge:CALLS_EXTERNAL": 4472,
+  "calls_external": 4472,
+  "edge:CALLS": 4596,
+  "calls_scoped": 3177,
+  "calls_unique_global": 308,
+  "calls_ambiguous": 358,
+  "ambiguous_calls": 358,
+  "unresolved_bases": 17,
+  "edge:INHERITS": 4,
+  "cochange_sampled_commits": 500,
+  "cochange_min_pairs": 3,
+  "cochange_commits_skipped": 6,
+  "edge:CO_CHANGE": 281,
+  "entrypoints": 1145,
+  "nodes": 2755,
+  "edges": 12324,
+  "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
+  "redacted_secret_chunks": 31,
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:repo2graph/answer.py::_writer.write_text",
+      "label": "_writer.write_text",
+      "in_degree": 146
+    },
+    {
+      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
+      "label": "ResultCache.get",
+      "in_degree": 129
+    },
+    {
+      "node_id": "sym:repo2graph/cli.py::main",
+      "label": "main",
+      "in_degree": 120
+    },
+    {
+      "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
+      "label": "TaskManager.get",
+      "in_degree": 107
+    },
+    {
+      "node_id": "sym:tests/test_http_transport.py::Server.get",
+      "label": "Server.get",
+      "in_degree": 99
+    },
+    {
+      "node_id": "sym:repo2graph/query.py::Index",
+      "label": "Index",
+      "in_degree": 83
+    },
+    {
+      "node_id": "sym:tests/test_mcp.py::mcp_module",
+      "label": "mcp_module",
+      "in_degree": 67
+    },
+    {
+      "node_id": "sym:repo2graph/export.py::path",
+      "label": "path",
+      "in_degree": 65
+    },
+    {
+      "node_id": "sym:tests/test_audit.py::test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
+      "label": "test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
+      "in_degree": 59
+    },
+    {
+      "node_id": "sym:tests/test_auth.py::claims",
+      "label": "claims",
+      "in_degree": 57
+    }
+  ],
+  "languages": {
+    "python": 73,
+    "md": 53,
+    "json": 41,
+    "yml": 17,
+    "html": 5,
+    "yaml": 2,
+    "txt": 2,
+    "toml": 2,
+    "javascript": 1,
+    "lock": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "1",
+  "built_at_commit": "1134e3e",
+  "co_change_hotspots": [
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 24
+    },
+    {
+      "file_a": "repo2graph/export.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 22
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/export.py",
+      "weight": 21
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 20
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/graph.py",
+      "weight": 19
+    }
+  ]
+}
