@@ -34,8 +34,8 @@ past state.
 Route back to the work the 2026-09 whole-repo audit found but did not fix in the
 first batch. Full detail lives in `docs/BUILD_STATE.graphrag-2026-09.md`, the
 archived state file from that run (`## Plan` MASTER ISSUE TABLE = all 53
-findings; `## Improve` = the grouped backlog and loop retro). `BUILD_STATE.md` at
-the repo root always holds the *current* build-app run, not that one.
+findings; `## Improve` = the grouped backlog and loop retro). `docs/BUILD_STATE.md`
+always holds the *current* build-app run, not that one.
 
 **Epic:** [#31 — Epic: post-audit backlog](https://github.com/Srinivasan-78/repo2graph/issues/31)
 
