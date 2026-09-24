@@ -73,7 +73,7 @@ or a released package, independent of anything the tool does at runtime:
   resolved and stale approvals dismissed on push.
 - **Twelve status checks gate every merge**, all of which must pass before the PR is mergeable:
   `tests` across the full matrix (`ubuntu-latest`, `windows-latest`, `macos-latest` × Python 3.10,
-  3.11, 3.12), plus `packaging` (the no-extra refusal and a real stdio MCP round trip),
+  3.11, 3.12, 3.13), plus `packaging` (the no-extra refusal and a real stdio MCP round trip),
   `action` (the composite Action run against this repository) and `windows-cp1252-pipe` (the
   non-UTF-8 console regression leg). `reuse` — SPDX/licence-header compliance via
   [REUSE.toml](../REUSE.toml) — runs on every push in `provenance.yml` but is not one of the
