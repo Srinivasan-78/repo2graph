@@ -95,4 +95,6 @@ the reproduction command documented:
 - **[AGENTS.md](../AGENTS.md)** — repo-specific rules that override default behavior (encoding,
   text slicing, budget models) — read before editing source under `repo2graph/`.
 - **[docs/publishing.md](publishing.md)** — how a release ships to PyPI and the Marketplace.
+- **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
+  fallback order, and the release story that pairs it with the PyPI release.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
