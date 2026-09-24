@@ -13,6 +13,8 @@ updates:
       # a major is a decision and should not ride in on a group merge.
       pip-minor-patch:
         update-types: ["minor", "patch"]
+    cooldown:
+      default-days: 7
   # github-actions: every `uses:` in .github/workflows. Dependabot rewrites the
   # pinned SHA *and* the tag comment beside it, which is what keeps SHA pinning
   # maintainable rather than a one-off that rots.
@@ -26,3 +28,5 @@ updates:
     groups:
       github-actions-minor-patch:
         update-types: ["minor", "patch"]
+    cooldown:
+      default-days: 7
