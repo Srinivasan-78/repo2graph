@@ -37,6 +37,23 @@ pip install "repo2graph[mcp]"
 
 Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
 
+Prefer `npx`? [`repo2graph-mcp` on npm](https://www.npmjs.com/package/repo2graph-mcp) is a thin
+launcher that resolves `uvx` (falling back to an installed `repo2graph-mcp`, then `pipx`) and hands
+off to it — the server itself is still this same Python package, not a port. See
+[`npm/README.md`](../npm/README.md) for the resolution order and what it does when none of those is
+on `PATH`.
+
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "npx",
+      "args": ["-y", "repo2graph-mcp", "/path/to/project"]
+    }
+  }
+}
+```
+
 The extra pins `mcp>=1.0,<3.0`: `serve()` supports both the 1.x `Server`
 decorator API and the 2.x registration API it was replaced with. If neither is
 what you have installed, `repo2graph-mcp` says so and names what to install

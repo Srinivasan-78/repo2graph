@@ -127,6 +127,8 @@ the reproduction command documented:
   text slicing, budget models) — read before editing source under `repo2graph/`.
 - **[docs/publishing.md](publishing.md)** — the branch model, the pre-release checklist, and how a
   release ships to PyPI, the MCP Registry and the Marketplace.
+- **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
+  fallback order, and the release story that pairs it with the PyPI release.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
 
 ## Community and governance
