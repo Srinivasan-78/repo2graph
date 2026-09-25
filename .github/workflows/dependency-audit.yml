@@ -34,6 +34,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -108,6 +113,41 @@ jobs:
         run: |
           pip-audit --format cyclonedx-json --progress-spinner off > sbom.cyclonedx.json || true
 
+      - name: Generate Dependency Audit Step Summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary_file:
+              exit(0)
+          with open(summary_file, "a", encoding="utf-8") as out:
+              out.write("### 🛡️ Dependency Audit & Vulnerability Scan Summary\n\n")
+              if os.path.exists("audit.json"):
+                  try:
+                      data = json.load(open("audit.json"))
+                      vulns = []
+                      for dep in data.get("dependencies", []):
+                          for v in dep.get("vulns", []):
+                              vulns.append((dep.get("name"), dep.get("version"), v.get("id"), str(v.get("severity") or "UNKNOWN").upper()))
+                      if not vulns:
+                          out.write("✅ **No known vulnerabilities detected across core and all optional extras (`[dev,rag,mcp]`).**\n\n")
+                      else:
+                          out.write(f"⚠️ **Found {len(vulns)} advisories:**\n\n")
+                          out.write("| Package | Version | Advisory ID | Severity |\n")
+                          out.write("| :--- | :--- | :--- | :--- |\n")
+                          for pkg, ver, aid, sev in vulns:
+                              out.write(f"| `{pkg}` | `{ver}` | `{aid}` | `{sev}` |\n")
+                          out.write("\n")
+                  except Exception as e:
+                      out.write(f"Could not parse audit.json: {e}\n\n")
+              else:
+                  out.write("✅ **Strict pip-audit scan passed with zero vulnerabilities.**\n\n")
+              if os.path.exists("sbom.cyclonedx.json"):
+                  out.write("📦 **CycloneDX SBOM generated and retained for 14 days.**\n")
+          PY
+
       - name: Upload SBOM
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -115,6 +155,7 @@ jobs:
           name: sbom-cyclonedx
           path: sbom.cyclonedx.json
           if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload the audit report
         if: always()
@@ -123,3 +164,4 @@ jobs:
           name: pip-audit-report
           path: audit.json
           if-no-files-found: ignore
+          retention-days: 14

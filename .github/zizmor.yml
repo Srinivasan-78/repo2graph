@@ -17,7 +17,7 @@ rules:
       # explicitly-minted, permission-scoped App token) and the job ends
       # immediately after the push, so the persisted credential is never
       # live longer than the push it exists for.
-      - lockfile.yml:41    # check-lockfile: `git push` (auto_commit, dispatch-only)
+      - lockfile.yml:45    # check-lockfile: `git push` (auto_commit, dispatch-only)
       - publish.yml:85     # prepare-release: `git push origin refs/tags/$tag`
       - publish.yml:415    # release: `git push -f origin refs/tags/$major`
 
@@ -46,7 +46,7 @@ rules:
       # jobs exist to smoke-test the action at the exact commit checked out,
       # not at a separate pinned ref that could drift from what the PR
       # actually changed.
-      - ci.yml:265         # action: smoke-tests the composite action itself
+      - ci.yml:313         # action: smoke-tests the composite action itself
       - index-repo.yml:57  # index: dispatch-driven build against a target repo
       - self-index.yml:34  # index: keeps this repo's own graph fresh
 

@@ -24,6 +24,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
 jobs:
   regenerate:
     runs-on: ubuntu-latest
@@ -59,3 +63,16 @@ jobs:
             examples/
             benchmarks/results.json
           retention-days: 14
+
+      - name: Generate Examples Step Summary
+        if: always()
+        shell: bash
+        env:
+          INPUT_REPO: ${{ inputs.repo }}
+        run: |
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ### 📁 Regenerate Real-World Examples Summary
+
+          - **Target Repository**: \`$INPUT_REPO\`
+          - **Artifact Generated**: \`regenerated-examples\` (retained for 14 days)
+          EOF
