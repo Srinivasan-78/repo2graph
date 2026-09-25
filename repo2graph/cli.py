@@ -1664,7 +1664,10 @@ def main(argv=None):
     )
     imp.add_argument(
         "-o",
+        "-i",
         "--out",
+        "--index",
+        dest="out",
         default=".r2g",
         help="path to index directory (default: .r2g)",
     )

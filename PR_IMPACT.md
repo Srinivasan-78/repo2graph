@@ -311,8 +311,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          COMMENT_BODY=$(cat .impact-reports/pr-comment.md)
-          gh pr comment "$PR_NUMBER" --body "$COMMENT_BODY" || true
+          gh pr comment "$PR_NUMBER" --body-file .impact-reports/pr-comment.md || true
 ```
 
 ---
