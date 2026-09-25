@@ -39,7 +39,13 @@ def test_launcher_exists_and_is_executable_js():
     assert LAUNCHER_PATH.is_file(), f"launcher missing: {LAUNCHER_PATH}"
     src = _source()
     assert src.startswith("#!/usr/bin/env node"), "launcher needs a node shebang"
+    # REUSE-IgnoreStart
+    # `reuse lint` reads to end of line after the tag, so the bare literal
+    # would be parsed as the expression `MIT" in src` and fail the provenance
+    # gate. These markers are REUSE's own documented escape for a file that
+    # mentions the tag without carrying it.
     assert "SPDX-License-Identifier: MIT" in src
+    # REUSE-IgnoreEnd
 
 
 def test_launcher_spawns_batch_shims_through_a_shell():
