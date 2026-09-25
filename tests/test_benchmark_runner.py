@@ -1,8 +1,14 @@
 """Tests for the repo2graph benchmark and regression corpus suite."""
 
 import json
+import sys
+from pathlib import Path
 
-from scripts.benchmark_runner import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.benchmark_runner import (  # noqa: E402
     CORPUS_DIR,
     TASKS_FILE,
     estimate_tokens,
