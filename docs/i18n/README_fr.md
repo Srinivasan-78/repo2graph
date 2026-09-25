@@ -2,7 +2,10 @@
 
 # repo2graph
 
-**Graphes de code pilotés par AST et GraphRAG sans dépendance, pour les agents de codage IA et les humains**
+**Donner aux agents de codage des réponses fiables et sourcées sur des bases de code inconnues.**
+
+Posez une question à un dépôt ; recevez le code source qui y répond, chaque bloc estampillé du
+fichier et de la plage de lignes dont il provient.
 
 <p align="center">
   <a href="../../README.md">English</a> ·
@@ -57,18 +60,23 @@
 
 ## ⚡ Qu'est-ce que repo2graph ?
 
-Lorsqu'un agent de codage IA recherche dans une base de code avec grep ou une simple correspondance
-de mots-clés, il déverse soit des fichiers entiers dans son contexte — épuisant le budget de tokens
-et perdant toute structure —, soit passe complètement à côté de l'implémentation parce que la
-requête utilisait des mots différents du code.
+Un agent lâché dans une base de code qu'il n'a jamais vue n'a que deux mauvaises options. S'il
+grep un mot, soit il inonde son contexte de fichiers entiers, soit il ne trouve rien parce que le
+code nomme la chose autrement que vous. S'il devine à partir de ses données d'entraînement, il
+écrit quelque chose d'assuré et de faux. Dans les deux cas, vous ne pouvez pas savoir laquelle des
+deux vient de se produire.
 
-**repo2graph** analyse le code source avec [tree-sitter](https://tree-sitter.github.io/tree-sitter/)
-pour construire un graphe de relations de code réelles — `CALLS` (appels), `IMPORTS` (imports),
-`INHERITS` (héritage), `DEFINES` (définitions), `CO_CHANGE` (co-modifications) — et expose ce
-graphe aux agents via le **Model Context Protocol (MCP)**, ou l'empaquette dans un contexte markdown
-borné en tokens pour n'importe quel LLM. Chaque bloc retourné porte une ancre de citation exacte
-`[cite: chemin:début-fin]`, si bien que les réponses sont traçables jusqu'à la source plutôt que
-paraphrasées à partir d'une supposition.
+**repo2graph répond aux questions sur un dépôt avec le code source de ce dépôt.** Demandez
+« comment une requête est-elle authentifiée » et vous obtenez la fonction qui le fait, celles qui
+l'appellent et celles qu'elle appelle — chaque bloc précédé de `[cite: chemin:début-fin]`, de sorte
+que chaque affirmation de la réponse est à un clic de la ligne dont elle provient. Si la réponse est
+fausse, la citation vous montre où elle a dérapé. C'est tout l'intérêt.
+
+Il y parvient en **lisant** le code plutôt qu'en le cherchant : une seule passe d'analyse consigne
+qui appelle qui, qui importe quoi et quelle classe hérite de quelle autre, et la recherche suit ces
+liens au lieu de faire correspondre davantage de texte. Le résultat part directement dans Claude
+Code, Cursor ou tout autre client **Model Context Protocol**, ou se compacte en un contexte markdown
+à plafond de tokens strict pour n'importe quel autre LLM.
 
 ```mermaid
 flowchart LR
@@ -93,6 +101,40 @@ un dossier et ça fonctionne.
 `graph.html` est un fichier unique et autonome — pas de serveur, pas d'internet requis, glissez
 pour vous déplacer, faites défiler pour zoomer, cliquez sur un nœud pour inspecter son code et ses
 voisins.
+
+## 👥 À qui ça s'adresse
+
+| Vous êtes… | Le problème | La première chose à lancer |
+|---|---|---|
+| **🧭 Nouveau sur une base de code inconnue** | La première semaine passe à lire des fichiers pour découvrir lesquels comptent. | `uvx repo2graph build . -o .r2g`, puis ouvrez `.r2g/human/graph.html` et partez des fichiers pivots plutôt que de la racine. Ensuite, posez des questions entières : `repo2graph rag "<votre question>" -o .r2g`. |
+| **🤖 Utilisateur d'un agent de codage** | L'agent grep, tire trois fichiers entiers et modifie quand même le mauvais. | `claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .` — des blocs sourcés sous un plafond strict de 12k tokens plutôt que des déversements de fichiers. Les secrets sont exclus sans condition ; aucun drapeau ne désactive cela. |
+| **🔍 Relecteur d'une pull request** | Le diff fait 40 lignes ; le rayon d'impact est inconnu. | `repo2graph build . -o .r2g --git-history 500`, puis `repo2graph explain node "sym:src/auth.py::verify" -o .r2g` : appelants, importateurs, sous-classes — et les fichiers que l'historique git dit toujours modifiés en même temps (`CO_CHANGE`). |
+| **🌱 Mainteneur open source** | Chaque nouveau contributeur pose la même question : « par où je commence ? ». | Ajoutez la GitHub Action avec `commit-branch: graph` : une carte fraîche et navigable commitée à chaque push. Le résumé du job liste les fichiers pivots, les points chauds de co-modification et le delta du graphe depuis le dernier build. |
+
+## 🔎 Pourquoi repo2graph plutôt que grep ou la recherche vectorielle ?
+
+Les deux restent de la partie — `repo2graph` amorce chaque requête avec BM25, et les vecteurs
+denses sont une fusion optionnelle. La différence porte sur ce qui se passe *après* la première
+correspondance.
+
+| | **grep / ripgrep** | **Recherche par embeddings** | **repo2graph** |
+|---|---|---|---|
+| **Trouve** | la chaîne exacte | du texte qui se lit de façon similaire | le symbole, puis tout ce qui y est raccordé |
+| **Des mots différents de ceux du code** | ne renvoie rien | s'en sort | des amorces BM25, puis des sauts de graphe jusqu'à du code que la requête n'a jamais nommé |
+| **« Qui appelle ceci ? »** | sans réponse — une occurrence en commentaire se classe comme la définition | sans réponse — les voisins ne sont pas dans l'embedding | des arêtes `CALLS`, avec direction et `confidence` |
+| **« Qu'est-ce qui casse si je change ça ? »** | relire chaque occurrence à la main | non représenté | appelants, importateurs et sous-classes en un saut |
+| **Ce qui revient** | des lignes correspondantes, ou des fichiers entiers que l'agent déverse ensuite | les k morceaux les plus proches, appelants non récupérés | le code source qui répond, chaque bloc en-tête `[cite: chemin:début-fin]` |
+| **Coût en tokens** | non borné — l'agent décide de la quantité de fichier à lire | non borné | plafond strict sur *tout* le paquet, re-mesuré avant retour |
+| **« Quels fichiers changent ensemble ? »** | — | — | `CO_CHANGE`, extrait de l'historique git |
+| **Mise en place** | aucune | construction d'index + un modèle d'embedding d'environ 90 Mo | une passe d'analyse, sans modèle, sans clé d'API, sans serveur de langage |
+| **Classement explicable** | sans objet | un nombre cosinus | `repo2graph explain retrieval "<question>"` nomme l'amorce et l'arête qui a fait entrer chaque bloc |
+
+**Prenez grep** quand vous voulez toutes les occurrences d'une chaîne littérale — une clé de
+configuration, un message d'erreur, un TODO. repo2graph n'a aucune connaissance particulière des
+littéraux de chaîne et ne fera pas mieux.
+**Prenez repo2graph** quand la question porte sur des relations : qui appelle ceci, qu'est-ce qui
+casse si je le change, comment les données vont de A à B. Version longue :
+**[docs/why-graph.md](../why-graph.md)** (en anglais).
 
 ## 🚀 Démarrage rapide (en moins de 30 secondes)
 
@@ -145,12 +187,47 @@ de configuration selon la plateforme et le client.
 | **Graphe déterministe, pas une simple recherche par embeddings** | Appelants, appelés, imports et hiérarchies de classes résolus à partir de l'AST réel — pas une supposition par plus proche voisin. |
 | **Recherche hybride** | BM25 + expansion par voisinage de graphe par défaut ; fusion vectorielle dense optionnelle (`repo2graph embed`) sans dépendance supplémentaire requise. |
 | **Plafonds de tokens appliqués deux fois** | Le budget de `pack_context()` borne le markdown rendu *dans son intégralité*, pas seulement le texte des morceaux — et le serveur MCP écrête et remesure avant de renvoyer. |
-| **16 grammaires, traitement complet** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala et Bash bénéficient de l'analyse fonctions/classes/appels — 28 extensions de fichiers au total. Tout le reste apparaît quand même comme fichiers sur la carte. |
+| **17 grammaires, traitement complet** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash et Lua bénéficient de l'analyse fonctions/classes/appels — 29 extensions de fichiers au total. Tout le reste apparaît quand même comme fichiers sur la carte. |
 | **Natif CI** | Publié en tant que GitHub Action — versionnez un graphe à jour à côté de votre code à chaque push. |
 | **Local par défaut** | `build`, `query`, `rag` et le serveur MCP n'effectuent aucun appel réseau. La seule exception optionnelle (`rag --answer`) affiche le fournisseur et l'hôte avant tout envoi. |
 | **Export vers de vrais outils de graphe** | `graph.graphml` (yEd, Gephi, NetworkX) et `graph.cypher` (Neo4j, Memgraph) sont générés à chaque build, sans étape supplémentaire. |
 
-## 🆚 Comparaison
+## ⚖️ Ce qu'il fait — et ce qu'il ne fait pas
+
+Un outil de recherche qui se survend est pire que pas d'outil du tout, parce qu'on cesse de
+vérifier ses réponses. Donc, sans détour :
+
+**Il fait**
+
+- Renvoyer le **code source qui répond à une question**, sourcé en `chemin:début-fin`, dans un
+  budget de tokens qu'il **impose** au lieu de le demander.
+- Résoudre **appelants, appelés, imports et hiérarchies de classes** à partir d'une vraie analyse du
+  code, parcourables dans les deux sens depuis n'importe quel symbole.
+- Extraire **`CO_CHANGE`** de l'historique git — les fichiers sans cesse modifiés ensemble, ce
+  qu'aucun analyseur ne peut deviner.
+- Fonctionner **entièrement en local**, sans modèle, sans compte et sans appel réseau, en CLI, en CI
+  et via MCP.
+- **Se dégrader proprement** : un langage non analysé apparaît quand même comme nœud de fichier et
+  reste récupérable en tant que texte ; un index vectoriel manquant retombe sur BM25 au lieu
+  d'échouer.
+
+**Il ne fait pas**
+
+| Limite | Ce que cela signifie en pratique |
+|---|---|
+| **Résoudre les appels par type** | Les appels sont appariés par **nom**, avec un cadrage même-classe / même-fichier / imports pour départager. Quand le cadrage n'isole pas une cible, l'appel se déploie en jusqu'à 5 arêtes candidates à `confidence = 1/n`, marquées `ambiguous`. Filtrez sur `confidence == 1.0` si la certitude prime sur le rappel — 4,6 % à 21,3 % des arêtes `CALLS` sont ambiguës sur les cinq dépôts de référence. |
+| **Voir la répartition dynamique** | Une recherche par clé de chaîne, un registre de plugins, une répartition à la `getattr`, un appel virtuel résolu à l'exécution — rien de tout cela n'est écrit comme syntaxe, donc aucune arête n'est tracée. **L'absence de flèche ne prouve pas l'absence d'appel.** |
+| **Voir la réflexion ou les imports calculés** | `importlib.import_module(name)`, la réflexion Java, un `import()` dynamique à spécificateur calculé. Rien de littéral à résoudre, donc rien à relier. |
+| **Suivre l'injection de dépendances jusqu'à l'implémentation** | Un conteneur d'injection relie une interface à une classe concrète à l'exécution. Le site d'appel ne nomme que la méthode de l'interface : l'arête se pose donc sur la déclaration (ou se déploie sur toutes les implémentations de même nom), jamais sur la classe réellement injectée. Parcourez `INHERITS` pour énumérer les candidates. |
+| **Distinguer le code généré** | Un `.pb.go`, un `.js` bundlé, un client généré — tout est indexé exactement comme du code écrit à la main, sans aucun marqueur. Ils peuvent dominer le compte de symboles sans représenter une ligne que quiconque maintient. Excluez-les avec `--exclude`. |
+| **Remarquer que vos fichiers ont changé** | L'index est un instantané de l'arbre à partir duquel il a été construit ; rien ne surveille le système de fichiers. Modifiez un fichier et le graphe continue de décrire l'ancien. Reconstruisez (`build --incremental` ne réanalyse que ce qui a bougé), ou laissez la GitHub Action reconstruire à chaque push. `repo2graph doctor` vérifie l'*intégrité* de l'index et la dérive des vecteurs — pas si votre copie de travail a avancé. |
+| **Franchir une frontière de langage** | Python appelant du C++ via des bindings générés devient une arête `CALLS_EXTERNAL`, pas un lien vers la fonction C++. C'est une limite structurelle de l'analyse statique sur source seule, pas un défaut d'appariement. |
+| **Analyser proprement du C/C++ chargé en macros** | tree-sitter émet des nœuds `ERROR` autour des macros non expansées ; un repli sur le préprocesseur `cpp` en récupère une partie. Attendez-vous à un `parse_errors` non négligeable dans `stats.json` et lisez-le comme un **plancher** des symboles manqués. |
+
+Chacun de ces points est mesuré, pas affirmé — les taux, les dépôts sur lesquels ils l'ont été et
+les commandes de reproduction sont dans **[docs/limitations.md](../limitations.md)** (en anglais).
+
+## 🆚 Comparaison avec les autres outils de graphe
 
 Plusieurs outils construisent un graphe à partir d'une base de code. Ce qui les distingue, c'est ce
 qui *revient* quand on pose une question — une image, un sous-graphe, ou le code lui-même.
@@ -162,7 +239,7 @@ qui *revient* quand on pose une question — une image, un sous-graphe, ou le co
 | **Budget de tokens** | plafond strict sur *tout* le paquet, remesuré avant renvoi (limite de 12k via MCP) | pas une couche d'empaquetage | sans objet | généralement illimité |
 | **Arêtes issues de l'historique git** | `CO_CHANGE`, via `--git-history` | — | — | — |
 | **Fonctionne sans assistant, sans modèle, sans compte** | oui — CLI, MCP, ou la GitHub Action | la passe sur le code est locale ; la passe docs/médias utilise un modèle | nécessite Obsidian desktop 1.7.2+ | variable |
-| **Corpus** | code dans 16 grammaires analysées, tout autre fichier en texte | code dans ~40 langages, plus documents, PDF, images, vidéo | TS/TSX/JS/Python analysés, imports seuls pour 8 autres | n'importe quoi |
+| **Corpus** | code dans 17 grammaires analysées, tout autre fichier en texte | code dans ~40 langages, plus documents, PDF, images, vidéo | TS/TSX/JS/Python analysés, imports seuls pour 8 autres | n'importe quoi |
 
 **Tournez-vous vers [Graphify](https://github.com/Graphify-Labs/graphify)** quand le graphe lui-même est le produit : détection de
 communautés, plus court chemin entre deux concepts, et vos PDF et documents de conception dans le
@@ -196,6 +273,12 @@ avec authentification bearer ou OIDC et journal d'audit :
 **[docs/ENTERPRISE_DEPLOYMENT.md](../ENTERPRISE_DEPLOYMENT.md)** (en anglais).
 
 ## 📐 Architecture et économie des tokens
+
+La couche de recherche est un pipeline **GraphRAG** : [tree-sitter](https://tree-sitter.github.io/tree-sitter/)
+analyse le source en un graphe typé, BM25 choisit les morceaux d'amorce, et c'est ensuite le
+**graphe** — et non une similarité textuelle supplémentaire — qui décide de la façon de dépenser le
+budget. Les vecteurs denses (`repo2graph embed`) peuvent fusionner dans le classement des amorces ;
+rien en aval ne les exige.
 
 - **Nœuds** : `repo`, `dir`, `file`, `symbol` (fonction/méthode/classe/struct/trait/interface/type),
   `module` (dépendance externe), `external` (une cible d'appel non résolue).

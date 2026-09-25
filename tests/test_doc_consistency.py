@@ -19,6 +19,35 @@ ACTION_YML_PATH = REPO_ROOT / "action.yml"
 ACTION_DOC_PATH = REPO_ROOT / "docs" / "github-action.md"
 MCP_DOC_PATH = REPO_ROOT / "docs" / "mcp.md"
 
+# Map internal grammar keys to the exact token the READMEs use for them
+# (JS/TS/TSX are documented abbreviated). One regex per LANG_CFG key: every
+# family repo2graph actually parses must have a matching entry here.
+#
+# Module-level rather than local to test_languages_documented() because
+# tests/test_i18n_consistency.py runs the same check against the five
+# translated READMEs -- the language list drifted in all six files at once
+# (all said 16 grammars / 28 extensions after Lua landed), so one mapping
+# guarding one file was exactly the gap.
+LANGUAGE_TOKENS = {
+    "python": r"\bPython\b",
+    "javascript": r"\bJS\b",
+    "typescript": r"\bTS\b",
+    "tsx": r"\bTSX\b",
+    "go": r"\bGo\b",
+    "rust": r"\bRust\b",
+    "java": r"\bJava\b",
+    "ruby": r"\bRuby\b",
+    "c": r"\bC\b(?!\+\+|#)",
+    "cpp": r"C\+\+",
+    "csharp": r"C#",
+    "php": r"\bPHP\b",
+    "kotlin": r"\bKotlin\b",
+    "swift": r"\bSwift\b",
+    "scala": r"\bScala\b",
+    "bash": r"\bBash\b",
+    "lua": r"\bLua\b",
+}
+
 
 def test_cli_commands_documented():
     """Verify all CLI subcommands are documented in README.md and docs/cli.md."""
@@ -56,29 +85,7 @@ def test_languages_documented():
 
     readme_text = README_PATH.read_text(encoding="utf-8")
 
-    # Map internal grammar keys to the exact token README.md uses for them
-    # (JS/TS/TSX are documented abbreviated, as "JS/TS/TSX" -- see the
-    # "15 languages" row). One regex per LANG_CFG key: every family repo2graph
-    # actually parses must have a matching entry here.
-    families = {
-        "python": r"\bPython\b",
-        "javascript": r"\bJS\b",
-        "typescript": r"\bTS\b",
-        "tsx": r"\bTSX\b",
-        "go": r"\bGo\b",
-        "rust": r"\bRust\b",
-        "java": r"\bJava\b",
-        "ruby": r"\bRuby\b",
-        "c": r"\bC\b(?!\+\+|#)",
-        "cpp": r"C\+\+",
-        "csharp": r"C#",
-        "php": r"\bPHP\b",
-        "kotlin": r"\bKotlin\b",
-        "swift": r"\bSwift\b",
-        "scala": r"\bScala\b",
-        "bash": r"\bBash\b",
-        "lua": r"\bLua\b",
-    }
+    families = LANGUAGE_TOKENS
 
     assert set(families) == set(LANG_CFG), (
         f"families mapping is out of sync with LANG_CFG: "

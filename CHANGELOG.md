@@ -15,6 +15,20 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`tests/test_i18n_consistency.py`** — the first guard on any relationship
+  between the six READMEs, which is why all six had drifted together. 25 cases
+  pin, across every language at once: that each translation is linked from the
+  English switcher; that every `LANG_CFG` grammar appears in every README (the
+  exact drift recorded under *Changed* below); that `GraphRAG` never appears
+  above the `## 📐` architecture heading; that `GraphRAG`, `BM25`,
+  `pack_context()`, `AST` and `RRF` never appear before the `## 👥` persona
+  heading; and that each file still carries the positioning anchors
+  (`explain retrieval`, `build --incremental`, `[cite:`, `CO_CHANGE`,
+  `repo2graph-mcp`). Emoji section markers are the boundary because they are the
+  only headings identical in all six files. No assertion compares one README's
+  prose to another's — a translation legitimately differs in every sentence.
+  `test_doc_consistency.py`'s language-token map was hoisted to a module-level
+  `LANGUAGE_TOKENS` so both suites share one source of truth.
 - **`repo2graph explain`** — three subcommands that answer "why did the graph say
   that?" without reading JSONL by hand. `explain edge <src> <dst>` reports every
   edge between two nodes in either direction, with each edge's own attributes and
@@ -88,8 +102,14 @@ makes keeping it current a release-blocking step rather than a good intention.
   gained an embedding-search section; `docs/README.md`'s "when to use" bullets
   became a persona routing table.
 - **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
-  two places and the README's comparison table said 16; `LANG_CFG` has held 17
-  since Lua landed.
+  two places, the README's comparison table said 16, and all five translated
+  READMEs said "16 grammars / 28 extensions"; `LANG_CFG` has held 17 grammars
+  and 29 extensions since Lua landed.
+- **The five translated READMEs carry the new positioning.**
+  `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` were retranslated — not reduced to a
+  stub link — for the hero, the intro, the persona table, the grep/vector
+  comparison and the does/does-not table, at the same level of abridgement they
+  already used.
 - **HTTP mode no longer auto-builds a missing index.** Read-only network tool
   calls could previously trigger parser execution, file writes and git
   interactions on a server an operator had only pointed at a directory. A tool

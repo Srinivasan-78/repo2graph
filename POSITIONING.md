@@ -87,6 +87,20 @@ will bounce off it in §1.
 Rule of thumb: above the fold, name the *outcome* and the *channel*. Below it, name the
 *mechanism*.
 
+**This policy is enforced by tests**, in all six READMEs at once
+(`tests/test_i18n_consistency.py`):
+
+- `test_the_first_screen_names_no_mechanism` — nothing from `GraphRAG`, `BM25`, `pack_context()`,
+  `AST` or `RRF` may appear before the persona heading (`## 👥`), which is where the first screen
+  ends.
+- `test_graphrag_stays_below_the_architecture_heading` — `GraphRAG` may not appear anywhere above
+  `## 📐`, in any language.
+
+Emoji section markers are what make this checkable across translations: `## 📐` and `## 👥` are
+identical in all six files, while every word around them changes. Note that **`BM25` is deliberately
+allowed below the fold** — the grep comparison table names it on purpose, because conceding that
+lexical search is still the seeding step is part of the argument.
+
 ---
 
 ## 3. Personas
@@ -231,10 +245,11 @@ Status as of this change.
 | **docs/limitations.md** | no DI entry; freshness covered only for the shipped examples | DI bullet added; new "Stale indexes" section about your own `.r2g` | ✅ `docs/limitations.md` |
 | **docs/why-graph.md** | grep only | plus an "What about embedding search?" section and a pointer to the README table | ✅ `docs/why-graph.md` |
 | **docs/comparison.md** | said "15 languages" (twice); README said 16; actual is 17 | all corrected to 17 | ✅ `docs/comparison.md` |
-| **GitHub description** | "Turn any repository into a graph of its files, folders and functions and the links between them." | proposed below — **not applied**, repo metadata is not a file in this PR | ⬜ §7 |
-| **GitHub topics** | 13, mechanism-heavy, missing every agent term | proposed below — **not applied** | ⬜ §7 |
-| **Landing page** | "A GraphRAG engine and MCP server that hands an AI agent the right code — cited, budget-capped, and nothing else." | proposed below — **not applied**, the site lives outside this repository | ⬜ §7 |
-| **Translated READMEs** | five, all carrying the old hero | **not updated** — see §8 | ⬜ §8 |
+| **GitHub description** | "Turn any repository into a graph of its files, folders and functions and the links between them." | "Give coding agents trustworthy, cited answers about your codebase. Code graph + MCP server, no LLM required." | ✅ applied to repo metadata (§7.1) |
+| **GitHub topics** | 13, mechanism-heavy, missing every agent term | 20 — dropped `graph`, added `ai-agents`, `coding-agent`, `claude-code`, `cursor`, `llm`, `code-search`, `codebase-search`, `developer-tools` | ✅ applied to repo metadata (§7.2) |
+| **Translated READMEs** (de/es/fr/ja/zh-CN) | five, all carrying the old hero; all five said "16 grammars / 28 extensions" | hero, intro, personas, grep table and does/doesn't translated into each; counts corrected to 17/29 | ✅ `docs/i18n/` |
+| **Translation drift guard** | none — nothing enforced any relationship between the six files | `tests/test_i18n_consistency.py`, 25 cases | ✅ `tests/` |
+| **Landing page** | "A GraphRAG engine and MCP server that hands an AI agent the right code — cited, budget-capped, and nothing else." | proposed below — **not applied**, the site lives outside this repository | ⬜ §7.3 |
 
 ---
 
@@ -242,19 +257,19 @@ Status as of this change.
 
 Ready to paste. Nothing here is applied by this PR.
 
-### 7.1 GitHub repository description
+### 7.1 GitHub repository description — **applied**
 
 > Give coding agents trustworthy, cited answers about your codebase. Code graph + MCP server, no LLM required.
 
-(118 chars; GitHub's limit is 350, but the listing truncates around 150.)
+(110 chars; GitHub's limit is 350, but the listing truncates around 150.)
 
-The current description — *"Turn any repository into a graph of its files, folders and functions and
-the links between them"* — describes the artifact, not the outcome, and omits both MCP and
+The previous description — *"Turn any repository into a graph of its files, folders and functions and
+the links between them"* — described the artifact, not the outcome, and omitted both MCP and
 citations, which are the two things the audience searches for.
 
-### 7.2 GitHub topics
+### 7.2 GitHub topics — **applied**
 
-GitHub caps a repository at 20 topics. Current list is 13.
+GitHub caps a repository at 20 topics. The previous list was 13; the list below is exactly 20.
 
 **Keep (12):** `mcp`, `model-context-protocol`, `code-graph`, `graphrag`, `rag`, `tree-sitter`,
 `static-analysis`, `code-analysis`, `dependency-graph`, `github-action`, `visualization`, `python`
@@ -265,7 +280,8 @@ term below.
 **Add (8):** `ai-agents`, `coding-agent`, `claude-code`, `cursor`, `llm`, `code-search`,
 `codebase-search`, `developer-tools`
 
-Applying:
+The command that was run (kept here so the list is reproducible, and so a future change edits a
+recorded baseline rather than guessing at one):
 
 ```bash
 gh repo edit Srinivasan-78/repo2graph \
@@ -325,21 +341,44 @@ arrives after the reader has had to parse two pieces of jargon.
 
 ---
 
-## 8. Known gaps after this pass
+## 8. Translations, and the guard that keeps them honest
 
-- **The five translated READMEs** (`docs/i18n/README_{zh-CN,ja,fr,es,de}.md`) still carry the old
-  hero and have no persona, grep-comparison or limitations section. Nothing enforces their sync
-  with `README.md`, so they will drift silently. Either retranslate them against the new README or
-  reduce them to a short intro plus a link — the second is cheaper to keep honest. Tracked as
-  follow-up work; deliberately out of scope here so the English surfaces land as one coherent set.
-- **GitHub description and topics** (§7.1, §7.2) are repository metadata, not files, and are not
-  changed by this PR.
-- **The landing page** (§7.3) lives outside this repository.
-- **No test pins the hero sentence.** `tests/test_doc_consistency.py` enforces that every CLI
-  subcommand and every parsed grammar appears in `README.md`, which is what caught the
-  15/16/17-languages drift — but nothing would catch a future edit that reintroduces "GraphRAG" to
-  the hero. If that matters, the cheap detector is a test asserting the string *does not* appear
-  above the `## 📐 Architecture` heading.
+All five translated READMEs (`docs/i18n/README_{zh-CN,ja,fr,es,de}.md`) now carry the repositioned
+hero, the rewritten intro, the persona table, the grep/vector comparison and the
+does/does-not table, and all five have the corrected 17-grammar / 29-extension counts.
+
+They were **retranslated rather than reduced to a stub link**: they were already condensed versions
+of the English README (240–303 lines against its ~600), not one-to-one mirrors, so the positioning
+sections could be carried across at the same level of abridgement they already used. Reducing them
+to an intro plus a link would have been cheaper to maintain but would have removed working
+documentation from every non-English reader.
+
+The reason that trade-off was even a question is that **nothing enforced any relationship between
+the six files** — which is exactly why all six drifted together, every one of them still claiming
+"16 grammars / 28 extensions" long after Lua made it 17/29. That gap is now closed by
+`tests/test_i18n_consistency.py` (25 cases), which pins four things across all six READMEs at once:
+
+| Test | Catches |
+|---|---|
+| `test_the_translation_set_is_the_one_the_switcher_offers` | a translation added or deleted without updating the language switcher |
+| `test_every_readme_documents_every_parsed_grammar` | the exact drift that happened — a new `LANG_CFG` grammar missing from any README, in any language |
+| `test_graphrag_stays_below_the_architecture_heading` | a future edit dragging `GraphRAG` back above `## 📐` |
+| `test_the_first_screen_names_no_mechanism` | `GraphRAG`, `BM25`, `pack_context()`, `AST` or `RRF` reappearing before the persona heading |
+| `test_every_readme_carries_the_positioning_anchors` | a translation losing the persona, comparison or limitations section entirely |
+
+None of these compares one README's prose against another's — a translation legitimately differs
+from its source in every sentence. They pin language-independent literals (`explain retrieval`,
+`build --incremental`, `[cite:`, `CO_CHANGE`, `repo2graph-mcp`) and the `LANG_CFG` grammar list,
+which is the one thing all six must state identically. Each was verified as a real detector by
+reintroducing the bug it targets and watching only that test fail.
+
+### Still open
+
+- **The landing page** (§7.3) lives outside this repository. The copy is ready to paste.
+- **The translations are abridged on purpose.** They do not carry the Docker section, the four-way
+  "ways to run" table, or the full MCP tool contract, and they did not before this change either.
+  The guard above ensures they cannot silently lose the *positioning*; it does not make them
+  complete translations, and they are not meant to be.
 
 ---
 
