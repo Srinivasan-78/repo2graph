@@ -3,29 +3,21 @@ name: Benchmark and Regression Corpus
 on:
   push:
     branches: [main, develop]
-    paths:
-      - "repo2graph/**"
-      - "benchmarks/**"
-      - "scripts/benchmark_runner.py"
-      - ".github/workflows/benchmark.yml"
   pull_request:
-    paths:
-      - "repo2graph/**"
-      - "benchmarks/**"
-      - "scripts/benchmark_runner.py"
-      - ".github/workflows/benchmark.yml"
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   benchmark:
+    name: Benchmark Regression Gate (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -45,7 +37,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Run benchmark suite and regression gate
+      - name: Run benchmark suite and verify regression gate
         shell: bash
         run: |
           set -euo pipefail
@@ -57,4 +49,3 @@ jobs:
         with:
           name: benchmark-results-${{ matrix.os }}
           path: benchmarks/results_ci_${{ matrix.os }}.json
-

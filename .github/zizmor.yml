@@ -46,7 +46,7 @@ rules:
       # jobs exist to smoke-test the action at the exact commit checked out,
       # not at a separate pinned ref that could drift from what the PR
       # actually changed.
-      - ci.yml:265         # action: smoke-tests the composite action itself
+      - ci.yml:256         # action: smoke-tests the composite action itself
       - index-repo.yml:57  # index: dispatch-driven build against a target repo
       - self-index.yml:34  # index: keeps this repo's own graph fresh
 

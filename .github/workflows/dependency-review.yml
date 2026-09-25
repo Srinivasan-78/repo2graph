@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   dependency-review:
+    name: Dependency Supply Chain Review
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
