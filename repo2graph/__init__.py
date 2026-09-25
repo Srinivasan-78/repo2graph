@@ -10,4 +10,4 @@ try:
 except Exception:
     # Only reached when running from a source tree with no installed dist-info;
     # keep it equal to [project] version in pyproject.toml.
-    __version__ = "2.0.0"
+    __version__ = "2.1.0"

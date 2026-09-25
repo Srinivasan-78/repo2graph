@@ -107,10 +107,10 @@ Concretely:
 
 ```bash
 # Pin explicitly, everywhere this matters:
-uvx --from "repo2graph[mcp]==2.0.0" repo2graph-mcp /path/to/project
+uvx --from "repo2graph[mcp]==2.1.0" repo2graph-mcp /path/to/project
 
 # Or, mirrored internally:
-pip install --index-url https://pypi.internal.example.com/simple/ "repo2graph[mcp]==2.0.0"
+pip install --index-url https://pypi.internal.example.com/simple/ "repo2graph[mcp]==2.1.0"
 ```
 
 `uv.lock` is committed in this repository specifically so that anyone building from source gets the

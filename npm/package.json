@@ -1,6 +1,6 @@
 {
   "name": "repo2graph-mcp",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "npx launcher for the repo2graph MCP server (bootstraps the Python implementation via uvx/pipx)",
   "license": "MIT",
   "author": "Srinivasan Vijayaraghavan",

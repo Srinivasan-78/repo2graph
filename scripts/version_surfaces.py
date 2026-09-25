@@ -84,6 +84,29 @@ SURFACES: tuple[Surface, ...] = (
     ),
     Surface(
         kind="version",
+        # The only `"version":` key in the file; `engines.node` is `">=18"`, which
+        # this pattern cannot reach because the key name differs.
+        pattern=r'"version"\s*:\s*"(?P<v>[^"]+)"',
+        paths=("npm/package.json",),
+        why=(
+            "npm/README.md's 'Release story' promises the npx launcher and the PyPI "
+            "release ship from one tag; it was outside this table for 2.1.0 and drifted"
+        ),
+    ),
+    Surface(
+        kind="version",
+        # `^version:` only -- `cff-version: 1.2.0` names the file *format* and must
+        # survive every bump, so the anchor is what keeps this off it.
+        pattern=rf"^version:\s*(?P<v>{SEMVER})\s*$",
+        paths=("CITATION.cff",),
+        why=(
+            "what GitHub's 'Cite this repository' box and every downstream .bib render; "
+            "it was outside this table for the 2.1.0 release and stayed on 2.0.0 while "
+            "every other surface moved"
+        ),
+    ),
+    Surface(
+        kind="version",
         # uv writes LF; a Windows checkout with autocrlf may hand us CRLF.
         pattern=r'name = "repo2graph"\r?\nversion = "(?P<v>[^"]+)"',
         paths=("uv.lock",),
