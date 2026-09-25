@@ -15,6 +15,30 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Repository governance docs.** **`docs/ARCHITECTURE.md`** — the contributor-facing module map
+  (what each of the 27 modules owns, which way dependencies run, the two import cycles
+  `export`↔`viz` and `mcp`↔`http_server`↔`tasks`, that `langs`/`walker`/`layout` are re-export
+  shims rather than modules, and where a change of each kind goes).
+  **`docs/parser-development.md`** — adding a language end to end: `LangConfig`'s four keys, how to
+  find real tree-sitter node types, `_BASE_NODES` for inheritance clauses, optional per-language
+  import resolution, the two tests to write, and the six documents a test will fail without.
+  **`docs/TRIAGE.md`** — what makes an issue workable, the triage buckets, what qualifies as
+  `good first issue`, and the proposed label taxonomy. **`docs/COMMUNITY.md`** — issues vs.
+  Discussions routing and the Discussions categories. **`docs/good-first-issues.md`** — seven
+  starter tasks, each with a file-and-line pointer, acceptance criteria, and the specific catch
+  that makes it harder than it reads.
+- **`docs/issue-triage-2026-09-25.md`** — a full pass over all 84 open issues. Classifies every one
+  into a single bucket (15 bug, 29 enhancement, 2 documentation, 8 chore/ci/refactor, 2 duplicate,
+  21 needs-reproduction, 4 proposed out-of-scope, 3 epic), and records what the pass turned up:
+  two duplicates (#295⊂#315, #291 superseded by #407), five issues describing behaviour that
+  already exists or is documented as deliberate (#289's edge filters, #283's MCP ceiling, #263's
+  deployment docs, #287's residual-chunk threshold, #349's documented import cycle), and four
+  issues about the same budget vocabulary with none referencing another. Drafted replies included;
+  **nothing was applied** — no issue was closed, relabelled or commented on.
+- **Two issue templates.** `incorrect_edge.yml` for a wrong or missing `CALLS`/`IMPORTS`/`INHERITS`
+  edge, which gates on the documented blind spots (dynamic dispatch, reflection, DI, generated
+  bindings) and on index freshness before the report is filed; and `language_support.yml`, which
+  asks for the tree-sitter node types and points at the parser guide.
 - **`tests/test_i18n_consistency.py`** — the first guard on any relationship
   between the six READMEs, which is why all six had drifted together. 25 cases
   pin, across every language at once: that each translation is linked from the
@@ -77,6 +101,32 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **`.github/CONTRIBUTING.md` corrected on two points that would have cost a
+  contributor a round trip.** It said to fork and branch from `main`; feature and
+  fix PRs target **`develop`**, and `main` only moves via a promotion PR or the
+  release bump. And it listed two lint commands where CI runs three —
+  `ruff format --check .` is a gate separate from `ruff check .`, and
+  `make lint` alone does not include it. Also added: a routing table to the new
+  guides, the full CI gate list, the test house style (pin literal values; prove
+  a new test is a detector), and a pointer to the starter tasks — the "Good first
+  issues" section previously said none were filed.
+- **`.github/SECURITY.md` leads with how to report.** Reporting was the last
+  section of seven; it is now the first, with a direct private-advisory link,
+  acknowledgement and disclosure expectations, what to include, an explicit
+  in-scope list, and the three things that are documented behaviour rather than
+  vulnerabilities (a missing edge, a `1/n` ambiguous `CALLS` edge, a stale index).
+- **`docs/publishing.md` documents the branch model and a pre-release checklist.**
+  The automated release flow was covered; what was missing was that `develop` is
+  promoted to `main` first, that `develop` is protected from the repo-wide
+  auto-delete because promotion PRs use it as the head branch, and the six things
+  to verify before cutting.
+- **The bug and feature templates.** Bug report now gates on index freshness and
+  on `docs/limitations.md`, asks for `repo2graph doctor` output, and redirects
+  edge reports to the new template; its version placeholder was stale at `1.5.1`.
+  Feature request became **Feature proposal** and now asks which surface it lands
+  on, for one checkable acceptance criterion, and whether the filer wants to
+  implement it. The issue chooser's contact links now route questions, support,
+  ideas and showcases to Discussions.
 - **Positioning rewritten around one outcome: "give coding agents trustworthy,
   cited answers about unfamiliar codebases."** The README hero no longer opens on
   "AST-driven code graphs & zero-dependency GraphRAG"; `GraphRAG`, `AST-driven`,

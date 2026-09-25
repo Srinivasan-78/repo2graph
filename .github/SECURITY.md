@@ -5,6 +5,33 @@ the network, how the repository itself is protected, and how to report a vulnera
 [TECHNICAL.md](../TECHNICAL.md) for how the code works, and [README.md](../README.md) for how to
 use it.
 
+## Reporting a vulnerability
+
+**[Open a private advisory →](https://github.com/Srinivasan-78/repo2graph/security/advisories/new)**
+
+Do not open a public issue, a pull request or a discussion thread for an undisclosed vulnerability.
+If the advisory flow is unavailable to you, email
+[@Srinivasan-78](https://github.com/Srinivasan-78) directly and say the report is security-related.
+
+| | |
+|---|---|
+| **Acknowledgement** | Within 72 hours |
+| **Supported versions** | The latest release on PyPI only. Please confirm the issue reproduces there. |
+| **Disclosure** | Coordinated. A fix ships first, then the advisory is published with credit unless you ask otherwise. |
+
+**Useful in a report:** the version, the surface (CLI / MCP stdio / MCP HTTP / GitHub Action /
+Python API), whether the attacker is assumed to control the repository being indexed, an index
+being loaded, or the network, and a reproduction. The first two of those three attacker positions
+are in scope and have prior advisories — see "Further reading".
+
+**In scope:** anything that reads an untrusted repository or an untrusted index
+(`GHSA-6wrx-c2rg-mvm9` established that an index is untrusted input), the HTTP MCP transport and
+its authentication, secret exclusion and redaction, and the generated `graph.html`.
+
+**Not a vulnerability, though still worth reporting as a bug:** a missing graph edge, an ambiguous
+`CALLS` edge at `confidence = 1/n`, or a stale index — all three are documented behaviour in
+[docs/limitations.md](../docs/limitations.md).
+
 ## What never leaves your machine
 
 `repo2graph build`, `repo2graph query`, `repo2graph rag`, and the `repo2graph-mcp` server make
@@ -107,9 +134,7 @@ or a released package, independent of anything the tool does at runtime:
 - [docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating
   with evidence and remaining risk for each.
 
-## Reporting a Vulnerability
+---
 
-Please report security issues privately to [@Srinivasan-78](https://github.com/Srinivasan-78) via a GitHub Security Advisory or email. Do not open a public issue for undisclosed vulnerabilities.
-
-We aim to acknowledge reports within 72 hours. Only the latest release on PyPI is supported;
-please confirm the issue reproduces there before reporting.
+Reporting is at [the top of this page](#reporting-a-vulnerability), where someone arriving to
+report something will actually see it.

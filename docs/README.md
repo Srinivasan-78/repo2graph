@@ -103,9 +103,31 @@ the reproduction command documented:
 
 ## Development
 
-- **[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** — how to run tests, add a language,
-  submit a change.
+- **[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** — setup, the three CI gates, the branch
+  model, and the test house style reviewers hold you to.
+- **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** — the module map for people changing the code: what
+  each module owns, which way dependencies run, the two import cycles, and where a change of each
+  kind goes.
+- **[docs/parser-development.md](parser-development.md)** — adding a language, end to end:
+  `LANG_CFG`, `EXT_LANG`, inheritance clauses, import resolution, the two tests, the six docs that
+  a test will fail without.
+- **[docs/good-first-issues.md](good-first-issues.md)** — seven starter tasks, each with a code
+  pointer, acceptance criteria, and the catch that makes it harder than it looks.
 - **[AGENTS.md](../AGENTS.md)** — repo-specific rules that override default behavior (encoding,
   text slicing, budget models) — read before editing source under `repo2graph/`.
-- **[docs/publishing.md](publishing.md)** — how a release ships to PyPI and the Marketplace.
+- **[docs/publishing.md](publishing.md)** — the branch model, the pre-release checklist, and how a
+  release ships to PyPI, the MCP Registry and the Marketplace.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
+
+## Community and governance
+
+- **[docs/COMMUNITY.md](COMMUNITY.md)** — where to ask what: issues vs. Discussions, and what each
+  Discussions category is for.
+- **[docs/TRIAGE.md](TRIAGE.md)** — how an issue gets classified, what makes one workable, what
+  qualifies as `good first issue`, and the label taxonomy.
+- **[docs/issue-triage-2026-09-25.md](issue-triage-2026-09-25.md)** — the most recent full pass over
+  every open issue: classification, duplicates, what is already shipped, and drafted replies.
+- **[POSITIONING.md](../POSITIONING.md)** — what repo2graph claims, what it deliberately does not,
+  and the copy for every outward-facing surface.
+- **[CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1, applying to issues,
+  pull requests and discussion threads alike.
