@@ -1,9 +1,13 @@
 # Privacy
 
-What leaves your machine, what's cached, and what's logged — verified against the code, not
-claimed from memory. See [.github/SECURITY.md](../.github/SECURITY.md) for the network/credential-exclusion
-guarantees this document assumes, and [docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md) for how those
-guarantees were checked.
+What leaves your machine, what is written where, and what is logged — verified against the code,
+not claimed from memory.
+
+- [docs/privacy-audit-2026-09-25.md](privacy-audit-2026-09-25.md) — the audit behind this page:
+  every outbound path and every write location, enumerated from the source.
+- [docs/THREAT_MODEL.md](THREAT_MODEL.md) — what an attacker could try, and what is out of scope.
+- [docs/secure-configuration.md](secure-configuration.md) — hardened configurations to copy.
+- [.github/SECURITY.md](../.github/SECURITY.md) — the policy, and how to report a vulnerability.
 
 ## Does source code leave the machine?
 

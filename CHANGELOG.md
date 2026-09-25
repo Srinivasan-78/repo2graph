@@ -116,6 +116,24 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **The README and all five translations carried the two errors corrected
+  elsewhere in this release.** Their Security sections said `rag --answer` was
+  "the one opt-in exception" to making no network calls — the same
+  under-statement corrected in `PRIVACY.md`, and the more visible one, since the
+  README is the front page. All six now distinguish "makes a network call" from
+  "sends your code": four commands can reach the network and only `--answer`
+  transmits anything of yours. Their contributing blocks all said
+  `make lint test`, which runs two of the four gates CI runs; all six now say
+  `make lint format-check typecheck test`, and the English one states the branch
+  model. The README's "good first issues" pointer went to `docs/BACKLOG.md`,
+  which does not have such a section; it now points at
+  `docs/good-first-issues.md`.
+- **`CODE_OF_CONDUCT.md` says what enforcement means on a one-maintainer
+  project.** The Contributor Covenant text implies a body that does not exist
+  here: the person who receives a report is the person who acts on it, and if the
+  report concerns that person there is no internal escalation — GitHub's own
+  abuse reporting is the independent route. Also states plainly that a security
+  vulnerability is not a conduct issue and the conduct email is the wrong channel.
 - **`docs/PRIVACY.md` corrected on three counts, all under-statements of scope rather
   than failed guarantees.** It described **two** opt-in network exceptions; there are
   **four** outbound paths — `rag --answer` (the only one that transmits source),

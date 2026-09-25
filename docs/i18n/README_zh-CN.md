@@ -163,7 +163,7 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 | **双重强制的 token 上限** | `pack_context()` 的预算约束的是*整份*渲染后的 Markdown,而不仅是片段文本;MCP 服务器还会二次裁剪并重新计量后再返回。 |
 | **17 种文法,完整支持** | Python、JS、TS、TSX、Go、Rust、Java、Ruby、C、C++、C#、PHP、Kotlin、Swift、Scala、Bash、Lua 均支持函数/类/调用解析,共覆盖 29 种文件扩展名。其余语言的文件仍会出现在地图上。 |
 | **原生支持 CI** | 已发布为 GitHub Action——每次 push 都能在代码旁提交最新图谱。 |
-| **默认本地运行** | `build`、`query`、`rag` 与 MCP 服务器均不发起任何网络请求。唯一的可选例外(`rag --answer`)会在发送前打印所用的服务商与主机名。 |
+| **默认本地运行** | `build`、`query`、`rag` 与经 stdio 运行的 MCP 服务器均不发起任何网络请求——由套接字层面的测试保证。唯一会把你的代码发送出去的路径是 `rag --answer`,且它会在发送前打印所用的服务商与主机名。没有任何遥测。 |
 | **导出至主流图谱工具** | 每次构建都会生成 `graph.graphml`(yEd、Gephi、NetworkX)与 `graph.cypher`(Neo4j、Memgraph),无需额外步骤。 |
 
 ## ⚖️ 它能做什么,不能做什么
@@ -271,7 +271,11 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 
 ## 🔐 安全性
 
-`build`、`query`、`rag` 与 MCP 服务器均不会发起任何网络请求。`rag --answer` 是唯一的可选例外——它会把打包好的内容发送给 LLM 服务商,并在发送前打印所用的服务商与主机名。MCP 服务器会无条件排除疑似密钥的文件,没有任何开关可以关闭该行为。详情见 **[SECURITY.md](../../.github/SECURITY.md)**(英文)。
+`build`、`query`、`rag`、`map`、`stats` 以及经 stdio 运行的 MCP 服务器不会打开任何套接字——这由套接字层面的测试保证,而不只是读代码得出的结论。**没有任何遥测**,也没有需要关闭的开关。
+
+有四个命令*可能*访问网络,而只有第一个会发送属于你的东西:`rag --answer`(上传上下文包,并在此之前打印服务商与主机名)、`repo2graph github`(克隆)、`repo2graph embed`(仅首次下载一个向量模型)、`repo2graph-mcp --auth-oidc-issuer`(获取公钥)。
+
+MCP 服务器会无条件排除疑似密钥的文件,没有任何开关可以关闭该行为。每个字节流向何处、以及如何彻底删除:**[docs/PRIVACY.md](../PRIVACY.md)**。攻击者可能尝试什么:**[docs/THREAT_MODEL.md](../THREAT_MODEL.md)**。可直接复制的加固配置:**[docs/secure-configuration.md](../secure-configuration.md)**。以上三份与 **[SECURITY.md](../../.github/SECURITY.md)** 均为英文。
 
 ## 🤝 贡献与社区
 
@@ -279,7 +283,7 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make lint test   # 或者: ruff check . && pytest
+make lint format-check typecheck test    # CI 运行的四道检查
 ```
 
 - **[.github/CONTRIBUTING.md](../../.github/CONTRIBUTING.md)**(英文)——完整的本地开发环境搭建、代码风格与注册表/Glama 发布流程。

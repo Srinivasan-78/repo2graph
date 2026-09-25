@@ -190,7 +190,7 @@ archivos de configuración según la plataforma y el cliente.
 | **Límites de tokens aplicados dos veces** | El presupuesto de `pack_context()` acota el markdown renderizado *en su totalidad*, no solo el texto de los fragmentos — y el servidor MCP recorta y vuelve a medir antes de devolver. |
 | **17 gramáticas, tratamiento completo** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash y Lua reciben análisis de funciones/clases/llamadas — 29 extensiones de archivo en total. Todo lo demás igualmente aparece como archivos en el mapa. |
 | **Nativo para CI** | Publicado como GitHub Action — versiona un grafo actualizado junto a tu código en cada push. |
-| **Local por defecto** | `build`, `query`, `rag` y el servidor MCP no realizan ninguna llamada de red. La única excepción opcional (`rag --answer`) imprime el proveedor y el host antes de enviar nada. |
+| **Local por defecto** | `build`, `query`, `rag` y el servidor MCP por stdio no realizan ninguna llamada de red — garantizado por pruebas a nivel de socket. `rag --answer` es el único camino que envía tu código a algún sitio, e imprime el proveedor y el host antes de hacerlo. Sin telemetría. |
 | **Exportación a herramientas de grafos reales** | `graph.graphml` (yEd, Gephi, NetworkX) y `graph.cypher` (Neo4j, Memgraph) se generan en cada build, sin pasos adicionales. |
 
 ## ⚖️ Lo que hace — y lo que no
@@ -344,11 +344,21 @@ presupuesto: **[docs/cli.md](../cli.md)** (en inglés).
 
 ## 🔐 Seguridad
 
-`build`, `query`, `rag` y el servidor MCP no realizan ninguna llamada de red. `rag --answer` es la
-única excepción opcional — envía el paquete ensamblado a un proveedor de LLM e imprime el proveedor
-y el host antes de hacerlo. El servidor MCP excluye incondicionalmente archivos con apariencia de
-credenciales, sin ninguna opción para desactivarlo. Detalles: **[SECURITY.md](../../.github/SECURITY.md)**
-(en inglés).
+`build`, `query`, `rag`, `map`, `stats` y el servidor MCP por stdio no abren ningún socket —
+garantizado por pruebas a nivel de socket, no solo por leer el código. **Ninguna telemetría**, y
+nada que desactivar.
+
+Cuatro comandos *pueden* alcanzar la red, y solo el primero envía algo tuyo: `rag --answer` (sube
+el paquete; imprime antes el proveedor y el host), `repo2graph github` (clona),
+`repo2graph embed` (descarga un modelo de embeddings una sola vez) y
+`repo2graph-mcp --auth-oidc-issuer` (obtiene claves públicas).
+
+El servidor MCP excluye incondicionalmente archivos con apariencia de credenciales, sin ninguna
+opción para desactivarlo. A dónde va cada byte y cómo borrarlo todo:
+**[docs/PRIVACY.md](../PRIVACY.md)**. Qué podría intentar un atacante:
+**[docs/THREAT_MODEL.md](../THREAT_MODEL.md)**. Configuraciones endurecidas para copiar:
+**[docs/secure-configuration.md](../secure-configuration.md)**. Las tres en inglés, igual que
+**[SECURITY.md](../../.github/SECURITY.md)**.
 
 ## 🤝 Contribución y comunidad
 
@@ -356,7 +366,7 @@ credenciales, sin ninguna opción para desactivarlo. Detalles: **[SECURITY.md](.
 git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make lint test   # o: ruff check . && pytest
+make lint format-check typecheck test    # las cuatro comprobaciones que ejecuta CI
 ```
 
 - **[.github/CONTRIBUTING.md](../../.github/CONTRIBUTING.md)** (en inglés) — configuración completa

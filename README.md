@@ -389,7 +389,7 @@ See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full 
 | **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
 | <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. |
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
-| **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
+| **Local by default** | `build`, `query`, `rag` and the MCP server over stdio make zero network calls — asserted by socket-level tests. `rag --answer` is the only path that ever sends your code anywhere, and it prints the provider + hostname first. No telemetry. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
 
 <a id="does-and-doesnt"></a>
@@ -540,10 +540,15 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 
 ## 🔐 Security
 
-- **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, GitHub Action, and MCP exclude credential files (`.env*`, private keys, certificates, tokens, `.ssh`, `.aws`, `.gnupg`) automatically. Use `--include-secrets` only if you explicitly choose to index them.
-- **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs, and private keys. Inline matches undergo line-preserving redaction (`--secret-policy redact-match|exclude-file|warn-only|off`).
+- **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, the GitHub Action and MCP all skip credential files automatically — `.env*`, private keys, certificates, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more. `--include-secrets` opts out; **the MCP tools have no equivalent**, because an agent returning `.env` is a different problem from a human choosing to read it.
+- **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs and private keys. Matches are redacted line-preservingly (`--secret-policy redact-match|exclude-file|warn-only|off`).
 - **Sanitized logs and events**: Audit logs and structured event sinks enforce cycle detection, container size limits, recursion depth ceilings, and scrub URL basic-auth credentials.
-- **Local by default**: `build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one opt-in exception — it sends the assembled pack to an LLM provider and prints the provider + hostname before doing so. Details: **[.github/SECURITY.md](.github/SECURITY.md)**.
+- **Local by default, and only one path ever sends your code**: `build`, `query`, `rag`, `map`, `stats` and the MCP server over stdio open no socket at all — asserted by socket-level tests, not just by reading the code. Four commands *can* reach the network, and only the first sends anything of yours: `rag --answer` (uploads the pack; prints provider + hostname first), `repo2graph github` (clones), `repo2graph embed` (downloads an embedding model once), and `repo2graph-mcp --auth-oidc-issuer` (fetches public keys). **No telemetry of any kind, and no setting to turn off.**
+
+Where every byte goes and how to delete it: **[docs/PRIVACY.md](docs/PRIVACY.md)**. What an attacker
+could try, and what is out of scope: **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**. Hardened
+configurations to copy: **[docs/secure-configuration.md](docs/secure-configuration.md)**. Reporting
+a vulnerability: **[.github/SECURITY.md](.github/SECURITY.md)**.
 
 ## 🤝 Contributing & community
 
@@ -551,13 +556,22 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make lint test   # or: ruff check . && pytest
+make lint format-check typecheck test    # the four gates CI runs
 ```
 
-- **[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)** — full local dev setup, code style, and
-  the registry/Glama release process.
+Branch from **`develop`** and open the PR against it — `main` is the release branch. `make lint`
+alone is only `ruff check .`; `ruff format --check .` is a **separate** gate and the one people
+miss.
+
+- **[docs/good-first-issues.md](docs/good-first-issues.md)** — seven starter tasks, each with a
+  file and line to start from, acceptance criteria, and the catch that makes it harder than it
+  looks.
+- **[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)** — local setup, the CI gates, the branch
+  model, the test house style, and the registry/Glama release process.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the module map: what each module owns, which
+  way dependencies run, and where a change of each kind goes.
 - **[docs/BACKLOG.md](docs/BACKLOG.md)** — deliberately deferred work and why; the closest thing to
-  a roadmap, plus a "good first issues" section.
+  a roadmap.
 - **[AGENTS.md](AGENTS.md)** — this codebase's non-obvious conventions (Windows encoding, text
   slicing, the two budget models) before editing `repo2graph/`.
 - **[POSITIONING.md](POSITIONING.md)** — what repo2graph claims, what it deliberately does not

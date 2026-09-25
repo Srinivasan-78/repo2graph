@@ -163,7 +163,7 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 | **二重に強制されるトークン上限** | `pack_context()` の予算は、断片テキストだけでなく*レンダリングされたMarkdown全体*を制限します。さらにMCPサーバーは返却前にクランプと再計測を行います。 |
 | **17の文法をフルサポート** | Python、JS、TS、TSX、Go、Rust、Java、Ruby、C、C++、C#、PHP、Kotlin、Swift、Scala、Bash、Lua では関数/クラス/呼び出しを完全解析します(合計29のファイル拡張子)。それ以外の言語のファイルもマップ上にファイルとして表示されます。 |
 | **CIネイティブ** | GitHub Action として公開されており、push のたびにコードと並んで最新のグラフをコミットできます。 |
-| **デフォルトでローカル動作** | `build`、`query`、`rag`、MCPサーバーはいずれもネットワーク通信を行いません。唯一のオプトインの例外(`rag --answer`)は、送信前にプロバイダーとホスト名を表示します。 |
+| **デフォルトでローカル動作** | `build`、`query`、`rag`、stdio 経由の MCP サーバーはいずれもネットワーク通信を行いません——ソケットレベルのテストで保証されています。あなたのコードをどこかへ送信する経路は `rag --answer` だけで、送信前にプロバイダー名とホスト名を表示します。テレメトリは一切ありません。 |
 | **実用的なグラフツールへのエクスポート** | すべてのビルドで `graph.graphml`(yEd、Gephi、NetworkX 用)と `graph.cypher`(Neo4j、Memgraph 用)が追加のステップなしで生成されます。 |
 
 ## ⚖️ できること・できないこと
@@ -271,7 +271,11 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 
 ## 🔐 セキュリティ
 
-`build`、`query`、`rag`、MCPサーバーはいずれもネットワーク通信を行いません。`rag --answer` だけが唯一のオプトインの例外で、パッケージ化された内容をLLMプロバイダーへ送信する前にプロバイダー名とホスト名を表示します。MCPサーバーは機密情報らしきファイルを無条件に除外し、これを無効化するフラグはありません。詳細は **[SECURITY.md](../../.github/SECURITY.md)**(英語)を参照してください。
+`build`、`query`、`rag`、`map`、`stats`、および stdio 経由の MCP サーバーはソケットを一切開きません——コードを読むだけでなく、ソケットレベルのテストで保証されています。**テレメトリは一切なく**、無効化すべきものもありません。
+
+ネットワークに到達*しうる*コマンドは4つあり、あなたのものを送信するのは最初の1つだけです: `rag --answer`(パックをアップロードし、その前にプロバイダー名とホスト名を表示)、`repo2graph github`(クローン)、`repo2graph embed`(埋め込みモデルを初回のみダウンロード)、`repo2graph-mcp --auth-oidc-issuer`(公開鍵を取得)。
+
+MCPサーバーは機密情報らしきファイルを無条件に除外し、これを無効化するフラグはありません。どのバイトがどこへ行くのか、そしてすべてを削除する方法: **[docs/PRIVACY.md](../PRIVACY.md)**。攻撃者が何を試みうるか: **[docs/THREAT_MODEL.md](../THREAT_MODEL.md)**。コピーして使える堅牢化構成: **[docs/secure-configuration.md](../secure-configuration.md)**。いずれも英語で、**[SECURITY.md](../../.github/SECURITY.md)** も同様です。
 
 ## 🤝 コントリビューションとコミュニティ
 
@@ -279,7 +283,7 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path/t
 git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make lint test   # または: ruff check . && pytest
+make lint format-check typecheck test    # CI が実行する4つのゲート
 ```
 
 - **[.github/CONTRIBUTING.md](../../.github/CONTRIBUTING.md)**(英語)——ローカル開発環境のセットアップ、コーディングスタイル、レジストリ/Glamaへの公開手順。

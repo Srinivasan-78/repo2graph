@@ -59,6 +59,26 @@ investigated promptly and fairly.
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
 
+### What that means on a project this size
+
+Said plainly, because the template language above implies a structure that does
+not exist here: **repo2graph currently has one maintainer.** The person who
+receives a report is the person who acts on it, and there is no separate body to
+escalate to. If your report concerns that maintainer, GitHub's own
+[abuse reporting](https://github.com/contact/report-abuse) is the independent
+route, and using it is entirely legitimate.
+
+This is stated rather than glossed over so nobody discovers it at the worst
+possible moment.
+
+### This is not the route for a security vulnerability
+
+A security issue is not a conduct issue and the email above is the wrong channel.
+Report vulnerabilities privately through
+[a GitHub Security Advisory](https://github.com/Srinivasan-78/repo2graph/security/advisories/new),
+never in a public issue, discussion, or pull request — see
+[.github/SECURITY.md](.github/SECURITY.md).
+
 ## Enforcement Guidelines
 
 Community leaders will follow these Community Impact Guidelines in determining
