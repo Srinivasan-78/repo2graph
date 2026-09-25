@@ -50,30 +50,30 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          mkdir -p .impact-reports
+          mkdir -p impact-reports
           
           # Generate all machine-readable and human-readable formats
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format markdown --write .impact-reports/impact-report.md
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format json --write .impact-reports/impact-report.json
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format sarif --write .impact-reports/impact-report.sarif
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format pr-comment --write .impact-reports/pr-comment.md
+          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format markdown --write impact-reports/impact-report.md
+          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format json --write impact-reports/impact-report.json
+          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format sarif --write impact-reports/impact-report.sarif
+          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format pr-comment --write impact-reports/pr-comment.md
 
       - name: "Publish Job Summary"
         run: |
-          cat .impact-reports/pr-comment.md >> "$GITHUB_STEP_SUMMARY"
+          cat impact-reports/pr-comment.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: "Upload Impact Artifacts"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pr-impact-analysis
-          path: .impact-reports/
+          path: impact-reports/
           retention-days: 14
 
       - name: "Upload SARIF Results to GitHub Code Scanning"
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         continue-on-error: true
         with:
-          sarif_file: .impact-reports/impact-report.sarif
+          sarif_file: impact-reports/impact-report.sarif
           category: repo2graph-impact
 
       - name: "Post PR Comment"
@@ -83,4 +83,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          gh pr comment "$PR_NUMBER" --body-file .impact-reports/pr-comment.md || true
+          gh pr comment "$PR_NUMBER" --body-file impact-reports/pr-comment.md || true
