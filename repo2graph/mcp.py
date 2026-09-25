@@ -37,6 +37,7 @@ from typing import Any
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
+from .edgemeta import cite as edge_cite
 from .query import (
     ALL_EDGE_DIRS,
     DEFAULT_EDGE_TYPES,
@@ -464,7 +465,7 @@ def tool_repo_neighbours(
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
-    for dst, etype, direction, _src in index.expand(
+    for dst, etype, direction, src in index.expand(
         [node_id],
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
@@ -478,12 +479,45 @@ def tool_repo_neighbours(
         if len(lines) - 1 >= limit:
             truncated = True
             break
-        lines.append(f"- {etype} {direction}: {_label(index, dst)}")
+        lines.append(
+            f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
+        )
     if truncated:
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
     return "\n".join(lines)
+
+
+def _edge_note(index: "Index", src: str, dst: str, etype: str) -> str:
+    """Where the relationship is written, and how sure repo2graph is of it.
+
+    The node label already says where the *neighbour* is defined. For "what
+    calls this", the citation an agent actually needs is the call site, which
+    lives on the edge -- and without the confidence, an ambiguous name match
+    reads exactly like a certain one. `compute_freshness -> ResultCache.get`
+    is a real example from this repository: a `.get()` on a dict resolved to
+    one of three candidates at 0.5, and the tool presented it as fact.
+
+    Certain edges get only their evidence, so the common case stays terse.
+    """
+    edge = None
+    for other, other_type, _direction, record in index.adj.get(src, ()):
+        if other == dst and other_type == etype:
+            edge = record
+            break
+    if edge is None:
+        return ""
+
+    bits = []
+    where = edge_cite(edge)
+    if where:
+        bits.append(f"at {where}")
+    conf = edge.get("confidence")
+    if isinstance(conf, (int, float)) and conf < 1.0:
+        n = edge.get("candidate_count")
+        bits.append(f"AMBIGUOUS {conf} of {n} candidates" if n else f"AMBIGUOUS {conf}")
+    return f"  -- {', '.join(bits)}" if bits else ""
 
 
 def _label(index: Index, node_id: str) -> str:

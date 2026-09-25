@@ -1,9 +1,10 @@
 # Benchmarks
 
-How `repo2graph build` performs against five real, large, public repositories — not estimated, not
-extrapolated. For synthetic-fixture and self-hosted numbers (isolating parser throughput from a
-real repository's specific shape), see [docs/PERFORMANCE.md](PERFORMANCE.md); this page is about
-the [examples/](../examples/) corpus specifically.
+How `repo2graph` performs at scale and in query evaluation:
+
+1. **Large-Scale Public Repository Corpus (this page):** Build performance, indexing throughput, node/edge density, and parser error rates against five real, large, public repositories ([examples/](../examples/)).
+2. **Reproducible Archetype Benchmark & Evaluation Suite ([BENCHMARK.md](../BENCHMARK.md)):** End-to-end repository-understanding evaluation across 25 tasks and 5 application archetypes (`benchmarks/corpus/`), measuring query correctness (100%), source-citation precision (97.9%), query latency (1.82ms), and context footprint against `ripgrep` and agent baseline search.
+3. **Synthetic Throughput & Self-Hosting ([docs/PERFORMANCE.md](PERFORMANCE.md)):** Hardware-controlled parser throughput isolated from repository structure.
 
 ## Methodology
 
@@ -90,15 +91,14 @@ submodules. See the module docstring and `clone_scoped()` in
 
 ## CI tiers
 
-Regenerating all five repositories on every pull request would be slow, bandwidth-heavy, and
-non-deterministic against upstream's moving `main`/`master` — the task this repository's CI exists
-to avoid. Instead:
+Regenerating all five large repositories on every pull request would be slow, bandwidth-heavy, and
+non-deterministic against upstream's moving `main`/`master`. The CI tiers are split intentionally:
 
-- **Pull request:** the existing unit/integration test suite (`pytest`), which exercises
-  `graph.build()`, `export.dump_all()` and `query.Index` against the small fixtures already in
-  `tests/`. No external clone happens on a PR.
+- **Pull request & Push (Continuous Verification):**
+  - Unit and integration tests (`pytest`).
+  - **Automated benchmark regression gate:** [`.github/workflows/benchmark.yml`](../.github/workflows/benchmark.yml) builds indexes for the 5 archetypes in `benchmarks/corpus/`, evaluates all 25 tasks via `python scripts/benchmark_runner.py --ci`, and enforces an accuracy gate (asserting `>= 80%` retrieval accuracy, zero regressions, on both Ubuntu and Windows).
 - **Manual (`workflow_dispatch`):** `.github/workflows/examples.yml` regenerates one or all five
-  real-world examples and re-runs `validate_example()` against the result, on demand — see that
+  large-scale real-world examples and re-runs `validate_example()` against the result, on demand — see that
   workflow file for the exact trigger. Not scheduled automatically, so it never runs (and never
   consumes CI minutes or bandwidth) without someone asking for it.
 - **Release:** left to whoever cuts a release to decide whether to regenerate the corpus and commit

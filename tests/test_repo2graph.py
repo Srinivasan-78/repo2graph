@@ -955,7 +955,10 @@ def test_stats_json_carries_hub_nodes_languages_and_schema_version(tmp_path, sam
     main(["build", str(sample_repo), "-o", str(out)])
     stats = json.loads(artifact_path(out, "stats.json").read_text())
 
-    assert stats["index_schema_version"] == "1"
+    # Bumped to "2" when every edge gained method/confidence/evidence: a
+    # consumer reading an older index needs to know those fields are absent
+    # rather than null.
+    assert stats["index_schema_version"] == "2"
     assert stats["has_vectors"] is False
     assert stats["languages"].get("python", 0) >= 2
     assert stats["top_hub_nodes"], "sample_repo has real IMPORTS/CALLS in-degree"

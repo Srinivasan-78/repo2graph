@@ -56,15 +56,22 @@ project stand out without you looking for them.
 
 **Arrows (edges):**
 
+**Every** edge, whatever its kind, carries `method` (how it was extracted),
+`confidence` (how sure repo2graph is that `dst` is the right target) and
+`evidence` (the `{path, line}` where the relationship is written, or `null`
+where there is none to point at). Those three are the same on every kind, and
+[docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) is their contract. The per-kind
+extras are below.
+
 | Kind | Meaning |
 |---|---|
-| `CONTAINS` | project holds folder, folder holds file |
-| `DEFINES` | a file creates a function or class, or one function creates another inside it |
-| `IMPORTS` | a file borrows from another file (`internal: true`) or from an outside library |
+| `CONTAINS` | project holds folder, folder holds file. `method: filesystem`, `evidence: null` — a file being in a folder is not written on any line. |
+| `DEFINES` | a file creates a function or class, or one function creates another inside it. `evidence` cites the definition line. |
+| `IMPORTS` | a file borrows from another file (`internal: true`) or from an outside library. `evidence` cites the import statement. |
 | `CALLS` | one function uses another. Carries `count`, `confidence`, `ambiguous`, `resolution_kind`, `candidate_count`, `scope_distance` and `call_kind`. |
-| `CALLS_EXTERNAL` | a function uses something from outside the project. Carries `count`, `resolution_kind`, `candidate_count` and `call_kind`. |
+| `CALLS_EXTERNAL` | a function uses something from outside the project. Carries `count`, `resolution_kind`, `candidate_count` and `call_kind`. `evidence` cites the call site. |
 | `INHERITS` | inheritance or interface implementation. Carries `subtype` (`INHERITS`, `IMPLEMENTS`, `EXTENDS`, `MIXES_IN`) and `raw_base`. |
-| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more by default; configurable via `--cochange-min`). Carries `count`, `cochange_count`, `sampled_commits`, `min_pairs`. |
+| `CO_CHANGE` | two files keep getting edited together (needs `--git-history`, 3 times or more by default; configurable via `--cochange-min`). Carries `count`, `cochange_count`, `sampled_commits`, `min_pairs`. `method: git-log`, `evidence: null` — history, not a line of code, and correlational rather than causal. |
 
 A small corner of a real map looks like this:
 
@@ -185,7 +192,11 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
   `CALLS_EXTERNAL` carries `resolution_kind` (always `unresolved_external`),
   `candidate_count` (always `0`), `count` and `call_kind` — but no
-  `scope_distance`, `confidence` or `ambiguous`.
+  `scope_distance` or `ambiguous`. Its `confidence` is `1.0`: `dst` is a
+  synthetic `external:<name>` node meaning "no definition for this name in the
+  repository", and that is exactly what was determined, so the *target* is
+  certain even though the callee is not ours. See
+  [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#what-confidence-means).
 
   **A method's own name is never resolved outright.** The receiver is not
   recorded, so inside `Report.to_dict` the calls `self.to_dict()` and

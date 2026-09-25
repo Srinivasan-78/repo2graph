@@ -27,6 +27,11 @@ class ImportDetail:
     module: str
     name: str | None = None
     alias: str | None = None
+    # 1-based line of the import statement, for the IMPORTS edge's `evidence`.
+    # tree-sitter's Point.row advances on a newline only -- the same convention
+    # chunks._lines() slices by -- so this indexes the same line the reader
+    # sees. See AGENTS.md on splitlines().
+    line: int | None = None
 
 
 EXT_LANG = {
@@ -475,6 +480,22 @@ def discover(
         files = _walk_files(root, skip_dirs=skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
+
+    # Discovery order *is* artifact order: node ids are emitted in the order
+    # files are parsed, and edges and chunks follow the nodes. `git ls-files`
+    # happens to sort its output, but `os.walk` yields whatever order the
+    # filesystem hands back -- alphabetical on NTFS, hash order on ext4 with
+    # dir_index. So the same tree indexed on two machines produced nodes.jsonl,
+    # edges.jsonl and chunks.jsonl that differed byte-for-byte while describing
+    # exactly the same graph.
+    #
+    # Sorting here rather than in _walk_files covers both sources with one
+    # rule, so the invariant holds no matter which branch ran, and a future
+    # third discovery source inherits it. The key is the resolved path's posix
+    # form: str(Path) would sort on "\" on Windows and "/" elsewhere, which is
+    # the same cross-machine divergence one level down.
+    files = sorted(files, key=lambda p: p.as_posix())
+
     for abspath in files:
         try:
             rel = abspath.relative_to(root)
@@ -582,6 +603,13 @@ class ParsedFile:
     used_cpp: bool = False
     is_chunked: bool = False
     import_details: list[ImportDetail] = field(default_factory=list)
+    # 1-based line per entry of `imports`, index-aligned with it by
+    # construction (both are appended in the same step of the walk). The
+    # IMPORTS edge iterates `imports`, not `import_details`, and matching the
+    # two back up by text is unsafe: `imports` entries are truncated at 300
+    # chars and `import_details[].raw` is a cleaned form, so the strings do
+    # not always agree.
+    import_lines: list[int] = field(default_factory=list)
 
 
 def _text(src: bytes, node) -> str:
@@ -1230,7 +1258,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     # (`import { a, ..., z } from "mod"`) longer than the cap loses its closing
     # brace and module path, so every regex in parse_import_details misses and
     # import_details silently comes back empty for that statement.
-    imports_full: list[str] = []
+    imports_full: list[tuple[str, int]] = []
     final_errors = 0
 
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
@@ -1245,14 +1273,14 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             raw = _text(source, node).strip()
             if raw:
                 imports.append(raw[:300])
-                imports_full.append(raw)
+                imports_full.append((raw, node.start_point[0] + 1))
         elif lang == "ruby" and ntype == "call":
             callee = _callee_name(source, node)
             if callee in ("require", "require_relative", "load"):
                 raw = _text(source, node).strip()
                 if raw:
                     imports.append(raw[:300])
-                    imports_full.append(raw)
+                    imports_full.append((raw, node.start_point[0] + 1))
         elif lang == "bash" and ntype == "command":
             cmd_name = _callee_name(source, node)
             if not cmd_name and node.children:
@@ -1263,7 +1291,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 raw = _text(source, node).strip()
                 if raw:
                     imports.append(raw[:300])
-                    imports_full.append(raw)
+                    imports_full.append((raw, node.start_point[0] + 1))
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
@@ -1275,7 +1303,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 elif callee in DYNAMIC_CALLEES.get(lang, frozenset()):
                     call_kind = "dynamic"
                 owner.calls.append(callee)
-                owner.call_details.append({"name": callee, "kind": call_kind})
+                owner.call_details.append(
+                    {"name": callee, "kind": call_kind, "line": node.start_point[0] + 1}
+                )
         kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner
         if kind is not None:
@@ -1292,6 +1322,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     kind = "function"
             if kind and name:
                 bases_list, base_details = _bases_with_details(source, node, lang)
+                # Every base in one class header cites that header's line.
+                for _bd in base_details:
+                    _bd["line"] = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,
                     qualname=".".join(scope + (name,)),
@@ -1319,7 +1352,13 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                             )
                             if dec_text:
                                 sym.calls.append(dec_text)
-                                sym.call_details.append({"name": dec_text, "kind": "decorator"})
+                                sym.call_details.append(
+                                    {
+                                        "name": dec_text,
+                                        "kind": "decorator",
+                                        "line": child.start_point[0] + 1,
+                                    }
+                                )
                 else:
                     # Java annotations or JS/TS decorators sit as the previous sibling.
                     prev = node.prev_sibling
@@ -1327,7 +1366,13 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         ann_text = _text(source, prev).strip().lstrip("@").split("(")[0].strip()
                         if ann_text:
                             sym.calls.append(ann_text)
-                            sym.call_details.append({"name": ann_text, "kind": "decorator"})
+                            sym.call_details.append(
+                                {
+                                    "name": ann_text,
+                                    "kind": "decorator",
+                                    "line": prev.start_point[0] + 1,
+                                }
+                            )
 
                 symbols.append(sym)
                 child_scope, child_owner = scope + (name,), sym
@@ -1339,10 +1384,14 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
 
     # Parse import details from the untruncated text -- see imports_full above.
     import_details: list[ImportDetail] = []
-    for raw in imports_full:
-        import_details.extend(parse_import_details(raw, lang))
+    for raw, raw_line in imports_full:
+        for detail in parse_import_details(raw, lang):
+            # One statement can bind several names; they all cite the same line.
+            detail.line = raw_line
+            import_details.append(detail)
 
     return ParsedFile(
+        import_lines=[line for _raw, line in imports_full],
         lang=lang,
         symbols=symbols,
         imports=imports,
@@ -1532,12 +1581,18 @@ def explain_path(
 
     # Step 9: Exclude globs
     if exclude_globs and matches_any(rel_str, exclude_globs):
+        # Name the one pattern that matched, not the whole list. `explain-path`
+        # exists to report the single rule that decided a path, and a
+        # `--exclude-group` expands to as many as 60 globs -- echoing all of
+        # them buries the answer in the evidence.
+        matched = next((g for g in exclude_globs if matches_any(rel_str, [g])), None)
         return {
             "path": str(target_path),
             "relative_path": rel_str,
             "included": False,
             "rule": "exclude_glob",
-            "reason": f"Path matches --exclude glob: {exclude_globs}",
+            "reason": f"Path matches exclude glob {matched!r}",
+            "matched_glob": matched,
             "precedence_step": 9,
         }
 

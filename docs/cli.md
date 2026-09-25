@@ -1,9 +1,11 @@
 # CLI reference
 
 Every flag `repo2graph` takes, and what it actually counts. See the
-[README](../README.md) for the five-minute version.
+[README](../README.md) for the five-minute version, or
+[docs/quickstart.md](quickstart.md) for the two-minute one.
 
 ```
+repo2graph demo              index a bundled example repo and answer 5 questions
 repo2graph build   <repo>    parse a folder into a graph + RAG chunks
 repo2graph github  <repo>    clone a GitHub project, then build
 repo2graph query   <question>  fast local search over a built index
@@ -11,6 +13,8 @@ repo2graph rag     [target] <question>  pack a cited context for an LLM
 repo2graph embed             add meaning-based search to an index
 repo2graph map               redraw graph.html from a built index
 repo2graph stats             print the index counts
+repo2graph index-status      provenance, contents, exclusions and freshness
+repo2graph bug-report        privacy-preserving diagnostic bundle for an issue
 repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph explain-path <path> explain file inclusion/exclusion precedence
 repo2graph explain <edge|node|retrieval> explain edges, nodes, or retrieval
@@ -22,6 +26,35 @@ Run `repo2graph` with no arguments and it prints help and exits 0. Ctrl-C stops
 with exit code 130 instead of a traceback, closing a pipe early (`| head`) is not
 an error, and an index that is missing, half-written or corrupt gets a sentence
 naming the rebuild command that fixes it. All numeric flags reject negatives.
+
+## `demo` — the first command to run
+
+```bash
+repo2graph demo [-o DIR] [--keep] [--full]
+```
+
+Writes a small bundled repository (an orders service: routes → auth guard →
+rules → SQL store, plus a test module and a JS client) to a scratch
+directory, builds a real index over it with the same code path `build` uses,
+and answers the five starter questions against it. Nothing is downloaded, no
+LLM is called, and no repository of your own is needed.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-o`, `--out DIR` | a temp directory | write the demo repo here and keep it |
+| `--keep` | off | keep the temp repo and its index instead of deleting them |
+| `--full` | off | print every answer in full, not the first cited block |
+
+The fixture is held as source strings inside `repo2graph/demo.py`, not as
+package data, so it is present under `uvx`, `pip`, Docker and a git checkout
+alike. With no `-o` the repository is materialised into a temp directory and
+removed on the way out; `--out` and `--keep` both leave it in place so you
+can run further commands against `<dir>/.r2g`.
+
+Each answer prints its citation table — `path:start-end`, the symbol, and
+*why* the block is in the pack (`seed`, or the edge that reached it) —
+followed by the head of the first cited block. The five questions themselves
+are listed in [the quickstart](quickstart.md#the-five-starter-questions).
 
 ## `build` — make the map
 
@@ -45,6 +78,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
+| `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/INDEXING.md](INDEXING.md#controlling-what-gets-indexed)**. |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
@@ -327,26 +361,153 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
 Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
 `claude-haiku-4-5` and `llama3.1`); pass `--model` to override.
 
+## `index-status` — is this index current, and what is in it?
+
+```bash
+repo2graph index-status [-o DIR] [-r REPO] [--json] [--check]
+```
+
+Joins `manifest.json`, `stats.json` and the working tree into one report:
+the indexed commit and branch, when the index was built, file/symbol/edge
+counts, detected languages, what discovery skipped and why, parse failures,
+the index's size on disk, and whether the tree has moved since the build.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `-o`, `--out DIR` | `.r2g` | The index directory |
+| `-r`, `--repo PATH` | the index's parent | The source tree, when the index lives elsewhere |
+| `--json` | off | The full report as JSON; every key is public |
+| `--check` | off | Exit `1` when freshness is not `current` |
+
+`--check` turns "the committed index matches this commit" into a CI gate:
+
+```yaml
+- run: repo2graph index-status -o .r2g --check
+```
+
+Freshness is `current`, `stale`, or `unknown` — the last meaning nothing
+could be checked (no `index.state.json`, not a git checkout, or past the
+50,000-file scan bound), which is deliberately not reported as staleness.
+
+Related: `stats` reports retrieval *quality* (call-resolution tiers,
+unresolved imports); `doctor` reports whether anything is *broken*. Full
+detail, including the determinism guarantees: **[docs/INDEXING.md](INDEXING.md)**.
+
+## `bug-report` — a bundle that is safe to paste into a public issue
+
+```bash
+repo2graph bug-report [-o DIR] [-r REPO] [--category CAT] [--include-paths] [--json] [--write FILE]
+```
+
+Assembles environment and versions, the non-passing `doctor` checks, the
+index's shape and freshness, and an edge-quality histogram (counts by type, by
+extraction method, and by confidence bucket) — which is often what explains a
+bad answer, since a graph dominated by ambiguous name matches behaves
+differently from one that resolves cleanly.
+
+| Flag | Meaning |
+|---|---|
+| `--category CAT` | One of `incorrect-relationship`, `missing-relationship`, `stale-index`, `parser-failure`, `answer-unhelpful`. Adds a checklist of the extra evidence that category needs. |
+| `--include-paths` | Include repo-relative file paths (off by default) |
+| `--json` | The raw bundle instead of the markdown |
+| `--write FILE` | Write to a file instead of stdout |
+
+**No file content is included, at any setting** — not a chunk body, not a line
+of source. Nor are environment variable values, the git remote URL, the
+repository or branch name, or absolute paths. File paths are off by default
+(a path like `billing/stripe_migration_v2.py` says a lot about a private
+repository); changed files appear as 8-character fingerprints so a maintainer
+can tell two entries apart without learning what they are.
+
+The commit sha *is* included: it makes a wrong edge reproducible against a
+public repo and reveals nothing a private repo's own history does not.
+
+Full contents and the reasoning: **[docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#feedback-and-the-bug-report-bundle)**.
+
 ## `doctor` — diagnose the environment and artifacts
 
 ```bash
 repo2graph doctor [path] [--json]
 ```
 
-Inspects the runtime environment and index directory for common configuration,
-permission, dependency, or artifact integrity issues:
+Inspects the runtime environment, the index and the MCP client wiring for the
+problems that actually stop a first run. `[path]` may be either a repository
+or an index directory; the checks that need both work either way.
+
+**Environment**
 
 - **Python version**: checks that Python is >= 3.10.
-- **Tree-sitter & grammars**: checks that `tree-sitter` and `tree-sitter-language-pack` are installed and verifies all supported language grammars.
-- **Git integration**: verifies `git` executable availability and non-ASCII path support.
+- **Package version**: warns when the imported module and the installed
+  dist-info disagree — a shadowed editable install, or a stale dist-info from
+  a partial upgrade.
+- **uv / pip availability**: reports `uv`/`uvx` and `pip`. Absent uv is *not*
+  an error — only the `uvx repo2graph ...` one-liner needs it — but neither
+  uv nor pip is, since nothing can then install the `[mcp]` or `[rag]` extras
+  the other checks recommend.
+- **Tree-sitter & grammars**: checks that `tree-sitter` and
+  `tree-sitter-language-pack` are installed and loads every supported grammar.
+- **Git integration**: verifies `git` availability and non-ASCII path support.
 - **Directory permissions**: verifies write permissions in the target directory.
-- **Artifact integrity**: validates `manifest.json`, `chunks.jsonl`, `nodes.jsonl`, and `edges.jsonl` if an index exists.
-- **Dense vector integrity**: checks `vectors.npy` and `vectors.meta.json` correspondence with `chunks.jsonl`.
-- **MCP SDK**: verifies installed `mcp` version compatibility.
-- **LLM providers**: checks if provider environment variables are configured without ever disclosing the secret values.
-- **Platform encoding**: checks console and filesystem encoding to detect potential charmap limitations.
+- **Platform encoding**: checks console and filesystem encoding to detect
+  potential charmap limitations.
 
-Pass `--json` for machine-readable JSON output suitable for CI or automation. Exits with code 0 if all checks pass, or 1 if any critical check fails.
+**The index**
+
+- **Artifact integrity**: validates `manifest.json`, `chunks.jsonl`,
+  `nodes.jsonl` and `edges.jsonl` if an index exists.
+- **Index freshness**: does the index still describe the tree it was built
+  from? Three signals, cheapest first — the commit recorded in the manifest
+  against the tree's current `HEAD`; the discovered file set against
+  `index.state.json`; and a real sha256 for any file whose mtime is newer
+  than the manifest's. The mtime only chooses *what* to hash, so a checkout
+  that rewrites every mtime without changing a byte does not report stale.
+- **Parser coverage**: parse errors and files with no grammar *in this
+  index*. Distinct from the grammar check above: a grammar that loads fine
+  still yields a symbol-free file node when the source uses syntax it does
+  not model, and that file is then reachable by text but carries no CALLS
+  edges.
+- **Ignored paths**: discovery mode (`git ls-files` vs `os.walk`) and what
+  each skip rule excluded. Warns when more than two thirds of the candidate
+  files were skipped, which is the signature of a repository whose source
+  lives under a name in `DEFAULT_SKIP_DIRS` (`build/`, `target/`, `dist/`) —
+  it indexes cleanly and answers every question with nothing.
+- **Generated / vendored code**: files that made it *into* the index and look
+  machine-written — vendored directories, lockfiles, `*_pb2.py`, `*.pb.go`,
+  `*.min.js`, and files whose first 2 KB carry `@generated`, `Code generated
+  by` or `DO NOT EDIT`. Generated output is usually the largest and most
+  repetitive text in a repository, so it dominates BM25 and crowds
+  hand-written code out of a bounded pack. The remediation prints the
+  `--exclude` globs to rebuild with.
+- **Dense vector integrity**: checks `vectors.npy` and `vectors.meta.json`
+  correspondence with `chunks.jsonl`.
+
+**Agent wiring**
+
+- **MCP SDK**: probes `mcp.server.Server` — the thing `serve()` needs — not
+  just that `import mcp` succeeds.
+- **MCP client configuration**: finds the Claude Code, Claude Desktop, Cursor
+  and Windsurf config files, and validates every repo2graph server entry in
+  them — a `command` that is not on `PATH`, `uvx` without
+  `--from "repo2graph[mcp]"`, a relative or non-existent repository path, and
+  JSON that does not parse (a trailing comma here surfaces to the user only
+  as "server failed to start"). It never reads or echoes an entry's `env`
+  values.
+- **LLM providers**: reports whether provider environment variables are set,
+  never their values — no prefix, no tail, no length.
+
+Every scan over an index is bounded, because `doctor` is the documented way
+to inspect an index built somewhere else: `MAX_NODE_LINES`,
+`MAX_FRESHNESS_FILES` and `MAX_GENERATED_CONTENT_SCANS` in
+`repo2graph/doctor.py`. Exceeding one degrades the check to its cheap signal
+and says so, rather than reading an attacker-chosen number of bytes.
+
+Pass `--json` for machine-readable output suitable for CI or automation.
+Exits `0` when every check passes or only warns, `1` when a check fails
+outright — so `repo2graph doctor . --json` is safe to attach to a bug report
+and safe to gate a pipeline on.
+
+[The quickstart's troubleshooting table](quickstart.md#when-something-goes-wrong)
+maps each symptom to the check that names it.
 
 ## `explain-path` — explain file inclusion or exclusion
 
