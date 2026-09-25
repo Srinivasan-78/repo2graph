@@ -1,136 +1,114 @@
 {
-  "base": "main",
-  "head": "feature/auth-refresh",
-  "analyzed_at": "2026-09-26T00:00:00Z",
-  "summary": {
-    "files_changed_count": 3,
-    "total_added_lines": 42,
-    "total_deleted_lines": 8,
-    "symbols_changed_count": 2,
+  "base_ref": "main",
+  "head_ref": "feature",
+  "risk_level": "MEDIUM",
+  "blast_radius_score": 15,
+  "metrics": {
+    "files_changed_count": 1,
+    "symbols_changed_count": 1,
     "public_apis_affected_count": 1,
-    "impacted_callers_count": 2,
-    "impacted_modules_count": 2,
+    "direct_callers_count": 1,
+    "transitive_callers_count": 0,
+    "impacted_modules_count": 1,
     "impacted_tests_count": 1,
-    "suspicious_findings_count": 1,
-    "max_depth_evaluated": 2,
-    "has_high_blast_radius": false
+    "untested_public_apis_count": 0,
+    "suspicious_findings_count": 1
   },
+  "files_changed": [
+    {
+      "path": "pkg/foo.py",
+      "old_path": null,
+      "status": "modified",
+      "added_lines": [
+        10,
+        11
+      ],
+      "deleted_lines_count": 0
+    }
+  ],
   "symbols_changed": [
     {
-      "id": "sym:src/auth/service.py::AuthService.refresh_token",
-      "name": "refresh_token",
-      "qualname": "AuthService.refresh_token",
-      "kind": "method",
-      "path": "src/auth/service.py",
-      "start_line": 45,
-      "end_line": 68,
-      "signature": "def refresh_token(self, token: str, client_id: str | None = None) -> TokenPair:",
+      "id": "sym:pkg/foo.py::bar",
+      "name": "bar",
+      "qualname": "bar",
+      "kind": "function",
+      "path": "pkg/foo.py",
+      "start_line": 10,
+      "end_line": 20,
+      "signature": "def bar():",
       "is_public": true,
       "signature_changed": true,
-      "changed_lines_count": 12,
-      "change_type": "modified"
-    },
-    {
-      "id": "sym:src/auth/service.py::_parse_jwt_claims",
-      "name": "_parse_jwt_claims",
-      "qualname": "_parse_jwt_claims",
-      "kind": "function",
-      "path": "src/auth/service.py",
-      "start_line": 110,
-      "end_line": 125,
-      "signature": "def _parse_jwt_claims(token: str) -> dict:",
-      "is_public": false,
-      "signature_changed": false,
       "changed_lines_count": 5,
       "change_type": "modified"
     }
   ],
   "public_apis_affected": [
     {
-      "id": "sym:src/auth/service.py::AuthService.refresh_token",
-      "name": "refresh_token",
-      "qualname": "AuthService.refresh_token",
-      "kind": "method",
-      "path": "src/auth/service.py",
-      "start_line": 45,
-      "end_line": 68,
-      "signature": "def refresh_token(self, token: str, client_id: str | None = None) -> TokenPair:",
+      "id": "sym:pkg/foo.py::bar",
+      "name": "bar",
+      "qualname": "bar",
+      "kind": "function",
+      "path": "pkg/foo.py",
+      "start_line": 10,
+      "end_line": 20,
+      "signature": "def bar():",
       "is_public": true,
       "signature_changed": true,
-      "changed_lines_count": 12,
+      "changed_lines_count": 5,
       "change_type": "modified"
     }
   ],
   "impacted_callers": [
     {
-      "id": "sym:api/routes/auth.py::handle_refresh_request",
-      "name": "handle_refresh_request",
-      "qualname": "handle_refresh_request",
+      "id": "sym:pkg/caller.py::use_bar",
+      "name": "use_bar",
+      "qualname": "use_bar",
       "kind": "function",
-      "path": "api/routes/auth.py",
-      "line": 82,
-      "target_symbol_id": "sym:src/auth/service.py::AuthService.refresh_token",
-      "target_symbol_name": "AuthService.refresh_token",
+      "path": "pkg/caller.py",
+      "line": 30,
+      "target_symbol_id": "sym:pkg/foo.py::bar",
+      "target_symbol_name": "bar",
       "depth": 1,
       "confidence": 1.0,
-      "evidence": "api/routes/auth.py:82",
-      "is_test": false
-    },
-    {
-      "id": "sym:api/middleware/auth.py::AuthMiddleware.authenticate",
-      "name": "authenticate",
-      "qualname": "AuthMiddleware.authenticate",
-      "kind": "method",
-      "path": "api/middleware/auth.py",
-      "line": 34,
-      "target_symbol_id": "sym:src/auth/service.py::AuthService.refresh_token",
-      "target_symbol_name": "AuthService.refresh_token",
-      "depth": 2,
-      "confidence": 0.9,
-      "evidence": "api/middleware/auth.py:34",
+      "evidence": "pkg/caller.py:30",
       "is_test": false
     }
   ],
   "impacted_modules": [
-    "api/routes/auth.py",
-    "api/middleware/auth.py"
+    "pkg/caller.py"
   ],
   "impacted_tests": [
     {
-      "test_file": "tests/test_auth.py",
-      "test_node_id": "sym:tests/test_auth.py::test_refresh_token_valid",
-      "test_name": "test_refresh_token_valid",
+      "test_file": "tests/test_foo.py",
+      "test_node_id": "sym:tests/test_foo.py::test_bar",
+      "test_name": "test_bar",
       "line": 12,
-      "target_symbol_id": "sym:src/auth/service.py::AuthService.refresh_token",
-      "target_symbol_name": "AuthService.refresh_token",
+      "target_symbol_id": "sym:pkg/foo.py::bar",
+      "target_symbol_name": "bar",
       "confidence": 1.0,
-      "evidence": "tests/test_auth.py:12"
+      "evidence": "tests/test_foo.py:12"
     }
   ],
   "dependency_paths": [
     {
-      "path_nodes": [
-        "api/routes/auth.py",
-        "src/auth/service.py",
-        "src/auth/crypto.py"
-      ],
-      "relationship_summary": "api/routes/auth.py -> src/auth/service.py -> src/auth/crypto.py"
+      "caller": "pkg/caller.py",
+      "changed_symbol": "sym:pkg/foo.py::bar",
+      "dependency": "pkg/foo.py",
+      "path_str": "pkg/caller.py -> sym:pkg/foo.py::bar -> pkg/foo.py"
     }
   ],
   "suspicious_findings": [
     {
-      "rule_id": "R2G-IMP-001",
+      "rule_id": "R2G-IMP-002",
+      "category": "untested_public_api",
       "severity": "warning",
-      "title": "Disconnected modified file",
-      "message": "File scripts/deploy_helper.py was modified (+25 lines) but shares no graph connections with other changed symbols.",
-      "file": "scripts/deploy_helper.py",
-      "line": 1,
-      "evidence": "scripts/deploy_helper.py"
+      "path": "pkg/foo.py",
+      "line": 10,
+      "title": "Untested public API change: `bar`",
+      "description": "Public API bar modified without direct test coverage."
     }
   ],
-  "uncertainty_notes": [
-    "This impact analysis is grounded solely in static code-graph relationships (AST symbols, static calls, module imports).",
-    "Static analysis cannot prove dynamic runtime breakage; dynamic dispatch, reflection, monkey-patching, or environment variables may affect real runtime behavior."
-  ]
+  "guardrails": {
+    "uncertainty_notice": "Static analysis cannot prove dynamic runtime breakage."
+  }
 }
-

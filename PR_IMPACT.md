@@ -179,10 +179,18 @@ repo2graph impact -i .index --base main --format pr-comment --write pr-comment.m
   ],
   "guardrails": {
     "analysis_type": "static_ast_code_graph",
-    "uncertainty_notice": "Static analysis identifies structural reachability and potential call exposure..."
+    "uncertainty_notice": "Static analysis identifies structural reachability and potential call exposure...",
+    "confidence_tiers": {"high": "...", "plausible": "...", "import_only": "..."},
+    "index_coverage": {
+      "changed_files": 2,
+      "files_absent_from_index": []
+    }
   }
 }
 ```
+
+`guardrails.stale_index_notice` is present only when `files_absent_from_index` is
+non-empty — see *Index coverage is part of the report* below.
 
 ### Static Impact Rules
 
@@ -192,6 +200,35 @@ repo2graph impact -i .index --base main --format pr-comment --write pr-comment.m
 | **`R2G-IMP-002`** | `UntestedPublicApiChange` | `warning` | A public function or class method changed, but no test node in the graph reaches it. |
 | **`R2G-IMP-003`** | `HighBlastRadiusModification`| `warning` | A modified symbol has \(\ge 8\) direct callers or spans \(\ge 3\) separate modules. |
 | **`R2G-IMP-004`** | `AmbiguousCallSite` | `note` | Downstream caller resolved with fractional confidence (< 0.70) due to dynamic or polymorphic naming. |
+
+Each rule is scoped so that a finding is a claim the graph can actually support:
+
+- **`R2G-IMP-001`** only judges files the graph can relate at all — a file with at
+  least one parsed symbol or one import edge. A workflow YAML, a lockfile or a
+  Markdown page has neither in any index, so "no graph relationships connect it to
+  the other changes" would be true of every such file in every multi-file diff.
+  For the same reason the rule needs **two** relatable files before it fires: a
+  lone source file has nothing in the change it could have been connected to.
+- **`R2G-IMP-003`** only judges *modified* symbols outside test paths. An added
+  symbol has no pre-existing dependents — its callers arrived with it in the same
+  change — so counting them measures how well new code is wired in, not what the
+  edit puts at risk. A shared test helper with many callers is how a suite is
+  meant to look.
+
+### Index coverage is part of the report
+
+`analyze_diff_impact` intersects diff hunks, whose line numbers are **new-file**
+coordinates, with symbol spans read out of the index. The index must therefore be
+built on the **head commit being analyzed**. An index built on the base ref cannot
+contain a file the diff adds, and holds base-side line numbers for every file the
+diff modifies — so added files read as unreachable orphans and modified symbols
+resolve against the wrong lines, with no error raised and plausible-looking
+numbers in the report.
+
+Every report states its own coverage under `guardrails.index_coverage`
+(`changed_files`, `files_absent_from_index`), and adds
+`guardrails.stale_index_notice` — rendered into the Markdown and PR-comment output
+— whenever a changed file is missing from the index.
 
 ---
 
@@ -225,94 +262,74 @@ Coding agents interacting with repository knowledge can invoke the `repo_impact`
 
 ## GitHub Actions CI Workflow
 
-Add the following workflow to `.github/workflows/pr-impact.yml` to automatically analyze every PR:
+`.github/workflows/pr-impact.yml` in this repository is the maintained reference
+implementation — read it rather than a copy pasted here, which is how the recipe
+below came to disagree with the tool it drives. The three properties any adaptation
+needs:
+
+**1. Build the index on the head commit, not the base ref.** See *Index coverage is
+part of the report* above. On a `pull_request` event `actions/checkout` leaves `HEAD`
+at the merge commit — the tree that will actually land — so indexing the checkout as
+it stands is both correct and one build instead of two:
 
 ```yaml
-name: "PR Architectural Impact Analysis"
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths-ignore:
-      - "docs/**"
-      - "*.md"
-
-permissions:
-  contents: read
-
-jobs:
-  impact:
-    name: "Analyze Diff Impact"
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      security-events: write
-    steps:
-      - name: "Checkout base and head"
+      - name: "Checkout PR merge commit"
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # so origin/<base> exists for the three-dot diff
           persist-credentials: false
 
-      - name: "Set up Python"
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12"
-          cache: "pip"
+      - name: "Build graph index on the analyzed head tree"
+        run: repo2graph build . -o .repo2graph-head --formats jsonl,overview
 
-      - name: "Install repo2graph"
-        run: |
-          python -m pip install --upgrade pip
-          pip install .
-
-      - name: "Build Graph Index on Base Branch"
-        env:
-          BASE_REF: ${{ github.base_ref }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          git checkout "$BASE_REF"
-          repo2graph build . -o .repo2graph-base --formats jsonl,overview
-          git checkout "$HEAD_REF"
-
-      - name: "Run repo2graph Impact Analysis"
-        id: impact
+      - name: "Run repo2graph impact analysis"
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           mkdir -p impact-reports
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format markdown --write impact-reports/impact-report.md
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format json --write impact-reports/impact-report.json
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format sarif --write impact-reports/impact-report.sarif
-          repo2graph impact -i .repo2graph-base --base "origin/$BASE_REF" --head "HEAD" --format pr-comment --write impact-reports/pr-comment.md
-
-      - name: "Publish Job Summary"
-        run: |
-          cat impact-reports/pr-comment.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: "Upload Impact Artifacts"
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: pr-impact-analysis
-          path: impact-reports/
-          retention-days: 14
-
-      - name: "Upload SARIF Results to GitHub Code Scanning"
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        continue-on-error: true
-        with:
-          sarif_file: impact-reports/impact-report.sarif
-          category: repo2graph-impact
-
-      - name: "Post PR Comment"
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh pr comment "$PR_NUMBER" --body-file impact-reports/pr-comment.md || true
+          run_impact() {
+            repo2graph impact -i .repo2graph-head               --base "origin/$BASE_REF" --head HEAD               --format "$1" --write "impact-reports/$2"
+          }
+          run_impact markdown   impact-report.md
+          run_impact json       impact-report.json
+          run_impact sarif      impact-report.sarif
+          run_impact pr-comment pr-comment.md
 ```
+
+**2. Update one comment instead of posting another.** `format_pr_comment` leads with
+`repo2graph.impact.PR_COMMENT_MARKER` (`<!-- repo2graph-impact-comment -->`) for
+exactly this. A plain `gh pr comment` appends a fresh comment on every push:
+
+```yaml
+        run: |
+          existing=$(gh api --paginate "repos/$GH_REPO/issues/$PR_NUMBER/comments"             --jq '[.[] | select(.body | startswith("<!-- repo2graph-impact-comment -->")) | .id] | last // empty')
+          jq -Rs '{body: .}' < impact-reports/pr-comment.md > comment-body.json
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GH_REPO/issues/comments/$existing" --input comment-body.json
+          else
+            gh api -X POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input comment-body.json
+          fi
+```
+
+**3. Do not hand a privileged credential to a job that runs PR code.** This job
+installs the package from the PR head, so a GitHub App key or any write-scoped
+identity must be minted only when the pull request comes from a branch of the
+repository itself:
+
+```yaml
+    env:
+      SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    # ...
+      - name: "Generate app token"
+        id: app-token
+        if: ${{ env.SAME_REPO == 'true' && env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}
+```
+
+A fork pull request still gets the whole analysis in the job summary and the
+uploaded artifact. The comment and the SARIF upload are what GitHub already
+withholds there: `GITHUB_TOKEN` is read-only for fork pull requests regardless of
+the workflow's `permissions:` block, which is why the SARIF upload step carries
+`continue-on-error: true`.
 
 ---
 
@@ -327,4 +344,10 @@ jobs:
 - [x] Machine-readable outputs: JSON, Markdown, PR-comment, and SARIF v2.1.0.
 - [x] Full MCP tool exposure (`repo_impact`) with secret filtering and depth clamping.
 - [x] GitHub Action CI recipe with security-hardened action pins and step summaries.
+- [x] Index coverage reported rather than assumed, so a base-built index cannot
+      produce a confident wrong answer.
+- [x] Findings scoped to claims the graph can support: no orphan finding for a file
+      the parser never read, no blast-radius finding for a symbol nothing depended on.
+- [x] One PR comment, updated in place, posted as the repository's PR assistant.
+- [x] No write-scoped credential in a job that executes pull-request code.
 

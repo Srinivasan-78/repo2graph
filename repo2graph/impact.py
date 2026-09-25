@@ -125,6 +125,16 @@ class ImpactReport:
     guardrails: dict[str, Any] = field(default_factory=dict)
 
 
+#: HTML comment `format_pr_comment` leads with, so a CI job can find the comment
+#: it posted last time and update it in place. Changing it orphans every comment
+#: already posted -- a second series of comments starts alongside the first.
+PR_COMMENT_MARKER = "<!-- repo2graph-impact-comment -->"
+
+#: Longest public-API list `format_pr_comment` will render. GitHub rejects an
+#: issue comment body over 65536 characters, so every list in that renderer is
+#: bounded; the full, uncapped report is the `markdown`/`json` format.
+PR_COMMENT_MAX_APIS = 20
+
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 DIFF_GIT_RE = re.compile(r"^diff --git a/(.*?) b/(.*)$")
 
@@ -260,28 +270,36 @@ def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = N
     return proc.stdout.decode("utf8", "surrogateescape")
 
 
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
+_TEST_BASENAME_SUFFIXES = (
+    "_test.py",
+    "_test.go",
+    ".test.ts",
+    ".test.js",
+    ".test.tsx",
+    ".test.jsx",
+    ".spec.ts",
+    ".spec.js",
+    ".spec.tsx",
+    ".spec.jsx",
+)
+
+
 def is_test_path(path: str) -> bool:
-    """Identify whether a relative path represents test code."""
-    p = path.replace("\\", "/").lower()
-    return (
-        p.startswith("tests/")
-        or "/tests/" in p
-        or p.startswith("test/")
-        or "/test/" in p
-        or p.startswith("__tests__/")
-        or "/__tests__/" in p
-        or p.endswith("_test.py")
-        or p.endswith("_test.go")
-        or p.endswith(".test.ts")
-        or p.endswith(".test.js")
-        or p.endswith(".test.tsx")
-        or p.endswith(".test.jsx")
-        or p.endswith(".spec.ts")
-        or p.endswith(".spec.js")
-        or p.endswith(".spec.tsx")
-        or p.endswith("test.py")
-        or "/test_" in p
-    )
+    """Identify whether a relative path represents test code.
+
+    Matched per path component, never as a suffix of the whole path.
+    `path.endswith("test.py")` -- what this used to do -- is true for
+    `latest.py`, `fastest.py` and `manifest.py`, so those modules were
+    classified as tests: excluded from `is_public_symbol`, credited as their own
+    test coverage, and skipped by every rule that skips test files.
+    """
+    parts = path.replace("\\", "/").lower().split("/")
+    if any(part in _TEST_DIR_NAMES or part.startswith("test_") for part in parts[:-1]):
+        return True
+
+    base = parts[-1]
+    return base == "test.py" or base.startswith("test_") or base.endswith(_TEST_BASENAME_SUFFIXES)
 
 
 def is_public_symbol(node: dict[str, Any]) -> bool:
@@ -350,11 +368,18 @@ def analyze_diff_impact(
     changed_sym_ids: set[str] = set()
     changed_file_paths: set[str] = set(file_diffs.keys())
 
+    # Every path the parser produced at least one symbol for. Collected in the
+    # same pass as the symbol match below so R2G-IMP-001 can tell "this file has
+    # no relationship to the rest of the diff" apart from "the graph has nothing
+    # to say about this file at all" -- see _relatable() below.
+    symbol_paths: set[str] = set()
+
     # 1. Match diff line ranges against symbol nodes in the index
     for node_id, node in index.nodes.items():
         if node.get("type") != "symbol":
             continue
         path = node.get("path", "")
+        symbol_paths.add(path)
         if path not in file_diffs:
             continue
 
@@ -552,8 +577,25 @@ def analyze_diff_impact(
     suspicious: list[SuspiciousFinding] = []
 
     # Rule R2G-IMP-001: Disconnected / Orphan Changes
-    if len(changed_file_paths) > 1:
-        for fpath in sorted(changed_file_paths):
+    #
+    # Only files the graph can actually relate are judged. "No graph
+    # relationships connect this file to the other changes" is a falsifiable
+    # claim for a parsed source file; for a workflow YAML, a lockfile or a
+    # Markdown page it is true of every such file in every diff, and for a file
+    # the index has never seen (an index built before the file was added) it is
+    # an artifact of the index, not of the change. Each of those shapes produced
+    # a code-scanning alert on PR #422 that named a perfectly ordinary edit.
+    def _relatable(fpath: str) -> bool:
+        if fpath in symbol_paths:
+            return True
+        return any(etype == "IMPORTS" for _, etype, _, _ in index.adj.get(f"file:{fpath}", []))
+
+    relatable_paths = [p for p in sorted(changed_file_paths) if _relatable(p)]
+
+    # >1 because the rule is about isolation *within* the diff: a single
+    # relatable file has nothing in the change it could have been connected to.
+    if len(relatable_paths) > 1:
+        for fpath in relatable_paths:
             fid = f"file:{fpath}"
             # Check if this file has ANY edge connecting it to another changed file
             connected = False
@@ -582,11 +624,7 @@ def analyze_diff_impact(
                     if connected:
                         break
 
-            if (
-                not connected
-                and not is_test_path(fpath)
-                and not fpath.endswith((".md", ".txt", ".json", ".lock"))
-            ):
+            if not connected and not is_test_path(fpath):
                 suspicious.append(
                     SuspiciousFinding(
                         rule_id="R2G-IMP-001",
@@ -625,6 +663,15 @@ def analyze_diff_impact(
 
     # Rule R2G-IMP-003: High Blast Radius
     for sc in symbols_changed:
+        # An *added* symbol cannot break a caller: nothing depended on it before
+        # this diff, so its callers are all part of the same change and the
+        # count measures how well the new code is wired in, not what the edit
+        # puts at risk. A new module landing with its three consumers scored
+        # "high blast radius" on every file of PR #422. Test helpers are skipped
+        # for the reason R2G-IMP-001 skips them: a shared fixture with many
+        # callers is how a suite is meant to look.
+        if sc.change_type == "added" or is_test_path(sc.path):
+            continue
         direct_callers = [
             c for c in impacted_callers if c.target_symbol_id == sc.id and c.depth == 1
         ]
@@ -688,7 +735,7 @@ def analyze_diff_impact(
     else:
         risk_level = "LOW"
 
-    guardrails = {
+    guardrails: dict[str, Any] = {
         "analysis_type": "static_ast_code_graph",
         "uncertainty_notice": (
             "Static analysis identifies structural reachability and potential call exposure. "
@@ -702,6 +749,25 @@ def analyze_diff_impact(
             "import_only": "Module-level import dependency without explicit symbol call site",
         },
     }
+
+    # An index built on the *base* ref cannot contain a file the diff adds, and
+    # its symbol line numbers are base-side while a diff's added_lines are
+    # head-side -- so every added file reads as unreachable and every symbol
+    # resolves against the wrong lines. That is a silent wrong answer, not an
+    # error, so the report states its own coverage instead of implying none of
+    # this happened. Build the index on the head commit being analyzed.
+    unindexed = sorted(p for p in changed_file_paths if f"file:{p}" not in index.nodes)
+    guardrails["index_coverage"] = {
+        "changed_files": len(changed_file_paths),
+        "files_absent_from_index": unindexed,
+    }
+    if unindexed:
+        guardrails["stale_index_notice"] = (
+            f"{len(unindexed)} of {len(changed_file_paths)} changed file(s) are absent from the "
+            "index, so no caller, test or public-API finding can be reported for them. This is "
+            "what an index built on a different commit than the analyzed head looks like: "
+            "rebuild it on the head commit for accurate results."
+        )
 
     return ImpactReport(
         base_ref=base,
@@ -745,6 +811,7 @@ def format_json(report: ImpactReport) -> str:
         "files_changed": [
             {
                 "path": f.path,
+                "old_path": f.old_path,
                 "status": f.status,
                 "added_lines": sorted(f.added_lines),
                 "deleted_lines_count": f.deleted_lines_count,
@@ -885,6 +952,13 @@ def format_markdown(report: ImpactReport) -> str:
         lines.append("")
 
     # Guardrails Notice
+    stale = report.guardrails.get("stale_index_notice")
+    if stale:
+        lines.append("> [!WARNING]")
+        lines.append("> **Index does not cover the whole diff**")
+        lines.append(f"> {stale}")
+        lines.append("")
+
     lines.append("> [!IMPORTANT]")
     lines.append("> **Static Analysis Guardrail & Uncertainty Notice**")
     lines.append(f"> {report.guardrails.get('uncertainty_notice', '')}")
@@ -904,6 +978,9 @@ def format_pr_comment(report: ImpactReport) -> str:
     badge = risk_emojis.get(report.risk_level, report.risk_level)
 
     lines: list[str] = []
+    # Marker, not decoration: the PR workflow finds its own previous comment by
+    # this string and edits it, instead of posting one more comment per push.
+    lines.append(PR_COMMENT_MARKER)
     lines.append(f"### 📐 repo2graph Impact Analysis: `{report.base_ref}`...`{report.head_ref}`")
     lines.append("")
     lines.append(
@@ -938,10 +1015,22 @@ def format_pr_comment(report: ImpactReport) -> str:
             + str(len(report.public_apis_affected))
             + ")</strong></summary>\n"
         )
-        for pub in report.public_apis_affected:
+        # Capped like the findings list above it. GitHub rejects a comment body
+        # over 65536 characters outright, and this was the one unbounded section:
+        # a refactor touching a few hundred public symbols would have made the
+        # whole comment unpostable rather than merely long.
+        for pub in report.public_apis_affected[:PR_COMMENT_MAX_APIS]:
             sig = " *(signature touched)*" if pub.signature_changed else ""
             lines.append(f"- `{pub.qualname}` in `{pub.path}:{pub.start_line}`{sig}")
+        remaining = len(report.public_apis_affected) - PR_COMMENT_MAX_APIS
+        if remaining > 0:
+            lines.append(f"- *... and {remaining} more (see the full report artifact)*")
         lines.append("\n</details>\n")
+
+    stale = report.guardrails.get("stale_index_notice")
+    if stale:
+        lines.append(f"> [!WARNING]\n> {stale}")
+        lines.append("")
 
     lines.append("*(Report generated via `repo2graph impact` grounded in static code graph)*")
     return "\n".join(lines)

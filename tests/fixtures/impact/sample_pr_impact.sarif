@@ -6,17 +6,13 @@
       "tool": {
         "driver": {
           "name": "repo2graph-impact",
-          "version": "0.1.0",
           "informationUri": "https://github.com/Srinivasan-78/repo2graph",
           "rules": [
             {
               "id": "R2G-IMP-001",
-              "name": "DisconnectedChange",
+              "name": "DisconnectedOrphanChange",
               "shortDescription": {
-                "text": "Disconnected modified file"
-              },
-              "fullDescription": {
-                "text": "A modified or added file shares no graph relationships (CALLS, IMPORTS, DEFINES) with other changed files in the diff."
+                "text": "File changed without graph connection to other modifications"
               },
               "defaultConfiguration": {
                 "level": "warning"
@@ -26,10 +22,7 @@
               "id": "R2G-IMP-002",
               "name": "UntestedPublicApiChange",
               "shortDescription": {
-                "text": "Public API modified without direct test coverage"
-              },
-              "fullDescription": {
-                "text": "A public symbol or function signature changed, but no test callers were identified in the static code graph."
+                "text": "Public API modified without test callers in repo graph"
               },
               "defaultConfiguration": {
                 "level": "warning"
@@ -37,25 +30,19 @@
             },
             {
               "id": "R2G-IMP-003",
-              "name": "HighBlastRadius",
+              "name": "HighBlastRadiusModification",
               "shortDescription": {
-                "text": "High blast radius change"
-              },
-              "fullDescription": {
-                "text": "A changed symbol impacts an exceptionally high number of downstream callers."
+                "text": "Symbol modified with widespread caller reachability"
               },
               "defaultConfiguration": {
-                "level": "note"
+                "level": "warning"
               }
             },
             {
               "id": "R2G-IMP-004",
-              "name": "AmbiguousCallResolution",
+              "name": "AmbiguousCallSite",
               "shortDescription": {
-                "text": "Ambiguous call resolution in blast radius"
-              },
-              "fullDescription": {
-                "text": "A downstream caller resolved with low confidence due to multiple candidate targets."
+                "text": "Call site resolved with low static confidence"
               },
               "defaultConfiguration": {
                 "level": "note"
@@ -66,20 +53,19 @@
       },
       "results": [
         {
-          "ruleId": "R2G-IMP-001",
-          "ruleIndex": 0,
+          "ruleId": "R2G-IMP-002",
           "level": "warning",
           "message": {
-            "text": "File scripts/deploy_helper.py was modified (+25 lines) but shares no graph connections with other changed symbols."
+            "text": "Untested public API change: `bar`: Public API bar modified without direct test coverage."
           },
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "scripts/deploy_helper.py"
+                  "uri": "pkg/foo.py"
                 },
                 "region": {
-                  "startLine": 1
+                  "startLine": 10
                 }
               }
             }
@@ -89,4 +75,3 @@
     }
   ]
 }
-
