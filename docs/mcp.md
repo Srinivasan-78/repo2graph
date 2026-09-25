@@ -9,6 +9,13 @@ It is an *additional* surface, not a replacement: every tool is a thin call into
 `repo2graph.query.Index`, the same object the CLI and the GitHub Action use, over
 the same artifacts.
 
+> **Before exposing the HTTP transport**, read
+> [docs/THREAT_MODEL.md §3.5](THREAT_MODEL.md#35-the-http-mcp-surface) — it names what the server
+> defends against, what it does not yet (TLS enforcement, rate limiting), and why the intended
+> shape is a loopback bind behind a reverse proxy. The hardened invocations are in
+> [docs/secure-configuration.md](secure-configuration.md). Stdio mode, the default, has no
+> listening socket and none of this applies to it.
+
 > **Note**: `repo2graph-mcp` needs the `mcp` SDK (`mcp>=1.0,<3.0`), which ships as
 > an optional extra: `pip install "repo2graph[mcp]"`. The CLI, the Action and the
 > Python API never import it.

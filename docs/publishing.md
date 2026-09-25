@@ -73,6 +73,39 @@ repo owner (or an org member with the right role) in a browser.
 
 ---
 
+## The branch model, and what has to happen first
+
+Two long-lived branches:
+
+- **`develop`** — where feature and fix PRs land. This is the base contributors target; see
+  [.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md).
+- **`main`** — the release branch. Only ever updated by a **promotion PR** with `develop` as the
+  head branch, or by the release bump itself.
+
+Two consequences worth knowing before your first release:
+
+- **`develop` is protected from deletion** by a ruleset scoped to `refs/heads/develop` with no
+  bypass actors. The repository has `delete_branch_on_merge: true`, and because promotion PRs use
+  `develop` as the *head*, every promotion merge would otherwise auto-delete it — which in turn
+  auto-closes every open PR targeting it. A refused post-merge deletion of `develop` is the
+  protection working, not a failure to fix.
+- **Auto-delete only ever removes the head branch**, so PRs *into* `develop` were never at risk.
+
+### Pre-release checklist
+
+- [ ] `develop` is green on CI.
+- [ ] `develop` has been promoted to `main` and merged (a PR with `develop` as head).
+- [ ] `CHANGELOG.md`'s `## [Unreleased]` section describes everything in the release, in the right
+      subsections. `publish.yml` reads this section verbatim as the GitHub Release body, which
+      makes it a release-blocking step rather than a good intention.
+- [ ] `python scripts/check_version.py` passes — every surface in `scripts/version_surfaces.py`
+      agrees. If a new surface was added this cycle, confirm it is registered there;
+      `tests/test_version_surfaces.py` asserts the bump script covers all of them.
+- [ ] `uv lock --check` passes. A stale lockfile aborts the release *after* the tag is cut, which
+      is the worst point to find out.
+- [ ] `server.json`'s `description` and `pyproject.toml`'s `description` still say what the project
+      currently claims — see [POSITIONING.md](../POSITIONING.md) §6 for the surface audit.
+
 ## Cutting a release
 
 Releasing is fully automated via **`.github/workflows/publish.yml`**, which runs in three sequential stages:

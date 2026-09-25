@@ -15,6 +15,59 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`docs/THREAT_MODEL.md`** — the page the five existing security documents now hang off, and what
+  issue #263 was actually asking for. Assets, five trust boundaries, and per-surface attacks with
+  the mitigation and the open gap for each: hostile repository, hostile index (an index is
+  untrusted input per `GHSA-6wrx-c2rg-mvm9`), prompt injection through retrieved source, secrets
+  reaching the index, the HTTP MCP surface, and supply chain. Includes an explicit out-of-scope
+  list and a table of every open security-relevant issue against the surface it belongs to, so the
+  page does not read as though the surface is closed.
+- **`docs/secure-configuration.md`** — copy-paste configurations: exclusion globs worth adding
+  beyond the defaults (Terraform state, Helm prod values, test fixtures with real data), a
+  `--network=none` build that *proves* the offline claim rather than asserting it, stdio and HTTP
+  MCP, the Action, how to forbid `rag --answer` in a shared environment, deletion, and a checklist
+  for a sensitive repository.
+- **`docs/privacy-audit-2026-09-25.md`** — the data-handling audit behind the above: every outbound
+  path and every write location enumerated from the code. 12 claims checked, 9 held as written,
+  3 were incomplete and are corrected, none was false.
+- **Repository governance docs.** **`docs/ARCHITECTURE.md`** — the contributor-facing module map
+  (what each of the 27 modules owns, which way dependencies run, the two import cycles
+  `export`↔`viz` and `mcp`↔`http_server`↔`tasks`, that `langs`/`walker`/`layout` are re-export
+  shims rather than modules, and where a change of each kind goes).
+  **`docs/parser-development.md`** — adding a language end to end: `LangConfig`'s four keys, how to
+  find real tree-sitter node types, `_BASE_NODES` for inheritance clauses, optional per-language
+  import resolution, the two tests to write, and the six documents a test will fail without.
+  **`docs/TRIAGE.md`** — what makes an issue workable, the triage buckets, what qualifies as
+  `good first issue`, and the proposed label taxonomy. **`docs/COMMUNITY.md`** — issues vs.
+  Discussions routing and the Discussions categories. **`docs/good-first-issues.md`** — seven
+  starter tasks, each with a file-and-line pointer, acceptance criteria, and the specific catch
+  that makes it harder than it reads.
+- **`docs/issue-triage-2026-09-25.md`** — a full pass over all 84 open issues. Classifies every one
+  into a single bucket (15 bug, 29 enhancement, 2 documentation, 8 chore/ci/refactor, 2 duplicate,
+  21 needs-reproduction, 4 proposed out-of-scope, 3 epic), and records what the pass turned up:
+  two duplicates (#295⊂#315, #291 superseded by #407), five issues describing behaviour that
+  already exists or is documented as deliberate (#289's edge filters, #283's MCP ceiling, #263's
+  deployment docs, #287's residual-chunk threshold, #349's documented import cycle), and four
+  issues about the same budget vocabulary with none referencing another. Drafted replies included;
+  **nothing was applied** — no issue was closed, relabelled or commented on.
+- **Two issue templates.** `incorrect_edge.yml` for a wrong or missing `CALLS`/`IMPORTS`/`INHERITS`
+  edge, which gates on the documented blind spots (dynamic dispatch, reflection, DI, generated
+  bindings) and on index freshness before the report is filed; and `language_support.yml`, which
+  asks for the tree-sitter node types and points at the parser guide.
+- **`tests/test_i18n_consistency.py`** — the first guard on any relationship
+  between the six READMEs, which is why all six had drifted together. 25 cases
+  pin, across every language at once: that each translation is linked from the
+  English switcher; that every `LANG_CFG` grammar appears in every README (the
+  exact drift recorded under *Changed* below); that `GraphRAG` never appears
+  above the `## 📐` architecture heading; that `GraphRAG`, `BM25`,
+  `pack_context()`, `AST` and `RRF` never appear before the `## 👥` persona
+  heading; and that each file still carries the positioning anchors
+  (`explain retrieval`, `build --incremental`, `[cite:`, `CO_CHANGE`,
+  `repo2graph-mcp`). Emoji section markers are the boundary because they are the
+  only headings identical in all six files. No assertion compares one README's
+  prose to another's — a translation legitimately differs in every sentence.
+  `test_doc_consistency.py`'s language-token map was hoisted to a module-level
+  `LANGUAGE_TOKENS` so both suites share one source of truth.
 - **`repo2graph explain`** — three subcommands that answer "why did the graph say
   that?" without reading JSONL by hand. `explain edge <src> <dst>` reports every
   edge between two nodes in either direction, with each edge's own attributes and
@@ -63,6 +116,99 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **The README and all five translations carried the two errors corrected
+  elsewhere in this release.** Their Security sections said `rag --answer` was
+  "the one opt-in exception" to making no network calls — the same
+  under-statement corrected in `PRIVACY.md`, and the more visible one, since the
+  README is the front page. All six now distinguish "makes a network call" from
+  "sends your code": four commands can reach the network and only `--answer`
+  transmits anything of yours. Their contributing blocks all said
+  `make lint test`, which runs two of the four gates CI runs; all six now say
+  `make lint format-check typecheck test`, and the English one states the branch
+  model. The README's "good first issues" pointer went to `docs/BACKLOG.md`,
+  which does not have such a section; it now points at
+  `docs/good-first-issues.md`.
+- **`CODE_OF_CONDUCT.md` says what enforcement means on a one-maintainer
+  project.** The Contributor Covenant text implies a body that does not exist
+  here: the person who receives a report is the person who acts on it, and if the
+  report concerns that person there is no internal escalation — GitHub's own
+  abuse reporting is the independent route. Also states plainly that a security
+  vulnerability is not a conduct issue and the conduct email is the wrong channel.
+- **`docs/PRIVACY.md` corrected on three counts, all under-statements of scope rather
+  than failed guarantees.** It described **two** opt-in network exceptions; there are
+  **four** outbound paths — `rag --answer` (the only one that transmits source),
+  `repo2graph github` (clones), `repo2graph embed` (downloads a ~90 MB model from
+  huggingface.co on first use), and the OIDC JWKS fetch. It said every disk artifact
+  is written only inside `-o`, which is true of `export.py` but not of the package:
+  the build lock lands *beside* the output directory (`<repo>/..r2g.r2glock` for
+  `-o .r2g`), `repo2graph github` clones into the system temp dir, and the embedding
+  model caches under `~/.cache/huggingface/`. And its environment-variable table
+  omitted `GOOGLE_API_KEY`, `GH_TOKEN`/`GITHUB_TOKEN`, `R2G_AUTH_TOKEN` and the two
+  Windows path variables while stating no others were read — `R2G_AUTH_TOKEN`
+  particularly mattered, since it is the way to pass the HTTP bearer token without
+  putting it in argv where `ps` can read it. Added: a "Deleting everything" section
+  covering all four locations, a "Keeping sensitive files out" section, and an
+  explicit bar for any future analytics proposal (opt-in, disclosed before the first
+  byte, and the no-socket tests extended rather than weakened).
+- **`.github/CONTRIBUTING.md` corrected on two points that would have cost a
+  contributor a round trip.** It said to fork and branch from `main`; feature and
+  fix PRs target **`develop`**, and `main` only moves via a promotion PR or the
+  release bump. And it listed two lint commands where CI runs three —
+  `ruff format --check .` is a gate separate from `ruff check .`, and
+  `make lint` alone does not include it. Also added: a routing table to the new
+  guides, the full CI gate list, the test house style (pin literal values; prove
+  a new test is a detector), and a pointer to the starter tasks — the "Good first
+  issues" section previously said none were filed.
+- **`.github/SECURITY.md` leads with how to report.** Reporting was the last
+  section of seven; it is now the first, with a direct private-advisory link,
+  acknowledgement and disclosure expectations, what to include, an explicit
+  in-scope list, and the three things that are documented behaviour rather than
+  vulnerabilities (a missing edge, a `1/n` ambiguous `CALLS` edge, a stale index).
+- **`docs/publishing.md` documents the branch model and a pre-release checklist.**
+  The automated release flow was covered; what was missing was that `develop` is
+  promoted to `main` first, that `develop` is protected from the repo-wide
+  auto-delete because promotion PRs use it as the head branch, and the six things
+  to verify before cutting.
+- **The bug and feature templates.** Bug report now gates on index freshness and
+  on `docs/limitations.md`, asks for `repo2graph doctor` output, and redirects
+  edge reports to the new template; its version placeholder was stale at `1.5.1`.
+  Feature request became **Feature proposal** and now asks which surface it lands
+  on, for one checkable acceptance criterion, and whether the filer wants to
+  implement it. The issue chooser's contact links now route questions, support,
+  ideas and showcases to Discussions.
+- **Positioning rewritten around one outcome: "give coding agents trustworthy,
+  cited answers about unfamiliar codebases."** The README hero no longer opens on
+  "AST-driven code graphs & zero-dependency GraphRAG"; `GraphRAG`, `AST-driven`,
+  `BM25` and `pack_context()` now appear only in "Architecture & token economics"
+  and below. Three sections are new: **Who it's for** (four personas — onboarding
+  developer, coding-agent user, PR reviewer, maintainer — each with the first
+  command to run), **Why repo2graph instead of grep or vector search?** (a
+  three-way table that concedes grep is the right tool for a literal string), and
+  **What it does — and what it does not** (eight limitations on the first-time
+  reader's path, not only in `docs/limitations.md`). The same outcome sentence now
+  drives the PyPI summary (`pyproject.toml`), the MCP registry entry
+  (`server.json`) and the Action's Marketplace blurb (`action.yml`); eight
+  audience-facing PyPI keywords were added. The rationale, the jargon policy, the
+  per-surface before/after audit and ready-to-paste copy for the surfaces that are
+  not files in this repository (GitHub description and topics, the landing page)
+  are in the new root **`POSITIONING.md`**.
+- **`docs/limitations.md` gained two limitations that were real but undocumented:**
+  dependency injection (the `CALLS` edge lands on the interface declaration or
+  fans out across every same-named implementation, never on the class the
+  container injected) and **stale indexes** (the index is a snapshot, nothing
+  watches the filesystem, and `repo2graph doctor` checks index integrity and
+  vector drift — not whether your working tree moved on). `docs/why-graph.md`
+  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  became a persona routing table.
+- **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
+  two places, the README's comparison table said 16, and all five translated
+  READMEs said "16 grammars / 28 extensions"; `LANG_CFG` has held 17 grammars
+  and 29 extensions since Lua landed.
+- **The five translated READMEs carry the new positioning.**
+  `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` were retranslated — not reduced to a
+  stub link — for the hero, the intro, the persona table, the grep/vector
+  comparison and the does/does-not table, at the same level of abridgement they
+  already used.
 - **HTTP mode no longer auto-builds a missing index.** Read-only network tool
   calls could previously trigger parser execution, file writes and git
   interactions on a server an operator had only pointed at a directory. A tool
