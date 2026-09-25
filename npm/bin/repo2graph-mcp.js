@@ -30,35 +30,84 @@ const fs = require("node:fs");
 const PACKAGE_SPEC = "repo2graph[mcp]";
 const CONSOLE_SCRIPT = "repo2graph-mcp";
 
-function commandExists(cmd) {
+function resolveCommand(cmd) {
   // A manual PATH walk rather than spawning `cmd --version`: this only needs
   // to know whether something is on PATH, not run it, and `--version` is not
   // a contract any of these three commands actually promises to support.
+  //
+  // Returns the *resolved absolute path*, not a boolean, because `run()` below
+  // needs the extension to decide how to spawn it -- see the `.cmd`/`.bat`
+  // note there.
   const pathEnv = process.env.PATH || process.env.Path || "";
   const dirs = pathEnv.split(path.delimiter).filter(Boolean);
   const isWindows = process.platform === "win32";
   const exts = isWindows
-    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";")
+    ? (process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";")
     : [""];
   for (const dir of dirs) {
     for (const ext of exts) {
       const candidate = path.join(dir, cmd + ext);
       try {
         const st = fs.statSync(candidate);
-        if (st.isFile()) return true;
+        if (st.isFile()) return candidate;
       } catch {
         // not found here, keep looking
       }
     }
   }
-  return false;
+  return null;
 }
 
-function run(cmd, args) {
-  const result = spawnSync(cmd, args, { stdio: "inherit" });
+// cmd.exe metacharacters. A resolved path or a forwarded argument containing
+// one of these cannot be passed through `shell: true` unquoted.
+const CMD_UNSAFE_RE = /[&|<>^"%!()\s]/;
+
+function quoteForCmd(arg) {
+  // Double quotes stop cmd.exe splitting on whitespace and treating &|<>^ as
+  // operators. `%` and `!` still expand *inside* quotes, so a value carrying
+  // either is rejected by the caller rather than silently mangled -- there is
+  // no in-band escape for them in a `shell: true` command line.
+  return `"${String(arg).replace(/"/g, '\\"')}"`;
+}
+
+function run(resolved, args) {
+  // Node >= 18.20 / 20.12 refuses to spawn a `.cmd` or `.bat` without
+  // `shell: true` and fails with EINVAL (the CVE-2024-27980 fix). PATHEXT
+  // lists both, so `resolveCommand` can hand back a batch shim -- chocolatey
+  // and several version managers install `uvx`/`pipx` exactly that way -- and
+  // spawning it directly would abort the launch with an error that names
+  // EINVAL rather than anything actionable. Everything else (a real `.exe`,
+  // or any POSIX executable) is spawned directly, with no shell involved.
+  const ext = path.extname(resolved).toLowerCase();
+  const needsShell =
+    process.platform === "win32" && (ext === ".cmd" || ext === ".bat");
+
+  let cmd = resolved;
+  let spawnArgs = args;
+  const options = { stdio: "inherit" };
+
+  if (needsShell) {
+    const unquotable = [resolved, ...args].find((a) => /[%!]/.test(String(a)));
+    if (unquotable !== undefined) {
+      process.stderr.write(
+        `repo2graph-mcp: cannot safely run the batch shim '${resolved}' because ` +
+          `'${unquotable}' contains '%' or '!', which cmd.exe expands even inside ` +
+          `quotes.\nInstall uv (which ships a real uvx.exe) or run ` +
+          `${CONSOLE_SCRIPT} directly instead.\n`
+      );
+      process.exit(1);
+    }
+    options.shell = true;
+    cmd = quoteForCmd(resolved);
+    spawnArgs = args.map((a) =>
+      CMD_UNSAFE_RE.test(String(a)) ? quoteForCmd(a) : String(a)
+    );
+  }
+
+  const result = spawnSync(cmd, spawnArgs, options);
   if (result.error) {
     process.stderr.write(
-      `repo2graph-mcp: failed to run ${cmd}: ${result.error.message}\n`
+      `repo2graph-mcp: failed to run ${resolved}: ${result.error.message}\n`
     );
     process.exit(1);
   }
@@ -68,18 +117,21 @@ function run(cmd, args) {
 function main() {
   const forwardedArgs = process.argv.slice(2);
 
-  if (commandExists("uvx")) {
-    run("uvx", ["--from", PACKAGE_SPEC, CONSOLE_SCRIPT, ...forwardedArgs]);
+  const uvx = resolveCommand("uvx");
+  if (uvx) {
+    run(uvx, ["--from", PACKAGE_SPEC, CONSOLE_SCRIPT, ...forwardedArgs]);
     return;
   }
 
-  if (commandExists(CONSOLE_SCRIPT)) {
-    run(CONSOLE_SCRIPT, forwardedArgs);
+  const direct = resolveCommand(CONSOLE_SCRIPT);
+  if (direct) {
+    run(direct, forwardedArgs);
     return;
   }
 
-  if (commandExists("pipx")) {
-    run("pipx", ["run", "--spec", PACKAGE_SPEC, CONSOLE_SCRIPT, ...forwardedArgs]);
+  const pipx = resolveCommand("pipx");
+  if (pipx) {
+    run(pipx, ["run", "--spec", PACKAGE_SPEC, CONSOLE_SCRIPT, ...forwardedArgs]);
     return;
   }
 

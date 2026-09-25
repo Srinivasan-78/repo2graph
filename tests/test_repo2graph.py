@@ -3118,6 +3118,34 @@ def test_iss377_header_content_sniff_picks_c_or_cpp(tmp_path):
     assert g.stats["header_files_as_cpp"] == 1
 
 
+def test_iss377_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
+    """#377: a `.h` over `max_file_bytes` takes the chunked reader, which must sniff too.
+
+    `_read_and_parse` sniffs the full bytes it already read, but a file larger
+    than `max_file_bytes` returns early into `_chunk_and_parse`, which streams
+    and never holds them -- so that path needed its own sniff against the first
+    slice. An amalgamated single-header C++ library is the ordinary case for a
+    `.h` this size.
+    """
+    from repo2graph.parse import BuildConfig
+
+    big = tmp_path / "amalgamated.h"
+    # A C++ preamble, then enough filler to cross the (lowered) chunk
+    # threshold, then a class the cpp grammar finds and the C grammar does not.
+    big.write_text(
+        "#include <string>\nnamespace ns {\n"
+        + "// filler comment line to push this file over the chunk threshold\n" * 400
+        + "class Amalgamated { public: void method(); };\n}\n"
+    )
+    assert big.stat().st_size > 20_000, "fixture must exceed the config below"
+
+    g = build(tmp_path, config=BuildConfig(max_file_bytes=20_000, chunk_large_files=True))
+
+    assert g.nodes["file:amalgamated.h"]["lang"] == "cpp"
+    assert g.stats["header_files_as_cpp"] == 1
+    assert g.stats["header_files_as_c"] == 0
+
+
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
     """Verify atomic_write automatically creates missing parent directories."""
     from repo2graph.layout import atomic_write

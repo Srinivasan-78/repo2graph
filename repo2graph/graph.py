@@ -627,6 +627,16 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     total_parse_errors = 0
     used_cpp = False
     undecodable_slices = 0
+    # The #377 `.h` sniff, on the one path that never holds the whole file:
+    # this reader streams slices, so the sniff runs against the first decodable
+    # one instead of the full bytes `_read_and_parse` has. A header's C++
+    # signals (`#include <string>`, `namespace`, `class`, `::`) are in its
+    # opening lines, and a slice is `max_file_bytes` -- 1.5 MB by default --
+    # so the first slice is the whole preamble of any real header. Without
+    # this, a `.h` over the chunking threshold (an amalgamated single-header
+    # C++ library is the ordinary case) took the C grammar regardless of
+    # content, unlike every smaller `.h` in the same build.
+    sniff_header = lang == "c" and abspath.suffix.lower() == ".h"
 
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
@@ -675,6 +685,10 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 undecodable_slices += 1
                 line_offset += buf.count(b"\n")
                 continue
+
+            if sniff_header:
+                lang = sniff_header_lang(buf)
+                sniff_header = False
 
             pf = parse_source(buf, lang, filepath=None)
             if pf is None:

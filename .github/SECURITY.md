@@ -99,12 +99,17 @@ or a released package, independent of anything the tool does at runtime:
 - **Every change reaches `main` through a pull request**, with review threads required to be
   resolved and stale approvals dismissed on push.
 - **Twelve status checks gate every merge**, all of which must pass before the PR is mergeable:
-  `tests` across the full matrix (`ubuntu-latest`, `windows-latest`, `macos-latest` × Python 3.10,
-  3.11, 3.12, 3.13), plus `packaging` (the no-extra refusal and a real stdio MCP round trip),
-  `action` (the composite Action run against this repository) and `windows-cp1252-pipe` (the
-  non-UTF-8 console regression leg). `reuse` — SPDX/licence-header compliance via
-  [REUSE.toml](../REUSE.toml) — runs on every push in `provenance.yml` but is not one of the
-  required contexts.
+  `tests` on `ubuntu-latest`, `windows-latest` and `macos-latest` × Python 3.10, 3.11 and 3.12,
+  plus `packaging` (the no-extra refusal and a real stdio MCP round trip), `action` (the composite
+  Action run against this repository) and `windows-cp1252-pipe` (the non-UTF-8 console regression
+  leg).
+
+  CI *runs* more than it *requires*. The `tests` matrix also covers Python 3.13 on all three
+  operating systems, and `reuse` (SPDX/licence-header compliance via [REUSE.toml](../REUSE.toml))
+  and `zizmor` (the workflow audit) run on every push in `provenance.yml` — none of those five are
+  required contexts, so a failure there does not block a merge on its own. Verify against the live
+  ruleset rather than this list if you are relying on it:
+  `gh api repos/Srinivasan-78/repo2graph/rules/branches/main --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'`.
 
   Commit signing is *not* currently enforced by the ruleset. It was, until 2026-09-21; treat an
   unsigned commit on `main` as expected rather than as evidence of a bypass, and verify the live
