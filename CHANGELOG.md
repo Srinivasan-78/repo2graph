@@ -15,6 +15,21 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`docs/THREAT_MODEL.md`** — the page the five existing security documents now hang off, and what
+  issue #263 was actually asking for. Assets, five trust boundaries, and per-surface attacks with
+  the mitigation and the open gap for each: hostile repository, hostile index (an index is
+  untrusted input per `GHSA-6wrx-c2rg-mvm9`), prompt injection through retrieved source, secrets
+  reaching the index, the HTTP MCP surface, and supply chain. Includes an explicit out-of-scope
+  list and a table of every open security-relevant issue against the surface it belongs to, so the
+  page does not read as though the surface is closed.
+- **`docs/secure-configuration.md`** — copy-paste configurations: exclusion globs worth adding
+  beyond the defaults (Terraform state, Helm prod values, test fixtures with real data), a
+  `--network=none` build that *proves* the offline claim rather than asserting it, stdio and HTTP
+  MCP, the Action, how to forbid `rag --answer` in a shared environment, deletion, and a checklist
+  for a sensitive repository.
+- **`docs/privacy-audit-2026-09-25.md`** — the data-handling audit behind the above: every outbound
+  path and every write location enumerated from the code. 12 claims checked, 9 held as written,
+  3 were incomplete and are corrected, none was false.
 - **Repository governance docs.** **`docs/ARCHITECTURE.md`** — the contributor-facing module map
   (what each of the 27 modules owns, which way dependencies run, the two import cycles
   `export`↔`viz` and `mcp`↔`http_server`↔`tasks`, that `langs`/`walker`/`layout` are re-export
@@ -101,6 +116,22 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **`docs/PRIVACY.md` corrected on three counts, all under-statements of scope rather
+  than failed guarantees.** It described **two** opt-in network exceptions; there are
+  **four** outbound paths — `rag --answer` (the only one that transmits source),
+  `repo2graph github` (clones), `repo2graph embed` (downloads a ~90 MB model from
+  huggingface.co on first use), and the OIDC JWKS fetch. It said every disk artifact
+  is written only inside `-o`, which is true of `export.py` but not of the package:
+  the build lock lands *beside* the output directory (`<repo>/..r2g.r2glock` for
+  `-o .r2g`), `repo2graph github` clones into the system temp dir, and the embedding
+  model caches under `~/.cache/huggingface/`. And its environment-variable table
+  omitted `GOOGLE_API_KEY`, `GH_TOKEN`/`GITHUB_TOKEN`, `R2G_AUTH_TOKEN` and the two
+  Windows path variables while stating no others were read — `R2G_AUTH_TOKEN`
+  particularly mattered, since it is the way to pass the HTTP bearer token without
+  putting it in argv where `ps` can read it. Added: a "Deleting everything" section
+  covering all four locations, a "Keeping sensitive files out" section, and an
+  explicit bar for any future analytics proposal (opt-in, disclosed before the first
+  byte, and the no-socket tests extended rather than weakened).
 - **`.github/CONTRIBUTING.md` corrected on two points that would have cost a
   contributor a round trip.** It said to fork and branch from `main`; feature and
   fix PRs target **`develop`**, and `main` only moves via a promotion PR or the

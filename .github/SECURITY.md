@@ -125,10 +125,18 @@ or a released package, independent of anything the tool does at runtime:
 
 ## Further reading
 
-- [docs/SECURITY-AUDIT.md](../docs/SECURITY-AUDIT.md) — architecture, threat model, trust
-  boundaries, and a prioritized findings list with `file:line` evidence for every claim.
-- [docs/PRIVACY.md](../docs/PRIVACY.md) — exactly what leaves the machine, what's cached, and what's
-  logged.
+- [docs/THREAT_MODEL.md](../docs/THREAT_MODEL.md) — **start here**: assets, trust boundaries, what
+  an attacker could try against each surface, what stops it, and what is explicitly out of scope.
+  Every open security gap is named there with its issue number rather than left implied.
+- [docs/secure-configuration.md](../docs/secure-configuration.md) — copy-paste hardened
+  configurations: exclusion patterns, an offline build, stdio and HTTP MCP, CI, and how to
+  forbid `rag --answer` in a shared environment.
+- [docs/SECURITY-AUDIT.md](../docs/SECURITY-AUDIT.md) — the most recent whole-repository security
+  pass, with a prioritized findings list and `file:line` evidence for every claim.
+- [docs/PRIVACY.md](../docs/PRIVACY.md) — exactly what leaves the machine, what is written where,
+  what is logged, and how to delete all of it.
+- [docs/privacy-audit-2026-09-25.md](../docs/privacy-audit-2026-09-25.md) — the data-handling audit
+  behind that page: every outbound path and every write location, enumerated from the code.
 - [docs/ENTERPRISE_DEPLOYMENT.md](../docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
   scoping, and package-pinning guidance for a shared or regulated deployment.
 - [docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating

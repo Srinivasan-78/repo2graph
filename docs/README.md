@@ -92,10 +92,20 @@ the reproduction command documented:
 
 ## Security and privacy
 
-- **[.github/SECURITY.md](../.github/SECURITY.md)** — the security model: what makes network
-  calls, what is opt-in, how secrets are excluded, and how the repository itself is protected.
-  (The root `SECURITY.md` is a redirect stub kept only so old links don't 404.)
-- **[docs/PRIVACY.md](PRIVACY.md)** — what leaves your machine, what's cached, what's logged.
+- **[.github/SECURITY.md](../.github/SECURITY.md)** — the policy and how to report a vulnerability
+  privately. (The root `SECURITY.md` is a redirect stub kept only so old links don't 404.)
+- **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — assets, trust boundaries, what an attacker could
+  try against each surface, what stops it, and what is explicitly out of scope. Every open security
+  gap is named with its issue number.
+- **[docs/PRIVACY.md](PRIVACY.md)** — whether source ever leaves the machine (one path does, three
+  others open a connection carrying none of it), what is written where — including the three
+  locations outside `-o` — what is logged, and how to delete all of it.
+- **[docs/secure-configuration.md](secure-configuration.md)** — copy-paste configurations:
+  exclusion patterns worth adding, a provably offline build, stdio and HTTP MCP, CI, and how to
+  forbid `rag --answer` in a shared environment.
+- **[docs/privacy-audit-2026-09-25.md](privacy-audit-2026-09-25.md)** — the data-handling audit:
+  every outbound path and every write location enumerated from the code, with what the pass
+  corrected.
 - **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
 - **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP
   server inside an organization.

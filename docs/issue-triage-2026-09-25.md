@@ -314,9 +314,14 @@ JSON** path and the error/diagnostic text, which no ceiling covers. **Rescope to
 > "Add `docs/security-model.md` and update deployment docs."
 
 `docs/ENTERPRISE_DEPLOYMENT.md`, `docs/ACTION_SECURITY.md`, `docs/PRIVACY.md`,
-`docs/SECURITY-AUDIT.md` and `.github/SECURITY.md` are all present and current. What is missing is
-narrower: a **single threat model** — assets, actors, trust boundaries — that those five pages can
-hang off. **Rescope to "write the threat model; link the five existing pages from it".**
+`docs/SECURITY-AUDIT.md` and `.github/SECURITY.md` are all present and current. What was missing was
+narrower: a **single threat model** — assets, actors, trust boundaries — that those five pages could
+hang off.
+
+**Now written**: [docs/THREAT_MODEL.md](THREAT_MODEL.md), which also names every open
+security-relevant issue against the surface it belongs to, and
+[docs/secure-configuration.md](secure-configuration.md) for the deployment half. **#263 is
+addressed** — close it referencing both, rather than rescoping.
 
 ### 4.4 #287 — half is by design and is documented
 
