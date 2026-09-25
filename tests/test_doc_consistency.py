@@ -8,7 +8,7 @@ Prevents drift between code and documentation:
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
 - BUILD_STATE.md living at docs/, not the repo root (Issue #403)
-- docs/THREAT_MODEL.md's numeric claims vs the HTTP/auth transport source (Issue #263)
+- docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
 import json
@@ -27,6 +27,11 @@ PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 CITATION_PATH = REPO_ROOT / "CITATION.cff"
 NPM_PACKAGE_PATH = REPO_ROOT / "npm" / "package.json"
 THREAT_MODEL_PATH = REPO_ROOT / "docs" / "THREAT_MODEL.md"
+# The operator-facing companion: docs/THREAT_MODEL.md enumerates assets, trust
+# boundaries and attacks; this one issues a supported/not-recommended verdict
+# per deployment shape. The per-mode topics and the transport constants below
+# are the second document's job, so they are checked against it.
+DEPLOYMENT_SECURITY_PATH = REPO_ROOT / "docs" / "deployment-security.md"
 
 
 def _pyproject_version() -> str:
@@ -39,6 +44,7 @@ def _pyproject_version() -> str:
     m = re.search(r'^version\s*=\s*"(?P<v>[^"]+)"', text, re.MULTILINE)
     assert m, "pyproject.toml has no top-level version= line"
     return m.group("v")
+
 
 # Map internal grammar keys to the exact token the READMEs use for them
 # (JS/TS/TSX are documented abbreviated). One regex per LANG_CFG key: every
@@ -209,7 +215,7 @@ def test_build_state_lives_in_docs_not_repo_root():
 
 
 def test_threat_model_covers_every_deployment_mode():
-    """Issue #263: docs/THREAT_MODEL.md must exist and name every required mode/topic.
+    """Issue #263: docs/deployment-security.md must exist and name every required mode/topic.
 
     A loose substring check rather than a hand-derived membership assertion (AGENTS.md's usual
     rule for *behavioural* tests) -- this is a documentation-completeness check, so the thing
@@ -217,7 +223,8 @@ def test_threat_model_covers_every_deployment_mode():
     code under test computes.
     """
     assert THREAT_MODEL_PATH.exists(), "docs/THREAT_MODEL.md is missing"
-    text = THREAT_MODEL_PATH.read_text(encoding="utf-8")
+    assert DEPLOYMENT_SECURITY_PATH.exists(), "docs/deployment-security.md is missing"
+    text = DEPLOYMENT_SECURITY_PATH.read_text(encoding="utf-8")
 
     required_topics = [
         "Trusted-local CLI",
@@ -237,11 +244,11 @@ def test_threat_model_covers_every_deployment_mode():
         "rotation",
     ]
     for topic in required_topics:
-        assert topic in text, f"docs/THREAT_MODEL.md is missing required topic: {topic!r}"
+        assert topic in text, f"docs/deployment-security.md is missing required topic: {topic!r}"
 
 
 def test_threat_model_numeric_claims_match_the_http_and_auth_source():
-    """docs/THREAT_MODEL.md cites specific constants from http_server.py/auth.py in prose --
+    """docs/deployment-security.md cites specific constants from http_server.py/auth.py in prose --
     this pins those constants so a future change to either module without a doc edit fails
     here instead of leaving the threat model quietly wrong.
     """

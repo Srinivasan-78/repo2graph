@@ -272,8 +272,7 @@ def _is_secret_path(
 
     stripped = p.strip("/")
     if any(
-        stripped == suffix or stripped.endswith("/" + suffix)
-        for suffix in SECRET_PATH_SUFFIXES
+        stripped == suffix or stripped.endswith("/" + suffix) for suffix in SECRET_PATH_SUFFIXES
     ):
         return True
 

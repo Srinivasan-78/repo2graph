@@ -33,6 +33,7 @@ idx = Index(".r2g")
 results: list[RetrievalResult] = idx.retrieve("how does session auth work?")
 pack: PackResult = idx.pack_context("how does session auth work?")
 
+
 def cite(chunk: ChunkRecord) -> str:
     return f"{chunk['path']}:{chunk['start_line']}-{chunk['end_line']}"
 ```

@@ -516,8 +516,7 @@ FALSE_POSITIVE_CORPUS: tuple[str, ...] = (
     "icon = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1"
     "HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='",
     # lockfile integrity hashes (npm/yarn style)
-    "integrity sha512-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP"
-    "QRSTUVWXYZ+/==",
+    "integrity sha512-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+/==",
     "resolved 'https://registry.npmjs.org/foo/-/foo-1.0.0.tgz'",
     # CSS colors
     "color: #ffffff; background: #123abc;",
