@@ -92,18 +92,31 @@ jobs:
           #
           # `permission-*` requests that exact set, and the API rejects the whole
           # request with 422 "The permissions requested are not granted to this
-          # installation" if even one of them is absent from the installation's
-          # grant. So this list may only name permissions prod-igy is actually
-          # installed with: `permission-contents: read` used to be here, which
-          # failed closed and minted nothing. It was invisible on pull requests
-          # because `pull_request_target` runs the workflow from the *base*
-          # branch, and main did not carry this block yet -- the 422 would have
-          # arrived on every PR the moment develop was promoted. A dispatch run
-          # against this branch is what surfaced it
-          # (actions/runs/36199142420), so re-run one after touching this list.
+          # installation" if even one entry is absent from the installation's
+          # grant -- so a well-meant extra mints nothing at all rather than a
+          # slightly wider token, and the job silently falls back to
+          # github-actions[bot]. This list may therefore only name permissions
+          # prod-igy is *installed* with. Probed one permission per token request
+          # (actions/runs/36200243473):
+          #
+          #   granted: pull_requests: write, contents: read, metadata: read
+          #   absent:  issues, checks
+          #
+          # `permission-issues: write` and `permission-checks: read` were both
+          # here and both 422'd. Nothing is lost by dropping them: for a *pull
+          # request*, GitHub accepts `pull_requests: write` on the issue-comment
+          # and label endpoints prod-igy.js uses, and the unscoped token this
+          # replaced never carried `checks` either -- so the check-run section of
+          # the comment has always been running on GITHUB_TOKEN's `checks: read`.
+          # Grant the App "Checks: read" if that section should survive a future
+          # tightening.
+          #
+          # The 422 was invisible on pull requests because `pull_request_target`
+          # runs the workflow from the *base* branch and main does not carry this
+          # block yet: it would have hit every PR the moment develop was promoted.
+          # Only a real token request proves a set; re-probe after editing it.
+          permission-contents: read
           permission-pull-requests: write
-          permission-issues: write
-          permission-checks: read
 
       # The GITHUB_TOKEN fallback below is silent otherwise: a revoked or
       # unconfigured App key means every comment posts as github-actions[bot]

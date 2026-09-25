@@ -1090,13 +1090,16 @@ def test_github_app_token_is_scoped_to_the_job_permissions():
     grant: each `permission-<name>` input narrows it to something the job
     actually does, and never to more than the job's own `permissions:` block.
 
-    `permission-contents: read` must NOT come back. `permission-*` requests that
-    exact set and the API answers 422 "The permissions requested are not granted
-    to this installation" when any one of them is absent from the installation's
-    grant -- so an extra entry mints nothing at all rather than a slightly wider
-    token. prod-igy is not installed with `contents`, and asking for it broke the
-    whole step. It stayed invisible because `pull_request_target` runs the
-    workflow from the base branch, and main did not carry this block yet.
+    `permission-issues` and `permission-checks` must NOT come back.
+    `permission-*` requests that exact set and the API answers 422 "The
+    permissions requested are not granted to this installation" when any one of
+    them is absent from the installation's grant -- so an extra entry mints
+    nothing at all rather than a slightly wider token, and the job silently falls
+    back to github-actions[bot]. prod-igy is installed with pull_requests: write,
+    contents: read and metadata: read; `issues` and `checks` are absent and both
+    were requested here (probed per permission, actions/runs/36200243473). It
+    stayed invisible because `pull_request_target` runs the workflow from the base
+    branch, and main did not carry this block yet.
     """
     content = "\n".join(_read_lines(WORKFLOW_PATH))
     start = content.index("Generate prod-igy token")
@@ -1104,9 +1107,8 @@ def test_github_app_token_is_scoped_to_the_job_permissions():
     step = content[start:end]
     requested = set(re.findall(r"^\s+(permission-[\w-]+: \w+)$", step, re.M))
     assert requested == {
+        "permission-contents: read",
         "permission-pull-requests: write",
-        "permission-issues: write",
-        "permission-checks: read",
     }
 
     # and a failed mint falls through to the GITHUB_TOKEN fallback rather than
@@ -1157,7 +1159,7 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
         ("index-repo.yml", 57): "uses: ./",
         ("self-index.yml", 34): "uses: ./",
         # adhoc-packages: the one pinned npm dependency prod-igy.js has
-        ("prod-igy.yml", 145): "npm install",
+        ("prod-igy.yml", 158): "npm install",
     }
 
     pinned = {

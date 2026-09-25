@@ -49,8 +49,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      # A PR conversation comment goes through the issue-comment endpoints, which
+      # accept `pull-requests: write` when the issue is a pull request. No
+      # `issues: write` needed, for GITHUB_TOKEN or for the App token below.
       pull-requests: write
-      issues: write # a PR conversation comment is an issue comment
       security-events: write
     env:
       # Job-level, for the same reason prod-igy.yml promoted its probes here
@@ -131,14 +133,18 @@ jobs:
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
           # Scope the minted token down from the App installation's full grant to
           # exactly what the comment step below does -- an app token otherwise
-          # inherits every permission the installation holds. Request *only*
-          # permissions the installation actually grants: `permission-*` asks for
-          # that exact set and the API rejects the whole request with 422 "The
-          # permissions requested are not granted to this installation" if any one
-          # of them is absent, so a well-meant extra (`permission-contents: read`
-          # here) fails closed and mints nothing.
+          # inherits every permission the installation holds.
+          #
+          # Request *only* permissions the installation actually grants:
+          # `permission-*` asks for that exact set and the API rejects the whole
+          # request with 422 "The permissions requested are not granted to this
+          # installation" if any one entry is absent, so a well-meant extra mints
+          # nothing at all and the comment silently posts as github-actions[bot].
+          # prod-igy is installed with pull_requests: write, contents: read and
+          # metadata: read -- not issues, not checks (probed one permission per
+          # token request, actions/runs/36200243473). `pull_requests: write` is
+          # what the issue-comment endpoints below need for a pull request.
           permission-pull-requests: write
-          permission-issues: write
 
       # Without this the GITHUB_TOKEN fallback is invisible: a revoked App key
       # means the comment silently posts as github-actions[bot] again.

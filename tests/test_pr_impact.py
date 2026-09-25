@@ -943,13 +943,11 @@ def test_iss422_workflow_posts_as_prod_igy():
     # Exactly what the comment step does, and nothing else. `permission-*`
     # requests that exact set: the API answers 422 "The permissions requested are
     # not granted to this installation" if any one entry is absent from the
-    # installation's grant, so a well-meant extra mints nothing at all rather
-    # than a slightly wider token. prod-igy is not installed with `contents`.
+    # installation's grant, so a well-meant extra mints nothing at all and the
+    # comment silently posts as github-actions[bot] instead. prod-igy is
+    # installed with pull_requests, contents and metadata -- not issues.
     requested = set(re.findall(r"^\s+(permission-[\w-]+: \w+)$", text, re.M))
-    assert requested == {
-        "permission-pull-requests: write",
-        "permission-issues: write",
-    }
+    assert requested == {"permission-pull-requests: write"}
 
 
 def test_iss422_app_key_is_never_minted_for_a_fork_pull_request():
