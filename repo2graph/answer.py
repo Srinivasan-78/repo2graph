@@ -14,6 +14,8 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any
 
+from .limits import render as limitations_block
+
 HTTP_TIMEOUT = 300
 ERROR_SNIFF_LINES = 8  # unparsable lines kept, to explain an empty answer
 ERROR_SNIPPET = 400  # chars of a provider error body echoed to the user
@@ -54,7 +56,12 @@ SYSTEM_PROMPT = (
     "name, a parameter or a return value that does not appear in the chunks. "
     "Cite every claim with the source it came from, as [path/file.py:start-end], "
     "copying the path and line numbers from the `### [cite: ...]` header of the "
-    "chunk the claim rests on. A claim with no citation must not be made."
+    "chunk the claim rests on. A claim with no citation must not be made. "
+    "Where the provided material is not enough to answer fully, say what is "
+    "missing rather than filling the gap from general knowledge: a "
+    '"Confidence and limitations" section is appended to your answer '
+    "automatically, and it will contradict you if you overstate what the "
+    "sources support."
 )
 
 
@@ -501,6 +508,13 @@ def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
     if not parts:
         raise SystemExit(_empty_answer(spec, raw_tail))
     try:
+        write("\n")
+        # Counted from the pack that was actually sent, never asked of the
+        # model: a model rating its own confidence produces a number with no
+        # referent, and it cannot know what retrieval never showed it. Written
+        # after the stream so a provider failure mid-answer cannot leave a
+        # confidence block attached to a truncated one.
+        write(limitations_block(pack))
         write("\n")
     except (OSError, ValueError):
         pass

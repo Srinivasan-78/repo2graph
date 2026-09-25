@@ -1,0 +1,384 @@
+[
+  {
+    "id": "TASK-01",
+    "repo": "ts_app",
+    "category": "Entrypoint & Call Trace",
+    "query": "Where does an incoming request enter the application and trace to getUserProfile?",
+    "expected_answer": "ApplicationServer.start registers routes in UserRoutes.getProfileRoute, which calls UserController.getUserProfile, which calls UserService.findUserById.",
+    "evidence_locations": [
+      "src/server.ts:16",
+      "src/routes/user.routes.ts:19-22",
+      "src/controllers/user.controller.ts:7-9",
+      "src/services/user.service.ts:18-20"
+    ],
+    "acceptable_variants": [
+      "UserRoutes -> UserController -> UserService",
+      "start -> getProfileRoute -> getUserProfile -> findUserById"
+    ]
+  },
+  {
+    "id": "TASK-02",
+    "repo": "ts_app",
+    "category": "Authentication & Middleware",
+    "query": "What middleware guards getProfileRoute and how is the token validated?",
+    "expected_answer": "AuthMiddleware.verifySession guards the route and delegates validation to TokenService.validateToken, verifying the secret key signature.",
+    "evidence_locations": [
+      "src/routes/user.routes.ts:20",
+      "src/middleware/auth.middleware.ts:6-12",
+      "src/services/token.service.ts:20-33"
+    ],
+    "acceptable_variants": [
+      "AuthMiddleware verifySession using TokenService validateToken",
+      "TokenService.validateToken verifies jwt structure and secretKey"
+    ]
+  },
+  {
+    "id": "TASK-03",
+    "repo": "ts_app",
+    "category": "Security & Cryptography",
+    "query": "Where is user password hashing performed and verified during login?",
+    "expected_answer": "UserService.login calls verifyHash from utils/crypto, which compares against passwordHash created with hashPassword.",
+    "evidence_locations": [
+      "src/services/user.service.ts:23-25",
+      "src/utils/crypto.ts:1-7"
+    ],
+    "acceptable_variants": [
+      "verifyHash in src/utils/crypto.ts called by UserService.login",
+      "crypto.ts hashPassword and verifyHash"
+    ]
+  },
+  {
+    "id": "TASK-04",
+    "repo": "ts_app",
+    "category": "Test-to-Implementation",
+    "query": "Which test suite tests UserService.login and invalid credentials?",
+    "expected_answer": "tests/user.service.test.ts tests UserService.login success and the 'Invalid credentials' exception.",
+    "evidence_locations": [
+      "tests/user.service.test.ts:14-24",
+      "src/services/user.service.ts:21-28"
+    ],
+    "acceptable_variants": [
+      "user.service.test.ts",
+      "tests/user.service.test.ts"
+    ]
+  },
+  {
+    "id": "TASK-05",
+    "repo": "ts_app",
+    "category": "Blast Radius",
+    "query": "What components depend on the TokenPayload interface definition?",
+    "expected_answer": "TokenService (generateToken, validateToken) and AuthMiddleware (verifySession, requireAdmin).",
+    "evidence_locations": [
+      "src/services/token.service.ts:1-6",
+      "src/middleware/auth.middleware.ts:6-19"
+    ],
+    "acceptable_variants": [
+      "TokenService and AuthMiddleware",
+      "token.service.ts and auth.middleware.ts"
+    ]
+  },
+  {
+    "id": "TASK-06",
+    "repo": "python_backend",
+    "category": "Routing & Entrypoint",
+    "query": "What HTTP endpoint handles order refunds and what handler does it invoke?",
+    "expected_answer": "POST /api/v1/orders/{id}/refund registered in APIRouter invokes handle_refund_order.",
+    "evidence_locations": [
+      "app/api/router.py:16",
+      "app/api/orders.py:16-18"
+    ],
+    "acceptable_variants": [
+      "/orders/{id}/refund -> handle_refund_order",
+      "handle_refund_order registered on POST /api/v1/orders/{id}/refund"
+    ]
+  },
+  {
+    "id": "TASK-07",
+    "repo": "python_backend",
+    "category": "Multi-hop Call Trace",
+    "query": "Trace create_order from the API handler through the payment service to order model persistence.",
+    "expected_answer": "handle_create_order calls OrderService.create_order, which calls PaymentService.charge to get a transaction_id, instantiates OrderModel, and stores it in session.",
+    "evidence_locations": [
+      "app/api/orders.py:9-11",
+      "app/services/order_service.py:9-24",
+      "app/services/payment_service.py:8-14",
+      "app/models/order.py:4-13"
+    ],
+    "acceptable_variants": [
+      "handle_create_order -> OrderService.create_order -> PaymentService.charge -> OrderModel",
+      "orders.py -> order_service.py -> payment_service.py"
+    ]
+  },
+  {
+    "id": "TASK-08",
+    "repo": "python_backend",
+    "category": "Configuration & Secrets",
+    "query": "What environment variables configure the database URL and payment API key?",
+    "expected_answer": "DATABASE_URL and PAYMENT_API_KEY read in get_app_settings in dependencies.py.",
+    "evidence_locations": [
+      "app/dependencies.py:9-14"
+    ],
+    "acceptable_variants": [
+      "DATABASE_URL, PAYMENT_API_KEY, and APP_ENV in app/dependencies.py",
+      "dependencies.py get_app_settings"
+    ]
+  },
+  {
+    "id": "TASK-09",
+    "repo": "python_backend",
+    "category": "Test-to-Implementation",
+    "query": "Which test exercises order refunding and asserts status REFUNDED?",
+    "expected_answer": "test_order_refund_flow in tests/test_order_service.py calls order_service.process_refund and asserts status == 'REFUNDED'.",
+    "evidence_locations": [
+      "tests/test_order_service.py:17-26",
+      "app/services/order_service.py:31-38"
+    ],
+    "acceptable_variants": [
+      "tests/test_order_service.py::test_order_refund_flow",
+      "test_order_refund_flow in test_order_service.py"
+    ]
+  },
+  {
+    "id": "TASK-10",
+    "repo": "python_backend",
+    "category": "Blast Radius",
+    "query": "What callers are impacted if PaymentService.charge signature changes?",
+    "expected_answer": "OrderService.create_order in app/services/order_service.py and test_order_creation_flow.",
+    "evidence_locations": [
+      "app/services/order_service.py:14",
+      "tests/test_order_service.py:9"
+    ],
+    "acceptable_variants": [
+      "OrderService.create_order",
+      "app/services/order_service.py"
+    ]
+  },
+  {
+    "id": "TASK-11",
+    "repo": "modular_monolith",
+    "category": "Cross-Domain Workflow",
+    "query": "Where does checkout_order calculate tax and issue an invoice?",
+    "expected_answer": "MonolithApplication.checkout_order calls BillingService.issue_invoice, which computes tax using config.tax_rate and calls StripePaymentGateway.charge_customer.",
+    "evidence_locations": [
+      "monolith/app.py:14-20",
+      "monolith/billing/service.py:11-20",
+      "monolith/kernel/config.py:7-8"
+    ],
+    "acceptable_variants": [
+      "MonolithApplication.checkout_order and BillingService.issue_invoice",
+      "billing/service.py issue_invoice"
+    ]
+  },
+  {
+    "id": "TASK-12",
+    "repo": "modular_monolith",
+    "category": "Event-Driven Decoupled Tracing",
+    "query": "What components subscribe to the invoice_paid event and what do they do?",
+    "expected_answer": "NotificationDispatcher.on_invoice_paid sends a receipt, and ShippingService.schedule_delivery queues a delivery record.",
+    "evidence_locations": [
+      "monolith/notifications/dispatcher.py:6,13-16",
+      "monolith/shipping/service.py:6,8-11"
+    ],
+    "acceptable_variants": [
+      "NotificationDispatcher and ShippingService",
+      "notifications/dispatcher.py and shipping/service.py"
+    ]
+  },
+  {
+    "id": "TASK-13",
+    "repo": "modular_monolith",
+    "category": "Payment Gateway Abstraction",
+    "query": "What class handles charging customer cards and records the ledger in the billing module?",
+    "expected_answer": "StripePaymentGateway in monolith/billing/gateway.py via charge_customer.",
+    "evidence_locations": [
+      "monolith/billing/gateway.py:1-10",
+      "monolith/billing/service.py:14"
+    ],
+    "acceptable_variants": [
+      "StripePaymentGateway in billing/gateway.py",
+      "StripePaymentGateway.charge_customer"
+    ]
+  },
+  {
+    "id": "TASK-14",
+    "repo": "modular_monolith",
+    "category": "Domain Logic & Models",
+    "query": "How is product inventory stock reserved and decremented in catalog?",
+    "expected_answer": "CatalogService.reserve_stock checks Product.stock and decrements quantity.",
+    "evidence_locations": [
+      "monolith/catalog/service.py:13-18",
+      "monolith/catalog/models.py:4-9"
+    ],
+    "acceptable_variants": [
+      "CatalogService.reserve_stock in catalog/service.py",
+      "reserve_stock in CatalogService"
+    ]
+  },
+  {
+    "id": "TASK-15",
+    "repo": "modular_monolith",
+    "category": "Test-to-Implementation",
+    "query": "Which test verifies the full end-to-end checkout event flow across domains?",
+    "expected_answer": "test_full_checkout_event_flow in tests/test_cross_domain_events.py.",
+    "evidence_locations": [
+      "tests/test_cross_domain_events.py:4-18"
+    ],
+    "acceptable_variants": [
+      "test_cross_domain_events.py",
+      "test_full_checkout_event_flow"
+    ]
+  },
+  {
+    "id": "TASK-16",
+    "repo": "frontend_app",
+    "category": "UI Hierarchy",
+    "query": "What components compose the renderDashboardPage layout?",
+    "expected_answer": "renderHeader, renderSidebar, and renderMetricCard (populated by useMetrics).",
+    "evidence_locations": [
+      "src/pages/Dashboard.tsx:6-10",
+      "src/components/Header.tsx:3-6",
+      "src/components/Sidebar.tsx:1-7",
+      "src/components/MetricCard.tsx:3-5"
+    ],
+    "acceptable_variants": [
+      "Header, Sidebar, and MetricCard",
+      "renderHeader, renderSidebar, renderMetricCard"
+    ]
+  },
+  {
+    "id": "TASK-17",
+    "repo": "frontend_app",
+    "category": "Data Flow & Hooks",
+    "query": "How do metrics flow from ApiClient to the Dashboard page?",
+    "expected_answer": "apiClient.fetchMetrics is called by MetricsHook.load inside useMetrics, which is awaited by renderDashboardPage.",
+    "evidence_locations": [
+      "src/services/apiClient.ts:6-12",
+      "src/hooks/useMetrics.ts:4-10",
+      "src/pages/Dashboard.tsx:7-8"
+    ],
+    "acceptable_variants": [
+      "ApiClient -> useMetrics -> Dashboard",
+      "apiClient.fetchMetrics -> MetricsHook.load -> useMetrics -> renderDashboardPage"
+    ]
+  },
+  {
+    "id": "TASK-18",
+    "repo": "frontend_app",
+    "category": "State Management",
+    "query": "Where is user authentication state managed in the frontend application?",
+    "expected_answer": "AuthContextManager in src/context/AuthContext.tsx, exposed via useAuth hook in src/hooks/useAuth.ts.",
+    "evidence_locations": [
+      "src/context/AuthContext.tsx:4-22",
+      "src/hooks/useAuth.ts:4-10"
+    ],
+    "acceptable_variants": [
+      "AuthContextManager in AuthContext.tsx and useAuth.ts",
+      "AuthContext.tsx authContext singleton"
+    ]
+  },
+  {
+    "id": "TASK-19",
+    "repo": "frontend_app",
+    "category": "Test-to-Implementation",
+    "query": "Which unit test tests renderMetricCard formatting and trend rendering?",
+    "expected_answer": "src/__tests__/MetricCard.test.tsx tests renderMetricCard output containing label and value.",
+    "evidence_locations": [
+      "src/__tests__/MetricCard.test.tsx:4-16",
+      "src/components/MetricCard.tsx:3-5"
+    ],
+    "acceptable_variants": [
+      "MetricCard.test.tsx",
+      "src/__tests__/MetricCard.test.tsx"
+    ]
+  },
+  {
+    "id": "TASK-20",
+    "repo": "frontend_app",
+    "category": "Routing & Navigation",
+    "query": "What navigation paths are rendered in the Sidebar component?",
+    "expected_answer": "/dashboard, /analytics, and /settings in renderSidebar.",
+    "evidence_locations": [
+      "src/components/Sidebar.tsx:2"
+    ],
+    "acceptable_variants": [
+      "/dashboard, /analytics, /settings",
+      "navItems in Sidebar.tsx"
+    ]
+  },
+  {
+    "id": "TASK-21",
+    "repo": "dynamic_patterns",
+    "category": "Name Collisions",
+    "query": "Which classes define an execute method with identical signature?",
+    "expected_answer": "AlphaPlugin, BetaPlugin, GammaPlugin, UserHandler, and OrderHandler all define execute(payload).",
+    "evidence_locations": [
+      "dynamic_repo/plugins/alpha.py:8",
+      "dynamic_repo/plugins/beta.py:8",
+      "dynamic_repo/plugins/gamma.py:7",
+      "dynamic_repo/handlers/user_handler.py:14",
+      "dynamic_repo/handlers/order_handler.py:14"
+    ],
+    "acceptable_variants": [
+      "AlphaPlugin, BetaPlugin, GammaPlugin, UserHandler, OrderHandler",
+      "All three plugins and both user/order handlers"
+    ]
+  },
+  {
+    "id": "TASK-22",
+    "repo": "dynamic_patterns",
+    "category": "Dynamic Dispatch (Limitation)",
+    "query": "How does DynamicDispatcher.run_strategy dispatch to plugins and why is it statically ambiguous?",
+    "expected_answer": "DynamicDispatcher uses get_plugin_instance(strategy_name) lookup in PLUGIN_REGISTRY dictionary; static AST analysis cannot know which plugin strategy_name resolves to at runtime.",
+    "evidence_locations": [
+      "dynamic_repo/dispatcher.py:4-9",
+      "dynamic_repo/registry.py:4-13"
+    ],
+    "acceptable_variants": [
+      "String-keyed dictionary lookup in PLUGIN_REGISTRY",
+      "PLUGIN_REGISTRY lookup by runtime string name"
+    ]
+  },
+  {
+    "id": "TASK-23",
+    "repo": "dynamic_patterns",
+    "category": "Reflection (Limitation)",
+    "query": "How does BaseHandler.handle_request dispatch actions dynamically?",
+    "expected_answer": "Uses getattr(self, f'on_{action}', None) reflection, which is invisible to static call graphs.",
+    "evidence_locations": [
+      "dynamic_repo/handlers/base_handler.py:2-8"
+    ],
+    "acceptable_variants": [
+      "getattr reflection on on_<action>",
+      "getattr(self, f'on_{action}')"
+    ]
+  },
+  {
+    "id": "TASK-24",
+    "repo": "dynamic_patterns",
+    "category": "Metaprogramming",
+    "query": "Where are subclasses automatically registered via __init_subclass__?",
+    "expected_answer": "MetaRegistry in dynamic_repo/meta.py stores subclasses like ServiceA and ServiceB in subclasses dictionary.",
+    "evidence_locations": [
+      "dynamic_repo/meta.py:1-6"
+    ],
+    "acceptable_variants": [
+      "MetaRegistry in dynamic_repo/meta.py",
+      "MetaRegistry.__init_subclass__"
+    ]
+  },
+  {
+    "id": "TASK-25",
+    "repo": "dynamic_patterns",
+    "category": "Barrel Re-exports",
+    "query": "What classes are re-exported and aliased in barrel/index.py?",
+    "expected_answer": "AlphaPlugin (aliased as PrimaryPlugin), UserHandler, and DynamicDispatcher.",
+    "evidence_locations": [
+      "dynamic_repo/barrel/index.py:2-6"
+    ],
+    "acceptable_variants": [
+      "PrimaryPlugin (AlphaPlugin), UserHandler, DynamicDispatcher",
+      "AlphaPlugin as PrimaryPlugin, UserHandler, DynamicDispatcher"
+    ]
+  }
+]
+

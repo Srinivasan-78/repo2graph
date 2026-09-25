@@ -24,7 +24,7 @@ is the long version, with the measurements behind each row.
   before it existed, and is the raw name-match fan-out.
 - **No arrow does not prove no call.** Dynamic dispatch — a string-keyed lookup, a plugin registry,
   `getattr`-style dispatch, a virtual call resolved only at runtime — is invisible to a reader that
-  never executes anything.
+  never executes anything. See the empirical failure mode in **[BENCHMARK.md](../BENCHMARK.md#known-weaknesses-failure-cases-and-edge-cases)** (`DYNAMIC-01` plugin registry) and our mitigation design in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
 - **Dependency injection resolves to the declaration, not the implementation.** A DI container —
   Spring's `@Autowired`, .NET's `IServiceCollection`, a NestJS provider, a hand-rolled registry —
   binds an interface to a concrete class at startup. The call site only ever names the interface's
@@ -32,7 +32,7 @@ is the long version, with the measurements behind each row.
   or fans out across every same-named implementation at `1/n` confidence, and never on the class the
   container actually injected. The candidates are still enumerable — walk `INHERITS` *into* the
   interface node to list every type that implements it — but which one runs is a runtime fact, and
-  repo2graph never runs anything.
+  repo2graph never runs anything. See proposed framework edge extractors in **[LANGUAGE_SUPPORT.md](../LANGUAGE_SUPPORT.md#ecosystem-relationship-extraction-opportunities)**.
 - **Reflection and dynamic imports are invisible.** `importlib.import_module(some_variable)`,
   Java reflection, JavaScript's dynamic `import()` with a computed specifier — none of these name a
   literal string tree-sitter can resolve, so no `IMPORTS`/`CALLS` edge is drawn for them.
@@ -42,7 +42,8 @@ is the long version, with the measurements behind each row.
 - **Framework magic is invisible unless it is also literal syntax.** Django's URL routing being
   resolvable by `repo2graph query` (see [examples/django](../examples/django/)) works because
   routes are declared as literal `path(...)` calls tree-sitter can see; a framework that builds
-  equivalent routing purely from runtime metaprogramming would not be.
+  equivalent routing purely from runtime metaprogramming would not be. Framework-aware relationship
+  extraction for Express, FastAPI, and Spring is planned in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
 
 ## What parsing five real repositories actually showed
 

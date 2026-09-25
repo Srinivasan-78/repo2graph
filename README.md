@@ -260,7 +260,17 @@ Enterprise-ready, read-only, non-root container deployment.
 
 ### 🐍 1. Python / CLI
 
-Requires Python 3.10+. Run via [uv](https://docs.astral.sh/uv/), no install step:
+Requires Python 3.10+. The fastest way to see what it does — a bundled example
+repo, indexed and interrogated, with nothing to configure and no repository of
+your own:
+
+```bash
+uvx repo2graph demo
+```
+
+That writes a small orders service to a scratch directory, builds a real graph
+over it, and answers five questions against it, each one citing files and line
+ranges. Then point it at your own code:
 
 ```bash
 uvx repo2graph build . -o .r2g && open .r2g/human/graph.html
@@ -273,6 +283,30 @@ pip install repo2graph
 repo2graph build /path/to/project -o .r2g --git-history 200
 repo2graph query "how does routing match a path" -o .r2g
 ```
+
+Two minutes end to end, with the expected output at each step:
+**[docs/quickstart.md](docs/quickstart.md)**.
+
+#### Five questions to start with
+
+The ones that show what a graph gives you over a text search. Copy any of them
+onto your own repo — or run `repo2graph demo` to watch each answered against
+the bundled fixture.
+
+| Ask your repo | What comes back that grep cannot give you |
+|---|---|
+| `Where is authentication enforced?` | the guard itself, plus every route that calls it |
+| `What calls <function>?` | CALLS edges in, so callers come back even when the name is shadowed |
+| `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
+| `What would be affected by changing <api>?` | the blast radius: direct callers and what they are called from |
+| `Trace <a request> from route to persistence.` | a whole path across modules, each block cited to file and line |
+
+```bash
+repo2graph rag "What would be affected by changing pack_context?" -o .r2g
+```
+
+Something not working? `repo2graph doctor .` checks the environment, the index
+and your MCP client config, and prints a fix for anything it finds.
 
 <p align="center">
   <img src="docs/images/demo-build.gif" alt="A terminal running repo2graph build on a repository; a JSON summary appears counting files, functions, classes, CALLS, IMPORTS and CO_CHANGE edges, nodes, edges and chunks" width="850" />
@@ -387,7 +421,7 @@ See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full 
 | **Deterministic graph, not embeddings-only search** | Callers, callees, imports and class hierarchies resolved from the actual AST — not a nearest-neighbour guess. |
 | **Hybrid retrieval** | BM25 + graph-neighbour expansion by default; optional dense vector fusion (`repo2graph embed`) with zero required extra dependencies. |
 | **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
-| <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. |
+| <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. See our [strategic language scorecard](LANGUAGE_SUPPORT.md) and [framework relationship RFC](docs/rfcs/rfc-framework-relationship-graph.md). |
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
 | **Local by default** | `build`, `query`, `rag` and the MCP server over stdio make zero network calls — asserted by socket-level tests. `rag --answer` is the only path that ever sends your code anywhere, and it prints the provider + hostname first. No telemetry. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
@@ -426,7 +460,7 @@ its answers. So, plainly:
 | **Parse macro-heavy C/C++ cleanly** | tree-sitter emits `ERROR` nodes around unexpanded macros; a `cpp` preprocessor fallback recovers some. Expect a non-trivial `parse_errors` count in `stats.json` and read it as a floor on missed symbols. |
 
 Every one of these is measured, not asserted — the rates, the repositories they were measured on,
-and the reproduction commands are in **[docs/limitations.md](docs/limitations.md)**.
+and the reproduction commands are in **[docs/limitations.md](docs/limitations.md)**. See also the dynamic pattern evaluation in **[BENCHMARK.md](BENCHMARK.md)** and the framework relationship proposal in **[docs/rfcs/rfc-framework-relationship-graph.md](docs/rfcs/rfc-framework-relationship-graph.md)**.
 
 ## 🆚 How it compares to other graph tools
 
@@ -516,6 +550,21 @@ See **[examples/README.md](examples/README.md)** for the full index and reproduc
 actually surfaced (parse-error rates on macro-heavy C/C++, call-name ambiguity, cross-language
 resolution limits).
 
+### 🧪 Reproducible benchmark & regression suite
+
+Beyond full-scale public codebase indexing, repo2graph includes a reproducible 25-task benchmark across 5 application archetypes (`benchmarks/corpus/`: TypeScript app, Python backend, modular monolith, React frontend, and dynamic patterns) comparing repo2graph against `ripgrep` and agent-baseline search:
+
+| Metric | repo2graph (GraphRAG) | `ripgrep` Search | Agent Baseline Search |
+|---|---|---|---|
+| **Query Correctness** | **100% (25/25)** | 80.0% (20/25) | 56.0% (14/25) |
+| **Citation Precision** | **97.9% (46/47)** | 80.9% (38/47) | 55.3% (26/47) |
+| **Mean Query Latency** | **1.82 ms** | 12.44 ms | 31.84 ms |
+| **Token Budget Compliance** | **100%** (Clamped) | 0% (Unbounded) | 72% |
+
+Full methodology, ground truth evidence, failure cases, and reproduction scripts: **[BENCHMARK.md](BENCHMARK.md)**.
+Continuous benchmark regression checking is enforced in CI via [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml).
+
+
 ## 📖 CLI & server reference
 
 | Command | Does |
@@ -527,7 +576,9 @@ resolution limits).
 | `repo2graph embed -o .r2g [--verify-rag]` | Compute/verify dense vectors for hybrid search. |
 | `repo2graph map -o .r2g [--viz-nodes N]` | Regenerate `graph.html` with a different node cap. |
 | `repo2graph stats -o .r2g [--format text]` | Node/edge/function counts for an existing index; `--format text` for a quality summary. |
+| `repo2graph index-status -o .r2g [--json] [--check]` | Indexed commit/branch, build time, counts, languages, skipped paths, size, and freshness. `--check` exits 1 when stale. |
 | `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
+| `repo2graph bug-report -o .r2g [--category CAT]` | Privacy-preserving diagnostic bundle for an issue. No source code, no paths by default. |
 | `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
 | `repo2graph explain <edge|node|retrieval>` | Explain graph edges, node metadata, and retrieval ranking decisions. |
 | `repo2graph completion [shell]` | Print shell tab completion setup script (`bash`, `zsh`, `fish`). |
@@ -572,6 +623,9 @@ miss.
   way dependencies run, and where a change of each kind goes.
 - **[docs/BACKLOG.md](docs/BACKLOG.md)** — deliberately deferred work and why; the closest thing to
   a roadmap.
+- **[LANGUAGE_SUPPORT.md](LANGUAGE_SUPPORT.md)** — strategic language roadmap, scorecard generator, and ecosystem relationship extraction (routes, test links, DI, ORMs).
+- **[BENCHMARK.md](BENCHMARK.md)** — reproducible 25-task evaluation across 5 archetypes, comparison against ripgrep and agent baseline, and regression gating.
+- **[docs/ROADMAP_LANGUAGE_ISSUES.md](docs/ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues (`LANG-01` to `LANG-11`) for deep language and framework support.
 - **[AGENTS.md](AGENTS.md)** — this codebase's non-obvious conventions (Windows encoding, text
   slicing, the two budget models) before editing `repo2graph/`.
 - **[POSITIONING.md](POSITIONING.md)** — what repo2graph claims, what it deliberately does not

@@ -125,3 +125,31 @@ body:
       placeholder: "2.1.0"
     validations:
       required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Which is it?
+      description: >
+        Matches `repo2graph bug-report --category`, so the bundle below asks for the right
+        extra evidence.
+      options:
+        - incorrect-relationship — an edge exists that should not, or points at the wrong target
+        - missing-relationship — an edge that should exist does not
+    validations:
+      required: true
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Diagnostic bundle (optional)
+      description: >
+        `repo2graph bug-report -o .r2g --category incorrect-relationship` (or
+        `--category missing-relationship`). It carries the edge-confidence histogram, which is
+        often what explains the report: a graph dominated by ambiguous name matches behaves
+        differently from one that resolves cleanly.
+
+
+        No source code, no environment variable values, no remote URL, no absolute paths, and no
+        file paths at all unless you pass `--include-paths`. Read it before you post it.
+      render: markdown

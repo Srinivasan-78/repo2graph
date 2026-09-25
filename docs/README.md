@@ -9,8 +9,9 @@ source), *unfamiliar* (getting oriented without reading everything).
 
 ## Getting started
 
-- **[Install and quick start](../README.md#install)** — the main README covers this directly;
-  there is no separate copy here to keep in sync.
+- **[2-minute quickstart](quickstart.md)** — nothing installed to a cited answer, with the
+  expected output at each step, the five starter questions, the MCP one-liner, and a
+  symptom → `doctor` check → fix table.
 - **[MCP client configuration](mcp.md#client-configuration)** — Claude Code, Claude Desktop,
   Cursor, and any other stdio client.
 - **[CLI reference](cli.md)** — every flag, what it counts, budget accounting.
@@ -23,6 +24,11 @@ source), *unfamiliar* (getting oriented without reading everything).
   scoring, budget accounting, "where it guesses and why."
 - **[Reference: what is in the index](reference.md)** — every file, node type and edge type the
   output can contain.
+- **[Output schema](OUTPUT_SCHEMA.md)** — the contract for edge records: what `method`,
+  `confidence` and `evidence` mean, what `confidence` deliberately does *not* encode, where each
+  surface puts its citations, and what the bug-report bundle does and does not carry.
+- **[Indexing](INDEXING.md)** — how the graph is built, the determinism guarantees and the tests
+  that hold them, the four exclusion layers, and how staleness is computed.
 - **[MCP server](mcp.md)** — the five tools, their argument bounds, client configs.
 - **[Why a graph, not just search](why-graph.md)** — what each is actually good at, with the
   citation-following behavior [examples/django](../examples/django/) demonstrates as the concrete
@@ -83,12 +89,11 @@ the reproduction command documented:
 
 ## Performance and benchmarks
 
-- **[docs/benchmarks.md](benchmarks.md)** — real numbers from the five repositories above: clone
-  and build time, node/edge counts, methodology, staleness.
+- **[BENCHMARK.md](../BENCHMARK.md)** — canonical evaluation across 25 reproducible tasks and 5 archetypes: query correctness (100% vs ripgrep 80% / agent 56%), citation accuracy, context footprint, and query latency.
+- **[docs/benchmarks.md](benchmarks.md)** — real numbers from the five large-scale public repositories (Kubernetes, TensorFlow, Django, VS Code, Linux kernel): clone/build time, node/edge counts, methodology, staleness.
 - **[docs/PERFORMANCE.md](PERFORMANCE.md)** — controlled, hardware-comparable numbers on a synthetic
   fixture and this project's own self-hosted graph.
-- **[benchmarks/](../benchmarks/)** — the machine-readable `results.json` those tables are generated
-  from, and the methodology behind it.
+- **[benchmarks/](../benchmarks/)** — the machine-readable `results.json` (scale corpus) and `results_v2.json` / `tasks.json` (evaluation corpus), plus reproduction runners.
 
 ## Security and privacy
 
@@ -110,6 +115,9 @@ the reproduction command documented:
 - **[docs/privacy-audit-2026-09-25.md](privacy-audit-2026-09-25.md)** — the data-handling audit:
   every outbound path and every write location enumerated from the code, with what the pass
   corrected.
+- **[docs/ACTION_SECURITY.md](ACTION_SECURITY.md)** — the GitHub Action's own guardrails:
+  permission hardening, the threat model for a workflow that runs on untrusted input, and what
+  the Action deliberately does not expose (`--answer` among them).
 - **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
 - **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP
   server inside an organization.
@@ -127,12 +135,18 @@ the reproduction command documented:
   a test will fail without.
 - **[docs/good-first-issues.md](good-first-issues.md)** — seven starter tasks, each with a code
   pointer, acceptance criteria, and the catch that makes it harder than it looks.
+- **[LANGUAGE_SUPPORT.md](../LANGUAGE_SUPPORT.md)** — strategic language support, parser failure analysis, priority tiers (TypeScript, Python, JVM, Go), and ecosystem relationship opportunities.
+- **[Language RFCs](rfcs/rfc-framework-relationship-graph.md)** — proposals for ecosystem relationship expansion, deep TypeScript, deep Python, and JVM vs Go support.
+- **[Roadmap Issues](ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues for language and ecosystem features.
 - **[AGENTS.md](../AGENTS.md)** — repo-specific rules that override default behavior (encoding,
   text slicing, budget models) — read before editing source under `repo2graph/`.
 - **[docs/publishing.md](publishing.md)** — the branch model, the pre-release checklist, and how a
   release ships to PyPI, the MCP Registry and the Marketplace.
 - **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
   fallback order, and the release story that pairs it with the PyPI release.
+- **[docs/rfc-incremental-indexing.md](rfc-incremental-indexing.md)** — where an incremental
+  rebuild actually spends its time, measured, and the proposal that follows from it. The
+  conclusion is not the intuitive one.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
 
 ## Community and governance
