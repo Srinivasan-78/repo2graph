@@ -69,7 +69,9 @@ def _all_readmes():
 
 def test_the_translation_set_is_the_one_the_switcher_offers():
     """Five translations, each linked from the English language switcher."""
-    assert len(TRANSLATIONS) == 5, f"expected 5 translations, found {[p.name for p in TRANSLATIONS]}"
+    assert len(TRANSLATIONS) == 5, (
+        f"expected 5 translations, found {[p.name for p in TRANSLATIONS]}"
+    )
 
     readme_text = README_PATH.read_text(encoding="utf-8")
     for path in TRANSLATIONS:
