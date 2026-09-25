@@ -63,6 +63,33 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **Positioning rewritten around one outcome: "give coding agents trustworthy,
+  cited answers about unfamiliar codebases."** The README hero no longer opens on
+  "AST-driven code graphs & zero-dependency GraphRAG"; `GraphRAG`, `AST-driven`,
+  `BM25` and `pack_context()` now appear only in "Architecture & token economics"
+  and below. Three sections are new: **Who it's for** (four personas — onboarding
+  developer, coding-agent user, PR reviewer, maintainer — each with the first
+  command to run), **Why repo2graph instead of grep or vector search?** (a
+  three-way table that concedes grep is the right tool for a literal string), and
+  **What it does — and what it does not** (eight limitations on the first-time
+  reader's path, not only in `docs/limitations.md`). The same outcome sentence now
+  drives the PyPI summary (`pyproject.toml`), the MCP registry entry
+  (`server.json`) and the Action's Marketplace blurb (`action.yml`); eight
+  audience-facing PyPI keywords were added. The rationale, the jargon policy, the
+  per-surface before/after audit and ready-to-paste copy for the surfaces that are
+  not files in this repository (GitHub description and topics, the landing page)
+  are in the new root **`POSITIONING.md`**.
+- **`docs/limitations.md` gained two limitations that were real but undocumented:**
+  dependency injection (the `CALLS` edge lands on the interface declaration or
+  fans out across every same-named implementation, never on the class the
+  container injected) and **stale indexes** (the index is a snapshot, nothing
+  watches the filesystem, and `repo2graph doctor` checks index integrity and
+  vector drift — not whether your working tree moved on). `docs/why-graph.md`
+  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  became a persona routing table.
+- **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
+  two places and the README's comparison table said 16; `LANG_CFG` has held 17
+  since Lua landed.
 - **HTTP mode no longer auto-builds a missing index.** Read-only network tool
   calls could previously trigger parser execution, file writes and git
   interactions on a server an operator had only pointed at a directory. A tool

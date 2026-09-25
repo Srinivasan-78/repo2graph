@@ -2,6 +2,11 @@
 
 The main [README](../README.md) is the front door; this is the index for everything past it.
 
+repo2graph exists to give coding agents — and the humans driving them — **trustworthy, cited
+answers about unfamiliar codebases**. Every page below is in service of one of the three words in
+that sentence: *trustworthy* (what it does and does not know), *cited* (how a block is anchored to
+source), *unfamiliar* (getting oriented without reading everything).
+
 ## Getting started
 
 - **[Install and quick start](../README.md#install)** — the main README covers this directly;
@@ -27,20 +32,24 @@ The main [README](../README.md) is the front door; this is the index for everyth
 - **[How it compares](comparison.md)** — repo2graph against Graphify, the Obsidian Code Graph
   plugin, grep and embedding RAG, including where each of them is the better answer.
 
-## When to use repo2graph
+## Start here, by what you're trying to do
 
-Good fit:
+| You are… | Read | Then run |
+|---|---|---|
+| **Joining an unfamiliar codebase** and want to stop reading files at random | [why-graph.md](why-graph.md) · [examples/django](../examples/django/) for a worked cross-module trace | `repo2graph build . -o .r2g` then open `.r2g/human/graph.html`, then `repo2graph rag "<your question>" -o .r2g` |
+| **Driving a coding agent** (Claude Code, Cursor, any MCP client) and tired of it grepping badly | [mcp.md](mcp.md) — the five tools, their argument ceilings, client configs | `claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .` |
+| **Reviewing a PR** and need the blast radius of a changed symbol | [reference.md](reference.md) for what each edge kind means · [limitations.md](limitations.md) for what an absent edge does *not* prove | `repo2graph build . -o .r2g --git-history 500` then `repo2graph explain node "sym:<path>::<name>" -o .r2g` |
+| **Maintaining an open-source project** and answering "where do I start" for the tenth time | [github-action.md](github-action.md) — inputs, outputs, publishing the map to a branch | add `Srinivasan-78/repo2graph@v2` to a workflow with `commit-branch: graph` |
 
-- **An unfamiliar codebase.** The graph turns "read every file" into "start at an entry point and
-  follow the edges" — see [docs/why-graph.md](why-graph.md).
+The positioning behind those four framings — the message hierarchy, the proof point for each
+claim, and the copy for every surface — is in [POSITIONING.md](../POSITIONING.md).
+
+Also a good fit:
+
 - **A large monorepo.** [examples/kubernetes](../examples/kubernetes/) is the concrete case:
   "what calls the pod controller" is a graph-traversal question, not a grep pattern.
 - **Architecture discovery and impact analysis.** "What would changing this interface break" is
   exactly what `CALLS`/`IMPORTS`/`INHERITS` edges answer.
-- **Cross-module tracing.** [examples/django](../examples/django/)'s middleware-dispatch and
-  URL-resolution queries are this in a mature, real framework.
-- **Feeding an AI coding agent.** This is the reason `repo2graph rag` and the MCP server exist at
-  all — citation-carrying, budget-bounded context beats an ungrounded paste.
 
 Less value:
 
@@ -51,8 +60,12 @@ Less value:
 - **A language repo2graph does not parse deeply.** Unsupported languages still appear as file nodes
   (nothing goes missing from the map), but get no function/class/call-level structure — see
   [the language list](../README.md#languages) and [reference.md](reference.md#languages).
-- **Highly dynamic, runtime-decided architecture.** Plugin registries and reflection-heavy dispatch
-  are invisible to a static reader — see [docs/limitations.md](limitations.md).
+- **Highly dynamic, runtime-decided architecture.** Plugin registries, reflection-heavy dispatch and
+  dependency-injection containers are invisible to a static reader — see
+  [docs/limitations.md](limitations.md).
+- **A tree you are actively rewriting.** The index is a snapshot and nothing watches the
+  filesystem; if you are not going to rebuild, its citations will point at lines that have moved —
+  see [docs/limitations.md#stale-indexes](limitations.md#stale-indexes).
 
 ## Real-world examples
 

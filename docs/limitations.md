@@ -7,6 +7,10 @@ what running the pipeline against five real, large, public repositories
 ([examples/](../examples/)) actually surfaced, with the measured numbers, and the limitations that
 only show up at scale.
 
+The short version — one row per limitation, no numbers — is the
+["What it does — and what it does not"](../README.md#does-and-doesnt) table in the README. This page
+is the long version, with the measurements behind each row.
+
 ## Static analysis, generally
 
 - **`CALLS` is matched by name, not by type.** Two functions sharing a name are
@@ -21,6 +25,14 @@ only show up at scale.
 - **No arrow does not prove no call.** Dynamic dispatch — a string-keyed lookup, a plugin registry,
   `getattr`-style dispatch, a virtual call resolved only at runtime — is invisible to a reader that
   never executes anything.
+- **Dependency injection resolves to the declaration, not the implementation.** A DI container —
+  Spring's `@Autowired`, .NET's `IServiceCollection`, a NestJS provider, a hand-rolled registry —
+  binds an interface to a concrete class at startup. The call site only ever names the interface's
+  method, so that is what the name match sees: the `CALLS` edge lands on the abstract declaration,
+  or fans out across every same-named implementation at `1/n` confidence, and never on the class the
+  container actually injected. The candidates are still enumerable — walk `INHERITS` *into* the
+  interface node to list every type that implements it — but which one runs is a runtime fact, and
+  repo2graph never runs anything.
 - **Reflection and dynamic imports are invisible.** `importlib.import_module(some_variable)`,
   Java reflection, JavaScript's dynamic `import()` with a computed specifier — none of these name a
   literal string tree-sitter can resolve, so no `IMPORTS`/`CALLS` edge is drawn for them.
@@ -155,7 +167,35 @@ result is reproducible. This is a genuine trade-off, not a way of hiding a failu
 not fail to index the rest of any of these repositories — it was deliberately not asked to, for the
 reasons stated per repository.
 
-## Graph freshness
+## Stale indexes
+
+An index under `.r2g` is a **snapshot of the tree it was built from**, and nothing in repo2graph
+watches the filesystem. Edit a function, and every artifact — `graph.json`, `chunks.jsonl`,
+`graph.html`, the vectors — keeps describing the version that existed at build time. A query will
+answer confidently from it, and the `[cite: path:start-end]` anchor will point at line numbers that
+have since moved. There is no timestamp check in the query path, by design: adding one would mean
+stat-ing every indexed file on every call.
+
+What that means in practice:
+
+- **Rebuild after you change code.** `repo2graph build <path> -o .r2g --incremental` re-parses only
+  the files whose content hash moved (recorded per file node at build time), so the cost is
+  proportional to the diff, not to the repository.
+- **In CI, rebuild on every push.** That is what the [GitHub Action](github-action.md) is for; a
+  graph committed next to the code cannot drift from it by more than one commit.
+- **Over MCP, the server auto-builds only a *missing* index**, never an outdated one — and in HTTP
+  mode not even that, without `--allow-auto-build`. A long-lived `repo2graph-mcp` process serving a
+  branch you keep committing to will go stale; rebuild the index out-of-band, or restart the server
+  after a large change.
+- **`repo2graph doctor` does not detect this.** It reports index *integrity* — a corrupt
+  `chunks.jsonl`, a missing `vectors.meta.json`, vectors whose `build_id` or per-chunk text hashes
+  no longer match the chunks they were computed from (`status: "stale"` in
+  `repo2graph/integrity.py`). That is vector-vs-chunk drift *inside* the index. It says nothing
+  about whether your working tree has moved on since the build.
+- **The symptom to watch for** is a citation whose line range no longer contains what the answer
+  claimed, or a symbol the answer references that no longer exists. Both mean rebuild, not a bug.
+
+## Graph freshness of the shipped examples
 
 Every artifact under `examples/` is pinned to a specific commit recorded in that example's
 `metadata.json`. None of them update themselves, and none should be read as describing the
