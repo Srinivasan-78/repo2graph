@@ -354,8 +354,9 @@ Nothing is registered in a system location: no service, no scheduled task, nothi
 - [ ] `repo2graph explain-path` on four or five paths you care about, **before** the first build.
 - [ ] `--include` allowlist of source extensions, rather than only a denylist.
 - [ ] `--secret-policy exclude-file` if the repository has ever had a credential committed.
-- [ ] Output directory outside the repository, or `.r2g/` in `.gitignore`, so the index is not
-      committed by accident.
+- [ ] Output directory outside the repository, or **`.r2g/` and `*.r2glock`** in `.gitignore`, so
+      the index is not committed by accident. Both patterns are needed: the build lock sits
+      *beside* the output directory, so `.r2g/` does not cover it.
 - [ ] First build under `--network=none` — proves the offline claim on your own machine.
 - [ ] `grep -c . .r2g/agent/chunks.jsonl` and spot-check a few records. It is your source; look at
       it once.
