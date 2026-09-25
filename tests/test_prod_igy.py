@@ -1087,17 +1087,31 @@ def test_iss375_the_fallback_identity_is_logged():
 
 def test_github_app_token_is_scoped_to_the_job_permissions():
     """The app token must not inherit the App installation's full permission
-    grant. Every `permission-<name>` input mirrors the job's own
-    `permissions:` block exactly, so the token can never do more than the job
-    that requests it is already allowed to."""
+    grant: each `permission-<name>` input narrows it to something the job
+    actually does, and never to more than the job's own `permissions:` block.
+
+    `permission-contents: read` must NOT come back. `permission-*` requests that
+    exact set and the API answers 422 "The permissions requested are not granted
+    to this installation" when any one of them is absent from the installation's
+    grant -- so an extra entry mints nothing at all rather than a slightly wider
+    token. prod-igy is not installed with `contents`, and asking for it broke the
+    whole step. It stayed invisible because `pull_request_target` runs the
+    workflow from the base branch, and main did not carry this block yet.
+    """
     content = "\n".join(_read_lines(WORKFLOW_PATH))
     start = content.index("Generate prod-igy token")
-    end = content.index("\n\n", start)
+    end = content.index("\n\n      - name:", start)
     step = content[start:end]
-    assert "permission-contents: read" in step
-    assert "permission-pull-requests: write" in step
-    assert "permission-issues: write" in step
-    assert "permission-checks: read" in step
+    requested = set(re.findall(r"^\s+(permission-[\w-]+: \w+)$", step, re.M))
+    assert requested == {
+        "permission-pull-requests: write",
+        "permission-issues: write",
+        "permission-checks: read",
+    }
+
+    # and a failed mint falls through to the GITHUB_TOKEN fallback rather than
+    # costing the PR its labels and its rebase warning
+    assert "continue-on-error: true" in step
 
 
 def test_ai_diff_budget_is_per_file():
@@ -1117,3 +1131,45 @@ def test_ai_diff_budget_is_per_file():
     assert per_file(60000, 4) == 15000
     # A floor, so a 100-file PR still shows something of every file.
     assert per_file(60000, 500) == 600
+
+
+def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
+    """`.github/zizmor.yml` suppresses findings by `file:line`.
+
+    Its own header says a shifted line number un-ignores the finding rather than
+    silently keeping it suppressed -- but the reverse is worse and just as quiet:
+    an edit above a pinned line slides the pin onto unrelated YAML, where it
+    suppresses whatever finding lands there next. Only zizmor itself can prove a
+    pin still matches, and zizmor is not a dependency of the pytest environment,
+    so this pins the *construct* each entry was written for. zizmor reports a
+    step-level finding at the step's first line, hence the small window.
+    """
+    config = REPO_ROOT / ".github" / "zizmor.yml"
+    expected = {
+        # artipacked: checkout steps that deliberately persist credentials
+        ("lockfile.yml", 45): "actions/checkout@",
+        ("publish.yml", 85): "actions/checkout@",
+        ("publish.yml", 415): "actions/checkout@",
+        # dangerous-triggers: prod-igy's pull_request_target
+        ("prod-igy.yml", 16): "pull_request_target:",
+        # self-repository: jobs that run this repo's own composite action
+        ("ci.yml", 313): "uses: ./",
+        ("index-repo.yml", 57): "uses: ./",
+        ("self-index.yml", 34): "uses: ./",
+        # adhoc-packages: the one pinned npm dependency prod-igy.js has
+        ("prod-igy.yml", 145): "npm install",
+    }
+
+    pinned = {
+        (m.group(1), int(m.group(2)))
+        for m in re.finditer(r"^\s+- ([\w-]+\.yml):(\d+)", config.read_text(encoding="utf-8"), re.M)
+    }
+    assert pinned == set(expected), "a zizmor ignore was added or removed without a pin check here"
+
+    for (name, lineno), needle in sorted(expected.items()):
+        lines = _read_lines(WORKFLOW_DIR / name)
+        window = "\n".join(lines[lineno - 1 : lineno + 11])
+        assert needle in window, (
+            f"zizmor.yml pins {name}:{lineno} for {needle!r}, which is no longer there; "
+            f"the line is now {lines[lineno - 1]!r}"
+        )

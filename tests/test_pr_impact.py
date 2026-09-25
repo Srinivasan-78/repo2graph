@@ -12,6 +12,7 @@ Validates:
 """
 
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -937,12 +938,18 @@ def test_iss422_workflow_posts_as_prod_igy():
     assert "actions/create-github-app-token@" in text
     assert "app-id: ${{ secrets.PRODIGY_APP_ID }}" in text
     assert "private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}" in text
-    assert "permission-contents: read" in text
-    assert "permission-pull-requests: write" in text
-    assert "permission-issues: write" in text
-    # no permission beyond those three, in particular nothing that can write code
-    assert "permission-contents: write" not in text
     assert "GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}" in text
+
+    # Exactly what the comment step does, and nothing else. `permission-*`
+    # requests that exact set: the API answers 422 "The permissions requested are
+    # not granted to this installation" if any one entry is absent from the
+    # installation's grant, so a well-meant extra mints nothing at all rather
+    # than a slightly wider token. prod-igy is not installed with `contents`.
+    requested = set(re.findall(r"^\s+(permission-[\w-]+: \w+)$", text, re.M))
+    assert requested == {
+        "permission-pull-requests: write",
+        "permission-issues: write",
+    }
 
 
 def test_iss422_app_key_is_never_minted_for_a_fork_pull_request():

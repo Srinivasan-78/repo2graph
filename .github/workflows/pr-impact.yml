@@ -117,17 +117,26 @@ jobs:
           sarif_file: impact-reports/impact-report.sarif
           category: repo2graph-impact
 
+      # continue-on-error: the analysis is the deliverable. A revoked key, a
+      # changed App grant or an API blip degrades the comment to the
+      # github-actions[bot] fallback the next step reports -- it must not turn a
+      # completed impact report into a red check.
       - name: "Generate prod-igy token"
         id: app-token
         if: ${{ env.SAME_REPO == 'true' && env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}
+        continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.PRODIGY_APP_ID }}
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
-          # Scope the minted token down from the App installation's full grant
-          # to exactly what the comment step below does. An app token otherwise
-          # inherits every permission the installation holds.
-          permission-contents: read
+          # Scope the minted token down from the App installation's full grant to
+          # exactly what the comment step below does -- an app token otherwise
+          # inherits every permission the installation holds. Request *only*
+          # permissions the installation actually grants: `permission-*` asks for
+          # that exact set and the API rejects the whole request with 422 "The
+          # permissions requested are not granted to this installation" if any one
+          # of them is absent, so a well-meant extra (`permission-contents: read`
+          # here) fails closed and mints nothing.
           permission-pull-requests: write
           permission-issues: write
 
