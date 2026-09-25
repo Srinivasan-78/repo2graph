@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "repo2graph-impact",
+          "version": "0.1.0",
+          "informationUri": "https://github.com/Srinivasan-78/repo2graph",
+          "rules": [
+            {
+              "id": "R2G-IMP-001",
+              "name": "DisconnectedChange",
+              "shortDescription": {
+                "text": "Disconnected modified file"
+              },
+              "fullDescription": {
+                "text": "A modified or added file shares no graph relationships (CALLS, IMPORTS, DEFINES) with other changed files in the diff."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "R2G-IMP-002",
+              "name": "UntestedPublicApiChange",
+              "shortDescription": {
+                "text": "Public API modified without direct test coverage"
+              },
+              "fullDescription": {
+                "text": "A public symbol or function signature changed, but no test callers were identified in the static code graph."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "R2G-IMP-003",
+              "name": "HighBlastRadius",
+              "shortDescription": {
+                "text": "High blast radius change"
+              },
+              "fullDescription": {
+                "text": "A changed symbol impacts an exceptionally high number of downstream callers."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              }
+            },
+            {
+              "id": "R2G-IMP-004",
+              "name": "AmbiguousCallResolution",
+              "shortDescription": {
+                "text": "Ambiguous call resolution in blast radius"
+              },
+              "fullDescription": {
+                "text": "A downstream caller resolved with low confidence due to multiple candidate targets."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "R2G-IMP-001",
+          "ruleIndex": 0,
+          "level": "warning",
+          "message": {
+            "text": "File scripts/deploy_helper.py was modified (+25 lines) but shares no graph connections with other changed symbols."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "scripts/deploy_helper.py"
+                },
+                "region": {
+                  "startLine": 1
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

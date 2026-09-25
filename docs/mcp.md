@@ -225,10 +225,11 @@ deployment checklist that goes with the HTTP shape:
 | `repo_map` | none | Languages, hub files and top entry points. Stable across calls, so it caches. Read this first. |
 | `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
 | `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
+| `repo_impact` | optional `base`, `head`, `diff`, `max_depth`, `format` | PR and git diff impact analysis: changed symbols, affected public APIs, callers, tests, and blast radius. |
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
 
-The first three answer questions about the code and exclude secrets
+The first four answer questions about the code and exclude secrets
 unconditionally. The last two report on the server itself, never read a chunk,
 and are never served from the cache — a cached cache-stats or progress reading is
 the one answer guaranteed to be out of date.
@@ -245,6 +246,7 @@ here raises on a bad value; it is clamped and answered.
 | `hops` | `repo_search`, `repo_neighbours` | 1 | 4 |
 | `budget_tokens` | `repo_search` | 6 000 | 12 000 |
 | `limit` | `repo_neighbours` | 20 | 50 |
+| `max_depth` | `repo_impact` | 2 | 5 |
 | `query` (length) | `repo_search` | — | 4 000 chars |
 | `node_id` (length) | `repo_neighbours` | — | 2 000 chars |
 | `task_id` (length) | `repo_build_status` | — | 200 chars |
@@ -252,6 +254,22 @@ here raises on a bad value; it is clamped and answered.
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and
 it says so instead of returning nothing.
+
+### `repo_impact`
+
+**Purpose:** Analyze PR or git diff impact against a base branch using the code graph. Detects changed symbols, affected public APIs, impacted callers across depth hops, test coverage, and blast radius with grounded citations.
+
+**Input parameters:**
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `base` | string (optional) | Base branch or commit ref to compare against (default `"main"`). |
+| `head` | string (optional) | Head branch or commit ref (default `"HEAD"`). |
+| `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
+| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to maximum 5). |
+| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
+
+Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](../PR_IMPACT.md).
 
 ### `repo_cache_stats`
 

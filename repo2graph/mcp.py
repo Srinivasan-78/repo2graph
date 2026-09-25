@@ -101,6 +101,7 @@ TOOL_TITLES = {
     "repo_map": "Repository Map",
     "repo_search": "Search Codebase",
     "repo_neighbours": "Traverse Graph Neighbors",
+    "repo_impact": "Analyze PR Impact",
     "repo_cache_stats": "Cache Statistics",
     "repo_build_status": "Build Task Status",
 }
@@ -135,6 +136,15 @@ TOOL_DESCRIPTIONS = {
         "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
         "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+    ),
+    "repo_impact": (
+        "Analyze PR or git diff impact against a base branch using the code graph. "
+        "Detects changed symbols, affected public APIs, impacted callers, test coverage, "
+        "and architectural blast radius with grounded citations. Read-only, deterministic, "
+        "zero side effects. When to use: use when assessing PR risk, planning test execution, "
+        "evaluating breaking API changes, or investigating diff blast radius. When NOT to use: "
+        "do not use for generic lexical code search (use repo_search). "
+        "Output: structured markdown impact report or PR summary."
     ),
     "repo_cache_stats": (
         "Retrieve runtime diagnostic counters for the tool result cache (hits, misses, "
@@ -212,6 +222,32 @@ TOOL_SCHEMAS = {
             },
         },
         "required": ["node_id"],
+    },
+    "repo_impact": {
+        "type": "object",
+        "properties": {
+            "base": {
+                "type": "string",
+                "description": "Base ref or branch to compare against (default 'main').",
+            },
+            "head": {
+                "type": "string",
+                "description": "Head ref or branch to compare (default 'HEAD' or current working tree).",
+            },
+            "diff": {
+                "type": "string",
+                "description": "Optional raw unified diff text. If provided, overrides git diff.",
+            },
+            "max_depth": {
+                "type": "integer",
+                "description": f"Caller traversal hops around changed symbols (default 2, max {MCP_MAX_HOPS}).",
+            },
+            "format": {
+                "type": "string",
+                "enum": ["markdown", "json", "pr-comment"],
+                "description": "Report format: 'markdown' (full report), 'pr-comment' (compact PR summary), or 'json'.",
+            },
+        },
     },
     "repo_cache_stats": {"type": "object", "properties": {}},
     "repo_build_status": {
@@ -489,6 +525,69 @@ def tool_repo_neighbours(
     return "\n".join(lines)
 
 
+def tool_repo_impact(
+    index: Index,
+    base: str = "main",
+    head: str = "HEAD",
+    diff: str = "",
+    max_depth: int = 2,
+    format: str = "markdown",
+) -> str:
+    """Analyze PR or git diff impact against a base branch using the code graph.
+
+    Enforces exclude_secrets=True unconditionally and clamps numeric arguments.
+    """
+    base_ref = _str(base, 256).strip() or "main"
+    head_ref = _str(head, 256).strip() or "HEAD"
+    diff_text = _str(diff, 1_000_000)
+    depth = _clamp(max_depth, 2, 1, MCP_MAX_HOPS)
+
+    from .impact import (
+        analyze_diff_impact,
+        format_json,
+        format_markdown,
+        format_pr_comment,
+        get_git_diff,
+    )
+
+    if not diff_text.strip():
+        root_path: Path = Path.cwd()
+        raw_root = getattr(index, "repo_root", None)
+        if not raw_root:
+            m = getattr(index, "manifest", {}) or {}
+            raw_root = m.get("root")
+        if not raw_root:
+            raw_root = getattr(index, "dir", None)
+        if raw_root:
+            try:
+                candidate = Path(str(raw_root))
+                if (candidate / ".git").exists():
+                    root_path = candidate
+            except Exception:
+                pass
+        try:
+            diff_text = get_git_diff(root_path, base=base_ref, head=head_ref)
+        except Exception as exc:
+            return f"Error obtaining git diff ({base_ref}...{head_ref}): {exc}"
+
+    report = analyze_diff_impact(
+        index=index,
+        diff=diff_text,
+        base=base_ref,
+        head=head_ref,
+        max_depth=depth,
+        exclude_secrets=True,
+    )
+
+    fmt = str(format).lower().strip()
+    if fmt == "json":
+        return format_json(report)
+    elif fmt in ("pr-comment", "comment"):
+        return format_pr_comment(report)
+    else:
+        return format_markdown(report)
+
+
 def _edge_note(index: "Index", src: str, dst: str, etype: str) -> str:
     """Where the relationship is written, and how sure repo2graph is of it.
 
@@ -662,6 +761,15 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
             hops=_int(args.get("hops"), 1),
             limit=_int(args.get("limit"), MCP_NEIGHBOUR_LIMIT),
         )
+    elif name == "repo_impact":
+        result = tool_repo_impact(
+            index,
+            base=str(args.get("base") or "main"),
+            head=str(args.get("head") or "HEAD"),
+            diff=str(args.get("diff") or ""),
+            max_depth=_int(args.get("max_depth"), 2),
+            format=str(args.get("format") or "markdown"),
+        )
     else:
         # Not cached: an unknown-tool message is cheap, and caching it would
         # fill the cache with whatever names a confused caller invents.
@@ -782,6 +890,7 @@ server = ServerWrapper("repo2graph", version=__version__)
 server.add_tool("repo_map", tool_repo_map, TOOL_SCHEMAS["repo_map"])
 server.add_tool("repo_search", tool_repo_search, TOOL_SCHEMAS["repo_search"])
 server.add_tool("repo_neighbours", tool_repo_neighbours, TOOL_SCHEMAS["repo_neighbours"])
+server.add_tool("repo_impact", tool_repo_impact, TOOL_SCHEMAS["repo_impact"])
 server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_stats"])
 server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])
 

@@ -912,6 +912,74 @@ def cmd_explain(args) -> int:
         return 1
 
 
+def cmd_impact(args):
+    """Analyze PR / branch diff impact against a base branch using the code graph."""
+    from .impact import (
+        analyze_diff_impact,
+        format_json,
+        format_markdown,
+        format_pr_comment,
+        format_sarif,
+        get_git_diff,
+    )
+    from .query import Index
+
+    out = Path(args.out)
+    repo_path = Path(args.repo or ".")
+
+    _require_index(out, "chunks.jsonl")
+    _require_index(out, "nodes.jsonl")
+    _require_index(out, "edges.jsonl")
+
+    try:
+        idx = Index(out)
+    except ValueError as exc:
+        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+
+    if getattr(args, "diff", None):
+        diff_file = Path(args.diff)
+        if not diff_file.exists():
+            raise SystemExit(f"error: diff file {diff_file} does not exist")
+        diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
+    else:
+        try:
+            diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
+        except Exception as exc:
+            raise SystemExit(f"error: failed to retrieve git diff: {exc}") from None
+
+    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
+    if getattr(args, "sarif", False):
+        fmt = "sarif"
+
+    report = analyze_diff_impact(
+        idx,
+        diff_text,
+        base=args.base,
+        head=getattr(args, "head", None) or "HEAD",
+        max_depth=getattr(args, "max_depth", 2),
+        min_confidence=getattr(args, "min_confidence", None),
+    )
+
+    if fmt == "json":
+        rendered = format_json(report)
+    elif fmt == "sarif":
+        rendered = json.dumps(format_sarif(report), indent=2)
+    elif fmt == "pr-comment":
+        rendered = format_pr_comment(report)
+    else:
+        rendered = format_markdown(report)
+
+    if getattr(args, "write", None):
+        target = Path(args.write)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered, encoding="utf-8")
+        if sys.stderr.isatty():
+            sys.stderr.write(f"Wrote impact report to {target}\n")
+    else:
+        _emit(rendered)
+    return 0
+
+
 def _nonneg(value: str) -> int:
     """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
     numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
@@ -1583,6 +1651,76 @@ def main(argv=None):
     )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
+
+    imp = sub.add_parser(
+        "impact",
+        help="analyze PR / branch diff impact against a base branch using the code graph",
+    )
+    imp.add_argument(
+        "repo",
+        nargs="?",
+        default=".",
+        help="repository directory (default: current directory)",
+    )
+    imp.add_argument(
+        "-o",
+        "--out",
+        default=".r2g",
+        help="path to index directory (default: .r2g)",
+    )
+    imp.add_argument(
+        "--base",
+        default="main",
+        help="base ref or branch to compare against (default: main)",
+    )
+    imp.add_argument(
+        "--head",
+        default=None,
+        help="head ref or branch to compare (default: current working tree)",
+    )
+    imp.add_argument(
+        "--diff",
+        default=None,
+        metavar="FILE",
+        help="path to unified diff file (overrides git diff)",
+    )
+    imp.add_argument(
+        "--format",
+        choices=["markdown", "json", "sarif", "pr-comment"],
+        default="markdown",
+        help="output format (default: markdown)",
+    )
+    imp.add_argument("--json", action="store_true", help="output report as JSON")
+    imp.add_argument(
+        "--sarif",
+        action="store_true",
+        help="output report as SARIF v2.1.0 for Code Scanning",
+    )
+    imp.add_argument(
+        "--max-depth",
+        type=_nonneg,
+        default=2,
+        help="traversal hops for caller impact (default: 2)",
+    )
+    imp.add_argument(
+        "--min-confidence",
+        type=float,
+        default=None,
+        help="minimum confidence threshold for CALLS edges",
+    )
+    imp.add_argument(
+        "--no-auto-build",
+        dest="auto_build",
+        action="store_false",
+        help="do not build index if missing",
+    )
+    imp.add_argument(
+        "--write",
+        metavar="FILE",
+        default=None,
+        help="write report to FILE instead of stdout",
+    )
+    imp.set_defaults(func=cmd_impact)
 
     if argv is None:
         try:
