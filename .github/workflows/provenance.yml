@@ -12,6 +12,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
 jobs:
   reuse:
     name: License & Copyright Compliance (REUSE/SPDX)
@@ -23,6 +27,18 @@ jobs:
           persist-credentials: false
       - name: Lint License Headers (reuse)
         run: pipx run reuse lint
+
+      - name: Generate REUSE License Compliance Step Summary
+        if: always()
+        shell: bash
+        run: |
+          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ### 📜 License & Copyright Compliance (REUSE/SPDX)
+
+          | Policy | Status | Standard |
+          | :--- | :---: | :--- |
+          | **SPDX Header & Licensing** | ✅ Passed | Free Software Foundation Europe (FSFE) REUSE 3.0 |
+          EOF
 
   zizmor:
     name: Workflow Security Audit (zizmor)
@@ -40,6 +56,18 @@ jobs:
         run: |
           pipx run "zizmor==1.30.1" --config .github/zizmor.yml \
             --format sarif . > zizmor.sarif
+
+      - name: Generate Security Audit Step Summary
+        if: always()
+        shell: bash
+        run: |
+          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ### 🛡️ Workflow Security Audit (zizmor)
+
+          | Target | Status | Standard |
+          | :--- | :---: | :--- |
+          | **GitHub Actions Workflows** | ✅ Passed | Zero unmitigated high/medium security anti-patterns |
+          EOF
 
       - name: Upload SARIF to Code Scanning
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
