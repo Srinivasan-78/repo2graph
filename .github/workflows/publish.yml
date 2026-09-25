@@ -73,6 +73,11 @@ jobs:
         with:
           app-id: ${{ secrets.PRODIGY_APP_ID }}
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Scope the minted token to exactly what this job's own
+          # `permissions:` block above allows -- an app token otherwise
+          # inherits every permission the installation has.
+          permission-contents: write
+          permission-pull-requests: write
         env:
           HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
           HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
@@ -83,6 +88,9 @@ jobs:
           ref: ${{ inputs.branch }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          # persist-credentials stays at its default (true): the tag push
+          # further down ("git push origin refs/tags/$tag") relies on the
+          # credential this checkout persists for the app/GITHUB_TOKEN above.
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -277,6 +285,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
+          persist-credentials: false
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
@@ -345,6 +354,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
+          persist-credentials: false
 
       - name: Wait for PyPI to serve the new version
         env:
@@ -394,6 +404,10 @@ jobs:
         with:
           app-id: ${{ secrets.PRODIGY_APP_ID }}
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Scope the minted token to exactly what this job's own
+          # `permissions:` block above allows -- an app token otherwise
+          # inherits every permission the installation has.
+          permission-contents: write
         env:
           HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
           HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
@@ -403,6 +417,9 @@ jobs:
           ref: ${{ needs.prepare-release.outputs.tag }}
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          # persist-credentials stays at its default (true): "Advance floating
+          # major tag" further down relies on the credential this checkout
+          # persists for the app/GITHUB_TOKEN above.
 
       - name: Extract this version's CHANGELOG section
         env:

@@ -61,6 +61,40 @@ EXT_LANG = {
     ".lua": "lua",
 }
 
+# `.h` is the single ambiguous extension in EXT_LANG: it defaults to "c" there
+# (a decode-free, allocation-free lookup that every other extension can use
+# unconditionally), but `.h` is also the most common C++ header extension in
+# the wild -- LLVM, Chromium and most Google-style C++ use it. A positive
+# content signal from `sniff_header_lang` overrides that default so a C++
+# header's classes, templates, namespaces and member functions are parsed
+# with the cpp grammar instead of silently mis-parsed or dropped by the C one
+# (#377). `::` and `std::` are the least ambiguous signals; `template` and
+# `#include <string>` almost never appear in a plain C header, either.
+CPP_HEADER_HINTS = (
+    b"class ",
+    b"namespace ",
+    b"template",
+    b"public:",
+    b"private:",
+    b"protected:",
+    b"#include <string>",
+    b"#include <vector>",
+    b"::",
+    b"std::",
+)
+
+
+def sniff_header_lang(raw: bytes) -> str:
+    """Guess "c" or "cpp" for a `.h` file from its content (#377).
+
+    Cheap and best-effort: any single C++ signal anywhere in `raw` wins,
+    since a plain C header contains none of `CPP_HEADER_HINTS` in ordinary
+    (non-comment, non-string) code. Callers pass the bytes they already read
+    for hashing/parsing -- this never opens the file itself.
+    """
+    return "cpp" if any(h in raw for h in CPP_HEADER_HINTS) else "c"
+
+
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
 CONFIG_EXT = {".json", ".yaml", ".yml", ".toml", ".ini", ".cfg"}
 
@@ -611,7 +645,10 @@ def _callee_name(src: bytes, node) -> str | None:
     # that "(" onward, including the outer ".save", and left "obj.get_user".
     # Splitting on the separator first isolates "save" so the parens/generic
     # stripping below only ever runs on the final, already-resolved segment.
-    for sep in ("::", ".", "->"):
+    # "\\": PHP's namespace separator (`\App\Utils\compute()`, `Sub\helper()`).
+    # Without it a namespaced call's callee text keeps its leading namespace
+    # segments and never matches the bare symbol name `graph.py` indexes by (#344).
+    for sep in ("::", ".", "->", "\\"):
         if sep in txt:
             txt = txt.split(sep)[-1]
     txt = txt.split("(")[0].split("<")[0]
@@ -735,11 +772,20 @@ def _split_bases(text: str) -> list[str]:
     return parts
 
 
+# The C++/Kotlin base-clause colon (`class A : public B`) is punctuation and
+# must become whitespace; the C++/Rust "::" scope operator inside a qualified
+# base name (`NS::Base`, `std::runtime_error`) is part of the name and must
+# not. A blanket `.replace(":", " ")` turns "::" into two spaces and leaves
+# only the namespace segment as `words[0]` -- the class name after it is lost
+# entirely, not merely left unresolved (#341). This matches a lone ":" only.
+_SINGLE_COLON_RE = re.compile(r"(?<!:):(?!:)")
+
+
 def _clean_base(text: str) -> str:
-    """'public B', 'extends B', '< B' -> 'B'."""
+    """'public B', 'extends B', '< B' -> 'B'; 'public NS::Base' -> 'NS::Base'."""
     words = [
         w
-        for w in text.replace(":", " ").replace("<", " <").split()
+        for w in _SINGLE_COLON_RE.sub(" ", text).replace("<", " <").split()
         if w and w not in _BASE_WORDS and w not in ("<", ">", "&", "*", ",")
     ]
     return words[0].split("(")[0].strip(",;") if words else ""

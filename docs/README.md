@@ -97,6 +97,10 @@ the reproduction command documented:
 - **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — assets, trust boundaries, what an attacker could
   try against each surface, what stops it, and what is explicitly out of scope. Every open security
   gap is named with its issue number.
+- **[docs/deployment-security.md](deployment-security.md)** — a trust boundary and a
+  supported/not-recommended verdict for each of the six deployment shapes (trusted-local CLI
+  through multi-tenant HTTP), plus a worked hardened reverse-proxy example, token/OIDC rotation,
+  and artifact retention.
 - **[docs/PRIVACY.md](PRIVACY.md)** — whether source ever leaves the machine (one path does, three
   others open a connection carrying none of it), what is written where — including the three
   locations outside `-o` — what is logged, and how to delete all of it.
@@ -127,6 +131,8 @@ the reproduction command documented:
   text slicing, budget models) — read before editing source under `repo2graph/`.
 - **[docs/publishing.md](publishing.md)** — the branch model, the pre-release checklist, and how a
   release ships to PyPI, the MCP Registry and the Marketplace.
+- **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
+  fallback order, and the release story that pairs it with the PyPI release.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
 
 ## Community and governance

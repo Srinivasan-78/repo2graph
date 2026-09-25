@@ -378,7 +378,7 @@ docker run --rm \
   repo2graph build /repo -o /repo/.r2g
 ```
 
-See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full container hardening and HTTP server instructions.
+See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full container hardening and HTTP server instructions, and **[docs/deployment-security.md](docs/deployment-security.md)** for the trust boundary and supported/not-recommended verdict per deployment shape — including whether HTTP without TLS is safe (short answer: only on loopback) and a worked hardened reverse-proxy example.
 
 ## ✨ Key features
 

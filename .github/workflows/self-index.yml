@@ -25,6 +25,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           fetch-depth: 0  # full history so CO_CHANGE edges are meaningful
+          # The composite action's own push step inits a fresh repo in a temp
+          # dir and authenticates via its own `http.extraheader` (github.token,
+          # not this checkout's credential), so nothing here depends on the
+          # credential actions/checkout would otherwise persist.
+          persist-credentials: false
 
       - uses: ./  # the composite action at the repo root
         with:

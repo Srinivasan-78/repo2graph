@@ -336,6 +336,217 @@ def test_false_positive_resistance():
 
 
 # ---------------------------------------------------------------------------
+# #338: the assignment guard skipped lowercase alphanumeric/hex secrets
+#
+# `ASSIGNMENT_RE`'s "is this just a plain identifier" gate used to be
+# `re.fullmatch(r"[a-z0-9_]+", secret)`. A lowercase hex/alphanumeric secret
+# -- an md5 hash, a lowercase API key -- matches that character class too, so
+# the `not re.fullmatch(...)` guard was False and the digits-and-letters
+# check below it never ran. Only a secret with an uppercase character (or a
+# non-alnum char) ever reached the check. Fixed to `[a-z_]+`: a pure word
+# (no digit) is still excluded; a lowercase token with digits now is not.
+# ---------------------------------------------------------------------------
+
+
+def test_iss338_lowercase_hex_assignment_is_detected():
+    """The exact repro from #338: an all-lowercase hex value must be flagged."""
+    text = 'api_key = "abcdef12345678901234567890123456"'
+    findings = scan_content_secrets(text)
+    assert findings == [("CREDENTIAL_ASSIGNMENT", 11, 43)]
+    assert text[11:43] == "abcdef12345678901234567890123456"
+
+
+def test_iss338_mixed_case_assignment_still_detected():
+    """The pre-fix behaviour (one uppercase char flips detection on) must hold too."""
+    text = 'api_key = "Abcdef12345678901234567890123456"'
+    findings = scan_content_secrets(text)
+    assert findings == [("CREDENTIAL_ASSIGNMENT", 11, 43)]
+
+
+def test_iss338_lowercase_alphanumeric_api_key_is_redacted():
+    text = 'api_key = "4f6a8b1c2d3e4f5a6b7c8d9e0f1a2b3c"'
+    redacted, count = redact_content(text)
+    assert count == 1
+    assert "4f6a8b1c2d3e4f5a6b7c8d9e0f1a2b3c" not in redacted
+    assert "[REDACTED:CREDENTIAL_ASSIGNMENT]" in redacted
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'default_option = "none"',
+        'auth_key = "plainwordnodigitshere"',
+        'secret = "just_snake_case_words_only"',
+    ],
+)
+def test_iss338_pure_word_assignments_stay_ignored(text):
+    """Plain identifiers/words -- no digit at all -- must still be ignored.
+
+    This is the regression guard: a fix that widens detection to *any*
+    lowercase string (not just ones mixing letters and digits) would flag
+    these, which is exactly the false-positive failure mode this module must
+    avoid.
+    """
+    assert scan_content_secrets(text) == []
+    redacted, count = redact_content(text)
+    assert redacted == text
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# #368: modern vendor key prefixes and secret config paths
+# ---------------------------------------------------------------------------
+
+# One fixture per added prefix: (secret_type, sample_text). Built with
+# structurally-invalid-but-shaped values (repeated filler characters) so
+# nothing here resembles a live credential.
+_VENDOR_FIXTURES: tuple[tuple[str, str], ...] = (
+    ("anthropic_key", "sk-ant-" + "A" * 24),
+    ("github_fine_grained_pat", "github_pat_" + "A" * 24),
+    ("gitlab_token", "glpat-" + "A" * 24),
+    ("google_oauth_client_secret", "GOCSPX-" + "A" * 24),
+    ("stripe_key", "sk_live_" + "A" * 24),
+    ("stripe_key", "rk_live_" + "A" * 24),
+    ("stripe_webhook_secret", "whsec_" + "A" * 24),
+    ("npm_token", "npm_" + "A" * 24),
+    ("pypi_token", "pypi-AgEIcHlwaS5vcmc" + "A" * 24),
+    ("huggingface_token", "hf_" + "A" * 24),
+    ("digitalocean_token", "dop_v1_" + "a" * 24),
+    ("shopify_token", "shpat_" + "a" * 24),
+    ("shopify_token", "shpss_" + "a" * 24),
+    ("sendgrid_key", "SG." + "A" * 20 + "." + "B" * 20),
+    ("telegram_bot_token", "123456789:" + "A" * 35),
+)
+
+
+@pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
+def test_iss368_vendor_prefix_is_scanned(expected_type, secret):
+    text = f'token = "{secret}"'
+    findings = scan_content_secrets(text)
+    types = {f[0] for f in findings}
+    assert expected_type in types, f"{secret!r} not detected as {expected_type}: {findings}"
+
+
+@pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
+def test_iss368_vendor_prefix_is_redacted_preserving_lines(expected_type, secret):
+    """redact-match redacts the fixture and the newline count is unchanged."""
+    text = f"line one\ntoken = '{secret}'\nline three\n"
+    redacted, count = redact_content(text)
+    assert count >= 1
+    assert secret not in redacted
+    assert f"[REDACTED:{expected_type}]" in redacted
+    assert len(text.split("\n")) == len(redacted.split("\n"))
+    assert "line one" in redacted
+    assert "line three" in redacted
+
+
+def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
+    """`sk-ant-...` must be typed as anthropic_key, not the looser openai_key.
+
+    Both patterns match the same span; this is the ordering/dedup contract
+    documented next to CONTENT_SECRET_PATTERNS in secrets.py.
+    """
+    secret = "sk-ant-" + "A" * 24
+    redacted, count = redact_content(f'x = "{secret}"')
+    assert count == 1
+    assert "[REDACTED:anthropic_key]" in redacted
+    assert "openai_key" not in redacted
+
+
+# _is_secret_path: one assertion per new path form added for #368.
+@pytest.mark.parametrize(
+    "path",
+    [
+        ".pypirc",
+        "home/.pypirc",
+        ".terraformrc",
+        "opt/.terraformrc",
+        "server.keytab",
+        "keys/server.keytab",
+        "putty.ppk",
+        "keys/putty.ppk",
+        ".docker/config.json",
+        "home/user/.docker/config.json",
+        ".m2/settings.xml",
+        "project/.m2/settings.xml",
+        ".gradle/gradle.properties",
+        "repo/.gradle/gradle.properties",
+        ".config/gh/hosts.yml",
+        "home/.config/gh/hosts.yml",
+    ],
+)
+def test_iss368_new_secret_paths_are_detected(path):
+    assert _is_secret_path(path), f"{path!r} should be classified as a secret path"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # The vendor-path match is deliberately narrow: sibling files in the
+        # same dot-directory that are not the documented credential file must
+        # stay unflagged, or an entire tool-config directory gets dropped
+        # from every build for no reason.
+        ".docker/daemon.json",
+        ".config/gh/config.yml",
+        "gradle.properties",  # bare filename outside a .gradle/ dir
+        "settings.xml",  # bare filename outside a .m2/ dir
+        "src/hosts.yml",
+    ],
+)
+def test_iss368_sibling_files_in_vendor_dirs_stay_unflagged(path):
+    assert not _is_secret_path(path), f"{path!r} should NOT be classified as a secret path"
+
+
+# ---------------------------------------------------------------------------
+# False-positive corpus for the widened detection (#338 + #368)
+#
+# A false positive here is worse than a false negative: it silently drops
+# real source text out of every RAG pack (AGENTS.md). Every item below must
+# come back clean from both the scanner and the redactor.
+# ---------------------------------------------------------------------------
+
+FALSE_POSITIVE_CORPUS: tuple[str, ...] = (
+    # git-style SHAs (hex, no vendor prefix)
+    "commit_sha = '4f6a8b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a'",
+    "parent = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'",
+    # UUIDs
+    'request_id = "550e8400-e29b-41d4-a716-446655440000"',
+    "trace_id: 6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+    # base64 asset blobs
+    "icon = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1"
+    "HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='",
+    # lockfile integrity hashes (npm/yarn style)
+    "integrity sha512-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+/==",
+    "resolved 'https://registry.npmjs.org/foo/-/foo-1.0.0.tgz'",
+    # CSS colors
+    "color: #ffffff; background: #123abc;",
+    # npm/huggingface environment-variable *names*, not token values
+    "npm_config_registry=https://registry.npmjs.org/",
+    "npm_package_version=1.2.3",
+    "hf_dataset_cache_dir=/tmp/cache",
+    "hf_home = os.environ.get('HF_HOME')",
+    # ordinary identifiers and test fixtures
+    "api_key: str | None = None",
+    "def authenticate(password: str) -> bool: pass",
+    "MAX_TOKEN_LENGTH = 512",
+    "from transformers import AutoTokenizer",
+    "token = get_token()",
+    'default_option = "none"',
+    'snake_case_identifier_without_digits = "just_a_plain_word"',
+    'secret_type = "database_url"',
+)
+
+
+@pytest.mark.parametrize("text", FALSE_POSITIVE_CORPUS)
+def test_false_positive_corpus_stays_clean(text):
+    findings = scan_content_secrets(text)
+    assert findings == [], f"False positive in {text!r}: {findings}"
+    redacted, count = redact_content(text)
+    assert redacted == text
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
 # Issue 3 (#262): Audit and logging sanitization
 # ---------------------------------------------------------------------------
 
