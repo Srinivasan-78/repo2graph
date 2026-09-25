@@ -175,18 +175,25 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
     try:
         from .parse import BuildConfig, discover
 
-        config = BuildConfig(
-            include_vendor=bool((filters or {}).get("include_vendor")),
-            include_secrets=bool((filters or {}).get("include_secrets")),
-            extra_exclude_dirs=list((filters or {}).get("extra_exclude_dirs") or []),
-            extra_secret_keywords=list((filters or {}).get("extra_secret_keywords") or []),
-            extra_secret_dirs=list((filters or {}).get("extra_secret_dirs") or []),
-            **(
-                {"max_file_bytes": int((filters or {}).get("max_file_bytes") or 0)}
-                if (filters or {}).get("max_file_bytes")
-                else {}
-            ),
-        )
+        filter_dict = filters or {}
+        max_bytes = int(filter_dict.get("max_file_bytes") or 0)
+        if max_bytes > 0:
+            config = BuildConfig(
+                max_file_bytes=max_bytes,
+                include_vendor=bool(filter_dict.get("include_vendor")),
+                include_secrets=bool(filter_dict.get("include_secrets")),
+                extra_exclude_dirs=list(filter_dict.get("extra_exclude_dirs") or []),
+                extra_secret_keywords=list(filter_dict.get("extra_secret_keywords") or []),
+                extra_secret_dirs=list(filter_dict.get("extra_secret_dirs") or []),
+            )
+        else:
+            config = BuildConfig(
+                include_vendor=bool(filter_dict.get("include_vendor")),
+                include_secrets=bool(filter_dict.get("include_secrets")),
+                extra_exclude_dirs=list(filter_dict.get("extra_exclude_dirs") or []),
+                extra_secret_keywords=list(filter_dict.get("extra_secret_keywords") or []),
+                extra_secret_dirs=list(filter_dict.get("extra_secret_dirs") or []),
+            )
         current = {
             rel
             for rel, _abs in discover(
