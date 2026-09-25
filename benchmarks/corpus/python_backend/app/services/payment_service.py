@@ -1,5 +1,6 @@
 import uuid
 
+
 class PaymentService:
     def __init__(self, provider: str = "mock-stripe"):
         self.provider = provider
@@ -17,4 +18,3 @@ class PaymentService:
             raise KeyError(f"Transaction {tx_id} not found")
         self.transactions[tx_id]["status"] = "REFUNDED"
         return True
-

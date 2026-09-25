@@ -30,9 +30,9 @@ Deep Python support will transform `repo2graph` into the premier knowledge graph
 ```python
 router = APIRouter(prefix="/orders")
 
+
 @router.post("/{order_id}/refund", response_model=RefundResponse)
-async def process_refund(order_id: str, db: Session = Depends(get_db)):
-    ...
+async def process_refund(order_id: str, db: Session = Depends(get_db)): ...
 ```
 - **AST Pattern:**
   - Decorator node on `function_definition`: `@router.post(...)`, `@app.get(...)`.
@@ -47,8 +47,7 @@ async def process_refund(order_id: str, db: Session = Depends(get_db)):
 #### 2. Flask & Blueprints
 ```python
 @bp.route("/login", methods=["POST"])
-def handle_login():
-    ...
+def handle_login(): ...
 ```
 - Decorator `@<bp>.route(..., methods=[...])`. Default to `GET` if `methods` omitted.
 
@@ -89,6 +88,7 @@ urlpatterns = [
      @pytest.fixture
      def db_client(): ...
 
+
      def test_query(db_client): ...
      ```
    - When a test function parameter matches a `@pytest.fixture` in `conftest.py` or the test file, emit `sym:conftest.py::db_client` --`INJECTS`--> `sym:test_file.py::test_query`.
@@ -98,6 +98,7 @@ urlpatterns = [
 #### Target Pattern: FastAPI `Depends()`
 ```python
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User: ...
+
 
 @router.get("/me")
 async def read_current_user(current_user: User = Depends(get_current_user)):
@@ -117,6 +118,7 @@ class Department(Base):
     __tablename__ = "departments"
     id = Column(Integer, primary_key=True)
     employees = relationship("Employee", back_populates="department")
+
 
 class Employee(Base):
     __tablename__ = "employees"

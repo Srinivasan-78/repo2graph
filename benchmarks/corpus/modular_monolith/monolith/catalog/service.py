@@ -1,5 +1,6 @@
 from monolith.catalog.models import Product
 
+
 class CatalogService:
     def __init__(self):
         self.products = {
@@ -16,4 +17,3 @@ class CatalogService:
             prod.stock -= quantity
             return True
         return False
-

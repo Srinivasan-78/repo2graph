@@ -130,13 +130,15 @@ In `repo2graph/query.py`:
   ```
 - **Updates for new edge types:**
   ```python
-  DEFAULT_EDGE_DIRS.update({
-      "ROUTES_TO": ("out",),      # Route node expands into handler
-      "TESTS": ("out", "in"),     # Test expands into code; code expands into its tests
-      "INJECTS": ("out", "in"),   # Service expands into dependencies and consumers
-      "MODELS": ("out", "in"),    # Model entity expands to related entities
-      "CONFIGURES": ("out",),     # Config expands into consuming code
-  })
+  DEFAULT_EDGE_DIRS.update(
+      {
+          "ROUTES_TO": ("out",),  # Route node expands into handler
+          "TESTS": ("out", "in"),  # Test expands into code; code expands into its tests
+          "INJECTS": ("out", "in"),  # Service expands into dependencies and consumers
+          "MODELS": ("out", "in"),  # Model entity expands to related entities
+          "CONFIGURES": ("out",),  # Config expands into consuming code
+      }
+  )
   ```
 - `ALL_EDGE_DIRS` remains `{}` (unrestricted), preserving 100% backward compatibility for `Index.retrieve()` and any callers opting out by name.
 

@@ -1,5 +1,6 @@
 from monolith.kernel.events import global_event_bus
 
+
 class ShippingService:
     def __init__(self):
         self.shipments = []
@@ -10,5 +11,5 @@ class ShippingService:
         self.shipments.append(shipment_record)
         return shipment_record
 
-shipping_service = ShippingService()
 
+shipping_service = ShippingService()

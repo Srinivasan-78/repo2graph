@@ -1,5 +1,6 @@
 from dynamic_repo.registry import get_plugin_instance
 
+
 class DynamicDispatcher:
     def run_strategy(self, strategy_name: str, payload: dict) -> dict:
         # String lookup dispatch: static call graphs cannot know which plugin runs

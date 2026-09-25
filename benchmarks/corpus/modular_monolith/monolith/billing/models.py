@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class Invoice:
     id: str
@@ -7,4 +8,3 @@ class Invoice:
     amount: float
     charge_id: str
     paid: bool = False
-

@@ -1,5 +1,6 @@
 from dynamic_repo.handlers.base_handler import BaseHandler
 
+
 class OrderHandler(BaseHandler):
     def on_create(self, data: dict):
         return {"result": f"order_created_{data.get('order_id')}"}
@@ -14,4 +15,3 @@ class OrderHandler(BaseHandler):
     def execute(self, payload: dict) -> dict:
         # Same-name collision
         return self.on_create(payload)
-

@@ -1,6 +1,7 @@
 from app.services.order_service import OrderService
 from app.services.payment_service import PaymentService
 
+
 def test_order_creation_flow():
     payment_service = PaymentService()
     order_service = OrderService(payment_service)
@@ -14,6 +15,7 @@ def test_order_creation_flow():
     assert res["transaction_id"].startswith("tx-")
     assert "ord-999" in session
 
+
 def test_order_refund_flow():
     payment_service = PaymentService()
     order_service = OrderService(payment_service)
@@ -24,4 +26,3 @@ def test_order_refund_flow():
 
     refunded = order_service.process_refund(session, "ord-888")
     assert refunded["status"] == "REFUNDED"
-

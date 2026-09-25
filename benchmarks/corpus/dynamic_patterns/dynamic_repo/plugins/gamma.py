@@ -1,5 +1,6 @@
 from dynamic_repo.registry import register_plugin
 
+
 @register_plugin("gamma_strategy")
 class GammaPlugin:
     def validate(self, payload: dict) -> bool:

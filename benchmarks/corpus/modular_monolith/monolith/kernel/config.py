@@ -1,5 +1,6 @@
 import os
 
+
 class MonolithConfig:
     def __init__(self):
         self.app_name = "ModularMonolithSuite"
@@ -7,5 +8,5 @@ class MonolithConfig:
         self.currency = "USD"
         self.tax_rate = 0.08
 
-config = MonolithConfig()
 
+config = MonolithConfig()

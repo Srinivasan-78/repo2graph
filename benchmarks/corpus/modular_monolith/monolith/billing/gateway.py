@@ -4,7 +4,8 @@ class StripePaymentGateway:
         self.ledger = []
 
     def charge_customer(self, account_id: str, amount: float, currency: str) -> str:
-        charge_id = f"chg_{account_id}_{int(amount*100)}"
-        self.ledger.append({"charge_id": charge_id, "account": account_id, "amount": amount, "currency": currency})
+        charge_id = f"chg_{account_id}_{int(amount * 100)}"
+        self.ledger.append(
+            {"charge_id": charge_id, "account": account_id, "amount": amount, "currency": currency}
+        )
         return charge_id
-

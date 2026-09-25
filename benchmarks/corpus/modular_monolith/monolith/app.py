@@ -4,6 +4,7 @@ from monolith.billing.service import BillingService
 from monolith.shipping.service import shipping_service
 from monolith.notifications.dispatcher import notification_dispatcher
 
+
 class MonolithApplication:
     def __init__(self):
         self.identity = IdentityService()
@@ -20,5 +21,5 @@ class MonolithApplication:
         invoice = self.billing.issue_invoice(account_id, subtotal)
         return {"invoice_id": invoice.id, "amount": invoice.amount, "status": "COMPLETED"}
 
-app = MonolithApplication()
 
+app = MonolithApplication()

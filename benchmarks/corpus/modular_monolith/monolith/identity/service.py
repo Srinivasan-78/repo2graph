@@ -1,6 +1,7 @@
 from monolith.kernel.events import global_event_bus
 from monolith.identity.models import Account
 
+
 class IdentityService:
     def __init__(self):
         self.accounts = {}
@@ -18,4 +19,3 @@ class IdentityService:
             global_event_bus.publish("account_verified", {"account_id": account_id})
             return True
         return False
-

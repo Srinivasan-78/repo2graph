@@ -1,6 +1,7 @@
 from monolith.billing.service import BillingService
 from monolith.billing.gateway import StripePaymentGateway
 
+
 def test_billing_tax_calculation_and_charge():
     gateway = StripePaymentGateway()
     billing = BillingService(gateway)
@@ -10,4 +11,3 @@ def test_billing_tax_calculation_and_charge():
     assert inv.amount == 108.0
     assert inv.paid is True
     assert inv.charge_id.startswith("chg_acc-test_")
-

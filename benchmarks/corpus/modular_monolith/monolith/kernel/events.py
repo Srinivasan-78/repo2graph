@@ -11,5 +11,5 @@ class EventBus:
         for handler in self.subscribers.get(event_name, []):
             handler(data)
 
-global_event_bus = EventBus()
 
+global_event_bus = EventBus()

@@ -1,5 +1,6 @@
 from monolith.kernel.events import global_event_bus
 
+
 class NotificationDispatcher:
     def __init__(self):
         self.sent_emails = []
@@ -15,5 +16,5 @@ class NotificationDispatcher:
         amount = data.get("amount")
         self.sent_emails.append(f"Receipt sent for invoice {inv_id} ({amount})")
 
-notification_dispatcher = NotificationDispatcher()
 
+notification_dispatcher = NotificationDispatcher()

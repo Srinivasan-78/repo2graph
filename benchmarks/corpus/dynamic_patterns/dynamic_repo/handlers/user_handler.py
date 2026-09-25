@@ -1,5 +1,6 @@
 from dynamic_repo.handlers.base_handler import BaseHandler
 
+
 class UserHandler(BaseHandler):
     def on_create(self, data: dict):
         return {"result": f"user_created_{data.get('username')}"}
@@ -14,4 +15,3 @@ class UserHandler(BaseHandler):
     def execute(self, payload: dict) -> dict:
         # Same-name collision with AlphaPlugin/BetaPlugin/GammaPlugin/OrderHandler
         return self.on_create(payload)
-

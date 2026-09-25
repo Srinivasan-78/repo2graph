@@ -1,6 +1,7 @@
 from app.services.payment_service import PaymentService
 from app.models.order import OrderModel
 
+
 class OrderService:
     def __init__(self, payment_service: PaymentService):
         self.payment_service = payment_service
@@ -17,7 +18,7 @@ class OrderService:
             customer_id=payload.get("customer_id", "cust-anon"),
             amount=total_amount,
             status="PAID",
-            transaction_id=transaction_id
+            transaction_id=transaction_id,
         )
         session[order.order_id] = order
         return order.to_dict()
