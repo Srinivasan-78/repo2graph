@@ -247,6 +247,8 @@ here raises on a bad value; it is clamped and answered.
 | `budget_tokens` | `repo_search` | 6 000 | 12 000 |
 | `limit` | `repo_neighbours` | 20 | 50 |
 | `max_depth` | `repo_impact` | 2 | 5 |
+| `diff` (length) | `repo_impact` | — | 1 000 000 chars |
+| output (tokens) | `repo_impact` | — | 12 000 |
 | `query` (length) | `repo_search` | — | 4 000 chars |
 | `node_id` (length) | `repo_neighbours` | — | 2 000 chars |
 | `task_id` (length) | `repo_build_status` | — | 200 chars |
@@ -270,6 +272,20 @@ it says so instead of returning nothing.
 | `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
 
 Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](../PR_IMPACT.md).
+
+**Output is bounded too, not just the inputs.** The report grows with the number
+of impacted symbols rather than with `max_depth`, so a wide diff could render far
+past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
+
+- `markdown` and `pr-comment` are cut on a line boundary and end with a
+  `_[truncated to 12000 tokens…]_` note.
+- `json` is **not** cut — a line-boundary cut would stop being parseable. It is
+  replaced by a valid document carrying `"truncated": true`, a `reason`, and the
+  scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
+  per-symbol lists omitted.
+
+Run `repo2graph impact` for the full, unbounded report; the ceiling exists
+because this tool's output lands directly in an agent's context window.
 
 ### `repo_cache_stats`
 

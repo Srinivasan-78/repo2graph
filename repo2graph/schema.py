@@ -81,22 +81,64 @@ class NodeRecord(TypedDict, total=False):
     entrypoint: bool
     docstring: str
     file_type: str
+    # Symbol span and signature. Declared because they are the keys
+    # `impact.py` reads off a node (`analyze_diff_impact` matches
+    # `start_line`/`end_line` against a diff's hunks and compares `signature`
+    # to decide `signature_changed`) — while they were undeclared, a consumer
+    # annotating `node: NodeRecord` could not typecheck that path at all.
+    start_line: int
+    end_line: int
+    signature: str | None
+    # File-node bookkeeping.
+    size: int
+    chunked: bool
+    parse_errors: int
+    # True on a node standing in for a symbol outside the indexed tree, which is
+    # what a CALLS_EXTERNAL edge points at.
+    external: bool
 
 
 class EdgeRecord(TypedDict, total=False):
-    """One line of `edges.jsonl`. `src`/`dst`/`type` are on every edge; the
-    rest is edge-type-specific — see `export.EDGE_TYPES` for which type
-    carries what (`CALLS` carries `count`/`confidence`, `IMPORTS` carries
-    `target`/`internal`, `CO_CHANGE` carries `count`).
+    """One line of `edges.jsonl`.
+
+    `src`/`dst`/`type` are on every edge, and so are `method`, `confidence` and
+    `evidence` — `Graph.add_edge` runs every edge through `edgemeta.normalize`,
+    which is the chokepoint that makes those three unconditional (see the
+    AGENTS.md rule on edge evidence). `evidence: None` is a real answer for
+    `CONTAINS` and `CO_CHANGE` rather than a missing value.
+
+    Everything below that is edge-type-specific — see `export.EDGE_TYPES` for
+    which type carries what: `IMPORTS` carries `target`/`internal`, `CALLS` and
+    `CALLS_EXTERNAL` carry the resolution fields, `INHERITS` carries
+    `raw_base`/`subtype`, and `CO_CHANGE` carries the sampling fields.
     """
 
     src: str
     dst: str
     type: EdgeType
-    count: int
+    method: str
     confidence: float
+    evidence: dict[str, Any] | None
+    count: int
     internal: bool
     target: str
+    # CALLS / CALLS_EXTERNAL resolution provenance. `confidence` says how likely
+    # `dst` is the right target; these say how that target was picked.
+    # `call_kind` — never `confidence` — is what encodes dynamic dispatch.
+    call_kind: str
+    resolution_kind: str
+    candidate_count: int
+    ambiguous: bool
+    scope_distance: int
+    # INHERITS: the base as written at the source (before resolution), and
+    # whether this is a class/interface/mixin relationship.
+    raw_base: str
+    subtype: str
+    # CO_CHANGE: how often the pair moved together, and the sampling parameters
+    # that produced the edge, so a threshold change is visible in the artifact.
+    cochange_count: int
+    sampled_commits: int
+    min_pairs: int
 
 
 class _NeighbourEdgeRequired(TypedDict):

@@ -330,7 +330,7 @@ def test_globs_for_expands_all_and_rejects_an_unknown_group():
     # De-duplicated and stable: "vendor" appears in more than one group's
     # conceptual territory, and the CLI joins these into one --exclude list.
     assert len(every) == len(set(every))
-    assert globs_for(["generated", "generated"]) == globs_for(["generated"])
+    assert globs_for(["generated", "generated"]) == list(GROUPS["generated"].globs)
 
     with pytest.raises(ValueError, match="unknown exclusion group"):
         globs_for(["nope"])

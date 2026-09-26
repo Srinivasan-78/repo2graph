@@ -123,8 +123,11 @@ or a released package, independent of anything the tool does at runtime:
 - **Dependabot** watches `pyproject.toml`/`uv.lock` and the pinned Action SHAs for known
   vulnerabilities; `uv.lock` is committed, so every install — local, CI, or a hosted MCP build — is
   reproducible from the exact dependency graph that was reviewed.
-- **A dependency-review workflow** runs on every PR that touches dependencies, blocking new
-  packages with a disallowed license or a known advisory before merge.
+- **A dependency-review workflow** runs on every PR that touches dependencies and fails its own
+  check when a new package carries a disallowed license or a known advisory. Like the REUSE and
+  zizmor audits above, it is *not* in the required-status-check list, so it reddens the run rather
+  than hard-blocking the merge button — read it as a reviewable signal, not a gate, and use the
+  `gh api` command above to see what actually gates today.
 
 ## Further reading
 

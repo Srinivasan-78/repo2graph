@@ -803,6 +803,53 @@ def test_repeated_begin_without_end_stays_linear():
     assert {f[0] for f in findings} == {"private_key"}
 
 
+def test_repeated_incomplete_begin_header_stays_linear():
+    """`PEM_BEGIN_RE` itself must not backtrack, which the test above cannot see.
+
+    That one feeds *complete* `-----BEGIN RSA PRIVATE KEY-----` headers, which
+    match on the first try with no backtracking -- it detects the `_pem_spans`
+    pairing fix, not the anchor regex. The quadratic input is an *incomplete*
+    header: `[-A-Z0-9_ ]` contains every character of `PRIVATE KEY`, so at each
+    of the n/11 offsets where `-----BEGIN ` matches, the engine walks the whole
+    remaining tail before failing. Measured on the unbounded `*` form: 1.10 s at
+    107 KB, 17.6 s at 440 KB, ~90 s at 1 MB -- all inside the HTTP server's
+    1 MB `MAX_BODY_BYTES`, and reachable *before* authentication because
+    `_reject` sanitises the rejected request's own fields on the way to the 401.
+
+    Input size is chosen so the two regimes cannot overlap on a slow box. At
+    440 KB this whole scan measures ~0.21 s bounded and ~17.6 s unbounded, so the
+    5 s ceiling sits ~24x above the fixed cost and ~3.5x below the regression --
+    and a slower box pushes the unbounded number *up*, so it only sharpens.
+
+    A 110 KB input would not work: the unbounded form takes ~1.07 s there, which
+    passes a 2 s assertion. An earlier draft of this test did exactly that and
+    stayed green against the very regex it was written to catch.
+    """
+    # 440 KB of incomplete headers, still inside the server's 1 MB body cap.
+    text = "-----BEGIN " * 40_000
+
+    start = time.perf_counter()
+    findings = secrets.scan_content_secrets(text)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 5.0, (
+        f"scan took {elapsed:.2f}s on {len(text) // 1024}KB of incomplete "
+        f"'-----BEGIN ' headers; PEM_BEGIN_RE's label quantifier is unbounded again"
+    )
+    # An incomplete header is not a secret, so nothing is reported.
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "label", ["", "RSA ", "DSA ", "EC ", "OPENSSH ", "ENCRYPTED ", "ENCRYPTED RSA "]
+)
+def test_every_real_pem_label_is_still_matched(label):
+    """Bounding the quantifier must not narrow what counts as a private key."""
+    header = f"-----BEGIN {label}PRIVATE KEY-----"
+    assert secrets.PEM_BEGIN_RE.fullmatch(header), header
+    assert secrets.PEM_END_RE.fullmatch(header.replace("BEGIN", "END"))
+
+
 def test_redact_content_on_repeated_begin_stays_linear():
     """redact_content runs the scan and then rewrites; both must stay bounded.
 

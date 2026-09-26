@@ -1143,23 +1143,33 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
     an edit above a pinned line slides the pin onto unrelated YAML, where it
     suppresses whatever finding lands there next. Only zizmor itself can prove a
     pin still matches, and zizmor is not a dependency of the pytest environment,
-    so this pins the *construct* each entry was written for. zizmor reports a
-    step-level finding at the step's first line, hence the small window.
+    so this pins the *construct* each entry was written for.
+
+    The window is **per pin and tight**, which is the whole detector. An earlier
+    version of this test used a blanket 12-line window for every entry, and that
+    is exactly why it stayed green while `ci.yml:313` had drifted 4 lines off its
+    `uses: ./`: 317 fell comfortably inside 313..324, so the pin was un-anchored
+    and a real `self-repository` finding went unsuppressed and unnoticed. Most
+    entries anchor directly *on* their construct (window 1). The one exception is
+    `dangerous-triggers`, which zizmor reports against the whole `on:` mapping
+    rather than the individual trigger, so the needle sits a few lines inside it.
     """
     config = REPO_ROOT / ".github" / "zizmor.yml"
+    # (file, line) -> (construct, lines_to_search_from_that_line_inclusive)
     expected = {
-        # artipacked: checkout steps that deliberately persist credentials
-        ("lockfile.yml", 45): "actions/checkout@",
-        ("publish.yml", 85): "actions/checkout@",
-        ("publish.yml", 415): "actions/checkout@",
-        # dangerous-triggers: prod-igy's pull_request_target
-        ("prod-igy.yml", 16): "pull_request_target:",
+        # artipacked: checkout steps that deliberately persist credentials.
+        # lockfile.yml is deliberately absent -- its checkout now sets
+        # `persist-credentials` explicitly, so it needs no ignore.
+        ("publish.yml", 85): ("actions/checkout@", 1),
+        ("publish.yml", 435): ("actions/checkout@", 1),
+        # dangerous-triggers: reported against the `on:` mapping, not the trigger.
+        ("prod-igy.yml", 16): ("pull_request_target:", 8),
         # self-repository: jobs that run this repo's own composite action
-        ("ci.yml", 313): "uses: ./",
-        ("index-repo.yml", 57): "uses: ./",
-        ("self-index.yml", 34): "uses: ./",
+        ("ci.yml", 317): ("uses: ./", 1),
+        ("index-repo.yml", 59): ("uses: ./", 1),
+        ("self-index.yml", 34): ("uses: ./", 1),
         # adhoc-packages: the one pinned npm dependency prod-igy.js has
-        ("prod-igy.yml", 158): "npm install",
+        ("prod-igy.yml", 168): ("npm install", 1),
     }
 
     pinned = {
@@ -1168,10 +1178,12 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
     }
     assert pinned == set(expected), "a zizmor ignore was added or removed without a pin check here"
 
-    for (name, lineno), needle in sorted(expected.items()):
+    for (name, lineno), (needle, span) in sorted(expected.items()):
         lines = _read_lines(WORKFLOW_DIR / name)
-        window = "\n".join(lines[lineno - 1 : lineno + 11])
-        assert needle in window, (
-            f"zizmor.yml pins {name}:{lineno} for {needle!r}, which is no longer there; "
-            f"the line is now {lines[lineno - 1]!r}"
+        window = lines[lineno - 1 : lineno - 1 + span]
+        assert any(needle in line for line in window), (
+            f"zizmor.yml pins {name}:{lineno} for {needle!r}, which is not in the "
+            f"{span}-line window starting there; the line is now {lines[lineno - 1]!r}. "
+            f"Re-run `uvx zizmor==1.30.1 --config .github/zizmor.yml --format plain .` "
+            f"and re-anchor the pin."
         )

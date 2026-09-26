@@ -64,9 +64,13 @@ const CMD_UNSAFE_RE = /[&|<>^"%!()\s]/;
 
 function quoteForCmd(arg) {
   // Double quotes stop cmd.exe splitting on whitespace and treating &|<>^ as
-  // operators. `%` and `!` still expand *inside* quotes, so a value carrying
-  // either is rejected by the caller rather than silently mangled -- there is
-  // no in-band escape for them in a `shell: true` command line.
+  // operators. Three characters have no in-band escape on a `shell: true`
+  // command line, so `run()` rejects any value carrying one rather than
+  // silently mangling it: `%` and `!` still expand *inside* quotes, and an
+  // embedded `"` cannot be escaped at all -- the `\"` below is a C-runtime
+  // convention that cmd.exe does not honour. The replace is kept as a
+  // belt-and-braces measure for a future caller that has not gone through
+  // `run()`'s refusal; for every current caller it is unreachable.
   return `"${String(arg).replace(/"/g, '\\"')}"`;
 }
 
@@ -87,12 +91,12 @@ function run(resolved, args) {
   const options = { stdio: "inherit" };
 
   if (needsShell) {
-    const unquotable = [resolved, ...args].find((a) => /[%!]/.test(String(a)));
+    const unquotable = [resolved, ...args].find((a) => /[%!"]/.test(String(a)));
     if (unquotable !== undefined) {
       process.stderr.write(
         `repo2graph-mcp: cannot safely run the batch shim '${resolved}' because ` +
-          `'${unquotable}' contains '%' or '!', which cmd.exe expands even inside ` +
-          `quotes.\nInstall uv (which ships a real uvx.exe) or run ` +
+          `'${unquotable}' contains '%', '!', or quotes, which cmd.exe cannot safely escape.\n` +
+          `Install uv (which ships a real uvx.exe) or run ` +
           `${CONSOLE_SCRIPT} directly instead.\n`
       );
       process.exit(1);

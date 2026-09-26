@@ -71,6 +71,15 @@ jobs:
       # use for job-level env.
       HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
       HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+      # Same promotion, for the same reason, applied to the one step #375
+      # missed: "Install Anthropic SDK" gated on `env.PRODIGY_AI` while
+      # declaring `PRODIGY_AI` in that same step's own `env:` block. A step's
+      # `env:` is not in scope for that step's `if:`, so the gate read an empty
+      # string and never opened -- the SDK was never installed even with
+      # `vars.PRODIGY_AI` set to `true`, and because the step is
+      # `continue-on-error` the script just fell back to its deterministic
+      # inspection. Silent, and invisible in any run where the var is unset.
+      PRODIGY_AI: ${{ vars.PRODIGY_AI }}
 
     steps:
       # Generate prod-igy installation token if GitHub App credentials exist
@@ -153,8 +162,9 @@ jobs:
         # warning. If the install fails, `require` fails, and the script falls
         # back to the deterministic inspection it did before the AI existed.
         continue-on-error: true
-        env:
-          PRODIGY_AI: ${{ vars.PRODIGY_AI }}
+        # `PRODIGY_AI` now comes from the job-level `env:` above, so the `if:`
+        # can actually see it. A step-local block here would not be in scope for
+        # this step's own `if:`, which is the bug that kept this step dead.
         run: npm install --no-save --no-audit --no-fund --ignore-scripts '@anthropic-ai/sdk@0.127.0'
 
       - name: Run prod-igy PR Assistant
@@ -163,7 +173,9 @@ jobs:
           # Absent key or absent SDK => the AI step logs a warning and skips.
           # Deterministic triage always posts.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PRODIGY_AI: ${{ vars.PRODIGY_AI }}
+          # PRODIGY_AI is not repeated here: it is on the job-level `env:` above
+          # (so the SDK step's `if:` can see it), and a step-level copy of the
+          # same expression would only be a second place to keep in sync.
           PRODIGY_AI_MODEL: ${{ vars.PRODIGY_AI_MODEL }}
           PRODIGY_AI_MAX_TOKENS: ${{ vars.PRODIGY_AI_MAX_TOKENS }}
           PRODIGY_AI_EFFORT: ${{ vars.PRODIGY_AI_EFFORT }}

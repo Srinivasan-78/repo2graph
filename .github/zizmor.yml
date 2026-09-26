@@ -9,17 +9,25 @@
 rules:
   artipacked:
     ignore:
-      # These three checkout steps intentionally rely on the credential
+      # These two checkout steps intentionally rely on the credential
       # actions/checkout persists (default persist-credentials: true) to
       # authenticate a later plain `git push` / `git tag` in the same job --
-      # there is no separate credential-routing step to hand it to. Every
-      # one of them is scoped to that job's own narrow `permissions:` (or an
-      # explicitly-minted, permission-scoped App token) and the job ends
-      # immediately after the push, so the persisted credential is never
-      # live longer than the push it exists for.
-      - lockfile.yml:45    # check-lockfile: `git push` (auto_commit, dispatch-only)
+      # there is no separate credential-routing step to hand it to. Both are
+      # scoped to that job's own narrow `permissions:` (or an explicitly-minted,
+      # permission-scoped App token) and the job ends immediately after the
+      # push, so the persisted credential is never live longer than the push it
+      # exists for.
+      #
+      # `lockfile.yml` used to be a third entry. It is not ignored any more
+      # because it no longer needs to be: that checkout now sets
+      # `persist-credentials` to an expression that is true only on the
+      # dispatch-with-auto_commit path, so the audit is satisfied on the
+      # `pull_request` path -- which is the path that never pushes and the one
+      # the blanket ignore was wrongly covering. Verified: deleting this entry
+      # changes zizmor's output not at all, so keeping it would be dead config
+      # that could silently absorb a future real finding if lines shift onto it.
       - publish.yml:85     # prepare-release: `git push origin refs/tags/$tag`
-      - publish.yml:415    # release: `git push -f origin refs/tags/$major`
+      - publish.yml:435    # release: `git push -f origin refs/tags/$major`
 
   dangerous-triggers:
     ignore:
@@ -46,8 +54,8 @@ rules:
       # jobs exist to smoke-test the action at the exact commit checked out,
       # not at a separate pinned ref that could drift from what the PR
       # actually changed.
-      - ci.yml:313         # action: smoke-tests the composite action itself
-      - index-repo.yml:57  # index: dispatch-driven build against a target repo
+      - ci.yml:317         # action: smoke-tests the composite action itself
+      - index-repo.yml:59  # index: dispatch-driven build against a target repo
       - self-index.yml:34  # index: keeps this repo's own graph fresh
 
   adhoc-packages:
@@ -61,4 +69,4 @@ rules:
       # keeps a compromised release from running a lifecycle script in a job
       # that holds pull-requests: write and an API key -- see
       # tests/test_prod_igy.py::test_ai_workflow_wiring.
-      - prod-igy.yml:158
+      - prod-igy.yml:168
