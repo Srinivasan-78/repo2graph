@@ -927,6 +927,21 @@ def cmd_impact(args):
     out = Path(args.out)
     repo_path = Path(args.repo or ".")
 
+    # `--no-auto-build` can only mean something if building is the default, and
+    # the default is what makes a first run work at all: unlike `query`, there is
+    # no shipped-index case here. The diff's line numbers are head-side, so the
+    # index this needs is one of the tree that is already checked out -- exactly
+    # what there is to build. Progress goes to stderr because the report itself
+    # is on stdout and is often piped into a file or `jq`.
+    if getattr(args, "auto_build", True) and not artifact_path(out, "chunks.jsonl").is_file():
+        if not repo_path.is_dir():
+            raise SystemExit(
+                f"error: repository directory does not exist or is not a directory: {repo_path}"
+            )
+        sys.stderr.write(f"no index at {out}: building one from {repo_path}\n")
+        graph = build(repo_path)
+        dump_all(graph, iter_chunks(graph), out, {"jsonl", "overview"})
+
     _require_index(out, "chunks.jsonl")
     _require_index(out, "nodes.jsonl")
     _require_index(out, "edges.jsonl")
@@ -937,10 +952,19 @@ def cmd_impact(args):
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
 
     if getattr(args, "diff", None):
-        diff_file = Path(args.diff)
-        if not diff_file.exists():
-            raise SystemExit(f"error: diff file {diff_file} does not exist")
-        diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
+        if args.diff == "-":
+            # `git diff main...HEAD | repo2graph impact --diff -`, the form
+            # PR_IMPACT.md documents and CI wants: no temp file to write, clean
+            # up, or leak. Read the raw bytes and decode them the way every
+            # other reader of git output here does -- a piped diff carries
+            # whatever encoding the paths and hunks are in, and a cp1252 stdin
+            # on Windows would otherwise raise before the diff is even parsed.
+            diff_text = sys.stdin.buffer.read().decode("utf8", "surrogateescape")
+        else:
+            diff_file = Path(args.diff)
+            if not diff_file.exists():
+                raise SystemExit(f"error: diff file {diff_file} does not exist")
+            diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
     else:
         try:
             diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))

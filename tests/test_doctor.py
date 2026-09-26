@@ -400,30 +400,33 @@ def test_doctor_mcp_client_config_catches_a_command_that_is_not_on_path(tmp_path
     assert any("not on PATH" in d for d in res.details)
 
 
-def test_doctor_mcp_client_config_warns_on_a_relative_target(tmp_path):
-    """MCP clients launch servers from an unspecified working directory."""
-    _write_mcp_config(
-        tmp_path,
-        {"command": "uvx", "args": ["--from", "repo2graph[mcp]", "repo2graph-mcp", "./myrepo"]},
-    )
-    with patch("shutil.which", lambda name: f"/usr/bin/{name}"):
-        res = check_mcp_client_config(tmp_path)
-    assert res.status == "warn"
-    assert any("relative" in d for d in res.details)
-
-
-def test_doctor_mcp_client_config_warns_on_a_missing_target(tmp_path):
+# Two ways the configured target is unusable, one verdict. `./myrepo` is the
+# interesting row: MCP clients launch servers from an unspecified working
+# directory, so a relative path is a warning even though it might resolve here.
+@pytest.mark.parametrize(
+    "target, expected_detail",
+    [
+        pytest.param("./myrepo", "relative", id="relative-target"),
+        pytest.param(None, "does not exist", id="missing-target"),
+    ],
+)
+def test_doctor_mcp_client_config_warns_on_an_unusable_target(tmp_path, target, expected_detail):
     _write_mcp_config(
         tmp_path,
         {
             "command": "uvx",
-            "args": ["--from", "repo2graph[mcp]", "repo2graph-mcp", str(tmp_path / "gone")],
+            "args": [
+                "--from",
+                "repo2graph[mcp]",
+                "repo2graph-mcp",
+                target if target is not None else str(tmp_path / "gone"),
+            ],
         },
     )
     with patch("shutil.which", lambda name: f"/usr/bin/{name}"):
         res = check_mcp_client_config(tmp_path)
     assert res.status == "warn"
-    assert any("does not exist" in d for d in res.details)
+    assert any(expected_detail in d for d in res.details)
 
 
 def test_doctor_mcp_client_config_reports_invalid_json(tmp_path):

@@ -898,6 +898,13 @@ def test_open_index_missing_chunks_jsonl_raises_clean_systemexit(tmp_path):
 
 
 def test_serve_preflight_checks_index(monkeypatch, tmp_path):
+    """No index and no repo to build one from: fail fast, naming the path.
+
+    `test_serve_without_a_repo_still_preflights` asserted this same call and the
+    same message further down the file. Since `serve()` is invoked here with no
+    `repo` argument either, "without a repo" was already this test's condition,
+    not a second one.
+    """
     mcp = mcp_module()
     _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
     missing = tmp_path / "missing_idx"
@@ -1002,16 +1009,6 @@ def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path, monkeypa
     out = tmp_path / "deferred_idx"
     mcp.serve(out, repo=mini_repo)  # must not raise, must not build
     assert not out.exists()
-
-
-def test_serve_without_a_repo_still_preflights(monkeypatch, tmp_path):
-    """--no-auto-build territory: nothing to build from, so fail fast."""
-    mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
-    missing = tmp_path / "missing_idx"
-    with pytest.raises(SystemExit) as exc:
-        mcp.serve(missing)
-    assert f"error: no repo2graph index found at '{missing}'" in str(exc.value)
 
 
 # ----------------------------------------------------------- resolve_paths --

@@ -114,8 +114,12 @@ jobs:
           pip install --require-hashes -r requirements-ci.txt
           pip install -e . --no-deps
 
+      # `-n auto` uses every vCPU the runner has (4 on the hosted Linux and
+      # Windows images). Coverage still combines correctly because
+      # [tool.coverage.run] sets parallel = true, which the multiprocessing
+      # build path already needed.
       - name: Run Test Suite & Branch Coverage
-        run: pytest -q --cov=repo2graph --cov-report=term-missing
+        run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
 
       - name: Append Test Coverage to Step Summary
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
@@ -165,7 +169,7 @@ jobs:
         run: pip install -e ".[dev,mcp]"
 
       - name: Run test suite against fresh upstream
-        run: pytest -q
+        run: pytest -q -n auto
 
       - name: Show what was actually resolved
         if: always()

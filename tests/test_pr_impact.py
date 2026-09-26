@@ -13,11 +13,13 @@ Validates:
 
 import json
 import re
+import sys
 from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
+from repo2graph import edgemeta
 from repo2graph.impact import (
     PR_COMMENT_MARKER,
     PR_COMMENT_MAX_APIS,
@@ -170,7 +172,14 @@ class MockIndex:
         return node
 
     def add_edge(self, src: str, dst: str, etype: str, **attrs):
-        record = {"src": src, "dst": dst, "type": etype, **attrs}
+        # Through the real `edgemeta.normalize`, for the same reason
+        # `Graph.add_edge` is the only chokepoint in production: a double that
+        # invents its own edge shape stops being a detector. This one used to
+        # accept `evidence="pkg/app.py:12"` — a string, where a real edge
+        # carries an `{"path", "line"}` record — so every assertion about a
+        # citation was checking the mock's shape, not the schema's, and
+        # `impact.py` emitting raw dicts into its JSON and Markdown stayed green.
+        record = edgemeta.normalize({"src": src, "dst": dst, "type": etype, **attrs})
         self.edges.append(record)
         self.adj.setdefault(src, []).append((dst, etype, "out", record))
         self.adj.setdefault(dst, []).append((src, etype, "in", record))
@@ -257,7 +266,7 @@ def sample_graph_index():
         "sym:pkg/core.py::public_func",
         "CALLS",
         confidence=1.0,
-        evidence="pkg/app.py:12",
+        evidence=edgemeta.evidence("pkg/app.py", 12),
     )
     # test_public_func CALLS public_func
     idx.add_edge(
@@ -265,14 +274,14 @@ def sample_graph_index():
         "sym:pkg/core.py::public_func",
         "CALLS",
         confidence=1.0,
-        evidence="tests/test_core.py:14",
+        evidence=edgemeta.evidence("tests/test_core.py", 14),
     )
     # pkg/app.py IMPORTS pkg/core.py
     idx.add_edge(
         "file:pkg/app.py",
         "file:pkg/core.py",
         "IMPORTS",
-        evidence="pkg/app.py:1",
+        evidence=edgemeta.evidence("pkg/app.py", 1),
     )
 
     return idx
@@ -514,7 +523,13 @@ def blast_radius_index():
             (f"pkg/{label}_a.py", f"pkg/{label}_b.py", f"pkg/{label}_c.py")
         ):
             caller = _sym(caller_path, f"use_{label}", 1, 5)
-            idx.add_edge(caller, target, "CALLS", confidence=1.0, evidence=f"{caller_path}:{i + 2}")
+            idx.add_edge(
+                caller,
+                target,
+                "CALLS",
+                confidence=1.0,
+                evidence=edgemeta.evidence(caller_path, i + 2),
+            )
     return idx
 
 
@@ -551,6 +566,118 @@ def test_iss422_blast_radius_rule_ignores_added_and_test_symbols(blast_radius_in
     report = analyze_diff_impact(blast_radius_index, diff=diff_text)
     blast = {(f.path, f.line) for f in report.suspicious_findings if f.rule_id == "R2G-IMP-003"}
     assert blast == {("pkg/hub.py", 10)}
+
+
+@pytest.fixture
+def ambiguous_caller_index():
+    """One modified symbol reached by four callers the resolver could not pin.
+
+    `confidence` on a CALLS edge is P(this is the right target | a call exists
+    here), which the name resolver splits 1/n across the n symbols sharing a
+    name. 0.25 is what four same-named candidates look like -- the shape a
+    common method name (`start`, `run`, `get`) produces across a whole repo.
+    """
+    idx = MockIndex()
+
+    def _sym(path, name, start, end):
+        idx.add_node(f"file:{path}", type="file", path=path)
+        idx.add_node(
+            f"sym:{path}::{name}",
+            type="symbol",
+            name=name,
+            qualname=name,
+            kind="function",
+            path=path,
+            start_line=start,
+            end_line=end,
+        )
+        return f"sym:{path}::{name}"
+
+    target = _sym("pkg/server.py", "start", 40, 60)
+    for i, caller_path in enumerate(
+        ("pkg/unrelated_a.py", "pkg/unrelated_b.py", "pkg/unrelated_c.py", "pkg/unrelated_d.py")
+    ):
+        caller = _sym(caller_path, f"uses_start_{i}", 1, 5)
+        idx.add_edge(
+            caller,
+            target,
+            "CALLS",
+            confidence=0.25,
+            evidence=edgemeta.evidence(caller_path, i + 2),
+        )
+    return idx
+
+
+AMBIGUOUS_DIFF = (
+    "diff --git a/pkg/server.py b/pkg/server.py\n"
+    "--- a/pkg/server.py\n"
+    "+++ b/pkg/server.py\n"
+    "@@ -42,1 +42,1 @@\n"
+    "-    poll()\n"
+    "+    poll(interval=0.05)\n"
+)
+
+
+def test_ambiguous_call_rule_reports_once_against_the_changed_symbol(ambiguous_caller_index):
+    """R2G-IMP-004 is a claim about the symbol, not about each caller.
+
+    A low confidence is the resolver saying it could not tell which same-named
+    symbol a call meant. That is a fact about this analysis, so filing it against
+    the *caller's* line accuses a file that has nothing to do with the diff --
+    and it multiplies: changing `HTTPTransport.start` emitted 64 findings naming
+    `secrets.py::_pem_spans` (which calls `match.start()`), `graph.py` and every
+    other `.start()` call in the repo. Uploaded as SARIF, those became inline
+    review comments on untouched code.
+
+    One finding, anchored on the changed symbol.
+    """
+    report = analyze_diff_impact(ambiguous_caller_index, diff=AMBIGUOUS_DIFF)
+    found = [f for f in report.suspicious_findings if f.rule_id == "R2G-IMP-004"]
+
+    assert len(found) == 1, [f.title for f in found]
+    assert (found[0].path, found[0].line) == ("pkg/server.py", 40)
+    # Never the callers' files -- that was the whole defect.
+    assert "unrelated" not in found[0].path
+
+
+def test_blast_radius_counts_only_confidently_resolved_callers(ambiguous_caller_index):
+    """R2G-IMP-003's count is its entire claim, so a guess must not inflate it.
+
+    Four caller modules would clear the `>= 3 modules` threshold on raw count.
+    All four are 0.25 name matches, which is what `.start()` on a regex match or
+    a thread looks like to the resolver -- counting them reports that a method
+    has a common name, not that an edit is risky.
+    """
+    report = analyze_diff_impact(ambiguous_caller_index, diff=AMBIGUOUS_DIFF)
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-003"] == []
+
+
+def test_untested_public_api_rule_needs_the_graph_to_know_the_caller(sample_graph_index):
+    """ "No test edge" only means "untested" if the graph sees any caller at all.
+
+    `scripts/disconnected.py::helper` is public and has no callers of any kind,
+    which is the shape of a symbol invoked from somewhere this analysis cannot
+    see -- framework dispatch, an entry point, a plugin hook.
+    `MCPRequestHandler.do_POST` and `.do_OPTIONS` are the real case: the stdlib
+    dispatches them, so no in-repo edge points at either, and both were reported
+    as untested public APIs while 64 tests in tests/test_http_transport.py drove
+    them over real HTTP.
+
+    It has to be a *public* symbol to be a detector at all: a private one never
+    reaches this rule, so asserting on one would pass with the fix reverted.
+    """
+    diff_text = (
+        "diff --git a/scripts/disconnected.py b/scripts/disconnected.py\n"
+        "--- a/scripts/disconnected.py\n"
+        "+++ b/scripts/disconnected.py\n"
+        "@@ -5,1 +5,1 @@\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    report = analyze_diff_impact(sample_graph_index, diff=diff_text)
+    assert is_public_symbol({"name": "helper", "path": "scripts/disconnected.py"}) is True
+    assert "helper" in {s.name for s in report.public_apis_affected}, "not a public API change"
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-002"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -883,6 +1010,111 @@ def test_cli_cmd_impact(tmp_path, capsys):
     assert data["metrics"]["public_apis_affected_count"] == 1
 
 
+def _impact_args(tmp_path, diff_path, out_json, **over):
+    import argparse
+
+    base = dict(
+        out=str(tmp_path / "ix"),
+        repo=str(tmp_path / "src"),
+        base="main",
+        head="HEAD",
+        diff=str(diff_path),
+        format="json",
+        json=True,
+        sarif=False,
+        max_depth=2,
+        min_confidence=0.0,
+        write=str(out_json),
+    )
+    base.update(over)
+    return argparse.Namespace(**base)
+
+
+def _tiny_repo(tmp_path):
+    """A source tree to build an index *from*, plus a diff against it."""
+    src = tmp_path / "src"
+    (src / "pkg").mkdir(parents=True)
+    (src / "pkg" / "core.py").write_text(
+        "CONSTANT = 1\n\n\ndef public_func(x):\n    return x + CONSTANT\n",
+        encoding="utf-8",
+    )
+    diff_path = tmp_path / "t.diff"
+    diff_path.write_text(
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -4,1 +4,1 @@\n"
+        "-def public_func(x):\n"
+        "+def public_func(x, y=0):\n",
+        encoding="utf-8",
+    )
+    return diff_path
+
+
+def test_impact_builds_a_missing_index_by_default(tmp_path):
+    """`--no-auto-build` only means something if building is the default.
+
+    The flag was declared with `dest="auto_build"` but `args.auto_build` was
+    never read, so `cmd_impact` always went straight to `_require_index` and a
+    first run died with "no index at .r2g" — the documented default behaviour
+    could not happen. Asserted through the report, not just an exit code: a
+    build that produced no graph would still return 0.
+    """
+    from repo2graph.cli import cmd_impact
+
+    diff_path = _tiny_repo(tmp_path)
+    out_json = tmp_path / "report.json"
+
+    code = cmd_impact(_impact_args(tmp_path, diff_path, out_json, auto_build=True))
+
+    assert code == 0
+    assert (tmp_path / "ix").is_dir(), "auto-build wrote no index directory"
+    data = json.loads(out_json.read_text(encoding="utf-8"))
+    # public_func spans the changed line 4, so the freshly built index resolved
+    # the diff to a real symbol rather than to an empty graph.
+    assert [s["qualname"] for s in data["symbols_changed"]] == ["public_func"]
+    assert [s["qualname"] for s in data["public_apis_affected"]] == ["public_func"]
+
+
+def test_impact_reads_a_diff_from_stdin(tmp_path, monkeypatch):
+    """`--diff -` is the piped form PR_IMPACT.md documents.
+
+    It was documented in two places, including a copy-pasteable
+    `git diff main...HEAD | repo2graph impact --diff -`, but `-` went down the
+    file branch and exited with "diff file - does not exist". Bytes, not text:
+    a piped diff on a cp1252 Windows stdin must not raise before parsing.
+    """
+    import io
+
+    from repo2graph.cli import cmd_impact
+
+    diff_path = _tiny_repo(tmp_path)
+    piped = diff_path.read_bytes()
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(piped), encoding="utf-8"))
+
+    out_json = tmp_path / "report.json"
+    code = cmd_impact(_impact_args(tmp_path, "-", out_json, auto_build=True))
+
+    assert code == 0
+    data = json.loads(out_json.read_text(encoding="utf-8"))
+    assert [f["path"] for f in data["files_changed"]] == ["pkg/core.py"]
+    assert [s["qualname"] for s in data["symbols_changed"]] == ["public_func"]
+
+
+def test_impact_no_auto_build_still_refuses_a_missing_index(tmp_path):
+    """`--no-auto-build` keeps the old contract: name the command that fixes it."""
+    from repo2graph.cli import cmd_impact
+
+    diff_path = _tiny_repo(tmp_path)
+    args = _impact_args(tmp_path, diff_path, tmp_path / "r.json", auto_build=False)
+
+    with pytest.raises(SystemExit) as exc:
+        cmd_impact(args)
+
+    assert "no index at" in str(exc.value)
+    assert not (tmp_path / "ix").exists(), "--no-auto-build built an index anyway"
+
+
 # ---------------------------------------------------------------------------
 # 7. CI workflow wiring
 #
@@ -1000,3 +1232,82 @@ def test_iss422_workflow_interpolates_no_expression_into_a_run_body():
             elif "${{" in line:
                 offenders.append(line)
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# 8. PR_IMPACT.md documents the flags that actually exist
+#
+# Three wrong entries shipped in the options table at once: `-i` as "Required"
+# when it defaults to `.r2g`, a `-w` short flag that was never defined, and
+# `--diff -` for stdin, which went down the file branch and exited "diff file -
+# does not exist". A reader copy-pasting the documented pipeline got an error,
+# and nothing in the suite looked at the table.
+# ---------------------------------------------------------------------------
+
+PR_IMPACT_DOC = Path(__file__).resolve().parent.parent / "PR_IMPACT.md"
+
+
+def _impact_help() -> str:
+    """`repo2graph impact --help`, straight from the real parser.
+
+    `main()` builds the parser inline, so the help text is the only handle on
+    the argument list that does not duplicate it.
+    """
+    import contextlib
+    import io
+
+    from repo2graph.cli import main
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), pytest.raises(SystemExit):
+        main(["impact", "--help"])
+    return buf.getvalue()
+
+
+def _documented_flags() -> list[str]:
+    """Every `-x` / `--long` token in the doc's Formats & Options table."""
+    lines = PR_IMPACT_DOC.read_text(encoding="utf-8").split("\n")
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("### Formats & Options"))
+    flags: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("###"):
+            break
+        if not line.startswith("|"):
+            continue
+        first = line.split("|")[1]
+        for token in re.findall(r"`([^`]+)`", first):
+            for part in token.split(","):
+                part = part.strip().split(" ")[0].split("<")[0].strip()
+                if part.startswith("-"):
+                    flags.append(part)
+    return flags
+
+
+def _real_flags(help_text: str) -> set[str]:
+    """Every option string argparse actually renders, as whole tokens.
+
+    Whole tokens because substring matching is not a detector here: `"-w" in
+    help_text` is satisfied by `--write`, so a phantom short flag passes a
+    containment check. `(?<![\\w-])` is what stops `--write` from also yielding
+    `-write`.
+    """
+    return set(re.findall(r"(?<![\w-])(--?[a-zA-Z][\w-]*)", help_text))
+
+
+def test_pr_impact_doc_documents_only_real_flags():
+    real = _real_flags(_impact_help())
+    documented = _documented_flags()
+    assert documented, "parsed no flags out of the Formats & Options table"
+
+    phantom = sorted(set(documented) - real)
+    assert phantom == [], f"PR_IMPACT.md documents flags the impact parser has not: {phantom}"
+
+
+def test_pr_impact_doc_covers_every_impact_flag():
+    """The table is the flag reference, so a new flag has to land in it."""
+    # Long flags only: the table spells short aliases alongside them, and
+    # `-h/--help` is argparse's own, which the table has no reason to carry.
+    real = {f for f in _real_flags(_impact_help()) if f.startswith("--") and f != "--help"}
+    documented = set(_documented_flags())
+    undocumented = sorted(real - documented)
+    assert undocumented == [], f"impact flags missing from PR_IMPACT.md: {undocumented}"
