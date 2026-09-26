@@ -24,7 +24,7 @@ Full-suite runtime:      ~134s serial  (observed 130-158s across runs)
 Slowest single file:     test_http_transport.py, 40.2s (21% of all file time)
 Slowest single test:     test_file_limits.py::test_file_limits, 5.5s
 Branch coverage:         87.21%  (fail_under = 80)
-Known flaky tests:       none found
+Known flaky tests:       1, found only once parallelism was enabled (see below)
 Skipped:                 12, all platform or optional-extra gates
 ```
 
@@ -247,8 +247,37 @@ Coverage combines correctly because `[tool.coverage.run]` already set
 multiprocessing build path. No configuration change was needed.
 
 `-n auto` also serves as a standing order-independence check: workers receive
-tests in a different distribution every run, and three parallel runs produced
-identical results.
+tests in a different distribution every run.
+
+### Parallelism surfaced one latent flake, which was a real server bug
+
+Enabling `-n auto` made `test_a_cross_origin_origin_header_is_rejected` fail about
+one full-suite run in six, with `ConnectionAbortedError: [WinError 10053]` instead
+of the expected 403. It was confirmed pre-existing — a worktree at
+`origin/develop` reproduces it on the unparameterised original — so parallelism
+exposed it rather than caused it. With CI now running parallel on a
+`windows-latest` leg, tolerating it was not an option.
+
+The cause was in the server, not the test. `Host` and `Origin` are checked before
+the request body is read, deliberately, so the handler returned with the body
+still sitting in the socket. Closing a socket that holds unread bytes makes the OS
+send an RST rather than a FIN; on Windows the client loses the response it was
+about to read. So a refusal that goes to the trouble of naming its reason arrived
+as an opaque connection error — and a real MCP client behind a misconfigured proxy
+would see exactly the same thing.
+
+`MCPRequestHandler._drain_body()` now discards the announced body before the 403,
+bounded by `MAX_BODY_BYTES` just as `_read_body` is. The 401 path never had the
+problem because `authenticate()` runs *after* the body is read.
+
+The regression test uses a 512 KB body, which exceeds the socket buffers and
+therefore guarantees the client is still writing when the server refuses. That
+converts a one-in-six load-dependent flake into a deterministic detector: with
+`_drain_body` removed it fails on every run. Stress-verified 8/8 clean at `-n 32`,
+where the baseline failed on the first attempt.
+
+**No retry was added.** A retry here would have hidden a bug that loses a security
+refusal's message on a whole platform.
 
 ---
 
@@ -329,10 +358,11 @@ been seen to fail is a test of nothing.
 
 ```text
                          BEFORE        AFTER      DELTA
-Collected cases           1,730        1,730          0
+Collected cases           1,730        1,732         +2
   ├─ duplicates removed                              -2
-  └─ loop unrolled to rows                           +2
-Test functions            1,153        1,123        -30   (-2.6%)
+  ├─ loop unrolled to rows                           +2
+  └─ flake regression test added                      +2
+Test functions            1,153        1,124        -29   (-2.5%)
 Test files                   44           44          0
 Duplicate setup blocks        6            0         -6
 Runtime, serial            ~134s        ~134s          0
@@ -340,7 +370,7 @@ Runtime, default           ~134s          36s       -73%   (make test, -n auto)
 Runtime, CI-sized leg      ~134s          49s       -63%   (-n 4)
   └─ test_http_transport    40.2s        13.9s       -65%   (production fix)
 Branch coverage           87.21%       87.21%      0.00
-Flaky tests                    0            0          0
+Flaky tests                    1            0         -1   (pre-existing, root-caused)
 Skips                         12           12          0
 ```
 
@@ -357,9 +387,10 @@ The test count did not meaningfully fall, and this document does not present a
 - It had **23** redundant test *functions*, now 9 tables. Same coverage, ~200
   fewer lines, better failure ids.
 - It had **one** real runtime defect, in production code, worth 26s.
-- It had **no** cross-file duplication, no flaky tests, no disabled tests, no
-  duplicate CI execution, and no unjustified snapshots — because it has none at
-  all.
+- It had **one** latent flaky test, invisible until the suite ran in parallel,
+  caused by a real server bug. Root-caused and fixed, not retried.
+- It had **no** cross-file duplication, no disabled tests, no duplicate CI
+  execution, and no unjustified snapshots — because it has none at all.
 
 An aggressive deletion pass was available and was not taken. The 175-case
 encoding matrix alone would have delivered a 10% headline reduction by removing
