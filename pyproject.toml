@@ -56,7 +56,7 @@ include = ["repo2graph*"]
 # down to 36s on 16 cores, 49s on a 4-vCPU runner. `[tool.coverage.run]` below
 # already sets `parallel = true`, which is what lets the workers' data combine.
 dev = [
-    "pytest>=7",
+    "pytest>=9.1.1",
     "pytest-cov>=4",
     "pytest-xdist>=3.5",
     "ruff>=0.5",
