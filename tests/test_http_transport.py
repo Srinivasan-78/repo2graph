@@ -479,6 +479,37 @@ def test_a_rebinding_header_is_rejected(make_server, headers, message):
     assert body["error"]["message"] == message
 
 
+@pytest.mark.parametrize(
+    "headers, message",
+    [
+        pytest.param(
+            {"Origin": "https://evil.example.com"}, "Origin not allowed", id="cross-origin"
+        ),
+        pytest.param(
+            {"Host": "evil.example.com"}, "Host header not allowed", id="non-loopback-host"
+        ),
+    ],
+)
+def test_a_refused_request_still_gets_its_reason_with_a_large_body(make_server, headers, message):
+    """The refusal has to reach the client, not just be sent.
+
+    Host and Origin are checked before the body is read, so the handler used to
+    return with the body still sitting in the socket. Closing a socket holding
+    unread bytes sends an RST instead of a FIN, and on Windows the client then
+    raises ConnectionAbortedError (WinError 10053) *instead of* reading the 403 --
+    so the one thing this response exists to say was the thing that got lost.
+
+    The 512 KB body is what makes this deterministic rather than load-dependent.
+    It exceeds the socket buffers, so the client is guaranteed to still be
+    writing when the server decides to refuse; the plain-sized case above only
+    reproduced under CPU contention, roughly one run in six.
+    """
+    server = make_server()
+    status, body = server.rpc("initialize", params={"pad": "x" * 512_000}, headers=headers)
+    assert status == 403
+    assert body["error"]["message"] == message
+
+
 def test_a_loopback_request_with_a_same_origin_origin_header_is_accepted(make_server):
     server = make_server()
     status, body = server.rpc("initialize", headers={"Origin": f"http://127.0.0.1:{server.port}"})

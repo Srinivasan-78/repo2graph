@@ -383,6 +383,34 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             raise AuthError("request body ended before Content-Length", status=408)
         return data
 
+    def _drain_body(self) -> None:
+        """Discard the request body before refusing without having read it.
+
+        Closing a socket that still holds unread bytes makes the OS send an RST
+        rather than a FIN. On Windows the client then loses the response it was
+        about to read and raises `ConnectionAbortedError` (WinError 10053)
+        instead -- so a refusal that goes to the trouble of naming its reason
+        ("Origin not allowed") arrives as an opaque connection error. The Host
+        and Origin checks run before `_read_body` by design, which is what left
+        them in that position.
+
+        Best-effort and silent by construction: this runs on the way to a 403
+        that has already been decided, so there is no failure it could report
+        and nothing it could usefully do about one. `Content-Length` is bounded
+        by MAX_BODY_BYTES exactly as in `_read_body` -- the point is to unblock
+        one small frame, not to let an unauthenticated caller name a size.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if length <= 0 or (self.headers.get("Transfer-Encoding") or "").strip():
+            return
+        try:
+            self.rfile.read(min(length, MAX_BODY_BYTES))
+        except (TimeoutError, ConnectionError, OSError):
+            pass
+
     # ------------------------------------------------------------- routes --
 
     def do_HEAD(self) -> None:
@@ -392,11 +420,15 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         """Handle CORS preflight requests."""
         # DNS-rebinding: validate Host before doing anything, same as do_POST.
+        # A preflight does not normally carry a body, but if one did the refusal
+        # would race the close exactly as it does there -- see `_drain_body`.
         if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._drain_body()
             self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
             return
         origin = self.headers.get("Origin")
         if not _origin_header_allowed(origin, self.allowed_hostnames):
+            self._drain_body()
             self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
             return
         self.send_response(204)
@@ -474,9 +506,11 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         # server with ordinary fetch()/XHR unless Host and Origin are checked
         # *before* anything else runs. Fail closed on anything unrecognised.
         if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            self._drain_body()
             self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
             return
         if not _origin_header_allowed(self.headers.get("Origin"), self.allowed_hostnames):
+            self._drain_body()
             self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
             return
         try:
