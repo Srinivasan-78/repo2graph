@@ -185,6 +185,68 @@ makes keeping it current a release-blocking step rather than a good intention.
   prose to another's — a translation legitimately differs in every sentence.
   `test_doc_consistency.py`'s language-token map was hoisted to a module-level
   `LANGUAGE_TOKENS` so both suites share one source of truth.
+- **`repo2graph impact`** — architectural impact analysis for a pull request, a branch or a
+  unified diff, answered out of the graph rather than out of the diff. It intersects diff hunks
+  with symbol spans to name the symbols that actually changed, then walks the graph for the
+  callers, tests, modules and dependency paths that reach them, and reports which changed
+  symbols are public API, which are disconnected from everything else in the diff, and a risk
+  level with the evidence behind it. `--base`/`--head` for refs, `--diff FILE` or `--diff -` for
+  a diff on stdin, `--max-depth` for caller hops, `--min-confidence` to drop ambiguous `CALLS`
+  edges, `--write` for a file, and four `--format`s: `markdown`, `json`, `pr-comment` and
+  **SARIF v2.1.0** for Code Scanning. The guardrails are the point: a claim is phrased as what
+  the graph can support, never as definite runtime breakage, and `guardrails.stale_index_notice`
+  says out loud when the index is not the tree the diff belongs to — the failure mode that
+  otherwise looks exactly like a clean run. **`PR_IMPACT.md`** is the guide; the three committed
+  fixtures under `tests/fixtures/impact/` pin the shape of each output format.
+- **MCP tool `repo_impact`** — the same analysis as the sixth tool on the server, with its
+  arguments clamped in the handler and its *output* bounded to the same 12k-token ceiling
+  `repo_search` holds itself to, emitting a valid-JSON envelope for `format=json` rather than a
+  cut that stops parsing.
+- **`.github/workflows/pr-impact.yml`** — posts the blast radius on every PR as prod-igy, the
+  repository's existing PR assistant, and uploads the SARIF to Code Scanning. It builds the
+  index on the **head/merge** commit, never the base: an index built on the base cannot contain
+  a file the PR adds, and its line numbers belong to a different version of every file the PR
+  touches, so added files read as unreachable orphans and modified symbols resolve against the
+  wrong lines — a green run with plausible, wrong numbers.
+- **A five-archetype benchmark and regression corpus.** `benchmarks/corpus/` holds five
+  self-contained repositories chosen for the shapes real answers break on — `python_backend`
+  (layered FastAPI-style service), `ts_app` (Express-style controller/service/model stack),
+  `frontend_app` (React components, hooks and context), `modular_monolith` (cross-domain events
+  between six bounded contexts) and `dynamic_patterns` (registry, factory, dispatcher and barrel
+  re-export, i.e. the call sites the graph is documented to miss). `benchmarks/tasks.json`
+  defines 25 reproducible tasks with ground truth; `scripts/benchmark_runner.py` scores
+  repo2graph against lexical search and a multi-hop agent baseline on correctness, citation
+  accuracy, latency and context footprint, writing `benchmarks/results_v2.json`.
+  `.github/workflows/benchmark.yml` runs it as a regression gate on Ubuntu and Windows.
+  **`BENCHMARK.md`** documents the corpus, the tasks and the methodology.
+- **A language quality scorecard and the roadmap behind it.**
+  `scripts/generate_language_scorecard.py` audits every supported grammar on parser coverage,
+  symbol-extraction breadth, call resolution, import resolution, test-to-implementation linking
+  and framework-specific edges — read out of the code rather than out of a claim in a table
+  (`--json`, `--detail`, `--output`).
+  **`LANGUAGE_SUPPORT.md`** is the resulting strategy document — the tiering, what "supported"
+  means per tier, and which ecosystem relationships (routes, test links, DI bindings, ORM
+  entities) are syntactically invisible today. Four RFCs under `docs/rfcs/` work the plan
+  through for the relationship graph, TypeScript/JavaScript, Python and the JVM-vs-Go choice;
+  `docs/ROADMAP_LANGUAGE_ISSUES.md` breaks it into filed work.
+- **`npm/` — an npm launcher for the MCP server**, so a Node-first editor can start it without
+  the user having to know there is a Python package underneath. `npx repo2graph-mcp` ships no
+  server code: it walks `PATH` itself and hands off, in order, to `uvx --from "repo2graph[mcp]"`,
+  an already-installed `repo2graph-mcp`, or `pipx run --spec "repo2graph[mcp]"`, and otherwise
+  prints the install instructions and exits non-zero — it never installs a Python toolchain
+  behind the user's back. Every message it emits goes to stderr, because the MCP transport is
+  stdio JSON-RPC and anything on stdout corrupts the stream.
+  `tests/test_npm_launcher.py` pins the resolution order and the failure messages.
+- **`repo2graph/schema.py`** — `TypedDict` shapes for every public record (`NodeRecord`,
+  `EdgeRecord`, `ChunkRecord`, `NeighbourEdge`, `RetrievalResult`, `PackResult`,
+  `EntrypointRecord`, `ManifestRecord`). It documents a contract rather than enforcing one:
+  the producers keep returning `dict[str, Any]` on purpose, because a node's dict grows
+  type-specific keys. Import it to statically check code that *consumes* the artifacts.
+  `tests/test_schema.py` is the drift detector — it builds a real index and fails if a field
+  declared required here is missing from a real record.
+- **`CITATION.cff`**, so the repository can be cited, and
+  **`docs/testing/test-suite-optimization.md`**, which records the audit behind the suite
+  consolidation below.
 
 ### Changed
 
@@ -281,6 +343,144 @@ makes keeping it current a release-blocking step rather than a good intention.
   stub link — for the hero, the intro, the persona table, the grep/vector
   comparison and the does/does-not table, at the same level of abridgement they
   already used.
+- **CI reorganised so a red check names what broke.** Lint, format, type check and the version
+  surfaces moved out of the test matrix into a dedicated **Code Quality & Static Analysis** job
+  that runs once instead of eleven times, and every job carries a descriptive name — *Test Suite
+  (windows-latest, Python 3.13)*, *Windows CP1252 Non-UTF8 Pipeline Compatibility*, *Package
+  Distribution & MCP Stdio Smoke Test*, *GitHub Action Composite Integration Test*, *Upstream
+  Dependency Drift Canary* — rather than a job id. Jobs write a step summary with the numbers
+  worth reading (branch coverage, benchmark deltas, audit findings), `PYTHONUNBUFFERED=1` so a
+  hung job's logs are not still in a buffer, and uploaded artifacts carry explicit retention.
+- **The test suite runs in parallel.** `pytest-xdist` is a `[dev]` dependency and `-n auto` is
+  the default in both the `Makefile` and CI: ~1,700 mostly-independent cases with no shared
+  database or fixture state parallelise almost linearly — 134s serial to 36s on 16 cores, 49s
+  on a 4-vCPU runner. `make test-serial` is the escape hatch, because xdist reorders output and
+  a failure is easier to read serially. `[tool.coverage.run] parallel = true` is what lets the
+  workers' data combine. An audit of all 1,730 collected cases across 44 files backs this;
+  `docs/testing/test-suite-optimization.md` records what it found.
+
+### Fixed
+
+- **The same tree indexed on two machines produced different artifacts.** Discovery order *is*
+  artifact order — nodes are emitted as files are parsed, and edges and chunks follow. `git
+  ls-files` sorts its output; `os.walk` returns whatever the filesystem hands back, alphabetical
+  on NTFS and hash order on ext4 with `dir_index`. So a non-git build (a Docker image without git,
+  a source tarball, a plain folder) produced `nodes.jsonl`, `edges.jsonl` and `chunks.jsonl` that
+  differed byte-for-byte across machines while describing an identical graph — and no same-machine
+  A/B could see it, because on NTFS the unsorted and sorted orders coincide. `discover()` now
+  sorts both sources by the resolved path's **posix** form (`str(Path)` would sort on `\` on
+  Windows and `/` elsewhere, which is the same divergence one level down). `--max-files N` made
+  this worse than untidy: it takes the first N in discovery order, so two machines indexed
+  *different subsets* of one tree.
+- **Every build of a clean repository recorded `dirty: true`.** `BuildLock` writes
+  `..r2g.r2glock` and `dump_all` stages artifacts in `..r2g.staging.<pid>.<hex>/`, both *beside*
+  the output directory so they survive the transactional swap — so `.r2g/` in `.gitignore` covers
+  neither, and provenance is captured from inside both windows. The manifest blamed the user's
+  tree for repo2graph's own scratch files. Only untracked (`??`) entries are filtered; anything
+  git is tracking is the user's, whatever it is called.
+- **A build with any `--exclude` reported itself stale the instant it finished.** Freshness
+  re-runs discovery to compare the tree against the index, and it did so with *default* filters —
+  so every file the build deliberately excluded came back as newly added. `index.state.json` now
+  records the filters the build actually used (`filters`), because there is nowhere else to
+  recover `--exclude-group generated` from once the build exits, and the comparison applies them.
+  An index written before that field existed falls back to defaults and says so rather than
+  silently reporting phantom additions.
+- **POSITIONING.md's stale limitation #6.** It said `doctor` "checks integrity and vector drift,
+  not working-tree drift" -- true until `index-status` and the shared freshness check started
+  detecting exactly that. Corrected to say what is now true *and* what still is not: detection is
+  not subscription, and a file edited with its mtime preserved and left uncommitted is still
+  missed.
+- **The bug-report bundle could leak an absolute path through a diagnostic note.**
+  `compute_freshness` interpolates an exception message into its notes, and an `OSError` carries
+  the path that failed -- so a discovery failure put an absolute path *including a filename* into
+  a bundle whose entire premise is that it contains neither. The happy path produces no such
+  note, which is why the other privacy tests did not see it. Free text bound for the bundle is
+  now scrubbed at the boundary rather than in each producer: the guarantee has to hold for prose
+  written by code that has never heard of the bundle, including code added later.
+- **The MCP `repo_neighbours` tool presented an ambiguous edge as fact.** It showed where the
+  *neighbour* was defined but not the edge's own `evidence` -- so for "what calls this" an agent
+  got a list of definitions with no way to open the lines that do the calling -- and it showed no
+  confidence, so a name that matched three candidates read exactly like a unique resolution. Both
+  are now in the output, the ambiguous ones marked `AMBIGUOUS <conf> of <n> candidates`. This was
+  the one surface an agent actually reads, and it was the one surface the new edge metadata had
+  not reached.
+- **`docs/reference.md` claimed `CALLS_EXTERNAL` carries no `confidence`.** True until every edge
+  type gained the standard trio, and wrong afterwards; the page also did not mention `method` or
+  `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
+  `path`/`start_line` fields -- they return markdown strings. Both corrected, and
+  `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
+- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
+  which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
+  now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
+  working note.
+- **`explain-path` echoed every exclude glob instead of the one that matched.** Tolerable with a
+  handful of hand-written patterns; unreadable once `--exclude-group` expands to sixty. The
+  command exists to report the single rule that decided a path, so it now names that one pattern
+  and carries it as `matched_glob` in the JSON.
+- **`repo2graph impact` reported every diff as empty**, with exit code 0. `get_git_diff` placed
+  `--` *before* the revision, so `git diff -U0 -- main...HEAD` read the revision as a pathspec:
+  no match, no output, exit 0, "0 files changed / LOW risk". Nothing caught it because no test
+  let `get_git_diff` reach git — the whole module fed `parse_unified_diff` static text. On this
+  repository the command now reports 208 changed files where it reported 0. The same silent
+  `{}`-with-exit-0 failure came from a user's gitconfig: `diff.noprefix` or
+  `diff.mnemonicPrefix` makes git emit a real diff that `DIFF_GIT_RE` matches nothing in, so
+  both are pinned off per invocation. When both the base-only and the base...head forms fail,
+  both errors are now reported instead of one command running twice.
+- **`_validate_ref` rejected the ordinary ways to name a diff base.** Its allowlist turned away
+  `HEAD~1`, `HEAD^` and `main@{u}` — all illegal as refnames, all legal as revisions — along
+  with legal refnames containing `+`, `#`, `=`, `,` or non-ASCII. The actual requirement is only
+  "no leading `-`", which is what blocks git option injection (`--output=`, `--ext-cmd=`), so it
+  is now a denylist that says so.
+- **`parse_unified_diff` mis-parsed a diff that quotes a diff.** Hunk *body* lines were tested
+  against the file-header branches first, so `++ b/x.py` (arriving as `+++ b/x.py`) renamed the
+  enclosing file and dropped its entry, `-- /dev/null` flipped a file's status to "added", and
+  `++++` lines vanished from `added_lines`. Separately, `current_hunk` was reset only on a
+  `DIFF_GIT_RE` match, so `diff --cc` output and git-quoted paths left the previous file's hunk
+  open and charged their lines to it — and `analyze_diff_impact` selects changed symbols from
+  exactly that set, so the report named symbols the diff never touched.
+- **A pre-authentication ReDoS in the secret scanner.** `PEM_BEGIN_RE`'s label character class
+  contains every character of the `PRIVATE KEY` literal that follows it, so repeated incomplete
+  headers backtrack quadratically — about 90s of CPU for a 1 MB body, reachable *before*
+  authentication (`http_server._reject` calls `emit()` unconditionally) and not avoidable with
+  `AuditConfig(level="none")`. Bounding the quantifier takes that to 0.4s; every real PEM label
+  still matches.
+- **`repo_impact` clamped its inputs but not its output.** A wide diff rendered ~17.9k tokens
+  straight into an agent's context, past the 12k ceiling every other tool holds itself to. It
+  also relayed git's stderr, which names the server's absolute index path.
+- **`_is_secret_path` missed four shapes**: `env.local`, `kubeconfig`, `id_rsa.bak`, and
+  multi-segment backups such as `.docker/config.json.bak`. No file in this repository is newly
+  excluded.
+- **Response-cache keys retained the serialised request body**, before any handler's length cap
+  — roughly 257 MB for 256 large calls, in a cache whose *values* are bounded. Keys are now
+  hashed to a fixed 64 hex characters.
+- **The zizmor workflow-security gate could not fail.** `zizmor --format sarif` exits 0
+  regardless of findings (the plain form exits 12), and a real unsuppressed `self-repository`
+  finding was already sitting behind it. Gating now runs as its own pass and the SARIF upload
+  still happens when it fails. Three `zizmor.yml` ignore pins had drifted off the constructs
+  they were written for, silently un-suppressing one finding and leaving two as dead config;
+  `lockfile.yml` dropped an unused `pull-requests: write`.
+- **`impact --no-auto-build` was a dead flag**, declared with `dest="auto_build"` and never
+  read, so a first run died with "no index at .r2g" and the documented default could not
+  happen. CI was unaffected because the workflow builds explicitly, which is how it shipped
+  green. `--diff -` was documented twice, including a copy-pasteable
+  `git diff main...HEAD | repo2graph impact --diff -`, and exited "diff file - does not exist";
+  it is now implemented, reading bytes and decoding utf8/surrogateescape so a cp1252 Windows
+  stdin cannot raise before the diff is parsed.
+- **Impact citations rendered as a Python dict.** Edge `evidence` is a `{"path", "line"}`
+  record, but `impact.py` treated it as a `"path:line"` string, so Markdown printed
+  `[cite: {'path': ..., 'line': 878}]` and the JSON disagreed with the committed sample
+  fixture. The line-extraction guard `":" in evidence` was testing a mapping's *keys*, so a
+  call site's line never won over the symbol's `start_line`. Both now route through
+  `edgemeta.cite`. The reason 28 passing tests saw none of it: `MockIndex.add_edge` bypassed
+  `edgemeta.normalize` and stored `evidence` as a string, so every citation assertion was
+  checking the mock's shape instead of the schema's.
+- **`PR_IMPACT.md`'s flag table described a parser that does not exist** — `-i` marked
+  "Required" when it defaults to `.r2g`, a `-w` short flag that never existed, and no
+  `--out`/`--no-auto-build`. Two tests now pin the table against the real parser in both
+  directions.
+- **`LANGUAGE_SUPPORT.md` and `BENCHMARK.md` linked through `file:///e:/Github/repo2graph/`.**
+  86 absolute Windows file URLs that resolve for nobody, render as dead links on GitHub, and
+  disclose the author's local directory layout. All are now repo-relative.
 
 ## [2.1.0] — 2026-09-24
 
@@ -344,62 +544,6 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
-- **The same tree indexed on two machines produced different artifacts.** Discovery order *is*
-  artifact order — nodes are emitted as files are parsed, and edges and chunks follow. `git
-  ls-files` sorts its output; `os.walk` returns whatever the filesystem hands back, alphabetical
-  on NTFS and hash order on ext4 with `dir_index`. So a non-git build (a Docker image without git,
-  a source tarball, a plain folder) produced `nodes.jsonl`, `edges.jsonl` and `chunks.jsonl` that
-  differed byte-for-byte across machines while describing an identical graph — and no same-machine
-  A/B could see it, because on NTFS the unsorted and sorted orders coincide. `discover()` now
-  sorts both sources by the resolved path's **posix** form (`str(Path)` would sort on `\` on
-  Windows and `/` elsewhere, which is the same divergence one level down). `--max-files N` made
-  this worse than untidy: it takes the first N in discovery order, so two machines indexed
-  *different subsets* of one tree.
-- **Every build of a clean repository recorded `dirty: true`.** `BuildLock` writes
-  `..r2g.r2glock` and `dump_all` stages artifacts in `..r2g.staging.<pid>.<hex>/`, both *beside*
-  the output directory so they survive the transactional swap — so `.r2g/` in `.gitignore` covers
-  neither, and provenance is captured from inside both windows. The manifest blamed the user's
-  tree for repo2graph's own scratch files. Only untracked (`??`) entries are filtered; anything
-  git is tracking is the user's, whatever it is called.
-- **A build with any `--exclude` reported itself stale the instant it finished.** Freshness
-  re-runs discovery to compare the tree against the index, and it did so with *default* filters —
-  so every file the build deliberately excluded came back as newly added. `index.state.json` now
-  records the filters the build actually used (`filters`), because there is nowhere else to
-  recover `--exclude-group generated` from once the build exits, and the comparison applies them.
-  An index written before that field existed falls back to defaults and says so rather than
-  silently reporting phantom additions.
-- **POSITIONING.md's stale limitation #6.** It said `doctor` "checks integrity and vector drift,
-  not working-tree drift" -- true until `index-status` and the shared freshness check started
-  detecting exactly that. Corrected to say what is now true *and* what still is not: detection is
-  not subscription, and a file edited with its mtime preserved and left uncommitted is still
-  missed.
-- **The bug-report bundle could leak an absolute path through a diagnostic note.**
-  `compute_freshness` interpolates an exception message into its notes, and an `OSError` carries
-  the path that failed -- so a discovery failure put an absolute path *including a filename* into
-  a bundle whose entire premise is that it contains neither. The happy path produces no such
-  note, which is why the other privacy tests did not see it. Free text bound for the bundle is
-  now scrubbed at the boundary rather than in each producer: the guarantee has to hold for prose
-  written by code that has never heard of the bundle, including code added later.
-- **The MCP `repo_neighbours` tool presented an ambiguous edge as fact.** It showed where the
-  *neighbour* was defined but not the edge's own `evidence` -- so for "what calls this" an agent
-  got a list of definitions with no way to open the lines that do the calling -- and it showed no
-  confidence, so a name that matched three candidates read exactly like a unique resolution. Both
-  are now in the output, the ambiguous ones marked `AMBIGUOUS <conf> of <n> candidates`. This was
-  the one surface an agent actually reads, and it was the one surface the new edge metadata had
-  not reached.
-- **`docs/reference.md` claimed `CALLS_EXTERNAL` carries no `confidence`.** True until every edge
-  type gained the standard trio, and wrong afterwards; the page also did not mention `method` or
-  `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
-  `path`/`start_line` fields -- they return markdown strings. Both corrected, and
-  `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
-- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
-  which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
-  now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
-  working note.
-- **`explain-path` echoed every exclude glob instead of the one that matched.** Tolerable with a
-  handful of hand-written patterns; unreadable once `--exclude-group` expands to sixty. The
-  command exists to report the single rule that decided a path, so it now names that one pattern
-  and carries it as `matched_glob` in the JSON.
 - **The version bump covered five files; the version was written in eleven.**
   `bump_version.py` rewrote `pyproject.toml`, `server.json`,
   `repo2graph/__init__.py`, `CHANGELOG.md` and `uv.lock`, and

@@ -3,11 +3,11 @@
 **Benchmark Version:** 2.0.0  
 **Status:** Public Benchmark Report & Regression Suite  
 **Date:** 2026-09-26  
-**Corpus Directory:** [`benchmarks/corpus/`](file:///e:/Github/repo2graph/benchmarks/corpus/)  
-**Task Definitions:** [`benchmarks/tasks.json`](file:///e:/Github/repo2graph/benchmarks/tasks.json)  
-**Runner Script:** [`scripts/benchmark_runner.py`](file:///e:/Github/repo2graph/scripts/benchmark_runner.py)  
-**CI Workflow:** [`.github/workflows/benchmark.yml`](file:///e:/Github/repo2graph/.github/workflows/benchmark.yml)  
-**Machine-Readable Results:** [`benchmarks/results_v2.json`](file:///e:/Github/repo2graph/benchmarks/results_v2.json)  
+**Corpus Directory:** [`benchmarks/corpus/`](benchmarks/corpus/)  
+**Task Definitions:** [`benchmarks/tasks.json`](benchmarks/tasks.json)  
+**Runner Script:** [`scripts/benchmark_runner.py`](scripts/benchmark_runner.py)  
+**CI Workflow:** [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml)  
+**Machine-Readable Results:** [`benchmarks/results_v2.json`](benchmarks/results_v2.json)  
 
 ---
 
@@ -32,7 +32,7 @@ This benchmark measures the efficacy, citation accuracy, token footprint, and la
 
 ## 2. Benchmark Corpus Archetypes
 
-The benchmark corpus consists of five distinct, self-contained archetype repositories located in [`benchmarks/corpus/`](file:///e:/Github/repo2graph/benchmarks/corpus/):
+The benchmark corpus consists of five distinct, self-contained archetype repositories located in [`benchmarks/corpus/`](benchmarks/corpus/):
 
 ```
 benchmarks/corpus/
@@ -43,48 +43,48 @@ benchmarks/corpus/
 └── dynamic_patterns/    # 5. Intentionally Difficult Dynamic & Metaprogramming Patterns
 ```
 
-### 2.1 TypeScript/JavaScript Application ([`benchmarks/corpus/ts_app/`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/))
+### 2.1 TypeScript/JavaScript Application ([`benchmarks/corpus/ts_app/`](benchmarks/corpus/ts_app/))
 - **Tech Stack:** TypeScript, Express-style routing, Jest testing.
-- **Architectural Pattern:** Layered service-oriented architecture: [`ApplicationServer`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/src/server.ts) -> [`UserRoutes`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/src/routes/user.routes.ts) -> [`UserController`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/src/controllers/user.controller.ts) -> [`UserService`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/src/services/user.service.ts) -> [`TokenService`](file:///e:/Github/repo2graph/benchmarks/corpus/ts_app/src/services/token.service.ts).
+- **Architectural Pattern:** Layered service-oriented architecture: [`ApplicationServer`](benchmarks/corpus/ts_app/src/server.ts) -> [`UserRoutes`](benchmarks/corpus/ts_app/src/routes/user.routes.ts) -> [`UserController`](benchmarks/corpus/ts_app/src/controllers/user.controller.ts) -> [`UserService`](benchmarks/corpus/ts_app/src/services/user.service.ts) -> [`TokenService`](benchmarks/corpus/ts_app/src/services/token.service.ts).
 - **Key Characteristics:** Middleware session verification, password hashing utilities, JWT claims, unit test suite.
 
-### 2.2 Python Backend ([`benchmarks/corpus/python_backend/`](file:///e:/Github/repo2graph/benchmarks/corpus/python_backend/))
+### 2.2 Python Backend ([`benchmarks/corpus/python_backend/`](benchmarks/corpus/python_backend/))
 - **Tech Stack:** Python 3.12+, FastAPI router layout, pytest testing.
-- **Architectural Pattern:** Router and service layer: [`APIRouter`](file:///e:/Github/repo2graph/benchmarks/corpus/python_backend/app/api/router.py) -> [`OrderService`](file:///e:/Github/repo2graph/benchmarks/corpus/python_backend/app/services/order_service.py) -> [`PaymentService`](file:///e:/Github/repo2graph/benchmarks/corpus/python_backend/app/services/payment_service.py) -> [`OrderModel`](file:///e:/Github/repo2graph/benchmarks/corpus/python_backend/app/models/order.py).
+- **Architectural Pattern:** Router and service layer: [`APIRouter`](benchmarks/corpus/python_backend/app/api/router.py) -> [`OrderService`](benchmarks/corpus/python_backend/app/services/order_service.py) -> [`PaymentService`](benchmarks/corpus/python_backend/app/services/payment_service.py) -> [`OrderModel`](benchmarks/corpus/python_backend/app/models/order.py).
 - **Key Characteristics:** Environment configuration dependencies, multi-hop order creation and refund flows, pytest unit tests.
 
-### 2.3 Modular Monolith Service ([`benchmarks/corpus/modular_monolith/`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/))
+### 2.3 Modular Monolith Service ([`benchmarks/corpus/modular_monolith/`](benchmarks/corpus/modular_monolith/))
 - **Tech Stack:** Python modular monolith, event-driven internal choreography.
-- **Architectural Pattern:** Decoupled domains communicating via [`EventBus`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/kernel/events.py):
-  - `identity`: [`IdentityService`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/identity/service.py) (account registration).
-  - `catalog`: [`CatalogService`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/catalog/service.py) (stock reservation).
-  - `billing`: [`BillingService`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/billing/service.py) & [`StripePaymentGateway`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/billing/gateway.py) (tax computation & invoicing).
-  - `notifications`: [`NotificationDispatcher`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/notifications/dispatcher.py) (event listener).
-  - `shipping`: [`ShippingService`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/shipping/service.py) (event listener).
-- **Key Characteristics:** Cross-domain orchestration via [`MonolithApplication`](file:///e:/Github/repo2graph/benchmarks/corpus/modular_monolith/monolith/app.py), shared configuration, asynchronous event decoupled consumers.
+- **Architectural Pattern:** Decoupled domains communicating via [`EventBus`](benchmarks/corpus/modular_monolith/monolith/kernel/events.py):
+  - `identity`: [`IdentityService`](benchmarks/corpus/modular_monolith/monolith/identity/service.py) (account registration).
+  - `catalog`: [`CatalogService`](benchmarks/corpus/modular_monolith/monolith/catalog/service.py) (stock reservation).
+  - `billing`: [`BillingService`](benchmarks/corpus/modular_monolith/monolith/billing/service.py) & [`StripePaymentGateway`](benchmarks/corpus/modular_monolith/monolith/billing/gateway.py) (tax computation & invoicing).
+  - `notifications`: [`NotificationDispatcher`](benchmarks/corpus/modular_monolith/monolith/notifications/dispatcher.py) (event listener).
+  - `shipping`: [`ShippingService`](benchmarks/corpus/modular_monolith/monolith/shipping/service.py) (event listener).
+- **Key Characteristics:** Cross-domain orchestration via [`MonolithApplication`](benchmarks/corpus/modular_monolith/monolith/app.py), shared configuration, asynchronous event decoupled consumers.
 
-### 2.4 Frontend Application ([`benchmarks/corpus/frontend_app/`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/))
+### 2.4 Frontend Application ([`benchmarks/corpus/frontend_app/`](benchmarks/corpus/frontend_app/))
 - **Tech Stack:** React 18, TypeScript / TSX component tree.
 - **Architectural Pattern:** Component and state hierarchy:
-  - Pages: [`Dashboard`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/pages/Dashboard.tsx), [`Analytics`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/pages/Analytics.tsx).
-  - UI Components: [`Header`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/components/Header.tsx), [`Sidebar`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/components/Sidebar.tsx), [`MetricCard`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/components/MetricCard.tsx), [`DataTable`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/components/DataTable.tsx).
-  - Hooks & State: [`useMetrics`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/hooks/useMetrics.ts), [`useAuth`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/hooks/useAuth.ts), [`AuthContextManager`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/context/AuthContext.tsx).
-  - Data Services: [`ApiClient`](file:///e:/Github/repo2graph/benchmarks/corpus/frontend_app/src/services/apiClient.ts).
+  - Pages: [`Dashboard`](benchmarks/corpus/frontend_app/src/pages/Dashboard.tsx), [`Analytics`](benchmarks/corpus/frontend_app/src/pages/Analytics.tsx).
+  - UI Components: [`Header`](benchmarks/corpus/frontend_app/src/components/Header.tsx), [`Sidebar`](benchmarks/corpus/frontend_app/src/components/Sidebar.tsx), [`MetricCard`](benchmarks/corpus/frontend_app/src/components/MetricCard.tsx), [`DataTable`](benchmarks/corpus/frontend_app/src/components/DataTable.tsx).
+  - Hooks & State: [`useMetrics`](benchmarks/corpus/frontend_app/src/hooks/useMetrics.ts), [`useAuth`](benchmarks/corpus/frontend_app/src/hooks/useAuth.ts), [`AuthContextManager`](benchmarks/corpus/frontend_app/src/context/AuthContext.tsx).
+  - Data Services: [`ApiClient`](benchmarks/corpus/frontend_app/src/services/apiClient.ts).
 
-### 2.5 Intentionally Difficult Dynamic-Pattern Repository ([`benchmarks/corpus/dynamic_patterns/`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/))
+### 2.5 Intentionally Difficult Dynamic-Pattern Repository ([`benchmarks/corpus/dynamic_patterns/`](benchmarks/corpus/dynamic_patterns/))
 - **Tech Stack:** Python metaprogramming and reflection.
 - **Intended Difficulties & Stress Tests:**
-  - **Dynamic `getattr()` reflection:** [`BaseHandler.handle_request`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/base_handler.py#L2) dispatches to `on_<action>` methods dynamically.
-  - **String-keyed registry dispatch:** [`DynamicDispatcher`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/dispatcher.py#L3) calls `PLUGIN_REGISTRY[name].execute()`.
-  - **Severe Name Collisions:** Five unrelated classes ([`AlphaPlugin`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/alpha.py), [`BetaPlugin`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/beta.py), [`GammaPlugin`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/gamma.py), [`UserHandler`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/user_handler.py), [`OrderHandler`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/order_handler.py)) all define `execute(payload)` and `validate(payload)`.
-  - **Metaprogramming subclass hooks:** [`MetaRegistry.__init_subclass__`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/meta.py#L1).
-  - **Barrel file re-exports:** [`barrel/index.py`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/barrel/index.py) re-exports and aliases classes.
+  - **Dynamic `getattr()` reflection:** [`BaseHandler.handle_request`](benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/base_handler.py#L2) dispatches to `on_<action>` methods dynamically.
+  - **String-keyed registry dispatch:** [`DynamicDispatcher`](benchmarks/corpus/dynamic_patterns/dynamic_repo/dispatcher.py#L3) calls `PLUGIN_REGISTRY[name].execute()`.
+  - **Severe Name Collisions:** Five unrelated classes ([`AlphaPlugin`](benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/alpha.py), [`BetaPlugin`](benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/beta.py), [`GammaPlugin`](benchmarks/corpus/dynamic_patterns/dynamic_repo/plugins/gamma.py), [`UserHandler`](benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/user_handler.py), [`OrderHandler`](benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/order_handler.py)) all define `execute(payload)` and `validate(payload)`.
+  - **Metaprogramming subclass hooks:** [`MetaRegistry.__init_subclass__`](benchmarks/corpus/dynamic_patterns/dynamic_repo/meta.py#L1).
+  - **Barrel file re-exports:** [`barrel/index.py`](benchmarks/corpus/dynamic_patterns/dynamic_repo/barrel/index.py) re-exports and aliases classes.
 
 ---
 
 ## 3. The 25 Benchmark Tasks
 
-All tasks are defined in [`benchmarks/tasks.json`](file:///e:/Github/repo2graph/benchmarks/tasks.json) with exact evidence citations and acceptable answer variants:
+All tasks are defined in [`benchmarks/tasks.json`](benchmarks/tasks.json) with exact evidence citations and acceptable answer variants:
 
 | ID | Repository | Category | Realistic Question / Task Prompt | Evidence Locations |
 |---|---|---|---|---|
@@ -165,16 +165,16 @@ Queries were evaluated under identical task prompts:
 In accordance with this project's honest reporting policy, the following failure cases were observed and documented:
 
 #### 1. Dynamic Reflection Dispatch (TASK-23)
-- **Code:** [`BaseHandler.handle_request`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/base_handler.py#L2):
+- **Code:** [`BaseHandler.handle_request`](benchmarks/corpus/dynamic_patterns/dynamic_repo/handlers/base_handler.py#L2):
   ```python
   method = getattr(self, f"on_{action}", None)
   return method(data)
   ```
 - **Observed Behavior:** `repo2graph` draws no `CALLS` edge from `handle_request` to `on_create` or `on_delete`. The target is constructed at runtime from an interpolated string.
-- **Verdict:** True static-analysis limit. Documented in [`docs/limitations.md`](file:///e:/Github/repo2graph/docs/limitations.md). Mitigated only by text chunk retrieval matching the method bodies.
+- **Verdict:** True static-analysis limit. Documented in [`docs/limitations.md`](docs/limitations.md). Mitigated only by text chunk retrieval matching the method bodies.
 
 #### 2. String-Keyed Plugin Registries (TASK-22)
-- **Code:** [`DynamicDispatcher.run_strategy`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/dispatcher.py#L4):
+- **Code:** [`DynamicDispatcher.run_strategy`](benchmarks/corpus/dynamic_patterns/dynamic_repo/dispatcher.py#L4):
   ```python
   plugin = get_plugin_instance(strategy_name)
   return plugin.execute(payload)
@@ -183,18 +183,18 @@ In accordance with this project's honest reporting policy, the following failure
 - **Verdict:** Correctly marked as ambiguous. Disambiguation requires runtime tracing or configuration injection metadata.
 
 #### 3. Barrel File Re-export Indirection (TASK-25)
-- **Code:** [`dynamic_repo/barrel/index.py`](file:///e:/Github/repo2graph/benchmarks/corpus/dynamic_patterns/dynamic_repo/barrel/index.py):
+- **Code:** [`dynamic_repo/barrel/index.py`](benchmarks/corpus/dynamic_patterns/dynamic_repo/barrel/index.py):
   ```python
   from dynamic_repo.plugins.alpha import AlphaPlugin as PrimaryPlugin
   ```
 - **Observed Behavior:** While `parse_import_details` captures the alias `PrimaryPlugin`, imports of `barrel/index.py` resolve to the barrel file rather than tracing directly to `plugins/alpha.py`.
-- **Verdict:** Tracked in [RFC: Deep TypeScript / JavaScript Support](file:///e:/Github/repo2graph/docs/rfcs/rfc-language-deep-support-typescript.md) (Issue `LANG-01`).
+- **Verdict:** Tracked in [RFC: Deep TypeScript / JavaScript Support](docs/rfcs/rfc-language-deep-support-typescript.md) (Issue `LANG-01`).
 
 ---
 
 ## 6. Continuous Integration & Regression Prevention
 
-The benchmark suite is fully integrated into GitHub Actions CI via [`.github/workflows/benchmark.yml`](file:///e:/Github/repo2graph/.github/workflows/benchmark.yml):
+The benchmark suite is fully integrated into GitHub Actions CI via [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml):
 - Runs automatically on pull requests and pushes to `main` and `develop`.
 - Runs on both **Ubuntu** and **Windows** runners.
 - Executes `python scripts/benchmark_runner.py --ci`.
