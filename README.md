@@ -581,6 +581,7 @@ Continuous benchmark regression checking is enforced in CI via [`.github/workflo
 | `repo2graph bug-report -o .r2g [--category CAT]` | Privacy-preserving diagnostic bundle for an issue. No source code, no paths by default. |
 | `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
 | `repo2graph explain <edge|node|retrieval>` | Explain graph edges, node metadata, and retrieval ranking decisions. |
+| `repo2graph impact -i .r2g [--base main]` | PR / diff architectural blast radius & impact analysis. |
 | `repo2graph completion [shell]` | Print shell tab completion setup script (`bash`, `zsh`, `fish`). |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
@@ -625,6 +626,7 @@ miss.
   a roadmap.
 - **[LANGUAGE_SUPPORT.md](LANGUAGE_SUPPORT.md)** — strategic language roadmap, scorecard generator, and ecosystem relationship extraction (routes, test links, DI, ORMs).
 - **[BENCHMARK.md](BENCHMARK.md)** — reproducible 25-task evaluation across 5 archetypes, comparison against ripgrep and agent baseline, and regression gating.
+- **[PR_IMPACT.md](PR_IMPACT.md)** — flagship PR & diff architectural blast radius analysis, reverse caller exposure, test coverage mapping, and CI workflow.
 - **[docs/ROADMAP_LANGUAGE_ISSUES.md](docs/ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues (`LANG-01` to `LANG-11`) for deep language and framework support.
 - **[AGENTS.md](AGENTS.md)** — this codebase's non-obvious conventions (Windows encoding, text
   slicing, the two budget models) before editing `repo2graph/`.

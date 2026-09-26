@@ -61,4 +61,4 @@ rules:
       # keeps a compromised release from running a lifecycle script in a job
       # that holds pull-requests: write and an API key -- see
       # tests/test_prod_igy.py::test_ai_workflow_wiring.
-      - prod-igy.yml:122
+      - prod-igy.yml:158

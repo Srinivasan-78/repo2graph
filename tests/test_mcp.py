@@ -252,6 +252,7 @@ def test_ac31_tool_descriptions_stay_under_budget():
         "repo_map",
         "repo_search",
         "repo_neighbours",
+        "repo_impact",
         "repo_cache_stats",
         "repo_build_status",
     }
@@ -261,7 +262,7 @@ def test_ac31_tool_descriptions_stay_under_budget():
             f"{name} length {len(text)} out of expected [100, 800] range"
         )
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())
-    assert total <= 2500, f"Combined tool descriptions ({total} chars) exceed 2500-char budget"
+    assert total <= 3000, f"Combined tool descriptions ({total} chars) exceed 3000-char budget"
 
 
 test_ac31_tool_descriptions_stay_under_600_chars = test_ac31_tool_descriptions_stay_under_budget
@@ -279,6 +280,7 @@ def test_tool_descriptions_contain_usage_guidance_and_siblings():
         "repo_map": {"repo_search", "repo_neighbours"},
         "repo_search": {"repo_map", "repo_neighbours"},
         "repo_neighbours": {"repo_search", "repo_map"},
+        "repo_impact": {"repo_search"},
         "repo_cache_stats": {"repo_map", "repo_search"},
         "repo_build_status": {"repo_search", "repo_map"},
     }
@@ -323,10 +325,11 @@ def test_tool_schemas_have_informative_parameter_descriptions():
         "repo_map": [],
         "repo_search": ["query"],
         "repo_neighbours": ["node_id"],
+        "repo_impact": [],
         "repo_cache_stats": [],
         "repo_build_status": ["task_id"],
     }
-    bounded_params = {"k", "hops", "budget_tokens", "limit"}
+    bounded_params = {"k", "hops", "budget_tokens", "limit", "max_depth"}
 
     for name, schema in mcp.TOOL_SCHEMAS.items():
         assert schema.get("type") == "object", f"{name} schema type must be 'object'"
