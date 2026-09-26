@@ -29,19 +29,35 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
 jobs:
   check-lockfile:
     name: Lockfile Freshness
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
+      # `contents: write` is for the dispatch-only auto-commit step's `git push`
+      # at the end of this job. No step in this file uses the pull-requests
+      # scope -- it neither comments, labels, nor opens anything -- so it is not
+      # requested.
       contents: write
-      pull-requests: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ github.head_ref || github.ref }}
+          # Persist the token *only* on the dispatch path that actually pushes.
+          # On the `pull_request` path this job runs `uv lock`, which builds an
+          # sdist for any dependency without a wheel -- i.e. it executes build
+          # backend code influenced by the PR's own pyproject.toml. Holding a
+          # write-scoped credential in the same job while that runs is blast
+          # radius with no purpose, since that path never pushes. The
+          # `github.event.inputs` string comparison mirrors the auto-commit
+          # step's own `if:` below, so both gates open on exactly the same input.
+          persist-credentials: ${{ github.event.inputs.auto_commit == 'true' }}
 
       - name: Set up Python 3.12
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
@@ -64,6 +80,19 @@ jobs:
             exit 1
           fi
 
+      - name: Generate Lockfile Freshness Step Summary
+        if: always()
+        shell: bash
+        run: |
+          cat << EOF >> "$GITHUB_STEP_SUMMARY"
+          ### 🔒 Lockfile Synchronization Summary
+
+          | Property | Status |
+          | :--- | :--- |
+          | **Freshness Check** | ${{ steps.check.outputs.status == 'ok' && '✅ In sync with pyproject.toml' || '❌ Out of sync' }} |
+          | **Trigger Event** | \`${{ github.event_name }}\` |
+          EOF
+
       - name: Upload updated uv.lock as artifact
         if: failure() && steps.check.outputs.status == 'stale'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
@@ -71,6 +100,7 @@ jobs:
           name: uv.lock-updated
           path: uv.lock
           if-no-files-found: ignore
+          retention-days: 7
 
       - name: Auto-commit updated uv.lock (on dispatch)
         if: failure() && steps.check.outputs.status == 'stale' && github.event.inputs.auto_commit == 'true'

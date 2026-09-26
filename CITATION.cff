@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://citation-file-format.github.io/1.2.0/schema.json
+#
+# `version` below is a bump surface (`scripts/version_surfaces.py`), so `bump_version.py`
+# rewrites it and `check_version.py` verifies it alongside pyproject.toml. It was not one
+# at first, and the 2.1.0 release bumped every other surface and left this file on 2.0.0 --
+# caught only by `tests/test_doc_consistency.py`'s `test_citation_cff_matches_pyproject`,
+# which runs *after* publish.yml has already cut the tag. Note the pattern anchors on
+# `^version:`, so `cff-version` above is deliberately out of its reach.
+cff-version: 1.2.0
+message: "If you use repo2graph in your research, please cite it as below."
+title: repo2graph
+abstract: >-
+  AST-driven code graphs and zero-dependency GraphRAG for AI coding agents,
+  serving cited source over the Model Context Protocol within a hard token budget.
+type: software
+authors:
+  - given-names: Srinivasan
+    family-names: Vijayaraghavan
+repository-code: "https://github.com/Srinivasan-78/repo2graph"
+url: "https://github.com/Srinivasan-78/repo2graph"
+license: MIT
+version: 2.1.0
+keywords:
+  - code-graph
+  - graphrag
+  - retrieval-augmented-generation
+  - tree-sitter
+  - model-context-protocol
+  - static-analysis

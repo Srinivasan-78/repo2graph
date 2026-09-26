@@ -13,6 +13,8 @@ import json
 import threading
 import time
 
+import pytest
+
 from repo2graph import mcp
 from repo2graph import tasks as tasks_module
 from repo2graph.tasks import BUILDING, FAILED, READY, BuildTask, TaskManager
@@ -205,29 +207,28 @@ class RecordingLock:
         self.release()
 
 
-def test_run_success_writes_task_state_under_the_lock(tmp_path):
-    """ISS-109: task.status/finished_at on the success path must be set while
-    holding self._lock, like every other mutator in TaskManager."""
-    builder = Builder(block=True)
+# ISS-109: the terminal write must happen under `self._lock`, like every other
+# mutator in TaskManager. Both branches reach that write -- the success path sets
+# status/finished_at, the except branch also sets error -- so both are checked,
+# and the only thing that differs is which way the builder ends.
+@pytest.mark.parametrize(
+    "fail, expected_status, fields",
+    [
+        pytest.param(None, READY, "task.status/finished_at", id="success-path"),
+        pytest.param(
+            RuntimeError("boom"), FAILED, "task.error/status/finished_at", id="except-branch"
+        ),
+    ],
+)
+def test_run_writes_task_state_under_the_lock(tmp_path, fail, expected_status, fields):
+    builder = Builder(fail=fail, block=True) if fail else Builder(block=True)
     tasks = manager(builder)
     task = tasks.start(tmp_path / "repo", tmp_path / "out")
     recorder = tasks._lock = RecordingLock()
 
     builder.release.set()
-    assert wait_for(lambda: task.status == READY)
-    assert recorder.acquisitions >= 1, "task.status/finished_at were set without self._lock"
-
-
-def test_run_failure_writes_task_state_under_the_lock(tmp_path):
-    """ISS-109: same for the except branch -- task.error/status/finished_at."""
-    builder = Builder(fail=RuntimeError("boom"), block=True)
-    tasks = manager(builder)
-    task = tasks.start(tmp_path / "repo", tmp_path / "out")
-    recorder = tasks._lock = RecordingLock()
-
-    builder.release.set()
-    assert wait_for(lambda: task.status == FAILED)
-    assert recorder.acquisitions >= 1, "task.error/status/finished_at were set without self._lock"
+    assert wait_for(lambda: task.status == expected_status)
+    assert recorder.acquisitions >= 1, f"{fields} were set without self._lock"
 
 
 def test_the_estimator_failing_does_not_stop_the_build(tmp_path):

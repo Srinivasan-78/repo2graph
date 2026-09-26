@@ -1,0 +1,103 @@
+name: Answer unhelpful
+description: "`rag`, `query`, or an MCP tool returned an answer that did not help."
+labels: ["bug", "area/retrieval"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Retrieval quality is the hardest thing to report usefully and the most valuable when it
+        lands, because "it gave me the wrong thing" is not reproducible and "it did not cite
+        `auth.py:31` for *this* question" is.
+
+        **The one thing that makes this diagnosable:** run
+        `repo2graph explain retrieval "<your question>" -o <out>`. It traces tokenization, the
+        seed ranking with scores, every graph expansion step, and the final selection — so the
+        answer to "why did it pick that" is in the output rather than in a guess.
+
+        Check these first; each turns a bug report into a one-line answer:
+
+        - **Is the index current?** `repo2graph index-status -o <out>`. An answer citing code you
+          deleted is a staleness bug, not a retrieval one.
+        - **Was the pack truncated?** With `--answer`, the appended "Confidence and limitations"
+          section says so outright. A truncated pack can be wrong by omission; try a larger
+          `--budget`.
+        - **Is the code you wanted even indexed?** `repo2graph explain-path <path> -r .` names the
+          single rule that included or excluded it.
+        - **Is the relationship one the graph models at all?**
+          [docs/limitations.md](../../docs/limitations.md) — dynamic dispatch, reflection and DI
+          containers produce no edges, so a caller list through one is expected to be incomplete.
+
+  - type: input
+    id: version
+    attributes:
+      label: repo2graph version
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The exact question you asked
+      description: Verbatim, including quoting. Paraphrasing changes the retrieval.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface?
+      options:
+        - "repo2graph rag (no --answer: the pack itself was wrong)"
+        - "repo2graph rag --answer (the LLM's answer was wrong)"
+        - repo2graph query
+        - MCP tool (repo_search / repo_neighbours / repo_context)
+        - The GitHub Action's query output
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure
+    attributes:
+      label: What kind of unhelpful?
+      options:
+        - It cited the wrong code (irrelevant blocks)
+        - It missed code that clearly answers the question
+        - It returned nothing at all
+        - It cited the right file but the wrong lines
+        - The citations point at lines that do not contain what was claimed
+        - The answer contradicted the cited source
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should it have cited?
+      description: |
+        A `path:line-line` you expected in the output, and why it answers the question. This is
+        the single most useful field in the form — it turns a judgement call into a check.
+      placeholder: "app/auth.py:31-40 — require_token is the guard every route calls."
+    validations:
+      required: true
+
+  - type: textarea
+    id: trace
+    attributes:
+      label: "`repo2graph explain retrieval \"<question>\" -o <out> --json` output"
+      description: |
+        If the trace is large, the `seeds` and `expansion_steps` sections alone are usually
+        enough. Redact paths if you need to, but keep the scores and the edge types.
+      render: json
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Diagnostic bundle (optional)
+      description: |
+        `repo2graph bug-report -o <out> --category answer-unhelpful`
+
+        Carries the index shape and the edge-confidence distribution, which is often what
+        explains a bad pack. No source code, no environment variable values, no absolute paths.
+      render: markdown

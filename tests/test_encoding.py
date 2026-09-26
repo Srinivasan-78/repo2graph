@@ -70,8 +70,19 @@ class StrictStream(FakeStream):
 
 
 # ------------------------------------------------------------ the matrix ----
-
-
+#
+# 5 encodings x 7 handlers x 5 characters = 175 cases, and it is exhaustive on
+# purpose. Do not thin it to "the interesting rows": which cells actually raise
+# is not predictable from the codec, so there is no slice that is safely
+# redundant. `utf8` looks like the trivial row and is not -- it refuses a lone
+# surrogate under both `strict` and `surrogateescape`. `cp932` accepts the arrow
+# but not a surrogate; `latin-1` the reverse. `surrogatepass` rescues a surrogate
+# only on the UTF codecs and raises on all four narrow ones.
+#
+# The cost of keeping it is about 0.2s of a 35s suite. The cost of getting it
+# wrong is the bug class AGENTS.md calls the source of every historical
+# regression in this repo (ISS-06/17/22/27), which is why the product is
+# enumerated rather than sampled.
 @pytest.mark.parametrize("encoding", ["cp1252", "ascii", "utf8", "cp932", "latin-1"])
 @pytest.mark.parametrize(
     "errors",

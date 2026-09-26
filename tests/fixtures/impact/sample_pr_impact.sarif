@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "repo2graph-impact",
+          "informationUri": "https://github.com/Srinivasan-78/repo2graph",
+          "rules": [
+            {
+              "id": "R2G-IMP-001",
+              "name": "DisconnectedOrphanChange",
+              "shortDescription": {
+                "text": "File changed without graph connection to other modifications"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "R2G-IMP-002",
+              "name": "UntestedPublicApiChange",
+              "shortDescription": {
+                "text": "Public API modified without test callers in repo graph"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "R2G-IMP-003",
+              "name": "HighBlastRadiusModification",
+              "shortDescription": {
+                "text": "Symbol modified with widespread caller reachability"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "R2G-IMP-004",
+              "name": "AmbiguousCallSite",
+              "shortDescription": {
+                "text": "Call site resolved with low static confidence"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "R2G-IMP-002",
+          "level": "warning",
+          "message": {
+            "text": "Untested public API change: `bar`: Public API bar modified without direct test coverage."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "pkg/foo.py"
+                },
+                "region": {
+                  "startLine": 10
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

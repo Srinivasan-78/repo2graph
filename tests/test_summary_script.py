@@ -13,6 +13,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT_PATH = REPO_ROOT / ".github" / "scripts" / "summary.py"
 
@@ -193,17 +195,17 @@ def test_summary_degrades_built_at_when_not_a_git_checkout(tmp_path):
     assert re.search(r"\|\s*Built at\s*\|\s*N/A\s*\|", proc.stdout), proc.stdout
 
 
-def test_summary_omits_graph_delta_when_changelog_not_passed(tmp_path):
+# No changelog to diff against, either because none was asked for or because the
+# path given is not there. Both must render the rest of the summary and exit 0 --
+# a missing optional input is not a failure.
+@pytest.mark.parametrize(
+    "pass_changelog",
+    [pytest.param(False, id="flag-not-passed"), pytest.param(True, id="file-missing")],
+)
+def test_summary_omits_graph_delta_without_a_changelog(tmp_path, pass_changelog):
     stats, nodes, edges = _mock_artifacts(tmp_path)
-    proc = _run(tmp_path, stats=stats, nodes=nodes, edges=edges)  # no --changelog
-    assert proc.returncode == 0, proc.stderr
-    assert "Graph delta" not in proc.stdout
-
-
-def test_summary_omits_graph_delta_when_changelog_file_missing(tmp_path):
-    stats, nodes, edges = _mock_artifacts(tmp_path)
-    missing = tmp_path / "human" / "CHANGELOG.md"
-    proc = _run(tmp_path, stats=stats, nodes=nodes, edges=edges, changelog=missing)
+    extra = {"changelog": tmp_path / "human" / "CHANGELOG.md"} if pass_changelog else {}
+    proc = _run(tmp_path, stats=stats, nodes=nodes, edges=edges, **extra)
     assert proc.returncode == 0, proc.stderr
     assert "Graph delta" not in proc.stdout
 

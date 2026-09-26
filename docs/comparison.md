@@ -41,7 +41,7 @@ how this system hangs together, including the design docs", it is the better too
 | Returns | packed source, cited per block, inside a token budget | subgraph / path / concept explanation over `graph.json` |
 | Ranking | BM25 seeds + k-hop expansion, optional dense fusion | graph traversal; explicitly not a vector index |
 | Non-code corpus | indexed as text, never sent anywhere | docs, PDFs, images, video via a model-backed semantic pass |
-| Languages parsed for symbols | 15 | ~40 |
+| Languages parsed for symbols | 17 | ~40 |
 | Edges from version control | `CO_CHANGE`, files that keep changing together | — |
 | Ambiguity marking | `confidence` on `CALLS`; ambiguous names fan out at `1/n` | `EXTRACTED` / `INFERRED` tags |
 | Runs headless in CI | yes — published GitHub Action | built around a `/graphify` skill in an assistant |
@@ -74,6 +74,9 @@ install the plugin — the two do not compete for the same slot.
 ## repo2graph vs plain grep or an embeddings index
 
 This is the comparison that actually comes up in practice, because it is what most agents do today.
+The side-by-side table is in the README
+([Why repo2graph instead of grep or vector search?](../README.md#vs-grep)); what follows is the
+reasoning behind it.
 
 - **grep** is exact and structureless. It finds the token, not the relationship: it cannot tell you
   who calls this function, and a match inside a comment ranks identically to the definition. When
@@ -101,7 +104,7 @@ Stated plainly, because a comparison page that concludes "we win everything" is 
   edges, and absence of an edge is not proof of absence of a call (`docs/limitations.md`).
 - **You want the graph itself as the deliverable** — communities, layout, path queries between
   arbitrary concepts. That is Graphify's shape, not this one.
-- **Your language is outside the 15 with symbol support.** The files still appear on the map and
+- **Your language is outside the 17 with symbol support.** The files still appear on the map and
   are still retrievable as text, but there are no function-level nodes or `CALLS` edges for them.
 
 ## Reproducing any of this

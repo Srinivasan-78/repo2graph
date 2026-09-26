@@ -2,7 +2,10 @@
 
 # repo2graph
 
-**AST-driven code graphs & zero-dependency GraphRAG for AI coding agents and humans**
+**Give coding agents trustworthy, cited answers about unfamiliar codebases.**
+
+Ask a repository a question; get back the actual source that answers it, every block stamped with
+the file and line range it came from.
 
 <p align="center">
   <a href="README.md">English</a> ·
@@ -49,9 +52,11 @@
 
 <p align="center">
   <a href="#-what-is-repo2graph">What is it</a> ·
+  <a href="#who-its-for">Who it's for</a> ·
+  <a href="#vs-grep">vs. grep</a> ·
   <a href="#install">Quickstart</a> ·
   <a href="#mcp-server">MCP setup</a> ·
-  <a href="#-how-it-compares">Compare</a> ·
+  <a href="#does-and-doesnt">What it won't do</a> ·
   <a href="#-see-it-on-real-repositories">Benchmarks</a> ·
   <a href="#-architecture--token-economics">Architecture</a> ·
   <a href="docs/README.md">Docs</a> ·
@@ -66,15 +71,22 @@
 
 ## ⚡ What is repo2graph?
 
-When an AI coding agent searches a codebase with grep or plain keyword matching, it either dumps
-whole matching files into context — burning the token budget and losing structure — or misses the
-implementation entirely because it used different words than the search query.
+An agent dropped into a codebase it has never seen has two bad options. Grep for a word and it
+either floods its context with whole matching files, or finds nothing because the code spells the
+idea differently than you did. Guess from training data and it writes something confident and
+wrong. Either way you cannot tell which of the two just happened.
 
-**repo2graph** parses source with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) into a
-graph of real code relationships — `CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE` — and
-serves that graph to agents over the **Model Context Protocol**, or packs it into a budget-bounded
-markdown context for any LLM. Every returned block carries an exact `[cite: path:start-end]`
-anchor, so answers are traceable back to source instead of paraphrased from a guess.
+**repo2graph answers questions about a repository with the repository's own source.** Ask "how
+does a request get authenticated" and you get back the function that does it, the functions that
+call it and the ones it calls — each block headed `[cite: path:start-end]`, so every claim in the
+answer is one click from the line it came from. If the answer is wrong, the citation shows you
+where it went wrong. That is the whole point.
+
+It gets there by reading the code rather than searching it: one parse pass records who calls whom,
+who imports what, and which class extends which, and retrieval follows those links instead of
+matching more text. The result is served straight into Claude Code, Cursor or any
+**Model Context Protocol** client, or packed into a markdown context with a hard token ceiling for
+any other LLM.
 
 ```mermaid
 flowchart LR
@@ -97,6 +109,106 @@ No project setup, no language server, no build step — point it at a folder and
 
 `graph.html` is one self-contained file — no server, no internet, drag to pan, scroll to zoom,
 click a node to inspect its code and neighbours.
+
+<a id="who-its-for"></a>
+
+## 👥 Who it's for
+
+<table>
+<tr>
+<td valign="top" width="50%">
+
+### 🧭 Joining a new codebase
+
+**The problem:** week one goes on reading files to find out which ones matter.
+
+Build once, open the map, and start from the hub files instead of the root directory. Then ask
+whole questions — *"how does a request get from the router to the handler"* — and read the answer
+as source, with the callers and callees already attached.
+
+```bash
+uvx repo2graph build . -o .r2g
+open .r2g/human/graph.html
+repo2graph rag "how does routing work" -o .r2g
+```
+
+</td>
+<td valign="top" width="50%">
+
+### 🤖 Driving a coding agent
+
+**The problem:** the agent greps, pulls in three whole files, and still edits the wrong one.
+
+Point Claude Code, Cursor or any MCP client at the repo. The agent gets cited blocks under a hard
+12k-token ceiling instead of raw file dumps, and can walk from a symbol to its callers in one hop.
+Secrets are excluded from agent replies unconditionally — no flag turns that off.
+
+```bash
+claude mcp add repo2graph -- \
+  uvx --from "repo2graph[mcp]" repo2graph-mcp .
+```
+
+</td>
+</tr>
+<tr>
+<td valign="top" width="50%">
+
+### 🔍 Reviewing a pull request
+
+**The problem:** the diff is 40 lines; the blast radius is unknown.
+
+Ask the graph what touches the changed symbol — callers, importers, subclasses — and what the
+repository's own history says usually changes alongside it (`CO_CHANGE`, mined from git). That
+last one catches the test file or the config the diff forgot.
+
+```bash
+repo2graph build . -o .r2g --git-history 500
+repo2graph explain node "sym:src/auth.py::verify" -o .r2g
+```
+
+</td>
+<td valign="top" width="50%">
+
+### 🌱 Maintaining a project
+
+**The problem:** every new contributor asks the same "where do I start" question.
+
+Commit a fresh graph on every push with the GitHub Action, and publish `graph.html` to a branch
+contributors can browse. The job summary reports hub files, co-change hotspots and the graph delta
+since the last build, so architectural drift shows up in the run.
+
+```yaml
+- uses: Srinivasan-78/repo2graph@v2
+  with: { git-history: "500", commit-branch: graph }
+```
+
+</td>
+</tr>
+</table>
+
+<a id="vs-grep"></a>
+
+## 🔎 Why repo2graph instead of grep or vector search?
+
+Both of those are still in the box — `repo2graph` seeds every query with BM25, and dense vectors
+are an opt-in fusion. The difference is what happens *after* the first match.
+
+| | **grep / ripgrep** | **Embedding search** | **repo2graph** |
+|---|---|---|---|
+| **Finds** | the exact string | text that reads similarly | the symbol, then everything wired to it |
+| **Different words than the code uses** | returns nothing | handles it | BM25 seeds, then graph hops reach code the query never named |
+| **"What calls this?"** | can't answer — a match in a comment ranks like the definition | can't answer — neighbours aren't in the embedding | `CALLS` edges, with direction and a `confidence` score |
+| **"What breaks if I change this?"** | you read every hit by hand | not represented | callers, importers and subclasses in one hop |
+| **What comes back** | matching lines, or whole files an agent then dumps into context | top-k similar chunks, callers unretrieved | the source that answers it, each block headed `[cite: path:start-end]` |
+| **Token cost** | unbounded — the agent decides how much file to read | unbounded | hard ceiling on the *whole* pack, re-measured before it returns |
+| **"Which files keep changing together?"** | — | — | `CO_CHANGE`, mined from git history |
+| **Setup** | none | index build + an embedding model (~90 MB) | one parse pass, no model, no API key, no language server |
+| **Ranking is explainable** | n/a | a cosine number | `repo2graph explain retrieval "<q>"` names the seed and the edge that pulled each block in |
+
+**Use grep when** you want every occurrence of a literal string — a config key, an error message,
+a TODO. repo2graph has no special knowledge of string literals and will not beat it.
+**Use repo2graph when** the question is about relationships: what calls this, what breaks if I
+change it, how does data get from A to B. Longer version: **[docs/why-graph.md](docs/why-graph.md)**.
 
 <a id="install"></a>
 
@@ -148,7 +260,17 @@ Enterprise-ready, read-only, non-root container deployment.
 
 ### 🐍 1. Python / CLI
 
-Requires Python 3.10+. Run via [uv](https://docs.astral.sh/uv/), no install step:
+Requires Python 3.10+. The fastest way to see what it does — a bundled example
+repo, indexed and interrogated, with nothing to configure and no repository of
+your own:
+
+```bash
+uvx repo2graph demo
+```
+
+That writes a small orders service to a scratch directory, builds a real graph
+over it, and answers five questions against it, each one citing files and line
+ranges. Then point it at your own code:
 
 ```bash
 uvx repo2graph build . -o .r2g && open .r2g/human/graph.html
@@ -161,6 +283,30 @@ pip install repo2graph
 repo2graph build /path/to/project -o .r2g --git-history 200
 repo2graph query "how does routing match a path" -o .r2g
 ```
+
+Two minutes end to end, with the expected output at each step:
+**[docs/quickstart.md](docs/quickstart.md)**.
+
+#### Five questions to start with
+
+The ones that show what a graph gives you over a text search. Copy any of them
+onto your own repo — or run `repo2graph demo` to watch each answered against
+the bundled fixture.
+
+| Ask your repo | What comes back that grep cannot give you |
+|---|---|
+| `Where is authentication enforced?` | the guard itself, plus every route that calls it |
+| `What calls <function>?` | CALLS edges in, so callers come back even when the name is shadowed |
+| `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
+| `What would be affected by changing <api>?` | the blast radius: direct callers and what they are called from |
+| `Trace <a request> from route to persistence.` | a whole path across modules, each block cited to file and line |
+
+```bash
+repo2graph rag "What would be affected by changing pack_context?" -o .r2g
+```
+
+Something not working? `repo2graph doctor .` checks the environment, the index
+and your MCP client config, and prints a fix for anything it finds.
 
 <p align="center">
   <img src="docs/images/demo-build.gif" alt="A terminal running repo2graph build on a repository; a JSON summary appears counting files, functions, classes, CALLS, IMPORTS and CO_CHANGE edges, nodes, edges and chunks" width="850" />
@@ -266,7 +412,7 @@ docker run --rm \
   repo2graph build /repo -o /repo/.r2g
 ```
 
-See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full container hardening and HTTP server instructions.
+See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full container hardening and HTTP server instructions, and **[docs/deployment-security.md](docs/deployment-security.md)** for the trust boundary and supported/not-recommended verdict per deployment shape — including whether HTTP without TLS is safe (short answer: only on loopback) and a worked hardened reverse-proxy example.
 
 ## ✨ Key features
 
@@ -275,12 +421,48 @@ See **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)** for full 
 | **Deterministic graph, not embeddings-only search** | Callers, callees, imports and class hierarchies resolved from the actual AST — not a nearest-neighbour guess. |
 | **Hybrid retrieval** | BM25 + graph-neighbour expansion by default; optional dense vector fusion (`repo2graph embed`) with zero required extra dependencies. |
 | **Hard token ceilings, enforced twice** | `pack_context()`'s budget bounds the *entire* rendered markdown, not just chunk text — and the MCP server clamps and re-measures before returning. |
-| <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. |
+| <a id="languages"></a>**17 grammars, full treatment** | Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++, C#, PHP, Kotlin, Swift, Scala, Bash and Lua get functions/classes/calls — 29 file extensions in all. Everything else still appears as files on the map. See our [strategic language scorecard](LANGUAGE_SUPPORT.md) and [framework relationship RFC](docs/rfcs/rfc-framework-relationship-graph.md). |
 | **CI-native** | Published as a GitHub Action — commit a fresh graph next to your code on every push. |
-| **Local by default** | `build`, `query`, `rag`, and the MCP server make zero network calls. The one opt-in exception (`rag --answer`) prints the provider + hostname before sending anything. |
+| **Local by default** | `build`, `query`, `rag` and the MCP server over stdio make zero network calls — asserted by socket-level tests. `rag --answer` is the only path that ever sends your code anywhere, and it prints the provider + hostname first. No telemetry. |
 | **Export to real graph tooling** | `graph.graphml` (yEd, Gephi, NetworkX) and `graph.cypher` (Neo4j, Memgraph) come out of every build, no extra step. |
 
-## 🆚 How it compares
+<a id="does-and-doesnt"></a>
+
+## ⚖️ What it does — and what it does not
+
+A retrieval tool that oversells itself is worse than no retrieval tool, because you stop checking
+its answers. So, plainly:
+
+**It does**
+
+- Return the **source that answers a question**, cited to `path:start-end`, inside a token budget
+  it enforces rather than requests.
+- Resolve **callers, callees, imports and class hierarchies** from a real parse of the code, and
+  let you walk them in either direction from any symbol.
+- Mine **`CO_CHANGE`** from git history — the files that keep being edited together, which no
+  parser can tell you.
+- Run **entirely locally**, with no model, no account and no network call, in the CLI, in CI and
+  over MCP.
+- Degrade **gracefully**: an unparsed language still appears as file nodes and is still
+  retrievable as text; a missing vector index falls back to BM25 rather than failing.
+
+**It does not**
+
+| Limitation | What that means in practice |
+|---|---|
+| **Resolve calls by type** | Calls are matched by *name*, with same-class / same-file / import scoping to break ties. When scoping can't isolate one target, the call fans out to up to 5 candidate edges at `confidence = 1/n`, flagged `ambiguous`. Filter to `confidence == 1.0` when you need certainty over recall — 4.6%–21% of `CALLS` edges are ambiguous across [our five benchmark repos](docs/limitations.md#call-name-ambiguity-scales-with-symbol-reuse-conventions-not-repository-size). |
+| **See dynamic dispatch** | A string-keyed lookup, a plugin registry, `getattr`-style dispatch, a virtual call resolved at runtime — none of it is written down as syntax, so no edge is drawn. **No arrow does not prove no call.** |
+| **See reflection or computed imports** | `importlib.import_module(name)`, Java reflection, a dynamic `import()` with a computed specifier. Nothing literal to resolve, so nothing to link. |
+| **Follow dependency injection to the implementation** | A DI container wires an interface to a concrete class at runtime. The call site names the interface method, so the edge lands on the declaration (or fans out across every same-named implementation), never on the class the container actually injected. Walk `INHERITS` to enumerate the candidates. |
+| **Distinguish generated code** | A `.pb.go`, a bundled `.js`, a codegen'd client — all indexed exactly like hand-written code, with no marker. They can dominate a symbol count without representing a line anyone maintains. Exclude them with `--exclude`. |
+| **Notice that your files changed** | The index is a snapshot of the tree you built it from. Nothing watches the filesystem: edit a file and the graph keeps describing the old one. Rebuild (`build --incremental` re-parses only what moved), or let the GitHub Action rebuild on every push. `repo2graph doctor` checks index *integrity* and vector drift — not whether your working tree moved on. |
+| **Cross a language boundary** | Python calling into C++ through generated bindings becomes a `CALLS_EXTERNAL` edge, not a link to the C++ function. That is a structural limit of source-only analysis, not a matching bug. |
+| **Parse macro-heavy C/C++ cleanly** | tree-sitter emits `ERROR` nodes around unexpanded macros; a `cpp` preprocessor fallback recovers some. Expect a non-trivial `parse_errors` count in `stats.json` and read it as a floor on missed symbols. |
+
+Every one of these is measured, not asserted — the rates, the repositories they were measured on,
+and the reproduction commands are in **[docs/limitations.md](docs/limitations.md)**. See also the dynamic pattern evaluation in **[BENCHMARK.md](BENCHMARK.md)** and the framework relationship proposal in **[docs/rfcs/rfc-framework-relationship-graph.md](docs/rfcs/rfc-framework-relationship-graph.md)**.
+
+## 🆚 How it compares to other graph tools
 
 Several tools build a graph out of a codebase. The thing that separates them is what comes *back*
 when you ask a question — a picture, a subgraph, or the code itself.
@@ -292,7 +474,7 @@ when you ask a question — a picture, a subgraph, or the code itself.
 | **Token budget** | hard cap on the *whole* pack, re-measured before returning (12k ceiling over MCP) | not a packing layer | n/a | usually unbounded |
 | **Edges from git history** | `CO_CHANGE`, from `--git-history` | — | — | — |
 | **Runs with no assistant, no model, no account** | yes — CLI, MCP, or the GitHub Action | code pass is local; the docs/media pass uses a model | needs Obsidian desktop 1.7.2+ | varies |
-| **Corpus** | code in 16 parsed grammars, every other file as text | code in ~40 languages, plus docs, PDFs, images, video | TS/TSX/JS/Python parsed, imports-only for 8 more | anything |
+| **Corpus** | code in 17 parsed grammars, every other file as text | code in ~40 languages, plus docs, PDFs, images, video | TS/TSX/JS/Python parsed, imports-only for 8 more | anything |
 
 **Reach for [Graphify](https://github.com/Graphify-Labs/graphify)** when the graph itself is the
 product: community detection, shortest path between two concepts, and your PDFs and design docs in
@@ -324,6 +506,11 @@ shared, over HTTP, with bearer or OIDC auth and an audit log:
 **[docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md)**.
 
 ## 📐 Architecture & token economics
+
+The retrieval layer is a **GraphRAG** pipeline: [tree-sitter](https://tree-sitter.github.io/tree-sitter/)
+parses the source into a typed graph, BM25 picks the seed chunks, and the graph — not further text
+similarity — decides what else is worth spending the budget on. Optional dense vectors
+(`repo2graph embed`) fuse into the seed ranking; nothing downstream requires them.
 
 - **Nodes**: `repo`, `dir`, `file`, `symbol` (function/method/class/struct/trait/interface/type),
   `module` (external dependency), `external` (an unresolved call target).
@@ -363,6 +550,21 @@ See **[examples/README.md](examples/README.md)** for the full index and reproduc
 actually surfaced (parse-error rates on macro-heavy C/C++, call-name ambiguity, cross-language
 resolution limits).
 
+### 🧪 Reproducible benchmark & regression suite
+
+Beyond full-scale public codebase indexing, repo2graph includes a reproducible 25-task benchmark across 5 application archetypes (`benchmarks/corpus/`: TypeScript app, Python backend, modular monolith, React frontend, and dynamic patterns) comparing repo2graph against `ripgrep` and agent-baseline search:
+
+| Metric | repo2graph (GraphRAG) | `ripgrep` Search | Agent Baseline Search |
+|---|---|---|---|
+| **Query Correctness** | **100% (25/25)** | 80.0% (20/25) | 56.0% (14/25) |
+| **Citation Precision** | **97.9% (46/47)** | 80.9% (38/47) | 55.3% (26/47) |
+| **Mean Query Latency** | **1.82 ms** | 12.44 ms | 31.84 ms |
+| **Token Budget Compliance** | **100%** (Clamped) | 0% (Unbounded) | 72% |
+
+Full methodology, ground truth evidence, failure cases, and reproduction scripts: **[BENCHMARK.md](BENCHMARK.md)**.
+Continuous benchmark regression checking is enforced in CI via [`.github/workflows/benchmark.yml`](.github/workflows/benchmark.yml).
+
+
 ## 📖 CLI & server reference
 
 | Command | Does |
@@ -374,9 +576,12 @@ resolution limits).
 | `repo2graph embed -o .r2g [--verify-rag]` | Compute/verify dense vectors for hybrid search. |
 | `repo2graph map -o .r2g [--viz-nodes N]` | Regenerate `graph.html` with a different node cap. |
 | `repo2graph stats -o .r2g [--format text]` | Node/edge/function counts for an existing index; `--format text` for a quality summary. |
+| `repo2graph index-status -o .r2g [--json] [--check]` | Indexed commit/branch, build time, counts, languages, skipped paths, size, and freshness. `--check` exits 1 when stale. |
 | `repo2graph doctor [path]` | Diagnose environment, dependencies, permissions, and index integrity. |
+| `repo2graph bug-report -o .r2g [--category CAT]` | Privacy-preserving diagnostic bundle for an issue. No source code, no paths by default. |
 | `repo2graph explain-path <path> [-r <repo>]` | Say whether a path would be indexed, and which precedence rule decided. |
 | `repo2graph explain <edge|node|retrieval>` | Explain graph edges, node metadata, and retrieval ranking decisions. |
+| `repo2graph impact -i .r2g [--base main]` | PR / diff architectural blast radius & impact analysis. |
 | `repo2graph completion [shell]` | Print shell tab completion setup script (`bash`, `zsh`, `fish`). |
 | `repo2graph-mcp <path> [--no-auto-build] [--async-build]` | stdio MCP server over `.r2g`. |
 
@@ -387,10 +592,15 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 
 ## 🔐 Security
 
-- **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, GitHub Action, and MCP exclude credential files (`.env*`, private keys, certificates, tokens, `.ssh`, `.aws`, `.gnupg`) automatically. Use `--include-secrets` only if you explicitly choose to index them.
-- **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs, and private keys. Inline matches undergo line-preserving redaction (`--secret-policy redact-match|exclude-file|warn-only|off`).
+- **Secure-by-default secret exclusion**: `build`, `github`, auto-building `query`/`rag`, the GitHub Action and MCP all skip credential files automatically — `.env*`, private keys, certificates, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more. `--include-secrets` opts out; **the MCP tools have no equivalent**, because an agent returning `.env` is a different problem from a human choosing to read it.
+- **Content-aware secret scanning**: Chunks are scanned for high-entropy tokens, cloud API keys (AWS, OpenAI, Google, Slack, GitHub), JWTs, DB URLs and private keys. Matches are redacted line-preservingly (`--secret-policy redact-match|exclude-file|warn-only|off`).
 - **Sanitized logs and events**: Audit logs and structured event sinks enforce cycle detection, container size limits, recursion depth ceilings, and scrub URL basic-auth credentials.
-- **Local by default**: `build`, `query`, `rag`, and the MCP server make no network calls. `rag --answer` is the one opt-in exception — it sends the assembled pack to an LLM provider and prints the provider + hostname before doing so. Details: **[.github/SECURITY.md](.github/SECURITY.md)**.
+- **Local by default, and only one path ever sends your code**: `build`, `query`, `rag`, `map`, `stats` and the MCP server over stdio open no socket at all — asserted by socket-level tests, not just by reading the code. Four commands *can* reach the network, and only the first sends anything of yours: `rag --answer` (uploads the pack; prints provider + hostname first), `repo2graph github` (clones), `repo2graph embed` (downloads an embedding model once), and `repo2graph-mcp --auth-oidc-issuer` (fetches public keys). **No telemetry of any kind, and no setting to turn off.**
+
+Where every byte goes and how to delete it: **[docs/PRIVACY.md](docs/PRIVACY.md)**. What an attacker
+could try, and what is out of scope: **[docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)**. Hardened
+configurations to copy: **[docs/secure-configuration.md](docs/secure-configuration.md)**. Reporting
+a vulnerability: **[.github/SECURITY.md](.github/SECURITY.md)**.
 
 ## 🤝 Contributing & community
 
@@ -398,15 +608,30 @@ tables and budget accounting: **[docs/cli.md](docs/cli.md)**.
 git clone https://github.com/Srinivasan-78/repo2graph
 cd repo2graph
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-make lint test   # or: ruff check . && pytest
+make lint format-check typecheck test    # the four gates CI runs
 ```
 
-- **[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)** — full local dev setup, code style, and
-  the registry/Glama release process.
+Branch from **`develop`** and open the PR against it — `main` is the release branch. `make lint`
+alone is only `ruff check .`; `ruff format --check .` is a **separate** gate and the one people
+miss.
+
+- **[docs/good-first-issues.md](docs/good-first-issues.md)** — seven starter tasks, each with a
+  file and line to start from, acceptance criteria, and the catch that makes it harder than it
+  looks.
+- **[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)** — local setup, the CI gates, the branch
+  model, the test house style, and the registry/Glama release process.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — the module map: what each module owns, which
+  way dependencies run, and where a change of each kind goes.
 - **[docs/BACKLOG.md](docs/BACKLOG.md)** — deliberately deferred work and why; the closest thing to
-  a roadmap, plus a "good first issues" section.
+  a roadmap.
+- **[LANGUAGE_SUPPORT.md](LANGUAGE_SUPPORT.md)** — strategic language roadmap, scorecard generator, and ecosystem relationship extraction (routes, test links, DI, ORMs).
+- **[BENCHMARK.md](BENCHMARK.md)** — reproducible 25-task evaluation across 5 archetypes, comparison against ripgrep and agent baseline, and regression gating.
+- **[PR_IMPACT.md](PR_IMPACT.md)** — flagship PR & diff architectural blast radius analysis, reverse caller exposure, test coverage mapping, and CI workflow.
+- **[docs/ROADMAP_LANGUAGE_ISSUES.md](docs/ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues (`LANG-01` to `LANG-11`) for deep language and framework support.
 - **[AGENTS.md](AGENTS.md)** — this codebase's non-obvious conventions (Windows encoding, text
   slicing, the two budget models) before editing `repo2graph/`.
+- **[POSITIONING.md](POSITIONING.md)** — what repo2graph claims, what it deliberately does not
+  claim, and the copy for every outward-facing surface. Read it before changing any of them.
 - **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — Contributor Covenant v2.1.
 - Found a bug or have a feature idea? [Open an issue](https://github.com/Srinivasan-78/repo2graph/issues/new/choose).
 

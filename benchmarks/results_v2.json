@@ -1,0 +1,1187 @@
+{
+  "timestamp": "2026-09-25T19:48:55Z",
+  "repo2graph_version": "1.6.0",
+  "total_tasks": 25,
+  "repo_stats": {
+    "dynamic_patterns": {
+      "files": 12,
+      "nodes": 67,
+      "edges": 111,
+      "build_latency_ms": 434.64
+    },
+    "frontend_app": {
+      "files": 13,
+      "nodes": 62,
+      "edges": 103,
+      "build_latency_ms": 457.88
+    },
+    "modular_monolith": {
+      "files": 14,
+      "nodes": 71,
+      "edges": 125,
+      "build_latency_ms": 449.98
+    },
+    "python_backend": {
+      "files": 11,
+      "nodes": 56,
+      "edges": 93,
+      "build_latency_ms": 432.12
+    },
+    "ts_app": {
+      "files": 10,
+      "nodes": 68,
+      "edges": 105,
+      "build_latency_ms": 422.5
+    }
+  },
+  "workflow_metrics": {
+    "repo2graph": {
+      "correct_tasks": 25,
+      "accuracy_rate_pct": 100.0,
+      "mean_citation_accuracy": 97.9,
+      "mean_latency_ms": 1.88,
+      "mean_tokens_consumed": 591
+    },
+    "ripgrep": {
+      "correct_tasks": 20,
+      "accuracy_rate_pct": 80.0,
+      "mean_citation_accuracy": 72.7,
+      "mean_latency_ms": 2.21,
+      "mean_tokens_consumed": 219
+    },
+    "agent_baseline": {
+      "correct_tasks": 14,
+      "accuracy_rate_pct": 56.0,
+      "mean_citation_accuracy": 40.3,
+      "mean_latency_ms": 1.12,
+      "mean_tokens_consumed": 222
+    }
+  },
+  "task_evaluations": [
+    {
+      "task_id": "TASK-01",
+      "repo": "ts_app",
+      "category": "Entrypoint & Call Trace",
+      "query": "Where does an incoming request enter the application and trace to getUserProfile?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 8.23,
+          "context_chars": 2492,
+          "estimated_tokens": 623,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/server.ts:16",
+            "src/routes/user.routes.ts:19-22",
+            "src/controllers/user.controller.ts:7-9",
+            "src/services/user.service.ts:18-20"
+          ],
+          "output_snippet": "# Repo map: ts_app  files: 10  nodes: 68  edges: 105 languages: typescript=9, json=1  ## Most depended-on files - src/services/token.service.ts (in=4) - src/services/user.service.ts (in=4) - src/middleware/auth.middleware.ts (in=2) - src/models/user.model.ts (in=2) - src/controllers/user.controller."
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.24,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.91,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-02",
+      "repo": "ts_app",
+      "category": "Authentication & Middleware",
+      "query": "What middleware guards getProfileRoute and how is the token validated?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.34,
+          "context_chars": 2378,
+          "estimated_tokens": 594,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/routes/user.routes.ts:20",
+            "src/middleware/auth.middleware.ts:6-12",
+            "src/services/token.service.ts:20-33"
+          ],
+          "output_snippet": "# Repo map: ts_app  files: 10  nodes: 68  edges: 105 languages: typescript=9, json=1  ## Most depended-on files - src/services/token.service.ts (in=4) - src/services/user.service.ts (in=4) - src/middleware/auth.middleware.ts (in=2) - src/models/user.model.ts (in=2) - src/controllers/user.controller."
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.89,
+          "context_chars": 749,
+          "estimated_tokens": 187,
+          "correct": true,
+          "citation_accuracy": 0.667,
+          "citations_found": [
+            "src/routes/user.routes.ts:20",
+            "src/middleware/auth.middleware.ts:6-12"
+          ],
+          "output_snippet": "src/middleware/auth.middleware.ts:3: export class AuthMiddleware { src/routes/user.routes.ts:3: import { AuthMiddleware } from \"../middleware/auth.middleware\"; src/routes/user.routes.ts:8: constructor(userService: UserService, private authMiddleware: AuthMiddleware) { src/routes/user.routes.ts:14: t"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.07,
+          "context_chars": 1718,
+          "estimated_tokens": 429,
+          "correct": true,
+          "citation_accuracy": 0.667,
+          "citations_found": [
+            "src/middleware/auth.middleware.ts:6-12",
+            "src/services/token.service.ts:20-33"
+          ],
+          "output_snippet": "=== src/middleware/auth.middleware.ts === import { TokenService, TokenPayload } from \"../services/token.service\";  export class AuthMiddleware {     constructor(private tokenService: TokenService) {}      public verifySession(authHeader: string = \"jwt.sample.benchmark-secret-key\"): TokenPayload {   "
+        }
+      }
+    },
+    {
+      "task_id": "TASK-03",
+      "repo": "ts_app",
+      "category": "Security & Cryptography",
+      "query": "Where is user password hashing performed and verified during login?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.3,
+          "context_chars": 2424,
+          "estimated_tokens": 606,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/services/user.service.ts:23-25",
+            "src/utils/crypto.ts:1-7"
+          ],
+          "output_snippet": "# Repo map: ts_app  files: 10  nodes: 68  edges: 105 languages: typescript=9, json=1  ## Most depended-on files - src/services/token.service.ts (in=4) - src/services/user.service.ts (in=4) - src/middleware/auth.middleware.ts (in=2) - src/models/user.model.ts (in=2) - src/controllers/user.controller."
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.94,
+          "context_chars": 3819,
+          "estimated_tokens": 954,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/services/user.service.ts:23-25",
+            "src/utils/crypto.ts:1-7"
+          ],
+          "output_snippet": "src/controllers/user.controller.ts:1: import { UserService } from \"../services/user.service\"; src/controllers/user.controller.ts:2: import { UserModel } from \"../models/user.model\"; src/controllers/user.controller.ts:4: export class UserController { src/controllers/user.controller.ts:5: constructor("
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.23,
+          "context_chars": 1542,
+          "estimated_tokens": 385,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": "=== src/controllers/user.controller.ts === import { UserService } from \"../services/user.service\"; import { UserModel } from \"../models/user.model\";  export class UserController {     constructor(private userService: UserService) {}      public getUserProfile(userId: string): UserModel | null {     "
+        }
+      }
+    },
+    {
+      "task_id": "TASK-04",
+      "repo": "ts_app",
+      "category": "Test-to-Implementation",
+      "query": "Which test suite tests UserService.login and invalid credentials?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.37,
+          "context_chars": 2464,
+          "estimated_tokens": 616,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/user.service.test.ts:14-24",
+            "src/services/user.service.ts:21-28"
+          ],
+          "output_snippet": "# Repo map: ts_app  files: 10  nodes: 68  edges: 105 languages: typescript=9, json=1  ## Most depended-on files - src/services/token.service.ts (in=4) - src/services/user.service.ts (in=4) - src/middleware/auth.middleware.ts (in=2) - src/models/user.model.ts (in=2) - src/controllers/user.controller."
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.9,
+          "context_chars": 108,
+          "estimated_tokens": 27,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "tests/user.service.test.ts:14-24"
+          ],
+          "output_snippet": "package.json:5: \"test\": \"jest\" tests/user.service.test.ts:9: tokenService = new TokenService(\"test-secret\");"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.93,
+          "context_chars": 1061,
+          "estimated_tokens": 265,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "tests/user.service.test.ts:14-24"
+          ],
+          "output_snippet": "=== tests/user.service.test.ts === import { UserService } from \"../src/services/user.service\"; import { TokenService } from \"../src/services/token.service\";  describe(\"UserService\", () => {     let tokenService: TokenService;     let userService: UserService;      beforeEach(() => {         tokenSer"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-05",
+      "repo": "ts_app",
+      "category": "Blast Radius",
+      "query": "What components depend on the TokenPayload interface definition?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.24,
+          "context_chars": 2181,
+          "estimated_tokens": 545,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/services/token.service.ts:1-6",
+            "src/middleware/auth.middleware.ts:6-19"
+          ],
+          "output_snippet": "# Repo map: ts_app  files: 10  nodes: 68  edges: 105 languages: typescript=9, json=1  ## Most depended-on files - src/services/token.service.ts (in=4) - src/services/user.service.ts (in=4) - src/middleware/auth.middleware.ts (in=2) - src/models/user.model.ts (in=2) - src/controllers/user.controller."
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.82,
+          "context_chars": 713,
+          "estimated_tokens": 178,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/services/token.service.ts:1-6",
+            "src/middleware/auth.middleware.ts:6-19"
+          ],
+          "output_snippet": "package.json:7: \"dependencies\": { src/middleware/auth.middleware.ts:1: import { TokenService, TokenPayload } from \"../services/token.service\"; src/middleware/auth.middleware.ts:6: public verifySession(authHeader: string = \"jwt.sample.benchmark-secret-key\"): TokenPayload { src/middleware/auth.middlew"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.84,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-06",
+      "repo": "python_backend",
+      "category": "Routing & Entrypoint",
+      "query": "What HTTP endpoint handles order refunds and what handler does it invoke?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 8.59,
+          "context_chars": 2487,
+          "estimated_tokens": 621,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/api/router.py:16",
+            "app/api/orders.py:16-18"
+          ],
+          "output_snippet": "# Repo map: python_backend  files: 11  nodes: 56  edges: 93 languages: python=10, toml=1  ## Most depended-on files - app/services/payment_service.py (in=3) - app/dependencies.py (in=2) - app/services/order_service.py (in=2) - app/api/orders.py (in=1) - app/api/router.py (in=1) - app/models/order.py"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.39,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.16,
+          "context_chars": 1195,
+          "estimated_tokens": 298,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "app/api/orders.py:16-18"
+          ],
+          "output_snippet": "=== app/api/orders.py === from app.services.order_service import OrderService from app.services.payment_service import PaymentService from app.dependencies import get_db_session  payment_service = PaymentService() order_service = OrderService(payment_service)  def handle_create_order(payload: dict) "
+        }
+      }
+    },
+    {
+      "task_id": "TASK-07",
+      "repo": "python_backend",
+      "category": "Multi-hop Call Trace",
+      "query": "Trace create_order from the API handler through the payment service to order model persistence.",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.39,
+          "context_chars": 2463,
+          "estimated_tokens": 615,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/api/orders.py:9-11",
+            "app/services/order_service.py:9-24",
+            "app/services/payment_service.py:8-14",
+            "app/models/order.py:4-13"
+          ],
+          "output_snippet": "# Repo map: python_backend  files: 11  nodes: 56  edges: 93 languages: python=10, toml=1  ## Most depended-on files - app/services/payment_service.py (in=3) - app/dependencies.py (in=2) - app/services/order_service.py (in=2) - app/api/orders.py (in=1) - app/api/router.py (in=1) - app/models/order.py"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.2,
+          "context_chars": 1377,
+          "estimated_tokens": 344,
+          "correct": true,
+          "citation_accuracy": 0.75,
+          "citations_found": [
+            "app/api/orders.py:9-11",
+            "app/services/order_service.py:9-24",
+            "app/models/order.py:4-13"
+          ],
+          "output_snippet": "app/api/orders.py:1: from app.services.order_service import OrderService app/api/orders.py:2: from app.services.payment_service import PaymentService app/api/orders.py:3: from app.dependencies import get_db_session app/api/orders.py:8: def handle_create_order(payload: dict) -> dict: app/api/orders.p"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.22,
+          "context_chars": 2454,
+          "estimated_tokens": 613,
+          "correct": true,
+          "citation_accuracy": 0.75,
+          "citations_found": [
+            "app/services/order_service.py:9-24",
+            "app/services/payment_service.py:8-14",
+            "app/models/order.py:4-13"
+          ],
+          "output_snippet": "=== app/models/order.py === from dataclasses import dataclass, asdict  @dataclass class OrderModel:     order_id: str     customer_id: str     amount: float     status: str     transaction_id: str      def to_dict(self) -> dict:         return asdict(self)  === app/services/order_service.py === from"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-08",
+      "repo": "python_backend",
+      "category": "Configuration & Secrets",
+      "query": "What environment variables configure the database URL and payment API key?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.32,
+          "context_chars": 2439,
+          "estimated_tokens": 609,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/dependencies.py:9-14"
+          ],
+          "output_snippet": "# Repo map: python_backend  files: 11  nodes: 56  edges: 93 languages: python=10, toml=1  ## Most depended-on files - app/services/payment_service.py (in=3) - app/dependencies.py (in=2) - app/services/order_service.py (in=2) - app/api/orders.py (in=1) - app/api/router.py (in=1) - app/models/order.py"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.88,
+          "context_chars": 172,
+          "estimated_tokens": 43,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/dependencies.py:9-14"
+          ],
+          "output_snippet": "app/dependencies.py:10: \"environment\": os.getenv(\"APP_ENV\", \"benchmark-production\"), app/main.py:6: print(f\"Initializing service in environment: {settings['environment']}\")"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.9,
+          "context_chars": 735,
+          "estimated_tokens": 183,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": "=== app/services/payment_service.py === import uuid  class PaymentService:     def __init__(self, provider: str = \"mock-stripe\"):         self.provider = provider         self.transactions = {}      def charge(self, amount: float, currency: str) -> str:         if amount <= 0:             raise Valu"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-09",
+      "repo": "python_backend",
+      "category": "Test-to-Implementation",
+      "query": "Which test exercises order refunding and asserts status REFUNDED?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.26,
+          "context_chars": 2241,
+          "estimated_tokens": 560,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/test_order_service.py:17-26",
+            "app/services/order_service.py:31-38"
+          ],
+          "output_snippet": "# Repo map: python_backend  files: 11  nodes: 56  edges: 93 languages: python=10, toml=1  ## Most depended-on files - app/services/payment_service.py (in=3) - app/dependencies.py (in=2) - app/services/order_service.py (in=2) - app/api/orders.py (in=1) - app/api/router.py (in=1) - app/models/order.py"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.85,
+          "context_chars": 3395,
+          "estimated_tokens": 848,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/test_order_service.py:17-26",
+            "app/services/order_service.py:31-38"
+          ],
+          "output_snippet": "app/api/orders.py:1: from app.services.order_service import OrderService app/api/orders.py:6: order_service = OrderService(payment_service) app/api/orders.py:8: def handle_create_order(payload: dict) -> dict: app/api/orders.py:10: return order_service.create_order(session, payload) app/api/orders.py"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.06,
+          "context_chars": 1872,
+          "estimated_tokens": 468,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "tests/test_order_service.py:17-26"
+          ],
+          "output_snippet": "=== tests/test_order_service.py === from app.services.order_service import OrderService from app.services.payment_service import PaymentService  def test_order_creation_flow():     payment_service = PaymentService()     order_service = OrderService(payment_service)     session = {}      payload = {\""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-10",
+      "repo": "python_backend",
+      "category": "Blast Radius",
+      "query": "What callers are impacted if PaymentService.charge signature changes?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.26,
+          "context_chars": 2373,
+          "estimated_tokens": 593,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/services/order_service.py:14",
+            "tests/test_order_service.py:9"
+          ],
+          "output_snippet": "# Repo map: python_backend  files: 11  nodes: 56  edges: 93 languages: python=10, toml=1  ## Most depended-on files - app/services/payment_service.py (in=3) - app/dependencies.py (in=2) - app/services/order_service.py (in=2) - app/api/orders.py (in=1) - app/api/router.py (in=1) - app/models/order.py"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.82,
+          "context_chars": 584,
+          "estimated_tokens": 146,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "app/services/order_service.py:14",
+            "tests/test_order_service.py:9"
+          ],
+          "output_snippet": "app/api/orders.py:2: from app.services.payment_service import PaymentService app/api/orders.py:5: payment_service = PaymentService() app/services/order_service.py:1: from app.services.payment_service import PaymentService app/services/order_service.py:5: def __init__(self, payment_service: PaymentSe"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.81,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-11",
+      "repo": "modular_monolith",
+      "category": "Cross-Domain Workflow",
+      "query": "Where does checkout_order calculate tax and issue an invoice?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 7.12,
+          "context_chars": 2324,
+          "estimated_tokens": 581,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/app.py:14-20",
+            "monolith/billing/service.py:11-20",
+            "monolith/kernel/config.py:7-8"
+          ],
+          "output_snippet": "# Repo map: modular_monolith  files: 14  nodes: 71  edges: 125 languages: python=14  ## Most depended-on files - monolith/kernel/events.py (in=4) - monolith/billing/gateway.py (in=2) - monolith/billing/service.py (in=2) - monolith/app.py (in=1) - monolith/billing/models.py (in=1) - monolith/catalog/"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.54,
+          "context_chars": 549,
+          "estimated_tokens": 137,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/app.py:14-20",
+            "monolith/billing/service.py:11-20",
+            "monolith/kernel/config.py:7-8"
+          ],
+          "output_snippet": "monolith/app.py:15: def checkout_order(self, account_id: str, product_id: str, quantity: int) -> dict: monolith/billing/service.py:12: tax = subtotal * config.tax_rate monolith/billing/service.py:13: total = round(subtotal + tax, 2) monolith/kernel/config.py:8: self.tax_rate = 0.08 tests/test_billin"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.14,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-12",
+      "repo": "modular_monolith",
+      "category": "Event-Driven Decoupled Tracing",
+      "query": "What components subscribe to the invoice_paid event and what do they do?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.35,
+          "context_chars": 2471,
+          "estimated_tokens": 617,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/notifications/dispatcher.py:6,13-16",
+            "monolith/shipping/service.py:6,8-11"
+          ],
+          "output_snippet": "# Repo map: modular_monolith  files: 14  nodes: 71  edges: 125 languages: python=14  ## Most depended-on files - monolith/kernel/events.py (in=4) - monolith/billing/gateway.py (in=2) - monolith/billing/service.py (in=2) - monolith/app.py (in=1) - monolith/billing/models.py (in=1) - monolith/catalog/"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.4,
+          "context_chars": 953,
+          "estimated_tokens": 238,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/notifications/dispatcher.py:6,13-16",
+            "monolith/shipping/service.py:6,8-11"
+          ],
+          "output_snippet": "monolith/billing/service.py:19: global_event_bus.publish(\"invoice_paid\", {\"invoice_id\": invoice_id, \"account_id\": account_id, \"amount\": total}) monolith/kernel/events.py:3: self.subscribers = {} monolith/kernel/events.py:5: def subscribe(self, event_name: str, handler): monolith/kernel/events.py:6: "
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.29,
+          "context_chars": 1117,
+          "estimated_tokens": 279,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": "=== monolith/kernel/events.py === class EventBus:     def __init__(self):         self.subscribers = {}      def subscribe(self, event_name: str, handler):         if event_name not in self.subscribers:             self.subscribers[event_name] = []         self.subscribers[event_name].append(handler"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-13",
+      "repo": "modular_monolith",
+      "category": "Payment Gateway Abstraction",
+      "query": "What class handles charging customer cards and records the ledger in the billing module?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.41,
+          "context_chars": 2457,
+          "estimated_tokens": 614,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/billing/gateway.py:1-10",
+            "monolith/billing/service.py:14"
+          ],
+          "output_snippet": "# Repo map: modular_monolith  files: 14  nodes: 71  edges: 125 languages: python=14  ## Most depended-on files - monolith/kernel/events.py (in=4) - monolith/billing/gateway.py (in=2) - monolith/billing/service.py (in=2) - monolith/app.py (in=1) - monolith/billing/models.py (in=1) - monolith/catalog/"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.58,
+          "context_chars": 939,
+          "estimated_tokens": 234,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/billing/gateway.py:1-10",
+            "monolith/billing/service.py:14"
+          ],
+          "output_snippet": "monolith/app.py:7: class MonolithApplication: monolith/billing/gateway.py:1: class StripePaymentGateway: monolith/billing/models.py:1: from dataclasses import dataclass monolith/billing/models.py:3: @dataclass monolith/billing/models.py:4: class Invoice: monolith/billing/service.py:6: class BillingS"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 2.11,
+          "context_chars": 1659,
+          "estimated_tokens": 414,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/billing/gateway.py:1-10",
+            "monolith/billing/service.py:14"
+          ],
+          "output_snippet": "=== monolith/billing/gateway.py === class StripePaymentGateway:     def __init__(self, api_key: str = \"sk_live_monolith_key\"):         self.api_key = api_key         self.ledger = []      def charge_customer(self, account_id: str, amount: float, currency: str) -> str:         charge_id = f\"chg_{acco"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-14",
+      "repo": "modular_monolith",
+      "category": "Domain Logic & Models",
+      "query": "How is product inventory stock reserved and decremented in catalog?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.34,
+          "context_chars": 2411,
+          "estimated_tokens": 602,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/catalog/service.py:13-18",
+            "monolith/catalog/models.py:4-9"
+          ],
+          "output_snippet": "# Repo map: modular_monolith  files: 14  nodes: 71  edges: 125 languages: python=14  ## Most depended-on files - monolith/kernel/events.py (in=4) - monolith/billing/gateway.py (in=2) - monolith/billing/service.py (in=2) - monolith/app.py (in=1) - monolith/billing/models.py (in=1) - monolith/catalog/"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.63,
+          "context_chars": 1265,
+          "estimated_tokens": 316,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/catalog/service.py:13-18",
+            "monolith/catalog/models.py:4-9"
+          ],
+          "output_snippet": "monolith/app.py:15: def checkout_order(self, account_id: str, product_id: str, quantity: int) -> dict: monolith/app.py:16: product = self.catalog.get_product(product_id) monolith/app.py:17: if not product or not self.catalog.reserve_stock(product_id, quantity): monolith/app.py:18: raise ValueError(\""
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.3,
+          "context_chars": 855,
+          "estimated_tokens": 213,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "monolith/catalog/service.py:13-18",
+            "monolith/catalog/models.py:4-9"
+          ],
+          "output_snippet": "=== monolith/catalog/models.py === from dataclasses import dataclass  @dataclass class Product:     id: str     title: str     price: float     stock: int  === monolith/catalog/service.py === from monolith.catalog.models import Product  class CatalogService:     def __init__(self):         self.prod"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-15",
+      "repo": "modular_monolith",
+      "category": "Test-to-Implementation",
+      "query": "Which test verifies the full end-to-end checkout event flow across domains?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.35,
+          "context_chars": 2265,
+          "estimated_tokens": 566,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/test_cross_domain_events.py:4-18"
+          ],
+          "output_snippet": "# Repo map: modular_monolith  files: 14  nodes: 71  edges: 125 languages: python=14  ## Most depended-on files - monolith/kernel/events.py (in=4) - monolith/billing/gateway.py (in=2) - monolith/billing/service.py (in=2) - monolith/app.py (in=1) - monolith/billing/models.py (in=1) - monolith/catalog/"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.88,
+          "context_chars": 319,
+          "estimated_tokens": 79,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/test_cross_domain_events.py:4-18"
+          ],
+          "output_snippet": "tests/test_billing_workflow.py:4: def test_billing_tax_calculation_and_charge(): tests/test_billing_workflow.py:9: inv = billing.issue_invoice(\"acc-test\", 100.0) tests/test_billing_workflow.py:12: assert inv.charge_id.startswith(\"chg_acc-test_\") tests/test_cross_domain_events.py:3: def test_full_che"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.37,
+          "context_chars": 1624,
+          "estimated_tokens": 406,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "tests/test_cross_domain_events.py:4-18"
+          ],
+          "output_snippet": "=== tests/test_billing_workflow.py === from monolith.billing.service import BillingService from monolith.billing.gateway import StripePaymentGateway  def test_billing_tax_calculation_and_charge():     gateway = StripePaymentGateway()     billing = BillingService(gateway)      # Subtotal 100 with 0.0"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-16",
+      "repo": "frontend_app",
+      "category": "UI Hierarchy",
+      "query": "What components compose the renderDashboardPage layout?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 8.89,
+          "context_chars": 2319,
+          "estimated_tokens": 579,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/pages/Dashboard.tsx:6-10",
+            "src/components/Header.tsx:3-6",
+            "src/components/Sidebar.tsx:1-7",
+            "src/components/MetricCard.tsx:3-5"
+          ],
+          "output_snippet": "# Repo map: frontend_app  files: 13  nodes: 62  edges: 103 languages: tsx=8, typescript=4, json=1  ## Most depended-on files - src/types/dashboard.ts (in=7) - src/components/Header.tsx (in=2) - src/components/MetricCard.tsx (in=2) - src/components/Sidebar.tsx (in=2) - src/hooks/useMetrics.ts (in=2) "
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.56,
+          "context_chars": 685,
+          "estimated_tokens": 171,
+          "correct": false,
+          "citation_accuracy": 0.25,
+          "citations_found": [
+            "src/pages/Dashboard.tsx:6-10"
+          ],
+          "output_snippet": "src/__tests__/MetricCard.test.tsx:1: import { renderMetricCard } from \"../components/MetricCard\"; src/pages/Analytics.tsx:1: import { renderHeader } from \"../components/Header\"; src/pages/Analytics.tsx:2: import { renderSidebar } from \"../components/Sidebar\"; src/pages/Analytics.tsx:3: import { rend"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.34,
+          "context_chars": 1065,
+          "estimated_tokens": 266,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "src/components/Header.tsx:3-6",
+            "src/components/MetricCard.tsx:3-5"
+          ],
+          "output_snippet": "=== src/components/DataTable.tsx === import { MetricItem } from \"../types/dashboard\";  export function renderDataTable(rows: MetricItem[]): string {     const tableRows = rows.map(r => `<tr><td>${r.id}</td><td>${r.label}</td><td>${r.value}</td></tr>`);     return `<table><thead><tr><th>ID</th><th>Me"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-17",
+      "repo": "frontend_app",
+      "category": "Data Flow & Hooks",
+      "query": "How do metrics flow from ApiClient to the Dashboard page?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.3,
+          "context_chars": 2482,
+          "estimated_tokens": 620,
+          "correct": true,
+          "citation_accuracy": 0.667,
+          "citations_found": [
+            "src/services/apiClient.ts:6-12",
+            "src/hooks/useMetrics.ts:4-10"
+          ],
+          "output_snippet": "# Repo map: frontend_app  files: 13  nodes: 62  edges: 103 languages: tsx=8, typescript=4, json=1  ## Most depended-on files - src/types/dashboard.ts (in=7) - src/components/Header.tsx (in=2) - src/components/MetricCard.tsx (in=2) - src/components/Sidebar.tsx (in=2) - src/hooks/useMetrics.ts (in=2) "
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.38,
+          "context_chars": 2317,
+          "estimated_tokens": 579,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/services/apiClient.ts:6-12",
+            "src/hooks/useMetrics.ts:4-10",
+            "src/pages/Dashboard.tsx:7-8"
+          ],
+          "output_snippet": "src/__tests__/MetricCard.test.tsx:1: import { renderMetricCard } from \"../components/MetricCard\"; src/__tests__/MetricCard.test.tsx:2: import { MetricItem } from \"../types/dashboard\"; src/components/DataTable.tsx:1: import { MetricItem } from \"../types/dashboard\"; src/components/Header.tsx:1: import"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.25,
+          "context_chars": 1370,
+          "estimated_tokens": 342,
+          "correct": true,
+          "citation_accuracy": 0.667,
+          "citations_found": [
+            "src/hooks/useMetrics.ts:4-10",
+            "src/pages/Dashboard.tsx:7-8"
+          ],
+          "output_snippet": "=== src/pages/Dashboard.tsx === import { renderHeader } from \"../components/Header\"; import { renderSidebar } from \"../components/Sidebar\"; import { renderMetricCard } from \"../components/MetricCard\"; import { useMetrics } from \"../hooks/useMetrics\";  export async function renderDashboardPage(): Pro"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-18",
+      "repo": "frontend_app",
+      "category": "State Management",
+      "query": "Where is user authentication state managed in the frontend application?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.26,
+          "context_chars": 2474,
+          "estimated_tokens": 618,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/context/AuthContext.tsx:4-22",
+            "src/hooks/useAuth.ts:4-10"
+          ],
+          "output_snippet": "# Repo map: frontend_app  files: 13  nodes: 62  edges: 103 languages: tsx=8, typescript=4, json=1  ## Most depended-on files - src/types/dashboard.ts (in=7) - src/components/Header.tsx (in=2) - src/components/MetricCard.tsx (in=2) - src/components/Sidebar.tsx (in=2) - src/hooks/useMetrics.ts (in=2) "
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.5,
+          "context_chars": 1215,
+          "estimated_tokens": 303,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/context/AuthContext.tsx:4-22",
+            "src/hooks/useAuth.ts:4-10"
+          ],
+          "output_snippet": "src/components/Header.tsx:5: return `<header><h1>Analytics Platform</h1><span>User: ${session.username}</span></header>`; src/context/AuthContext.tsx:1: import { UserSession } from \"../types/dashboard\"; src/context/AuthContext.tsx:5: private session: UserSession = { src/context/AuthContext.tsx:7: us"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.97,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-19",
+      "repo": "frontend_app",
+      "category": "Test-to-Implementation",
+      "query": "Which unit test tests renderMetricCard formatting and trend rendering?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.25,
+          "context_chars": 2362,
+          "estimated_tokens": 590,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/__tests__/MetricCard.test.tsx:4-16",
+            "src/components/MetricCard.tsx:3-5"
+          ],
+          "output_snippet": "# Repo map: frontend_app  files: 13  nodes: 62  edges: 103 languages: tsx=8, typescript=4, json=1  ## Most depended-on files - src/types/dashboard.ts (in=7) - src/components/Header.tsx (in=2) - src/components/MetricCard.tsx (in=2) - src/components/Sidebar.tsx (in=2) - src/hooks/useMetrics.ts (in=2) "
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.38,
+          "context_chars": 50,
+          "estimated_tokens": 12,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "src/__tests__/MetricCard.test.tsx:4-16"
+          ],
+          "output_snippet": "src/__tests__/MetricCard.test.tsx:7: id: \"m-test\","
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.06,
+          "context_chars": 566,
+          "estimated_tokens": 141,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "src/__tests__/MetricCard.test.tsx:4-16"
+          ],
+          "output_snippet": "=== src/__tests__/MetricCard.test.tsx === import { renderMetricCard } from \"../components/MetricCard\"; import { MetricItem } from \"../types/dashboard\";  describe(\"MetricCardComponent\", () => {     it(\"renders metric label and formatted value\", () => {         const sample: MetricItem = {            "
+        }
+      }
+    },
+    {
+      "task_id": "TASK-20",
+      "repo": "frontend_app",
+      "category": "Routing & Navigation",
+      "query": "What navigation paths are rendered in the Sidebar component?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.25,
+          "context_chars": 2464,
+          "estimated_tokens": 616,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/components/Sidebar.tsx:2"
+          ],
+          "output_snippet": "# Repo map: frontend_app  files: 13  nodes: 62  edges: 103 languages: tsx=8, typescript=4, json=1  ## Most depended-on files - src/types/dashboard.ts (in=7) - src/components/Header.tsx (in=2) - src/components/MetricCard.tsx (in=2) - src/components/Sidebar.tsx (in=2) - src/hooks/useMetrics.ts (in=2) "
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.23,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.35,
+          "context_chars": 982,
+          "estimated_tokens": 245,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "src/components/Sidebar.tsx:2"
+          ],
+          "output_snippet": "=== src/components/Sidebar.tsx === export function renderSidebar(currentPath: string): string {     const navItems = [\"/dashboard\", \"/analytics\", \"/settings\"];     const links = navItems.map(item => `<a href=\"${item}\" class=\"${item === currentPath ? \"active\" : \"\"}\">${item}</a>`);     return `<aside>"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-21",
+      "repo": "dynamic_patterns",
+      "category": "Name Collisions",
+      "query": "Which classes define an execute method with identical signature?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 8.07,
+          "context_chars": 2492,
+          "estimated_tokens": 623,
+          "correct": true,
+          "citation_accuracy": 0.8,
+          "citations_found": [
+            "dynamic_repo/plugins/alpha.py:8",
+            "dynamic_repo/plugins/beta.py:8",
+            "dynamic_repo/plugins/gamma.py:7",
+            "dynamic_repo/handlers/user_handler.py:14"
+          ],
+          "output_snippet": "# Repo map: dynamic_patterns  files: 12  nodes: 67  edges: 111 languages: python=12  ## Most depended-on files - dynamic_repo/registry.py (in=4) - dynamic_repo/dispatcher.py (in=2) - dynamic_repo/handlers/base_handler.py (in=2) - dynamic_repo/handlers/user_handler.py (in=1) - dynamic_repo/plugins/al"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.3,
+          "context_chars": 543,
+          "estimated_tokens": 135,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/plugins/alpha.py:8",
+            "dynamic_repo/plugins/beta.py:8",
+            "dynamic_repo/plugins/gamma.py:7",
+            "dynamic_repo/handlers/user_handler.py:14",
+            "dynamic_repo/handlers/order_handler.py:14"
+          ],
+          "output_snippet": "dynamic_repo/dispatcher.py:8: return plugin.execute(payload) dynamic_repo/handlers/order_handler.py:14: def execute(self, payload: dict) -> dict: dynamic_repo/handlers/user_handler.py:14: def execute(self, payload: dict) -> dict: dynamic_repo/meta.py:2: subclasses = {} dynamic_repo/meta.py:6: cls.su"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.85,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-22",
+      "repo": "dynamic_patterns",
+      "category": "Dynamic Dispatch (Limitation)",
+      "query": "How does DynamicDispatcher.run_strategy dispatch to plugins and why is it statically ambiguous?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.42,
+          "context_chars": 2427,
+          "estimated_tokens": 606,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/dispatcher.py:4-9",
+            "dynamic_repo/registry.py:4-13"
+          ],
+          "output_snippet": "# Repo map: dynamic_patterns  files: 12  nodes: 67  edges: 111 languages: python=12  ## Most depended-on files - dynamic_repo/registry.py (in=4) - dynamic_repo/dispatcher.py (in=2) - dynamic_repo/handlers/base_handler.py (in=2) - dynamic_repo/handlers/user_handler.py (in=1) - dynamic_repo/plugins/al"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.91,
+          "context_chars": 796,
+          "estimated_tokens": 199,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "dynamic_repo/dispatcher.py:4-9"
+          ],
+          "output_snippet": "dynamic_repo/barrel/index.py:4: from dynamic_repo.dispatcher import DynamicDispatcher dynamic_repo/barrel/index.py:6: __all__ = [\"PrimaryPlugin\", \"UserHandler\", \"DynamicDispatcher\"] dynamic_repo/dispatcher.py:3: class DynamicDispatcher: dynamic_repo/dispatcher.py:4: def run_strategy(self, strategy_n"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.07,
+          "context_chars": 1304,
+          "estimated_tokens": 326,
+          "correct": true,
+          "citation_accuracy": 0.5,
+          "citations_found": [
+            "dynamic_repo/dispatcher.py:4-9"
+          ],
+          "output_snippet": "=== dynamic_repo/dispatcher.py === from dynamic_repo.registry import get_plugin_instance  class DynamicDispatcher:     def run_strategy(self, strategy_name: str, payload: dict) -> dict:         # String lookup dispatch: static call graphs cannot know which plugin runs         plugin = get_plugin_ins"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-23",
+      "repo": "dynamic_patterns",
+      "category": "Reflection (Limitation)",
+      "query": "How does BaseHandler.handle_request dispatch actions dynamically?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.2,
+          "context_chars": 2451,
+          "estimated_tokens": 612,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/handlers/base_handler.py:2-8"
+          ],
+          "output_snippet": "# Repo map: dynamic_patterns  files: 12  nodes: 67  edges: 111 languages: python=12  ## Most depended-on files - dynamic_repo/registry.py (in=4) - dynamic_repo/dispatcher.py (in=2) - dynamic_repo/handlers/base_handler.py (in=2) - dynamic_repo/handlers/user_handler.py (in=1) - dynamic_repo/plugins/al"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.93,
+          "context_chars": 1200,
+          "estimated_tokens": 300,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/handlers/base_handler.py:2-8"
+          ],
+          "output_snippet": "dynamic_repo/barrel/index.py:4: from dynamic_repo.dispatcher import DynamicDispatcher dynamic_repo/barrel/index.py:6: __all__ = [\"PrimaryPlugin\", \"UserHandler\", \"DynamicDispatcher\"] dynamic_repo/dispatcher.py:3: class DynamicDispatcher: dynamic_repo/dispatcher.py:5: # String lookup dispatch: static "
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 1.04,
+          "context_chars": 799,
+          "estimated_tokens": 199,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": "=== dynamic_repo/dispatcher.py === from dynamic_repo.registry import get_plugin_instance  class DynamicDispatcher:     def run_strategy(self, strategy_name: str, payload: dict) -> dict:         # String lookup dispatch: static call graphs cannot know which plugin runs         plugin = get_plugin_ins"
+        }
+      }
+    },
+    {
+      "task_id": "TASK-24",
+      "repo": "dynamic_patterns",
+      "category": "Metaprogramming",
+      "query": "Where are subclasses automatically registered via __init_subclass__?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.12,
+          "context_chars": 1299,
+          "estimated_tokens": 324,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/meta.py:1-6"
+          ],
+          "output_snippet": "# Repo map: dynamic_patterns  files: 12  nodes: 67  edges: 111 languages: python=12  ## Most depended-on files - dynamic_repo/registry.py (in=4) - dynamic_repo/dispatcher.py (in=2) - dynamic_repo/handlers/base_handler.py (in=2) - dynamic_repo/handlers/user_handler.py (in=1) - dynamic_repo/plugins/al"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 2.13,
+          "context_chars": 89,
+          "estimated_tokens": 22,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/meta.py:1-6"
+          ],
+          "output_snippet": "dynamic_repo/meta.py:2: subclasses = {} dynamic_repo/meta.py:6: cls.subclasses[key] = cls"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.82,
+          "context_chars": 0,
+          "estimated_tokens": 1,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": ""
+        }
+      }
+    },
+    {
+      "task_id": "TASK-25",
+      "repo": "dynamic_patterns",
+      "category": "Barrel Re-exports",
+      "query": "What classes are re-exported and aliased in barrel/index.py?",
+      "results": {
+        "repo2graph": {
+          "workflow": "repo2graph",
+          "latency_ms": 0.27,
+          "context_chars": 2478,
+          "estimated_tokens": 619,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/barrel/index.py:2-6"
+          ],
+          "output_snippet": "# Repo map: dynamic_patterns  files: 12  nodes: 67  edges: 111 languages: python=12  ## Most depended-on files - dynamic_repo/registry.py (in=4) - dynamic_repo/dispatcher.py (in=2) - dynamic_repo/handlers/base_handler.py (in=2) - dynamic_repo/handlers/user_handler.py (in=1) - dynamic_repo/plugins/al"
+        },
+        "ripgrep": {
+          "workflow": "ripgrep",
+          "latency_ms": 1.95,
+          "context_chars": 89,
+          "estimated_tokens": 22,
+          "correct": false,
+          "citation_accuracy": 0.0,
+          "citations_found": [],
+          "output_snippet": "dynamic_repo/meta.py:2: subclasses = {} dynamic_repo/meta.py:6: cls.subclasses[key] = cls"
+        },
+        "agent_baseline": {
+          "workflow": "agent_baseline",
+          "latency_ms": 0.89,
+          "context_chars": 330,
+          "estimated_tokens": 82,
+          "correct": true,
+          "citation_accuracy": 1.0,
+          "citations_found": [
+            "dynamic_repo/barrel/index.py:2-6"
+          ],
+          "output_snippet": "=== dynamic_repo/barrel/index.py === # Re-exports with aliases and indirect routing from dynamic_repo.plugins.alpha import AlphaPlugin as PrimaryPlugin from dynamic_repo.handlers.user_handler import UserHandler from dynamic_repo.dispatcher import DynamicDispatcher  __all__ = [\"PrimaryPlugin\", \"UserH"
+        }
+      }
+    }
+  ]
+}

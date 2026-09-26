@@ -1,0 +1,72 @@
+# zizmor audit configuration (issue #402).
+#
+# Every ignore below is deliberate and reviewed, not a blanket suppression:
+# each entry pins one finding at one file:line, so a new finding of the same
+# kind elsewhere in .github/workflows/ still fails the gate. Re-run
+# `uvx zizmor --config .github/zizmor.yml .github/workflows/` after any
+# workflow edit near these lines -- a shifted line number un-ignores the
+# finding rather than silently keeping it suppressed.
+rules:
+  artipacked:
+    ignore:
+      # These two checkout steps intentionally rely on the credential
+      # actions/checkout persists (default persist-credentials: true) to
+      # authenticate a later plain `git push` / `git tag` in the same job --
+      # there is no separate credential-routing step to hand it to. Both are
+      # scoped to that job's own narrow `permissions:` (or an explicitly-minted,
+      # permission-scoped App token) and the job ends immediately after the
+      # push, so the persisted credential is never live longer than the push it
+      # exists for.
+      #
+      # `lockfile.yml` used to be a third entry. It is not ignored any more
+      # because it no longer needs to be: that checkout now sets
+      # `persist-credentials` to an expression that is true only on the
+      # dispatch-with-auto_commit path, so the audit is satisfied on the
+      # `pull_request` path -- which is the path that never pushes and the one
+      # the blanket ignore was wrongly covering. Verified: deleting this entry
+      # changes zizmor's output not at all, so keeping it would be dead config
+      # that could silently absorb a future real finding if lines shift onto it.
+      - publish.yml:85     # prepare-release: `git push origin refs/tags/$tag`
+      - publish.yml:435    # release: `git push -f origin refs/tags/$major`
+
+  dangerous-triggers:
+    ignore:
+      # prod-igy's `pull_request_target` is the documented, narrow exception
+      # issue #402 itself asks this audit to surface -- and it does. The
+      # mitigations are already in the workflow's own header comment and are
+      # test-enforced, not just described: tests/test_prod_igy.py::
+      # test_ai_workflow_wiring pins the sparse checkout to exactly
+      # `.github/scripts/prod-igy.js` (no PR-head ref reachable),
+      # test_iss208_* pin the author_association gate on the one
+      # contributor-reachable trigger (issue_comment), and
+      # test_ai_workflow_survives_a_registry_outage / the SDK install step's
+      # `--ignore-scripts` keep a compromised npm dependency from running
+      # lifecycle scripts in this job. Dropping pull_request_target entirely
+      # would remove the write-scoped identity prod-igy needs to label PRs
+      # and post its inspection comment.
+      - prod-igy.yml:16
+
+  self-repository:
+    ignore:
+      # `uses: ./` referencing this repository's own composite action, from
+      # this repository's own workflows -- the pattern the audit flags
+      # (an unpinned self-reference) is structurally the point here: these
+      # jobs exist to smoke-test the action at the exact commit checked out,
+      # not at a separate pinned ref that could drift from what the PR
+      # actually changed.
+      - ci.yml:317         # action: smoke-tests the composite action itself
+      - index-repo.yml:59  # index: dispatch-driven build against a target repo
+      - self-index.yml:34  # index: keeps this repo's own graph fresh
+
+  adhoc-packages:
+    ignore:
+      # `npm install --ignore-scripts '@anthropic-ai/sdk@0.127.0'` in
+      # prod-igy.yml has no package.json/lockfile to pin against because this
+      # is the only npm dependency `.github/scripts/prod-igy.js` has -- adding
+      # a lockfile for one pinned package would be more surface, not less.
+      # The version is pinned exactly (not a range), the install happens only
+      # when `vars.PRODIGY_AI == 'true'` (opt-in), and `--ignore-scripts`
+      # keeps a compromised release from running a lifecycle script in a job
+      # that holds pull-requests: write and an API key -- see
+      # tests/test_prod_igy.py::test_ai_workflow_wiring.
+      - prod-igy.yml:168

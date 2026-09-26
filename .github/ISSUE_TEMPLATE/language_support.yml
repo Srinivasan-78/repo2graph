@@ -1,0 +1,118 @@
+name: Language / parser support
+description: Request symbol-level support for a language repo2graph does not parse deeply yet.
+labels: ["enhancement", "area/graph"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Files in unsupported languages are not invisible.** They still become `file` nodes, still
+        appear on the map, are still chunked as text and are still retrievable by `repo2graph query`.
+        What a new grammar adds is *symbol-level* structure: `symbol` nodes and
+        `DEFINES` / `CALLS` / `INHERITS` edges.
+
+        The 17 languages with full treatment are listed in
+        [the README](../../README.md#languages). If yours is already there, this is a bug report
+        rather than a request — use **Incorrect or missing graph edge** instead.
+
+        If you'd like to implement it: **[docs/parser-development.md](../../docs/parser-development.md)**
+        is the full guide. A grammar is almost certainly already installed —
+        `tree-sitter-language-pack` is a required dependency and ships ~165 of them — so an addition
+        is usually a `LANG_CFG` entry, an `EXT_LANG` mapping, two tests and a docs row. No parser is
+        written and no grammar is vendored.
+
+  - type: input
+    id: language
+    attributes:
+      label: Language
+      placeholder: "Elixir"
+    validations:
+      required: true
+
+  - type: input
+    id: extensions
+    attributes:
+      label: File extensions
+      description: All of them, and flag any shared with another language — one extension maps to exactly one grammar today.
+      placeholder: ".ex, .exs"
+    validations:
+      required: true
+
+  - type: input
+    id: grammar
+    attributes:
+      label: tree-sitter grammar
+      description: >
+        Check whether it is in `tree-sitter-language-pack` — `from tree_sitter_language_pack import
+        get_parser; get_parser("elixir")`. If it raises, say so: that changes this from a config
+        entry into a dependency question.
+      placeholder: "tree-sitter-elixir, available via tree-sitter-language-pack"
+    validations:
+      required: true
+
+  - type: textarea
+    id: usage
+    attributes:
+      label: What are you trying to ask about this code?
+      description: >
+        The case for a language is the questions it gets asked. "What calls this", "what breaks if
+        I change this", "how does a request get from A to B" are the ones repo2graph answers with a
+        graph. A language whose code is mostly configuration or templates gets little from symbol
+        nodes — say what yours is used for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: node-types
+    attributes:
+      label: Node types, if you have looked them up
+      description: >
+        Hugely helpful and easy to produce. Parse a sample and print the tree:
+
+        ```python
+        from tree_sitter_language_pack import get_parser
+        tree = get_parser("elixir").parse(open("sample.ex","rb").read())
+        def walk(n, d=0):
+            print("  " * d, n.type)
+            for c in n.children: walk(c, d + 1)
+        walk(tree.root_node)
+        ```
+
+        From that: which node types are function/class/module definitions, which are call sites,
+        which are imports.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: inheritance
+    attributes:
+      label: Does the language have inheritance or interface implementation?
+      description: Determines whether `INHERITS` edges apply and whether `_BASE_NODES` needs a new entry.
+      options:
+        - "Yes — classes/interfaces"
+        - "Yes — traits/protocols/mixins"
+        - "No"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - "Yes — I'll open a PR"
+        - "Yes, with guidance"
+        - "No, requesting only"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked [the language list](../../README.md#languages) and this language is not already parsed.
+          required: true
+        - label: I searched existing issues for the same request.
+          required: true

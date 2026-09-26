@@ -225,32 +225,32 @@ def test_ac4_baseline_subcommands_are_all_present(monkeypatch):
 # ==========================================================================
 
 
-def test_ac5_importing_query_pulls_in_no_optional_dependency():
-    """AC-5: numpy, sentence_transformers, torch and mcp all stay unimported."""
-    rc, out, err = _subprocess_modules("import repo2graph.query")
-    assert rc == 0, err
-    assert out == "", out
-
-
-def test_ac6_importing_embed_pulls_in_no_optional_dependency():
-    """AC-6: repo2graph.embed is importable with no extras installed."""
-    rc, out, err = _subprocess_modules(
-        "import repo2graph.embed", watched=("numpy", "sentence_transformers", "torch")
-    )
-    assert rc == 0, err
-    assert out == "", out
-
-
-def test_ac7_importing_repo2graph_mcp_does_not_import_the_mcp_sdk():
-    """AC-7: only serve() may import the SDK, so the module imports bare."""
-    rc, out, err = _subprocess_modules("import repo2graph.mcp")
-    assert rc == 0, err
-    assert out == "", out
-
-
-def test_ac5_cli_import_chain_stays_clean():
-    """AC-5 (corollary): `repo2graph query` must not drag an extra in either."""
-    rc, out, err = _subprocess_modules("import repo2graph.cli")
+# AC-5/6/7: importing any of these must not drag an optional extra in. Each row
+# is a fresh subprocess that imports one module and prints anything watched that
+# got imported, so the body is the same three lines every time and only the
+# import line differs. The acceptance criterion each row belongs to is in its id,
+# because that is what a failure needs to name.
+@pytest.mark.parametrize(
+    "statement, watched",
+    [
+        pytest.param("import repo2graph.query", None, id="ac5-query"),
+        # embed legitimately knows about the rag extra's names, so it is watched
+        # for those three only -- `mcp` is not a dependency of embedding.
+        pytest.param(
+            "import repo2graph.embed",
+            ("numpy", "sentence_transformers", "torch"),
+            id="ac6-embed",
+        ),
+        # Only serve() may touch the SDK, so the module has to import bare.
+        pytest.param("import repo2graph.mcp", None, id="ac7-mcp"),
+        # AC-5 corollary: `repo2graph query` goes through cli, so the entry
+        # point must stay as clean as the module it calls.
+        pytest.param("import repo2graph.cli", None, id="ac5-cli-entry-point"),
+    ],
+)
+def test_importing_a_module_pulls_in_no_optional_dependency(statement, watched):
+    kwargs = {} if watched is None else {"watched": watched}
+    rc, out, err = _subprocess_modules(statement, **kwargs)
     assert rc == 0, err
     assert out == "", out
 

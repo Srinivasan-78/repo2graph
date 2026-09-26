@@ -60,6 +60,49 @@ def test_a_key_distinguishes_every_argument_that_changes_the_answer():
     assert len(keys) == 5, "two distinct calls collided on one key"
 
 
+def test_a_key_is_bounded_however_large_the_arguments_are():
+    """A key that embeds the request body amplifies memory 256x.
+
+    `dispatch` keys on the *raw* arguments, before a handler's own
+    `_str(query, MCP_MAX_QUERY_CHARS)` cap applies. Storing the serialised params
+    verbatim meant 256 `repo_search` calls with a ~1 MB query each -- every one
+    inside the HTTP server's MAX_BODY_BYTES -- retained ~257 MB in *keys*, for a
+    cache whose values are bounded. Bounded here means constant, not merely
+    smaller: a 1 MB and a 4 MB argument must both yield the same key length.
+    """
+    small = make_key("repo_search", {"query": "x" * 10})
+    big = make_key("repo_search", {"query": "x" * 1_000_000})
+    bigger = make_key("repo_search", {"query": "y" * 4_000_000})
+
+    assert len(small) == len(big) == len(bigger) < 200, (
+        f"key length tracks argument size: {len(small)} / {len(big)} / {len(bigger)}"
+    )
+    # Bounding must not collapse distinct arguments onto one entry.
+    assert big != bigger
+    assert big != small
+
+
+@pytest.mark.parametrize("bad", ["caf\udce9", "\ud800", "\udfff", "a\ud800b\udce9c"])
+def test_a_key_survives_any_lone_surrogate_in_an_argument(bad):
+    """`make_key` promises never to raise; hashing the body must not break that.
+
+    Two separate routes put a lone surrogate in an argument: AGENTS.md requires
+    git/repo bytes be decoded `utf8`/`surrogateescape`, which produces the
+    U+DC80-U+DCFF range, and a JSON-RPC caller can simply send `"\\ud800"`.
+
+    The parametrization is the detector, not decoration. `surrogateescape` encodes
+    U+DC80-U+DCFF fine and raises `UnicodeEncodeError` on everything else in the
+    surrogate block, so a test using only `"caf\\udce9"` stays green against the
+    wrong codec -- which is exactly what an earlier version of this test did.
+    `\\ud800` and `\\udfff` are the cases that actually separate `surrogatepass`
+    (correct here) from `surrogateescape`.
+    """
+    key = make_key("repo_search", {"query": bad})
+    assert isinstance(key, str)
+    assert key == make_key("repo_search", {"query": bad})
+    assert key != make_key("repo_search", {"query": "plain"})
+
+
 def test_list_and_dict_arguments_do_not_raise():
     """frozenset(params.items()) raises here; canonical JSON does not.
 
@@ -131,17 +174,19 @@ def test_the_cache_never_exceeds_max_size():
     assert cache.stats()["size"] == 10
 
 
-def test_size_zero_disables_the_cache():
-    cache = ResultCache(max_size=0)
+# Either knob at zero turns the cache off outright -- a `put` is accepted and
+# then never returned. The `ttl` row previously checked only the missing read;
+# both now assert `enabled` too, since a cache that reports itself enabled while
+# storing nothing is the shape that misleads a caller.
+@pytest.mark.parametrize(
+    "kwargs",
+    [pytest.param({"max_size": 0}, id="size-zero"), pytest.param({"ttl": 0}, id="ttl-zero")],
+)
+def test_zero_disables_the_cache(kwargs):
+    cache = ResultCache(**kwargs)
     cache.put("k", "v")
     assert cache.get("k") is None
     assert cache.enabled is False
-
-
-def test_ttl_zero_disables_the_cache():
-    cache = ResultCache(ttl=0)
-    cache.put("k", "v")
-    assert cache.get("k") is None
 
 
 def test_clear_drops_every_entry_but_keeps_the_counters():

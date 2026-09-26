@@ -11,6 +11,11 @@ venv/
 .coverage
 .cache/
 .r2g/
+# The build lock sits *beside* the output directory, not inside it -- for
+# `-o .r2g` that is `..r2g.r2glock` in the repo root, so `.r2g/` does not cover
+# it. Normally unlinked on exit; it only lingers after a crashed build, which
+# is exactly when an unexplained untracked file is least welcome.
+*.r2glock
 .env
 .env.*
 .DS_Store

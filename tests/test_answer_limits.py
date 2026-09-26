@@ -181,7 +181,15 @@ def test_iss241_many_small_deltas_are_capped_in_total(monkeypatch, capsys):
 
 
 def test_iss241_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsys):
-    """stdout stays the answer and stays pipeable; the warning is on stderr."""
+    """stdout stays the answer and stays pipeable; the warning is on stderr.
+
+    stdout now carries the answer *and* the "Confidence and limitations"
+    segment, which is answer content -- a reader piping `rag --answer` to a
+    file wants the caveats in that file. The ISS-241 property this test
+    exists for is narrower and unchanged: the *provider stream truncation
+    warning* is a tool diagnostic, so it goes to stderr and never pollutes
+    the answer on stdout.
+    """
     only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
     serve(monkeypatch, ndjson(["y" * 1000] * 9000))
     sink = io.StringIO()
@@ -190,8 +198,18 @@ def test_iss241_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsy
 
     captured = capsys.readouterr()
     assert "truncated" in captured.err
-    assert "truncated" not in sink.getvalue()
-    assert set(sink.getvalue().replace("\n", "")) == {"y"}
+
+    out = sink.getvalue()
+    # The model's answer is everything before the appended segment.
+    model_answer, sep, segment = out.partition("\n---\n**Confidence and limitations**")
+    assert sep, "the confidence segment was not appended to stdout"
+    assert set(model_answer.replace("\n", "")) == {"y"}, (
+        "something other than the model's answer leaked into the answer body"
+    )
+    # The provider-stream warning stays out of stdout entirely -- including
+    # out of the segment, which reports on the *pack*, not on the HTTP stream.
+    assert "truncated" not in model_answer
+    assert "stream" not in segment.lower()
 
 
 # ------------------------------------------------ no false truncation ----

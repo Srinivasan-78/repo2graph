@@ -1,8 +1,25 @@
+# Discussion categories cannot be created through the GitHub API -- there is no
+# `createDiscussionCategory` mutation, so they are web-UI only. The `Support`
+# category proposed in docs/COMMUNITY.md does not exist yet; until it is created,
+# the "Help" link below points at Q&A so this chooser cannot 404. Switch it to
+# /discussions/categories/support in the same change that creates the category.
 blank_issues_enabled: false
 contact_links:
+  - name: Question — how do I…?
+    url: https://github.com/Srinivasan-78/repo2graph/discussions/categories/q-a
+    about: Usage questions go to Discussions → Q&A, where answers stay findable and can be marked as the accepted one.
+  - name: Help — something isn't working and I'm not sure it's a bug
+    url: https://github.com/Srinivasan-78/repo2graph/discussions/categories/q-a
+    about: Setup, MCP client configuration, unexpected retrieval results. If it turns out to be a defect, we'll open an issue from the thread.
+  - name: Show what you built
+    url: https://github.com/Srinivasan-78/repo2graph/discussions/categories/show-and-tell
+    about: Graphs of interesting repositories, agent workflows, integrations. Genuinely useful for working out what to build next.
+  - name: Idea, not yet a proposal
+    url: https://github.com/Srinivasan-78/repo2graph/discussions/categories/ideas
+    about: Half-formed directions are welcome here. Ideas that firm up become feature proposals.
   - name: Documentation
     url: https://github.com/Srinivasan-78/repo2graph/blob/main/docs/README.md
-    about: Check the docs index before filing — architecture, CLI/MCP reference, and known limitations are covered there.
+    about: Architecture, CLI/MCP reference, and the known limitations — worth a look before filing, especially docs/limitations.md.
   - name: Security vulnerability
     url: https://github.com/Srinivasan-78/repo2graph/security/advisories/new
-    about: Report vulnerabilities privately — see SECURITY.md. Do not open a public issue for undisclosed vulnerabilities.
+    about: Report privately — see SECURITY.md. Never open a public issue for an undisclosed vulnerability.

@@ -1641,6 +1641,107 @@ def test_is_secret_path_expanded():
     assert _is_secret_path("README.md") is False
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        # The dotless dotenv spelling -- same contents as `.env.<environment>`,
+        # which was already caught, but visible in a directory listing.
+        "env.local",
+        "env.production",
+        "env.dev",
+        "config/env.staging",
+        # The file KUBECONFIG points at when it is not `~/.kube/config`.
+        "kubeconfig",
+        # A backup holds exactly what the original held.
+        "id_rsa.bak",
+        "server.key.bak",
+        "certs/private.pem.old",
+        "id_rsa~",
+        "secrets.key.orig",
+        # Every SECRET_PATH_SUFFIXES rule is multi-segment, so the backup check
+        # has to re-ask about the whole *path*. Recursing on the bare basename
+        # skipped all of them -- `.docker/config.json` was excluded while
+        # `.docker/config.json.bak`, the same registry auth token, was indexed.
+        ".docker/config.json.bak",
+        ".config/gh/hosts.yml.bak",
+        ".m2/settings.xml.bak",
+        ".gradle/gradle.properties.bak",
+        "a/b/.netrc.save",
+        # `cp` twice, or a copy plus an editor: stopping after one layer made
+        # these a miss while plain `id_rsa.bak` was caught.
+        "id_rsa.bak.bak",
+        "id_rsa.bak~",
+    ],
+)
+def test_is_secret_path_catches_dotless_env_kubeconfig_and_backups(path):
+    """Three families that reached `chunks.jsonl` in the clear.
+
+    Each of these is indistinguishable in content from a path the filter already
+    excluded, so an agent calling `repo_search` -- or `rag --answer`, which POSTs
+    the pack to a third-party provider -- got the credential verbatim.
+    """
+    from repo2graph.query import _is_secret_path
+
+    assert _is_secret_path(path) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        # `env.*` is a real module name in several ecosystems. Treating every
+        # `env.*` as secret would silently drop source from the index, so the
+        # dotless rule matches an explicit environment-name set instead.
+        "env.py",
+        "env.ts",
+        "env.go",
+        "env.rs",
+        "env.json",
+        "src/environment.py",
+        # repo2graph must be able to index itself.
+        "repo2graph/secrets.py",
+        # A backup of something that was never a secret is not a secret.
+        "README.old",
+        "main.py.bak",
+        "docs/kubeconfig.md",
+        # Degenerate names that are only backup suffixes must not strip to "" --
+        # which would recurse on the empty string, or on the directory alone.
+        ".bak",
+        "~",
+        "~~",
+        ".bak.bak",
+        "notes.tmp",
+    ],
+)
+def test_the_new_secret_families_do_not_overmatch_source(path):
+    from repo2graph.query import _is_secret_path
+
+    assert _is_secret_path(path) is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [".bak" * 2500, "~" * 10000, "id_rsa" + ".bak" * 2000, ".bak~.bak~" * 500],
+)
+def test_the_backup_suffix_strip_terminates_on_a_hostile_name(path):
+    """A path is attacker-supplied on every build, and this rule loops.
+
+    Each pass removes at least one character and the loop stops when no suffix
+    matches or nothing but the suffix is left, so a name that is nothing but
+    thousands of stacked suffixes must return rather than recurse without bound.
+    The time bound is deliberately loose (measured ~6ms for the worst of these).
+    """
+    import time
+
+    from repo2graph.query import _is_secret_path
+
+    start = time.perf_counter()
+    result = _is_secret_path(path)
+    elapsed = time.perf_counter() - start
+
+    assert isinstance(result, bool)
+    assert elapsed < 1.0, f"{len(path)}-char stacked-suffix name took {elapsed:.3f}s"
+
+
 def test_is_secret_path_163_no_overmatch(rag_index):
     """ISS-163: _is_secret_path() must not over-match legitimate source files
     via bare substrings ("-env" in name, "token" in name), while still

@@ -955,7 +955,10 @@ def test_stats_json_carries_hub_nodes_languages_and_schema_version(tmp_path, sam
     main(["build", str(sample_repo), "-o", str(out)])
     stats = json.loads(artifact_path(out, "stats.json").read_text())
 
-    assert stats["index_schema_version"] == "1"
+    # Bumped to "2" when every edge gained method/confidence/evidence: a
+    # consumer reading an older index needs to know those fields are absent
+    # rather than null.
+    assert stats["index_schema_version"] == "2"
     assert stats["has_vectors"] is False
     assert stats["languages"].get("python", 0) >= 2
     assert stats["top_hub_nodes"], "sample_repo has real IMPORTS/CALLS in-degree"
@@ -3041,6 +3044,109 @@ def test_callee_name_macro_and_fn_pointers():
     src_rs = b"fn test() { my_macro!(42); }\n"
     pf_rs = parse_source(src_rs, "rust")
     assert "my_macro" in pf_rs.symbols[0].calls
+
+
+def test_iss344_callee_name_resolves_php_namespace_separator():
+    """#344: a PHP namespaced call must resolve to its bare function name.
+
+    `\\App\\Utils\\compute()` is a fully-qualified call outside any class; its
+    `function` field text carries the leading namespace segments, and without
+    "\\" in _callee_name's separator tuple those segments survived into the
+    recorded callee, which then never matched `graph.py`'s by-bare-name index.
+    """
+    src = b"<?php\nfunction test() {\n    \\App\\Utils\\compute();\n    Sub\\helper();\n}\n"
+    pf = parse_source(src, "php")
+    calls = pf.symbols[0].calls
+    assert calls == ["compute", "helper"]
+
+
+def test_iss341_inherits_edges_for_cpp_scope_and_php_namespace_bases(tmp_path):
+    """#341: `::`- and `\\`-qualified base classes must resolve to their node.
+
+    Uses class names outside COMMON_STDLIB_BASES (`Base`/`Model`/... are
+    deliberately unresolved unless local/imported -- unrelated to this bug)
+    so the assertion isolates the separator-stripping fix.
+    """
+    cpp_dir = tmp_path / "cpp"
+    cpp_dir.mkdir()
+    (cpp_dir / "ns.h").write_text("namespace NS { class Widget {}; }\n")
+    (cpp_dir / "derived.cpp").write_text('#include "ns.h"\nclass Sub : public NS::Widget {};\n')
+    g_cpp = build(cpp_dir)
+    assert ("sym:derived.cpp::Sub", "sym:ns.h::NS.Widget") in edges_of(g_cpp, "INHERITS")
+
+    php_dir = tmp_path / "php"
+    php_dir.mkdir()
+    (php_dir / "model.php").write_text("<?php\nnamespace App\\Models;\nclass BaseModel {}\n")
+    (php_dir / "derived.php").write_text(
+        "<?php\nclass Derived extends \\App\\Models\\BaseModel {}\n"
+    )
+    g_php = build(php_dir)
+    assert ("sym:derived.php::Derived", "sym:model.php::BaseModel") in edges_of(g_php, "INHERITS")
+
+
+def test_iss342_self_recursive_function_is_still_an_entrypoint_root(tmp_path):
+    """#342: a self-CALLS edge (src == dst) must not disqualify a root.
+
+    `entry` calls only itself and has no external caller, so it must still be
+    marked `entrypoint`. `helper`, called by `other`, must not be -- proving
+    the fix did not also stop *external* calls from marking a destination.
+    """
+    (tmp_path / "m.py").write_text(
+        "def entry():\n    return entry()\n\n\ndef helper():\n    pass\n\n\ndef other():\n    helper()\n"
+    )
+    g = build(tmp_path)
+    entry = {nid for nid, n in g.nodes.items() if n.get("entrypoint")}
+    assert "sym:m.py::entry" in entry
+    assert "sym:m.py::helper" not in entry
+    assert ("sym:m.py::entry", "sym:m.py::entry") in edges_of(g, "CALLS")
+
+
+def test_iss377_header_content_sniff_picks_c_or_cpp(tmp_path):
+    """#377: `.h` must be parsed as cpp when its content says so, else c."""
+    (tmp_path / "c_style.h").write_text(
+        "struct Point { int x; int y; };\nvoid move_point(struct Point *p);\n"
+    )
+    (tmp_path / "cpp_style.h").write_text(
+        "#include <string>\nnamespace ns { class Foo { public: void bar(); }; }\n"
+    )
+    g = build(tmp_path)
+    assert g.nodes["file:c_style.h"]["lang"] == "c"
+    assert g.nodes["file:cpp_style.h"]["lang"] == "cpp"
+    # A C .h yields no class node under the C grammar; the cpp-sniffed one does.
+    assert "sym:cpp_style.h::ns.Foo" in g.nodes
+    assert not any(
+        n.get("path") == "c_style.h" and n.get("kind") == "class" for n in g.nodes.values()
+    )
+    assert g.stats["header_files_as_c"] == 1
+    assert g.stats["header_files_as_cpp"] == 1
+
+
+def test_iss377_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
+    """#377: a `.h` over `max_file_bytes` takes the chunked reader, which must sniff too.
+
+    `_read_and_parse` sniffs the full bytes it already read, but a file larger
+    than `max_file_bytes` returns early into `_chunk_and_parse`, which streams
+    and never holds them -- so that path needed its own sniff against the first
+    slice. An amalgamated single-header C++ library is the ordinary case for a
+    `.h` this size.
+    """
+    from repo2graph.parse import BuildConfig
+
+    big = tmp_path / "amalgamated.h"
+    # A C++ preamble, then enough filler to cross the (lowered) chunk
+    # threshold, then a class the cpp grammar finds and the C grammar does not.
+    big.write_text(
+        "#include <string>\nnamespace ns {\n"
+        + "// filler comment line to push this file over the chunk threshold\n" * 400
+        + "class Amalgamated { public: void method(); };\n}\n"
+    )
+    assert big.stat().st_size > 20_000, "fixture must exceed the config below"
+
+    g = build(tmp_path, config=BuildConfig(max_file_bytes=20_000, chunk_large_files=True))
+
+    assert g.nodes["file:amalgamated.h"]["lang"] == "cpp"
+    assert g.stats["header_files_as_cpp"] == 1
+    assert g.stats["header_files_as_c"] == 0
 
 
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):

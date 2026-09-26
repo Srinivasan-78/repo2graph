@@ -210,50 +210,52 @@ def test_rsa_verify_accepts_a_real_signature():
     )
 
 
-def test_rsa_verify_rejects_a_tampered_message():
-    token = sign(claims())
-    head, payload, sig = token.split(".")
-    assert not rsa_verify(
-        KEY["n"], KEY["e"], auth.b64url_decode(sig), f"{head}.{payload}x".encode(), "sha256"
-    )
+def _sig_over_a_tampered_message():
+    head, payload, sig = sign(claims()).split(".")
+    return KEY["n"], KEY["e"], auth.b64url_decode(sig), f"{head}.{payload}x".encode()
 
 
-def test_rsa_verify_rejects_a_wrong_length_signature():
-    assert not rsa_verify(KEY["n"], KEY["e"], b"\x01\x02", b"msg", "sha256")
+def _forged_digest_in_the_padding():
+    """A DigestInfo planted in the padding's slack space rather than at the end.
 
-
-def test_rsa_verify_rejects_a_zero_modulus():
-    """A malicious JWK with n=0 must fail closed, not raise ValueError from pow()."""
-    assert rsa_verify(0, KEY["e"], b"", b"msg", "sha256") is False
-
-
-def test_rsa_verify_rejects_a_negative_modulus():
-    """A negative n must fail closed, not raise OverflowError from to_bytes()."""
-    n = -KEY["n"]
-    k = (KEY["n"].bit_length() + 7) // 8
-    sig = b"\x01" * k
-    assert rsa_verify(n, KEY["e"], sig, b"msg", "sha256") is False
-
-
-def test_rsa_verify_rejects_a_zero_exponent():
-    assert (
-        rsa_verify(KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg", "sha256")
-        is False
-    )
-
-
-def test_rsa_verify_rejects_garbage_in_the_padding():
-    """The whole block is compared, so a forged DigestInfo in slack space fails.
-
-    A verifier that *scans* for the digest instead of rebuilding the block
+    A verifier that *scans* for the digest instead of rebuilding the whole block
     accepts Bleichenbacher-style forgeries against low exponents.
     """
     digest = hashlib.sha256(b"msg").digest()
     tail = auth.DIGEST_INFO_PREFIX["sha256"] + digest
     k = (KEY["n"].bit_length() + 7) // 8
     forged = b"\x00\x01" + b"\x00" * (k - len(tail) - 3) + b"\x00" + tail
-    sig = int.from_bytes(forged, "big").to_bytes(k, "big")
-    assert not rsa_verify(KEY["n"], KEY["e"], sig, b"msg", "sha256")
+    return KEY["n"], KEY["e"], int.from_bytes(forged, "big").to_bytes(k, "big"), b"msg"
+
+
+# Every row asserts the same one thing -- `rsa_verify` returns False rather than
+# raising -- so they share a body. Each builds its own arguments because a
+# degenerate key is the input under test, not a fixture. `is False` and not a
+# truthiness check: the contract is a bool, and a verifier that returned None or
+# raised would be a different (worse) failure than returning False.
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(_sig_over_a_tampered_message, id="tampered-message"),
+        pytest.param(lambda: (KEY["n"], KEY["e"], b"\x01\x02", b"msg"), id="wrong-length-sig"),
+        # n=0 would raise ValueError out of pow(), and a negative n OverflowError
+        # out of to_bytes(). A crash inside a verifier is not a refusal: on the
+        # tool path it is a 500, on the refusal path a dead handler thread.
+        pytest.param(lambda: (0, KEY["e"], b"", b"msg"), id="zero-modulus"),
+        pytest.param(
+            lambda: (-KEY["n"], KEY["e"], b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg"),
+            id="negative-modulus",
+        ),
+        pytest.param(
+            lambda: (KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg"),
+            id="zero-exponent",
+        ),
+        pytest.param(_forged_digest_in_the_padding, id="garbage-in-the-padding"),
+    ],
+)
+def test_rsa_verify_rejects(build):
+    n, e, sig, message = build()
+    assert rsa_verify(n, e, sig, message, "sha256") is False
 
 
 # ----------------------------------------------------------------- jwt ----
@@ -338,70 +340,44 @@ def test_alg_none_and_hs256_are_refused_when_jwk_omits_alg(alg):
         decode_jwt(f"{header}.{payload}.", jwks, ISSUER, AUDIENCE)
 
 
-def test_an_expired_token_is_refused():
+# Claim-validation refusals. One table rather than nine functions because every
+# row runs the identical three lines -- sign a token whose claims are wrong,
+# assert `decode_jwt` refuses it with the right message -- and only the claim and
+# the message vary. The `id=` is the failure diagnostic: `[exp-nan]` names the
+# case more precisely than a function name did.
+@pytest.mark.parametrize(
+    "over, expected",
+    [
+        pytest.param({"exp": time.time() - 3600}, "expired", id="exp-in-the-past"),
+        pytest.param({"exp": _ABSENT}, "no exp", id="exp-absent"),
+        # NaN compares False against every relational operator in IEEE 754, so
+        # `float("nan") + CLOCK_SKEW < now` is False and a naive expiry check
+        # reads a NaN `exp` as "never expires". +Infinity is False against that
+        # comparison forever too. Both must fail closed -- these two rows are
+        # the reason the temporal cases are enumerated rather than spot-checked.
+        pytest.param({"exp": float("nan")}, "expired", id="exp-nan"),
+        pytest.param({"exp": float("inf")}, "expired", id="exp-infinite"),
+        pytest.param({"nbf": time.time() + 3600}, "not valid yet", id="nbf-in-the-future"),
+        # -Infinity is not finite either, and must not be reinterpreted as
+        # "always valid".
+        pytest.param({"nbf": float("nan")}, "not valid yet", id="nbf-nan"),
+        pytest.param({"nbf": float("-inf")}, "not valid yet", id="nbf-negative-infinite"),
+        # An unenforced `iss` or `aud` leaves the happy path working perfectly,
+        # which is what makes it a CVE rather than a bug someone notices.
+        pytest.param({"iss": "https://evil.example.com"}, "issuer", id="wrong-issuer"),
+        pytest.param({"aud": "some-other-service"}, "audience", id="wrong-audience"),
+    ],
+)
+def test_an_invalid_claim_is_refused(over, expected):
+    body = claims(**over)
+    # `_ABSENT` drops the claim outright, which is how "no exp at all" differs
+    # from "an exp that has passed".
+    for name, value in list(body.items()):
+        if value is _ABSENT:
+            body.pop(name)
     jwks, _ = cache()
-    with pytest.raises(AuthError, match="expired"):
-        decode_jwt(sign(claims(exp=time.time() - 3600)), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_token_with_no_exp_is_refused():
-    body = claims()
-    body.pop("exp")
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="no exp"):
+    with pytest.raises(AuthError, match=expected):
         decode_jwt(sign(body), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_not_yet_valid_token_is_refused():
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="not valid yet"):
-        decode_jwt(sign(claims(nbf=time.time() + 3600)), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_nan_exp_claim_is_refused():
-    """NaN compares False against every relational operator in IEEE 754.
-
-    `float("nan") + CLOCK_SKEW < now` is False, so a naive expiry check lets a
-    NaN `exp` claim through as if the token never expires. It must fail closed.
-    """
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="expired"):
-        decode_jwt(sign(claims(exp=float("nan"))), jwks, ISSUER, AUDIENCE)
-
-
-def test_an_infinite_exp_claim_is_refused():
-    """+Infinity satisfies `exp + CLOCK_SKEW < now` as False forever too."""
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="expired"):
-        decode_jwt(sign(claims(exp=float("inf"))), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_nan_nbf_claim_is_refused():
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="not valid yet"):
-        decode_jwt(sign(claims(nbf=float("nan"))), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_negative_infinite_nbf_claim_is_refused():
-    """-Infinity is not finite either; a not-a-finite-number claim must reject,
-
-    not be reinterpreted as "always valid".
-    """
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="not valid yet"):
-        decode_jwt(sign(claims(nbf=float("-inf"))), jwks, ISSUER, AUDIENCE)
-
-
-def test_the_wrong_issuer_is_refused():
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="issuer"):
-        decode_jwt(sign(claims(iss="https://evil.example.com")), jwks, ISSUER, AUDIENCE)
-
-
-def test_the_wrong_audience_is_refused():
-    jwks, _ = cache()
-    with pytest.raises(AuthError, match="audience"):
-        decode_jwt(sign(claims(aud="some-other-service")), jwks, ISSUER, AUDIENCE)
 
 
 def test_a_list_audience_containing_ours_is_accepted():
@@ -426,34 +402,26 @@ def test_a_tampered_payload_is_refused():
         decode_jwt(f"{head}.{forged}.{sig}", jwks, ISSUER, AUDIENCE)
 
 
-def test_a_jwk_with_no_modulus_is_refused():
-    """Issue 238: kty RSA and no `n` indexed straight into the dict.
-
-    `key["n"]` on a key set that never published one is a KeyError, and a
-    KeyError is not an AuthError -- it becomes a 500 on the tool path and a
-    dead handler thread on the refusal path, which catches AuthError only.
-    """
-    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(n=_ABSENT)))
-    with pytest.raises(AuthError, match="missing its RSA parameters"):
-        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_jwk_with_no_exponent_is_refused():
-    """The same hole, one field over: `e` is read unguarded too."""
-    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(e=_ABSENT)))
-    with pytest.raises(AuthError, match="missing its RSA parameters"):
-        decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
-
-
-def test_a_jwk_whose_modulus_is_a_json_number_is_refused():
-    """Presence is not enough: the parameter has to be the base64url string.
-
-    `str()` of a JSON integer is a run of decimal digits, which base64url
-    either decodes to some unrelated modulus or rejects as bad padding. Either
-    way the key is silently reinterpreted rather than refused, so the type
-    check matters as much as the presence check.
-    """
-    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(n=KEY["n"])))
+# Issue 238: `kty: RSA` with a missing or wrongly-typed parameter used to index
+# straight into the dict. `key["n"]` on a key set that never published one is a
+# KeyError, and a KeyError is not an AuthError -- it becomes a 500 on the tool
+# path and a dead handler thread on the refusal path, which catches AuthError
+# only. Same refusal, same message, three ways to malform one key.
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param({"n": _ABSENT}, id="no-modulus"),
+        pytest.param({"e": _ABSENT}, id="no-exponent"),
+        # Presence is not enough: the parameter has to be the base64url string.
+        # `str()` of a JSON integer is a run of decimal digits, which base64url
+        # either decodes to some unrelated modulus or rejects as bad padding --
+        # either way the key is silently reinterpreted rather than refused, so
+        # the type check matters as much as the presence check.
+        pytest.param({"n": KEY["n"]}, id="modulus-as-a-json-number"),
+    ],
+)
+def test_a_jwk_missing_its_rsa_parameters_is_refused(entry):
+    jwks, _ = cache(issuer=FakeIssuer(jwks=jwks_with(**entry)))
     with pytest.raises(AuthError, match="missing its RSA parameters"):
         decode_jwt(sign(claims()), jwks, ISSUER, AUDIENCE)
 
@@ -801,24 +769,20 @@ def _serves(doc):
     return opener
 
 
-def test_a_jwks_uri_on_another_host_is_refused():
-    """One field in a fetched document must not relocate the trust anchor."""
+# One field in a fetched document must not relocate the trust anchor -- not to
+# another host, and not to cleartext on the same host.
+@pytest.mark.parametrize(
+    "jwks_uri",
+    [
+        pytest.param("https://evil.example.com/jwks", id="another-host"),
+        pytest.param("http://issuer.example.com/jwks", id="downgraded-to-http"),
+    ],
+)
+def test_a_jwks_uri_off_the_issuers_origin_is_refused(jwks_uri):
     jwks = JWKSCache(
         ISSUER,
         300.0,
-        opener=_serves({"issuer": ISSUER, "jwks_uri": "https://evil.example.com/jwks"}),
-        clock=Clock(),
-    )
-    with pytest.raises(AuthError, match="jwks_uri origin"):
-        jwks.key_for(KID)
-
-
-def test_a_jwks_uri_downgraded_to_http_is_refused():
-    """Same host, cleartext scheme: still not where these keys come from."""
-    jwks = JWKSCache(
-        ISSUER,
-        300.0,
-        opener=_serves({"issuer": ISSUER, "jwks_uri": "http://issuer.example.com/jwks"}),
+        opener=_serves({"issuer": ISSUER, "jwks_uri": jwks_uri}),
         clock=Clock(),
     )
     with pytest.raises(AuthError, match="jwks_uri origin"):

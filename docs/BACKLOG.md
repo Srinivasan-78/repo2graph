@@ -34,8 +34,8 @@ past state.
 Route back to the work the 2026-09 whole-repo audit found but did not fix in the
 first batch. Full detail lives in `docs/BUILD_STATE.graphrag-2026-09.md`, the
 archived state file from that run (`## Plan` MASTER ISSUE TABLE = all 53
-findings; `## Improve` = the grouped backlog and loop retro). `BUILD_STATE.md` at
-the repo root always holds the *current* build-app run, not that one.
+findings; `## Improve` = the grouped backlog and loop retro). `docs/BUILD_STATE.md`
+always holds the *current* build-app run, not that one.
 
 **Epic:** [#31 — Epic: post-audit backlog](https://github.com/Srinivasan-78/repo2graph/issues/31)
 
@@ -154,6 +154,24 @@ on `supports_decorators = hasattr(Server, "list_tools")`: the 1.x decorator API
 generations. The `mcp` extra is `mcp>=1.0,<3.0` (`pyproject.toml`, `SDK_SPEC` in `mcp.py`), and
 `_require_sdk()` still exits with a clear instruction rather than a traceback when neither API
 shape is present.
+
+## Language Support & Ecosystem Relationship Roadmap (2026-09)
+
+Strategic priorities from [`LANGUAGE_SUPPORT.md`](../LANGUAGE_SUPPORT.md) and [`docs/ROADMAP_LANGUAGE_ISSUES.md`](ROADMAP_LANGUAGE_ISSUES.md):
+
+| Issue | Scope | Tier / Priority | Related RFC |
+|---|---|---|---|
+| **LANG-01** | TypeScript `tsconfig.json` path aliases & monorepo workspace module resolution | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-02** | Express, NestJS, Next.js HTTP route & controller extraction (`ROUTES_TO`) | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-03** | Jest & Vitest test-to-implementation linking (`TESTS`) | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-04** | FastAPI, Flask, & Django route-to-handler resolution (`ROUTES_TO`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-05** | Pytest test-to-implementation linking & fixture injection (`TESTS`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-06** | SQLAlchemy & Django model relational schema extraction (`MODELS`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-07** | Spring Boot & Jakarta Dependency Injection resolution (`INJECTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-08** | Spring MVC & JAX-RS routes (`ROUTES_TO`) & JUnit test links (`TESTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-09** | Go anonymous struct embedding & interface satisfaction (`INHERITS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-10** | Go Gin/Chi web routing (`ROUTES_TO`) & `*_test.go` table-driven test linking (`TESTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-11** | Core test suite language coverage parity (TS, TSX, Java, Scala, Rust, Swift) | Core / P2 | Scorecard Generator |
 
 ## Shipped in batch 1
 

@@ -1,0 +1,155 @@
+name: Incorrect or missing graph edge
+description: A CALLS / IMPORTS / INHERITS / CO_CHANGE edge is wrong, missing, or points somewhere unexpected.
+labels: ["bug", "area/graph"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most valuable kind of bug report for repo2graph, and also the one most often
+        filed against behaviour that is working as documented. Two minutes of the checks below
+        saves a round trip.
+
+        **Read [docs/limitations.md](../../docs/limitations.md) first.** A missing edge is expected
+        — not a bug — when the call goes through dynamic dispatch, reflection, a dependency-injection
+        container, a computed import, or a language boundary crossed by generated bindings. An
+        `INHERITS` edge landing on an interface rather than the injected implementation is also
+        documented behaviour, not a defect.
+
+        An *ambiguous* `CALLS` edge is likewise by design: name-based resolution fans a tie out to
+        up to five candidates at `confidence = 1/n`. Check the `confidence` value before filing.
+
+  - type: dropdown
+    id: edge-kind
+    attributes:
+      label: Which edge kind?
+      options:
+        - CALLS
+        - IMPORTS
+        - INHERITS
+        - DEFINES
+        - CONTAINS
+        - CO_CHANGE
+        - CALLS_EXTERNAL
+    validations:
+      required: true
+
+  - type: dropdown
+    id: problem
+    attributes:
+      label: What is wrong with it?
+      options:
+        - The edge is missing entirely
+        - The edge points at the wrong target
+        - The edge should not exist at all
+        - The confidence value looks wrong
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language of the source
+      placeholder: "Python / TypeScript / Go / C++ / ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal source that reproduces it
+      description: >
+        The smallest snippet where the edge is wrong — both files if the edge crosses files.
+        Include the file paths, because node ids are path-based.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-edge
+    attributes:
+      label: The edge you expected
+      description: >
+        As node ids if you have them — `sym:<path>::<Qualname>` for symbols, `file:<path>` for
+        files. Plain English is fine if you don't.
+      placeholder: "sym:app/router.py::Router.dispatch  ->  sym:app/views.py::handle_index"
+    validations:
+      required: true
+
+  - type: textarea
+    id: explain
+    attributes:
+      label: Output of `repo2graph explain`
+      description: >
+        `repo2graph explain edge "<src-id>" "<dst-id>" -o .r2g` reports every edge between two
+        nodes in either direction, with each edge's attributes — and says *which* node is missing
+        when there is no edge at all. If you don't have ids, `repo2graph explain node "<id>" -o .r2g`
+        on either end works too. This output usually identifies the cause on its own.
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: not-a-known-limitation
+    attributes:
+      label: Ruled out
+      description: All of these are documented behaviour rather than bugs. Confirm the report is none of them.
+      options:
+        - label: The call is **not** dispatched dynamically (string-keyed lookup, plugin registry, `getattr`, a virtual call resolved at runtime).
+          required: true
+        - label: The import is **not** computed (`importlib.import_module(var)`, reflection, dynamic `import()` with a non-literal specifier).
+          required: true
+        - label: The target is **not** wired by a dependency-injection container at runtime.
+          required: true
+        - label: The edge does **not** cross a language boundary through generated bindings.
+          required: true
+        - label: If this is an ambiguous `CALLS` edge, I checked `confidence` and it is not a `1/n` tie.
+          required: false
+
+  - type: checkboxes
+    id: freshness
+    attributes:
+      label: Index freshness
+      description: >
+        The index is a snapshot and nothing watches the filesystem — an edited file keeps being
+        described by the old graph until you rebuild. This is the single most common cause of a
+        report that cannot be reproduced.
+      options:
+        - label: I rebuilt the index (`repo2graph build <path> -o .r2g`) after the source reached its current state.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: repo2graph version
+      description: Output of `repo2graph --version`.
+      placeholder: "2.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Which is it?
+      description: >
+        Matches `repo2graph bug-report --category`, so the bundle below asks for the right
+        extra evidence.
+      options:
+        - incorrect-relationship — an edge exists that should not, or points at the wrong target
+        - missing-relationship — an edge that should exist does not
+    validations:
+      required: true
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Diagnostic bundle (optional)
+      description: >
+        `repo2graph bug-report -o .r2g --category incorrect-relationship` (or
+        `--category missing-relationship`). It carries the edge-confidence histogram, which is
+        often what explains the report: a graph dominated by ambiguous name matches behaves
+        differently from one that resolves cleanly.
+
+
+        No source code, no environment variable values, no remote URL, no absolute paths, and no
+        file paths at all unless you pass `--include-paths`. Read it before you post it.
+      render: markdown

@@ -2,6 +2,13 @@
 
 This document details security guardrails, threat model considerations, and permission hardening for the `repo2graph` GitHub Action (`Srinivasan-78/repo2graph`).
 
+For the whole-project threat model — assets, trust boundaries, and the other surfaces — see
+**[docs/THREAT_MODEL.md](THREAT_MODEL.md)**; its supply-chain section covers the workflow risks
+that apply to this repository's own CI rather than to your use of the Action. One thing worth
+carrying over from **[docs/PRIVACY.md](PRIVACY.md)**: the artifact this Action uploads contains
+`agent/chunks.jsonl`, which is your source code as text — give it the repository's own access
+control.
+
 ## Key Principles
 
 1. **Principle of Least Privilege**: Grant only `contents: read` unless pushing to a graph branch.

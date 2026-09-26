@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from .edgemeta import cite as edge_cite, describe as describe_edge
 from .query import ALL_EDGE_DIRS, RETRIEVE_BUDGET_CHARS, Index, tokenize
 
 
@@ -224,11 +225,16 @@ def format_explain_edge(data: dict[str, Any]) -> str:
     for i, e in enumerate(data["edges"], 1):
         direction = f"{e['src']} -> {e['dst']}"
         etype = e.get("type", "UNKNOWN")
-        conf = e.get("confidence")
-        conf_str = f" (confidence: {conf})" if conf is not None else ""
-        lines.append(f"  {i}. [{etype}] {direction}{conf_str}")
+        lines.append(f"  {i}. [{etype}] {direction}")
+        # One rendering of trust, shared with the MCP tools and the rag
+        # limitations block, so the same edge is never characterised two
+        # different ways depending on which command the reader used.
+        lines.append(f"       {describe_edge(e)}")
+        where = edge_cite(e)
+        if where:
+            lines.append(f"       open: {where}")
         for k, v in sorted(e.items()):
-            if k not in ("src", "dst", "type", "confidence"):
+            if k not in ("src", "dst", "type", "confidence", "method", "evidence"):
                 lines.append(f"       {k}: {v}")
 
     src_node = data.get("src_node")

@@ -5,9 +5,11 @@
 tree-sitter advances `Point.row` on `\n` only. `str.splitlines()` (and universal-newline mode)
 *also* break on U+2028, U+2029, U+0085, `\x0b` and `\x0c` — so any source file containing one of
 those desyncs Python's line list from the parser's row numbers, and every later symbol's chunk
-text gets sliced from the wrong lines. This bug class keeps recurring: ISS-22 (`chunks.py`), the
-`query.py` comment near its `read_jsonl`, and still-open at `graph.py:380` (git-log output is
-`.splitlines()` — a raw U+2028 in a path splits the line and the file drops out of `CO_CHANGE`).
+text gets sliced from the wrong lines. This bug class keeps recurring: ISS-22 (`chunks.py`) and the
+`query.py` comment near its `read_jsonl`. The git-log instance this rule used to call "still-open
+at `graph.py:380`" is closed — that call is now `split("\n")` with the reason inline — and there
+are **no `.splitlines()` calls left anywhere in `repo2graph/`**. Keep it that way; the three
+remaining matches for the word are this rule being cited in prose.
 
 - Slice source-against-parser with `src.split("\n")`, dropping a trailing `"\r"` per line for CRLF.
 - `chunks.py` already has a `_lines(src)` helper that does exactly this — reuse it.
@@ -167,3 +169,41 @@ The Python suite cannot see this at all.
 - `-n` / `-z` non-emptiness tests agree with GitHub for every casing — only `==` equality gates need
   this. `tests/test_compat.py`'s R-6 executes the real `run:` body across casings and fails if a new
   `inputs.X ==` gate appears.
+
+## Discovery order *is* artifact order — keep `discover()` sorted
+
+Node ids are emitted as files are parsed, and edges and chunks follow the nodes. So anything that
+perturbs discovery order perturbs `nodes.jsonl`, `edges.jsonl` and `chunks.jsonl` byte-for-byte
+while describing an identical graph. `git ls-files` happens to sort; `os.walk` returns filesystem
+order — alphabetical on NTFS, hash order on ext4 with `dir_index` — so a non-git build produced
+different artifacts on different machines, and **no same-machine A/B could see it** (on NTFS the
+unsorted and sorted orders coincide).
+
+- `discover()` sorts both sources in one place, keyed on `Path.as_posix()`. Not `str(Path)`: that
+  sorts on `\` on Windows and `/` elsewhere, which is the same divergence one level down.
+- A third discovery source must inherit that sort rather than add its own.
+- `--max-files N` takes the first N *in discovery order*, so unsorted discovery made two machines
+  index different **subsets** of one tree.
+- `tests/test_determinism.py` reverses `os.walk` to stand in for "a different filesystem". A test
+  that does not do that is not a detector for this class.
+
+## Every edge carries `method`, `confidence` and `evidence` — normalise at the chokepoint
+
+An edge is a claim about the code; without evidence it is an assertion. Four of the six edge types
+were once bare `(src, dst, type)` triples, so "why do you think this file imports that one" had no
+answer in the artifact.
+
+- `Graph.add_edge` is the single chokepoint and runs `edgemeta.normalize`, so a **new edge type
+  cannot ship without the standard fields**. Add per-type metadata at the call site; never bypass
+  `add_edge`.
+- `confidence` means P(`dst` is the correct target | the relationship at `evidence` exists) — not
+  P(the relationship exists). That separation is why an ambiguous name splits 1/n across candidates
+  while the call site stays certain, and why `CALLS_EXTERNAL` is 1.0. It **never** encodes dynamic
+  dispatch; `call_kind` does.
+- `evidence: null` is a real answer for `CONTAINS` and `CO_CHANGE`. Inventing a line for either
+  would be a fabricated citation, which is the failure the field exists to prevent.
+- Anything added to `ParsedFile` for evidence must round-trip through `parse.cache.json` **and**
+  bump `PARSE_CACHE_FORMAT`, or an incremental build emits edges with no evidence where a full
+  build emits a line. `import_lines` was caught by the byte-equality tests doing exactly that.
+- `docs/reference.md` and `docs/OUTPUT_SCHEMA.md` both describe these records.
+  `tests/test_doc_consistency.py` fails if they disagree.

@@ -5,6 +5,12 @@ where the repositories being indexed contain proprietary code. This is guidance 
 who deploys the tool, not a claim that any single configuration makes it "fully secure" — see
 `docs/SECURITY-AUDIT.md`'s closing section for what the tool does and does not protect against.
 
+Read **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** first if you are making a deployment decision: it
+states the trust boundaries this page's architecture is designed around, and names every open
+security-relevant gap against the surface it belongs to. **[docs/secure-configuration.md](secure-configuration.md)**
+has the copy-paste version of the configurations below, and
+**[docs/PRIVACY.md](PRIVACY.md)** covers what is written where and how to delete it.
+
 ## Recommended architecture
 
 ```mermaid

@@ -1,0 +1,98 @@
+name: Parser failure
+description: A file in a supported language failed to parse, or produced no symbols.
+labels: ["bug", "area/graph"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is for a language repo2graph **already supports** — one of the 17 in
+        [the README](../../README.md#languages) — producing no symbols, or reporting syntax
+        errors on code that compiles. If the language is not on that list, use the
+        **Language / parser support** template instead.
+
+        **Run `repo2graph doctor .` first.** Its `Parser Coverage` check reports parse errors and
+        grammar-less files for an index that already exists, and `Tree-Sitter & Languages` reports
+        which grammars actually loaded. A grammar that fails to load is a different bug from one
+        that loads and mis-parses, and the fix is different too.
+
+        Three things that are **not** parser failures:
+
+        - A file indexed as plain text with no symbols, when its extension is not in `EXT_LANG`.
+          It is still searchable; it just has no `DEFINES` edges.
+        - A file over `--max-file-mb` (default 1.5 MB). It is skipped by design; see
+          `--chunk-large-files`.
+        - A symbol that exists but has no `CALLS` edges. That is resolution, not parsing —
+          use the **Incorrect or missing graph edge** template.
+
+  - type: input
+    id: version
+    attributes:
+      label: repo2graph version
+      placeholder: "2.0.0"
+    validations:
+      required: true
+
+  - type: input
+    id: language
+    attributes:
+      label: Language and file extension
+      placeholder: "kotlin, .kt"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What is happening?
+      options:
+        - The file parses but produces zero symbols
+        - The file produces some symbols but misses a whole construct (e.g. every method in a class)
+        - repo2graph reports syntax errors on code that compiles
+        - --parse-policy strict aborts the build on a valid file
+        - The grammar fails to load at all
+    validations:
+      required: true
+
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal snippet that reproduces it
+      description: |
+        The smallest code that shows the problem. **Only share code you are free to share** — a
+        constructed example that reproduces it is better than a real one you have to redact,
+        and much better than none.
+
+        If you cannot share any code, say so and describe the construct instead (e.g. "a Kotlin
+        `companion object` inside a sealed class"). That is often enough to reproduce.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What symbols did you expect?
+      placeholder: |
+        Expected: a `class` symbol for Foo and `method` symbols for bar() and baz().
+        Got: the file node only, no symbols.
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`repo2graph doctor . --json` output"
+      description: Carries the tree-sitter and language-pack versions, and which grammars loaded.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Diagnostic bundle (optional)
+      description: |
+        `repo2graph bug-report -o <out> --category parser-failure`
+
+        No source code, no environment variable values, no absolute paths.
+      render: markdown

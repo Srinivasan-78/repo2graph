@@ -114,6 +114,12 @@ def test_every_surface_path_exists():
 # history or illustrates a *form*, and a pattern loose enough to reach one of
 # them would rewrite the past or break an example.
 MUST_SURVIVE = (
+    # The CITATION.cff surface anchors on `^version:`; `cff-version` is the
+    # citation-file-format spec version, not ours. A pattern that reached it
+    # would claim the repo emits CFF 9.9.9, which no parser accepts -- and
+    # test_bump_moves_every_surface_to_the_new_version could not see it, since
+    # both lines would agree on the new value.
+    ("CITATION.cff", "cff-version: 1.2.0"),
     ("docs/github-action.md", "repo2graph>=1.4,<2"),
     ("docs/github-action.md", "actions/checkout@v4"),
     ("README.md", "actions/checkout@v4"),
