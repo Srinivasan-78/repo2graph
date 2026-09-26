@@ -2162,7 +2162,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0,<3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "numpy", marker = "extra == 'rag'", specifier = ">=1.24" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.6.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
