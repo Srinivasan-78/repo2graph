@@ -568,7 +568,19 @@ def tool_repo_impact(
         try:
             diff_text = get_git_diff(root_path, base=base_ref, head=head_ref)
         except Exception as exc:
-            return f"Error obtaining git diff ({base_ref}...{head_ref}): {exc}"
+            # The exception text is *not* relayed. `get_git_diff` embeds git's
+            # stderr, and `git -C <root>` names <root> in its own failure
+            # message, so passing `exc` through hands the caller the server's
+            # absolute index path -- exactly what `http_server`'s
+            # INDEX_UNAVAILABLE and `_public_repo_label` keep server-side for
+            # every other route. The refs are the caller's own input, so echoing
+            # those discloses nothing. Only the type is kept, which is enough to
+            # tell "bad ref" from "not a repository" without naming the host.
+            return (
+                f"Error obtaining git diff ({base_ref}...{head_ref}): "
+                f"{type(exc).__name__}. Check that both refs exist in the "
+                f"indexed repository, or pass the diff directly via `diff`."
+            )
 
     report = analyze_diff_impact(
         index=index,
@@ -581,11 +593,96 @@ def tool_repo_impact(
 
     fmt = str(format).lower().strip()
     if fmt == "json":
-        return format_json(report)
+        rendered = format_json(report)
     elif fmt in ("pr-comment", "comment"):
-        return format_pr_comment(report)
+        rendered = format_pr_comment(report)
     else:
-        return format_markdown(report)
+        rendered = format_markdown(report)
+
+    # Bound the rendered result, the second half of the AGENTS.md MCP rule: a
+    # clamped *input* does not bound the *output*. The report grows with the
+    # number of impacted symbols, not with `max_depth`, and `diff` is accepted up
+    # to 1 MB -- a diff naming every indexed path rendered 17,927 tokens as JSON,
+    # already 1.5x the ceiling `repo_search` enforces on itself. Measured after
+    # rendering rather than predicted, for the same reason `repo_search`
+    # re-measures `pack_context`'s own output instead of trusting it.
+    if count_tokens(rendered) <= MCP_MAX_BUDGET_TOKENS:
+        return rendered
+
+    if fmt == "json":
+        # `_fit_lines` would cut mid-structure and hand back a string that is no
+        # longer JSON, which for a machine-readable format is worse than the
+        # overrun: the caller gets a parse error instead of a result. Return the
+        # scalar summary -- which is what does not grow with the diff -- as a
+        # valid document, and say plainly that the lists were dropped.
+        # Function-local import, matching this module's other json call sites:
+        # the docstring's promise is that importing `mcp` costs nothing.
+        import json as _json
+
+        return _json.dumps(
+            {
+                "truncated": True,
+                "reason": (
+                    f"report exceeded the {MCP_MAX_BUDGET_TOKENS}-token tool ceiling; "
+                    f"per-symbol lists omitted. Narrow the diff, or run "
+                    f"`repo2graph impact` for the full report."
+                ),
+                "base_ref": report.base_ref,
+                "head_ref": report.head_ref,
+                "risk_level": report.risk_level,
+                "blast_radius_score": report.blast_radius_score,
+                "metrics": {
+                    "files_changed_count": len(report.files_changed),
+                    "symbols_changed_count": len(report.symbols_changed),
+                    "public_apis_affected_count": len(report.public_apis_affected),
+                    "impacted_callers_count": len(report.impacted_callers),
+                    "impacted_modules_count": len(report.impacted_modules),
+                    "impacted_tests_count": len(report.impacted_tests),
+                    "untested_public_apis_count": len(report.untested_public_apis),
+                    "suspicious_findings_count": len(report.suspicious_findings),
+                },
+            },
+            indent=2,
+        )
+
+    # Markdown and pr-comment are line-oriented, so a line-boundary cut degrades
+    # into a shorter report rather than a malformed one.
+    #
+    # The notice's cost is paid for *before* fitting -- appending it afterwards
+    # put the result back over the ceiling by its own length (12,013 against a
+    # 12,000 bound). A truncation notice that breaks the limit it announces is
+    # the one thing it must not do.
+    #
+    # Subtracting the notice's own `count_tokens` is not enough, because
+    # `count_tokens` is `len // 4` and so is not additive. `_fit_lines` only
+    # guarantees `len(fit) // 4 <= room`, i.e. up to `4 * room + 3` characters, so
+    # a notice whose length is not a multiple of 4 can carry the sum's floor one
+    # token over. Reserving `(len(notice) + 3) // 4` closes it arithmetically:
+    #
+    #     len(fit) + len(notice) <= 4 * room + 3 + len(notice)
+    #     => count_tokens(total) <= room + (len(notice) + 3) // 4 == ceiling
+    #
+    # -- exact, in one pass. Iterating `room` downward until it fit would also
+    # work but re-runs `_fit_lines`, which rebuilds its candidate string on every
+    # line and is therefore quadratic in line count; one call is the difference
+    # between ~0.3s and ~27s on a 60k-line report.
+    notice = (
+        f"\n\n_[truncated to {MCP_MAX_BUDGET_TOKENS} tokens. "
+        f"Narrow the diff, or run `repo2graph impact` for the full report.]_"
+    )
+    room = max(1, MCP_MAX_BUDGET_TOKENS - (len(notice) + 3) // 4)
+
+    # Hand `_fit_lines` only the prefix that could possibly survive. Every line it
+    # keeps lies inside the first `4 * room + 3` characters, so cutting to the
+    # last newline at or beyond that bound is loss-free -- and it stops the
+    # quadratic candidate rebuild from walking a report that may be megabytes of
+    # lines past the point where the budget was already spent.
+    head = rendered[: 4 * room + 4]
+    if len(head) < len(rendered):
+        cut = head.rfind("\n")
+        if cut > 0:
+            head = head[:cut]
+    return _fit_lines(head, room, count_tokens) + notice
 
 
 def _edge_note(index: "Index", src: str, dst: str, etype: str) -> str:

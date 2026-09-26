@@ -449,13 +449,32 @@ def test_cli_text_output(built, capsys):
 
 
 def test_cli_json_output_is_the_report_verbatim(built, capsys):
+    """`index_status`'s docstring promises `--json` prints the report verbatim,
+    so every key it returns is public API. That is the contract under test here:
+    a full dict comparison, not a spot-check of a few keys, because a CLI that
+    renamed or dropped one key on the way to stdout would break a consumer while
+    still satisfying any subset assertion.
+
+    `index.age_seconds` is the one legitimately volatile field -- whole seconds
+    since the manifest was written -- so it is dropped from *both* sides rather
+    than used as an excuse to weaken the comparison. Its presence is still
+    asserted, so it cannot silently disappear.
+    """
     _src, out = built
     assert main(["index-status", "-o", str(out), "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert (
-        data == index_status(out)
-        or data["index"]["build_id"] == index_status(out)["index"]["build_id"]
-    )
+    direct = index_status(out)
+
+    assert "age_seconds" in data["index"] and "age_seconds" in direct["index"]
+    data["index"].pop("age_seconds")
+    direct["index"].pop("age_seconds")
+    assert data == direct
+
+    # The six documented sections, pinned literally so a rename fails here too.
+    assert set(data) == {"index", "source", "contents", "discovery", "parsing", "freshness"}
+    assert data["freshness"]["status"] == "current"
+    assert data["contents"]["nodes"] > 0
+    assert data["contents"]["edges"] > 0
 
 
 def test_cli_check_flag_gates_on_freshness(built, capsys):
@@ -490,11 +509,31 @@ def test_pointing_at_the_agent_dir_gives_the_same_answer(built):
     via_root = index_status(out)
     via_agent = index_status(out / "agent")
 
-    assert via_agent["index"]["path"] == via_root["index"]["path"]
-    assert via_agent["source"]["path"] == via_root["source"]["path"]
+    assert via_root["freshness"]["status"] == "current"
     assert via_agent["freshness"]["status"] == "current"
-    assert via_agent["contents"] == via_root["contents"]
+    assert via_agent["source"]["path"] == via_root["source"]["path"]
+    # `index.path` and `index.size_bytes` are the two fields that probe the
+    # resolution line this test exists to defend --
+    #   index_root = out.parent if (agent == out and out.name == "agent") else out
+    # -- because `agent/` is a strict subset of `.r2g`. If that ever regressed to
+    # a plain `index_root = out`, both would diverge immediately while the
+    # `contents` counts (read from the same manifest either way) would not. They
+    # are the strongest assertions here, so they stay.
+    assert via_agent["index"]["path"] == via_root["index"]["path"]
     assert via_agent["index"]["size_bytes"] == via_root["index"]["size_bytes"]
+    # Whole-dict, not a hand-picked trio: `symbols_by_kind`, `edges_by_type` and
+    # `languages` must match too, and naming three keys would let a fourth drift.
+    assert via_agent["contents"] == via_root["contents"]
+
+
+def test_malformed_state_json_handled_gracefully(built):
+    """Corrupted index.state.json reports stale gracefully without crashing."""
+    src, out = built
+    state_file = out / "agent" / "index.state.json"
+    state_file.write_text("NOT VALID JSON {{{", encoding="utf-8")
+    rep = index_status(out, repo=src)
+    assert rep["freshness"]["status"] == "stale"
+    assert any("unreadable" in r for r in rep["freshness"]["reasons"])
 
 
 def test_cli_accepts_an_explicit_repo_path(built, capsys):

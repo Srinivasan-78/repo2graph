@@ -84,6 +84,39 @@ SECRET_EXACT_NAMES = frozenset(
         "id_dsa",
         "id_ecdsa",
         "id_ed25519",
+        # The file `KUBECONFIG` points at when it is not `~/.kube/config` (which
+        # the `.kube` entry in SECRET_DIR_NAMES already covers). It holds cluster
+        # credentials -- client certs, bearer tokens, or an exec plugin config.
+        "kubeconfig",
+    }
+)
+
+#: Suffixes an editor, a script or a careless `cp` appends to a file it is about
+#: to replace. `id_rsa.bak` and `server.key.bak` hold exactly what `id_rsa` and
+#: `server.key` hold, so a backup is tested by stripping the suffix and asking
+#: the same question again. Only one layer is stripped, and the `~` form is
+#: handled separately because it carries no dot.
+BACKUP_SUFFIXES = (".bak", ".old", ".orig", ".save", ".swp", ".tmp", "~")
+
+#: Environment names in the *dotless* dotenv spelling. `.env.production` is
+#: already caught by the `.env` family test, but `env.production` -- the spelling
+#: a project uses when it wants the file visible in a listing -- was not, and it
+#: holds the same values. Matched against an explicit set rather than by treating
+#: every `env.*` as a secret: `env.py`, `env.ts` and `env.go` are ordinary
+#: modules, and excluding those from the index would be a silent loss of code.
+DOTENV_ENVIRONMENTS = frozenset(
+    {
+        "local",
+        "dev",
+        "development",
+        "test",
+        "testing",
+        "stage",
+        "staging",
+        "prod",
+        "production",
+        "secret",
+        "secrets",
     }
 )
 
@@ -156,8 +189,23 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
 # remaining text before the optional group gives up. Repository content is
 # attacker-supplied on every build and `max_file_bytes` defaults to 1.5 MB, so
 # a single file of repeated BEGIN lines cost minutes of CPU per build.
-PEM_BEGIN_RE = re.compile(r"-----BEGIN [-A-Z0-9_ ]*PRIVATE KEY-----")
-PEM_END_RE = re.compile(r"-----END [-A-Z0-9_ ]*PRIVATE KEY-----")
+#
+# The label repetition is *bounded*, and that bound is the whole point rather
+# than tidiness: `[-A-Z0-9_ ]` contains every character of the `PRIVATE KEY`
+# literal that follows it, so an unbounded `*` has to backtrack the entire tail
+# at every one of the n/11 offsets where `-----BEGIN ` matches. A body of
+# repeated *incomplete* headers is therefore quadratic -- measured 1.1 s at
+# 107 KB and ~90 s at 1 MB, which `MAX_BODY_BYTES` admits in a single request.
+# That is reachable pre-authentication: `http_server._reject` calls `emit()`
+# unconditionally, so sanitising a rejected request's own field burns the CPU
+# before the 401 is written, and `AuditConfig(level="none")` does not avoid it.
+# With `{0,40}` the engine tries at most 41 lengths per offset, which is linear
+# (966 KB in 0.0084 s) and still admits every real label -- `RSA`, `DSA`, `EC`,
+# `OPENSSH`, `ENCRYPTED`, `ENCRYPTED RSA`, and the bare `PRIVATE KEY`.
+# Python 3.10 is the floor here, so possessive `*+` is not available.
+_PEM_LABEL = r"[-A-Z0-9_ ]{0,40}"
+PEM_BEGIN_RE = re.compile(rf"-----BEGIN {_PEM_LABEL}PRIVATE KEY-----")
+PEM_END_RE = re.compile(rf"-----END {_PEM_LABEL}PRIVATE KEY-----")
 
 # Types whose spans are computed by a dedicated pass rather than by running
 # their entry below over the text. The entry is still the shape test used by
@@ -307,8 +355,42 @@ def _is_secret_path(
         return True
     if name.startswith(".env") or name.endswith(".env") or ".env." in name:
         return True
+    # The dotless dotenv spelling: `env.production` holds what `.env.production`
+    # holds. Restricted to known environment names so `env.py`/`env.ts` stay
+    # indexable -- see DOTENV_ENVIRONMENTS.
+    if name.startswith("env.") and name[len("env.") :] in DOTENV_ENVIRONMENTS:
+        return True
     if any(name.endswith(ext) for ext in SECRET_EXTS):
         return True
+    # A backup of a secret is a secret. Strip the editor/copy suffixes and re-ask
+    # the same question, so `id_rsa.bak` and `server.key.bak` are caught without
+    # every rule above needing its own `.bak` variant.
+    #
+    # Two things this has to get right:
+    #
+    #  - **Re-ask about the whole path, not the bare name.** Every
+    #    `SECRET_PATH_SUFFIXES` rule is inherently multi-segment, so recursing on
+    #    the basename alone skipped all of them: `.docker/config.json` was
+    #    excluded but `.docker/config.json.bak` -- the same registry auth token --
+    #    was indexed in the clear. Same for `.config/gh/hosts.yml.bak`,
+    #    `.m2/settings.xml.bak`, `.gradle/gradle.properties.bak`.
+    #  - **Strip every layer, not one.** `cp` twice and an editor once gives
+    #    `id_rsa.bak.bak` and `id_rsa.bak~`, and stopping after one layer made
+    #    those a miss while `id_rsa.bak` was caught.
+    #
+    # The loop is bounded: each pass removes at least one character, and it stops
+    # as soon as no suffix matches or nothing but the suffix is left (so `.bak`
+    # and `~` alone never strip to `""` and recurse on the empty string).
+    stem = name
+    while True:
+        for suffix in BACKUP_SUFFIXES:
+            if stem != suffix and stem.endswith(suffix) and len(stem) > len(suffix):
+                stem = stem[: -len(suffix)]
+                break
+        else:
+            break
+    if stem != name and stem:
+        return _is_secret_path("/".join([*parts[:-1], stem]), extra_keywords, extra_dirs)
 
     if extra_keywords:
         valid_kws = [kw.lower() for kw in extra_keywords if kw and kw.strip()]

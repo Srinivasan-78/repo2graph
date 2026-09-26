@@ -235,7 +235,11 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
         try:
             if abspath.stat().st_mtime <= cutoff:
                 continue
-            digest = hashlib.sha256(abspath.read_bytes()).hexdigest()
+            h = hashlib.sha256()
+            with open(abspath, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            digest = h.hexdigest()
         except OSError:
             continue
         if digest != recorded[rel]:

@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -145,6 +146,61 @@ AMBIGUOUS_CALL_CONFIDENCE = 0.7
 
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 DIFF_GIT_RE = re.compile(r"^diff --git a/(.*?) b/(.*)$")
+#: Deliberately a **denylist**, not an allowlist of "safe" characters.
+#:
+#: The one thing this has to stop is git **option** injection: a revision
+#: beginning `-` is read as an option, and `--output=<path>` writes a file while
+#: `--ext-cmd=<cmd>` runs one -- both reachable even though the argv is a list
+#: and no shell is involved. That is a leading-character rule, nothing more.
+#:
+#: An allowlist is the tempting shape here and it is wrong twice over. Refnames
+#: legitimately contain `+`, `#`, `=`, `,` and non-ASCII (`feat+1`, `fix#123`,
+#: `naïve` are all accepted by `git check-ref-format`), so a character class
+#: turns a real branch into "invalid git ref". And *revision expressions* --
+#: which is what this actually receives -- add `~ ^ @ { } :` on top, so even
+#: `git check-ref-format`'s own character set is too narrow: `HEAD~1`, `HEAD^^`
+#: and `main@{u}` are illegal refnames and ordinary diff bases.
+#:
+#: So: reject empty, reject a leading `-`, and reject the characters git already
+#: forbids in a refname and that no revision expression can contain -- ASCII
+#: whitespace and control characters (NUL included), plus shell metacharacters
+#: that cannot appear in either. A leading `.` goes too, which also disposes of
+#: `./x` and `../x`.
+#:
+#: Note what is deliberately *not* rejected: an interior `..`. `main..dev` is an
+#: ordinary two-dot range and a revision a user may reasonably pass as `--base`.
+#: It is not a traversal risk, because the revision is passed *before* the `--`
+#: in `get_git_diff`, so git resolves it as a revision and never as a path.
+_REF_FORBIDDEN_RE = re.compile(r"[\x00-\x20\x7f\\;|&$'\"`()<>*?\[\]!]")
+
+
+def _validate_ref(ref: str) -> str:
+    """Ensure a git revision carries no leading-dash option or stray metacharacter."""
+    if not ref or ref[0] in "-." or _REF_FORBIDDEN_RE.search(ref):
+        raise ValueError(f"invalid git ref: {ref!r}")
+    return ref
+
+
+#: `-c` overrides every `git diff` here needs, so the two call sites cannot
+#: drift apart. All three neutralise a *user's* `~/.gitconfig`, which would
+#: otherwise reshape output this module parses with fixed patterns:
+#:
+#: - `core.quotepath=false` -- the AGENTS.md rule: a non-ASCII path must come
+#:   back raw, not as `"caf\303\251.py"`, which matches no path in the index.
+#: - `diff.noprefix=false` -- with it on, git emits `diff --git f.py f.py`.
+#: - `diff.mnemonicPrefix=false` -- with it on, `diff --git c/f.py w/f.py`.
+#:
+#: `DIFF_GIT_RE` hard-requires `a/`...` b/`, so either prefix setting yields a
+#: real diff in which this parser finds no files at all: `{}`, exit code 0, and
+#: a report that silently claims the PR changed nothing.
+_GIT_CONFIG = (
+    "-c",
+    "core.quotepath=false",
+    "-c",
+    "diff.noprefix=false",
+    "-c",
+    "diff.mnemonicPrefix=false",
+)
 
 
 def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
@@ -162,16 +218,69 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
     for raw_line in lines:
         line = raw_line.rstrip("\r")
 
-        # Check for diff --git header
-        m_git = DIFF_GIT_RE.match(line)
-        if m_git:
-            old_p, new_p = m_git.group(1), m_git.group(2)
-            current_file = FileDiff(path=new_p, old_path=old_p if old_p != new_p else None)
-            files[new_p] = current_file
+        # Any `diff ` line starts a new file block and therefore ends the
+        # previous one -- not just a `diff --git a/X b/Y` this regex can split.
+        # `diff --cc` / `diff --combined` (a merge commit, which `git show` and
+        # `git log -p --cc` emit) and `diff --git "a/we\"ird.py" ...` (git quotes
+        # a filename containing a double quote whatever `core.quotepath` says)
+        # both fail DIFF_GIT_RE. Leaving `current_file`/`current_hunk` pointing at
+        # the *previous* file then charged this block's `---`/`+++`/body lines to
+        # that file: its `added_lines` gained phantom entries, and
+        # `analyze_diff_impact` selects changed symbols from exactly that set
+        # (`intersecting = [l for l in fd.added_lines ...]`), so the report named
+        # symbols the PR never touched. An unrecognised header means "unknown
+        # file", so the block is skipped rather than misattributed.
+        if line.startswith("diff "):
             current_hunk = None
+            m_git = DIFF_GIT_RE.match(line)
+            if m_git:
+                old_p, new_p = m_git.group(1), m_git.group(2)
+                current_file = FileDiff(path=new_p, old_path=old_p if old_p != new_p else None)
+                files[new_p] = current_file
+            else:
+                current_file = None
             continue
 
         if current_file is None:
+            continue
+
+        # Hunk body first, and it wins outright. Every line inside a hunk carries
+        # a `+`/`-`/space prefix, so a *source* line reading `++ b/x.py` reaches
+        # this loop as `+++ b/x.py` and a source line reading `-- /dev/null` as
+        # `--- /dev/null`. Matching the file-header branches below against those
+        # let a diff's own *content* rewrite the enclosing file's identity: the
+        # `+++` branch renamed `notes.md` to `oops.py` and deleted the real entry,
+        # so every symbol in the genuinely-changed file was then skipped by
+        # `analyze_diff_impact`'s `path not in file_diffs` test, and the report
+        # named a file the PR never touched. A diff that merely *quotes* a diff --
+        # a fixture, a doc, this repo's own tests -- is enough to trigger it.
+        #
+        # Headers can never be missed by this ordering: `diff --git` is handled
+        # above and resets `current_hunk`, and every header line for a file
+        # precedes its first `@@`, so `current_hunk` is None throughout the
+        # header block. `@@`, `\` and `diff --git` do not start with a body
+        # prefix, so a following hunk header still falls through to HUNK_RE.
+        #
+        # `\` being absent from this prefix set is what makes
+        # `\ No newline at end of file` correct: it is legal *mid*-hunk (it
+        # follows the last line of whichever side lacks the trailing newline, so
+        # it can land between the `-` lines and the `+` lines) and it is not a
+        # line of either file, so it must not advance `curr_new_line`. Falling
+        # past every branch below and out of the iteration is exactly that.
+        if current_hunk is not None and line[:1] in ("+", "-", " ", ""):
+            # No `+++`/`---` exclusions here: inside a hunk those are content,
+            # never headers. Excluding them dropped a real added line whose text
+            # began with `++`, leaving a gap in `added_lines` while the line
+            # counter kept advancing -- so a symbol whose only change was that
+            # line was silently never reported.
+            if line.startswith("+"):
+                current_file.added_lines.add(curr_new_line)
+                current_hunk.added_lines.append(curr_new_line)
+                curr_new_line += 1
+            elif line.startswith("-"):
+                current_file.deleted_lines_count += 1
+            else:
+                curr_new_line += 1
             continue
 
         if line.startswith("new file mode"):
@@ -195,7 +304,15 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
                 path = line[4:].strip()
                 if path.startswith("b/"):
                     path = path[2:]
-                current_file.path = path
+                if current_file.path != path:
+                    # The `+++ b/<path>` line is authoritative; the `diff --git`
+                    # header's non-greedy `a/(.*?) b/(.*)` mis-splits a path that
+                    # itself contains " b/". Drop the key that header guessed --
+                    # but only if it still holds *this* FileDiff, so a guessed
+                    # path that collides with an earlier real file cannot evict it.
+                    if files.get(current_file.path) is current_file:
+                        del files[current_file.path]
+                    current_file.path = path
                 files[path] = current_file
             continue
 
@@ -216,16 +333,6 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
             curr_new_line = new_start
             continue
 
-        if current_hunk is not None:
-            if line.startswith("+") and not line.startswith("+++"):
-                current_file.added_lines.add(curr_new_line)
-                current_hunk.added_lines.append(curr_new_line)
-                curr_new_line += 1
-            elif line.startswith("-") and not line.startswith("---"):
-                current_file.deleted_lines_count += 1
-            else:
-                curr_new_line += 1
-
     return files
 
 
@@ -234,17 +341,33 @@ def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = N
 
     Adheres strictly to AGENTS.md:
     - `-c core.quotepath=false`
+    - `-c diff.noprefix=false -c diff.mnemonicPrefix=false`, because
+      `DIFF_GIT_RE` hard-requires the `a/`...` b/` prefixes. Both are ordinary
+      `~/.gitconfig` settings, and either one makes git emit a perfectly real
+      diff (`diff --git f.py f.py`, or `diff --git c/f.py w/f.py`) that this
+      parser matches nothing in -- returning `{}` with exit code 0, the same
+      silent "no files changed" report the `--` bug below produced.
     - bytes stdout decoded utf8 + surrogateescape
     - split("\\n"), never splitlines()
     - stdin DEVNULL, bounded timeout
+
+    The `--` goes *after* the revision, never before it: `git diff -U0 -- main`
+    reads `main` as a **pathspec**, so it diffs nothing and exits 0, which would
+    make every impact report silently claim the PR changed no files. Placing it
+    last still guarantees nothing afterwards is parsed as an option, and
+    `_validate_ref` is what actually blocks a leading-dash revision.
     """
     root = str(repo_root)
+    valid_base = _validate_ref(base)
+    valid_head = _validate_ref(head) if head else None
+
     # Prefer three-dot diff (merge-base) if head is given
-    cmd = ["git", "-c", "core.quotepath=false", "-C", root, "diff", "-U0"]
-    if head:
-        cmd.append(f"{base}...{head}")
+    cmd = ["git", *_GIT_CONFIG, "-C", root, "diff", "-U0"]
+    if valid_head:
+        cmd.append(f"{valid_base}...{valid_head}")
     else:
-        cmd.append(base)
+        cmd.append(valid_base)
+    cmd.append("--")
 
     try:
         proc = subprocess.run(
@@ -257,23 +380,49 @@ def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = N
         raise RuntimeError(f"failed to run git diff: {exc}") from exc
 
     if proc.returncode != 0:
+        if not valid_head:
+            # Nothing to fall back *to*: the three-dot form only exists when a
+            # head is given, so without one the fallback command is character-for
+            # -character the primary. Running it would spend a second 30s timeout
+            # re-learning the same failure, and then report it twice.
+            err = proc.stderr.decode("utf8", "surrogateescape").strip()
+            raise RuntimeError(f"git diff failed with code {proc.returncode}: {err}")
+
         # Fallback to two-dot diff if three-dot merge-base failed (e.g. shallow clone)
-        cmd_fallback = ["git", "-c", "core.quotepath=false", "-C", root, "diff", "-U0", base]
-        if head:
-            cmd_fallback.append(head)
+        cmd_fallback = [
+            "git",
+            *_GIT_CONFIG,
+            "-C",
+            root,
+            "diff",
+            "-U0",
+            valid_base,
+            valid_head,
+            "--",
+        ]
         try:
-            proc = subprocess.run(
+            fallback_proc = subprocess.run(
                 cmd_fallback,
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
                 timeout=30,
             )
-        except (OSError, subprocess.SubprocessError):
-            pass
+            if fallback_proc.returncode == 0:
+                return fallback_proc.stdout.decode("utf8", "surrogateescape")
+        except (OSError, subprocess.SubprocessError) as exc:
+            err = proc.stderr.decode("utf8", "surrogateescape").strip()
+            raise RuntimeError(f"git diff failed with code {proc.returncode}: {err}") from exc
 
-    if proc.returncode != 0:
+        # Report *both* failures. The three-dot error is usually the informative
+        # one ("unknown revision"); the two-dot error alone would say only that
+        # the fallback also could not run, which sends the reader after the wrong
+        # cause when the real problem is a base ref that does not exist.
         err = proc.stderr.decode("utf8", "surrogateescape").strip()
-        raise RuntimeError(f"git diff failed with code {proc.returncode}: {err}")
+        err_fb = fallback_proc.stderr.decode("utf8", "surrogateescape").strip()
+        raise RuntimeError(
+            f"git diff failed with code {proc.returncode}: {err} "
+            f"(two-dot fallback also failed with code {fallback_proc.returncode}: {err_fb})"
+        )
 
     return proc.stdout.decode("utf8", "surrogateescape")
 
@@ -454,10 +603,10 @@ def analyze_diff_impact(
         sid = sc.id
         visited_nodes: set[str] = {sid}
         # queue item: (current_nid, depth, origin_confidence)
-        queue: list[tuple[str, int, float]] = [(sid, 1, 1.0)]
+        queue: deque[tuple[str, int, float]] = deque([(sid, 1, 1.0)])
 
         while queue:
-            curr_id, depth, parent_conf = queue.pop(0)
+            curr_id, depth, parent_conf = queue.popleft()
             if depth > max_depth:
                 continue
 
@@ -588,6 +737,11 @@ def analyze_diff_impact(
     # 5. Suspicious / Disconnected change detection
     suspicious: list[SuspiciousFinding] = []
 
+    # Pre-group symbols_changed by path for O(1) file-to-symbols lookup
+    syms_by_file: dict[str, list[SymbolChange]] = {}
+    for sc in symbols_changed:
+        syms_by_file.setdefault(sc.path, []).append(sc)
+
     # Rule R2G-IMP-001: Disconnected / Orphan Changes
     #
     # Only files the graph can actually relate are judged. "No graph
@@ -622,7 +776,7 @@ def analyze_diff_impact(
                     break
             # Also check if any symbol in this file connects to symbols in other changed files
             if not connected:
-                syms_in_f = [s for s in symbols_changed if s.path == fpath]
+                syms_in_f = syms_by_file.get(fpath, [])
                 for s in syms_in_f:
                     for neighbor_id, _, _, _ in index.adj.get(s.id, []):
                         n_node = index.nodes.get(neighbor_id)
@@ -664,9 +818,11 @@ def analyze_diff_impact(
     # reported as untested public APIs while 64 tests in
     # tests/test_http_transport.py drive them over real HTTP.
     untested_public: list[SymbolChange] = []
+    tested_targets: set[str] = {t.target_symbol_id for t in impacted_tests}
+    caller_targets: set[str] = {c.target_symbol_id for c in impacted_callers}
     for pub in public_apis_affected:
-        has_test = any(t.target_symbol_id == pub.id for t in impacted_tests)
-        reachable_in_graph = any(c.target_symbol_id == pub.id for c in impacted_callers)
+        has_test = pub.id in tested_targets
+        reachable_in_graph = pub.id in caller_targets
         if not has_test and reachable_in_graph:
             untested_public.append(pub)
             suspicious.append(

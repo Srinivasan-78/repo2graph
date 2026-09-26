@@ -372,11 +372,31 @@ jobs:
           echo "::error::repo2graph $VERSION never appeared on PyPI"
           exit 1
 
+      # Pinned by version *and* by digest, like every action SHA in this repo.
+      # This was the one unpinned executable here: `releases/latest/download/...`
+      # piped straight into `tar xz` and then run in a job holding
+      # `id-token: write`, so whatever upstream re-tagged as "latest" got an OIDC
+      # identity against the MCP Registry. `latest` is a moving pointer, and a
+      # pipe into tar cannot be checked at all -- there is no complete file to
+      # hash until after tar has already written the binary.
+      #
+      # The platform detection went with it: this job is `runs-on:
+      # ubuntu-latest`, so `uname` was always `linux`/`x86_64`. Naming the one
+      # real target makes the digest below checkable rather than decorative.
+      #
+      # To bump: read the new digest from that release's
+      # `registry_<version>_checksums.txt` and change both values together.
       - name: Install mcp-publisher
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
           set -euo pipefail
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-            | tar xz mcp-publisher
+          url="https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          curl -fsSL --retry 3 -o mcp-publisher.tar.gz "$url"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar xzf mcp-publisher.tar.gz mcp-publisher
+          rm -f mcp-publisher.tar.gz
 
       - name: Validate server.json
         run: ./mcp-publisher validate

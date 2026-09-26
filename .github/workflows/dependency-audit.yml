@@ -1,7 +1,11 @@
 name: Dependency audit
 
-# Fails a PR when a known high-severity CVE is reachable from the dependency
-# tree. `dependency-review.yml` already covers *added* dependencies on a diff;
+# Fails *this check* when a known high-severity CVE is reachable from the
+# dependency tree. It is not one of the required status checks (see
+# `.github/SECURITY.md`), so it turns the run red for a reviewer rather than
+# blocking the merge button -- deliberately, because a CVE published against a
+# transitive dependency nobody touched should not wedge every open PR.
+# `dependency-review.yml` already covers *added* dependencies on a diff;
 # this covers the installed tree as a whole, so a CVE published against a
 # dependency nobody touched this week still surfaces.
 #

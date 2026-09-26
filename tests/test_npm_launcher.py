@@ -176,3 +176,48 @@ def test_launcher_explains_itself_when_no_python_launcher_is_installed(tmp_path)
     assert 'pip install "repo2graph[mcp]"' in stderr
     # Diagnostics go to stderr only: stdout is the MCP JSON-RPC stream.
     assert proc.stdout == b"", f"launcher wrote to stdout: {proc.stdout!r}"
+
+
+@needs_node
+@pytest.mark.parametrize("bad_arg", ['arg"with"quote', "arg%PATH%pct", "arg!bang!"])
+def test_launcher_refuses_a_batch_shim_it_cannot_quote_for(tmp_path, bad_arg):
+    """`%`, `!` and `"` have no in-band escape on a `shell: true` cmd.exe line.
+
+    `quoteForCmd` wraps an argument in double quotes, but cmd.exe still expands
+    `%VAR%` and (under delayed expansion) `!VAR!` *inside* quotes, and it honours
+    no backslash escape for an embedded `"` -- `\\"` is a C-runtime convention,
+    not a cmd.exe one, so the `"`-escaping in `quoteForCmd` is a no-op there.
+    Rather than hand cmd.exe a line it will mangle, `run()` refuses.
+
+    Deliberately asserts opposite outcomes per platform, because the gate is
+    reached only via `needsShell`, which is `win32 && (.cmd|.bat)`:
+
+    - Windows: the shim `_write_uvx_shim` lays down is a `.cmd`, so the gate
+      fires -- exit 1, and the argument never reaches the shim.
+    - POSIX: the shim is an extensionless `uvx` spawned with no shell at all, so
+      the same argument is passed through to argv untouched. That is the real
+      assertion here, not merely `returncode == 0`: no shell means no mangling.
+
+    Uses `_write_uvx_shim` rather than writing a `uvx.cmd` on both platforms --
+    `resolveCommand` consults PATHEXT only on Windows (`exts = [""]` elsewhere),
+    so a POSIX `uvx.cmd` is invisible to the PATH walk and the launcher would
+    fall through to the "no working Python launcher" branch and exit 1, making a
+    `returncode == 0` assertion fail on two of the three CI legs.
+    """
+    shim_dir = tmp_path / "bin"
+    _write_uvx_shim(shim_dir)
+
+    proc = _run_launcher(tmp_path, shim_dir, [bad_arg])
+    stdout = proc.stdout.decode("utf8", "surrogateescape")
+    stderr = proc.stderr.decode("utf8", "surrogateescape")
+
+    if sys.platform == "win32":
+        assert proc.returncode == 1, f"expected refusal, got {proc.returncode}: {stderr}"
+        assert "cannot safely run the batch shim" in stderr
+        assert "UVX-RAN" not in stdout, f"refused argument still reached the shim: {stdout!r}"
+        # Diagnostics go to stderr only: stdout is the MCP JSON-RPC stream.
+        assert proc.stdout == b"", f"launcher wrote to stdout: {proc.stdout!r}"
+    else:
+        assert proc.returncode == 0, f"expected the shim's exit 0, got {proc.returncode}: {stderr}"
+        assert "UVX-RAN" in stdout, f"uvx shim was never reached: {stdout!r} / {stderr!r}"
+        assert bad_arg in stdout, f"no shell is involved, so the argument must survive: {stdout!r}"

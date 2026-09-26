@@ -13,6 +13,7 @@ Validates:
 
 import json
 import re
+import shutil
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -75,6 +76,139 @@ def test_parse_unified_diff_basic():
     assert 12 in fd.added_lines
     # Line number added in hunk 2: line 32
     assert 32 in fd.added_lines
+
+
+def test_a_diff_that_quotes_a_diff_does_not_rewrite_the_enclosing_file():
+    """Hunk *content* must never be read as a file header.
+
+    Every line inside a hunk carries a `+`/`-`/space prefix, so a source line
+    reading `++ b/oops.py` arrives as `+++ b/oops.py` and one reading
+    `-- /dev/null` arrives as `--- /dev/null`. Matching those against the
+    `+++ `/`--- ` header branches let a diff's own content rename the enclosing
+    file, delete its entry, and flip its status -- so every symbol in the
+    genuinely-changed file was skipped by `analyze_diff_impact`'s
+    `path not in file_diffs` test and the report named a file never touched.
+    A diff that merely quotes a diff (a fixture, a doc, this repo's own tests)
+    is enough. Line numbers are hand-derived from the hunk headers below.
+    """
+    # A `+++`-shaped added line: both lines are content, neither is a header.
+    quoted = (
+        "diff --git a/notes.md b/notes.md\n"
+        "--- a/notes.md\n"
+        "+++ b/notes.md\n"
+        "@@ -5,0 +6,2 @@\n"
+        "+++ b/oops.py\n"
+        "+real added line\n"
+    )
+    diffs = parse_unified_diff(quoted)
+    assert set(diffs) == {"notes.md"}, f"content invented a file: {sorted(diffs)}"
+    assert diffs["notes.md"].status == "modified"
+    assert diffs["notes.md"].added_lines == {6, 7}
+
+    # A `--- /dev/null`-shaped deleted line must not flip status to "added",
+    # which would mark every symbol in the file as newly added and public.
+    devnull = (
+        "diff --git a/notes.md b/notes.md\n"
+        "--- a/notes.md\n"
+        "+++ b/notes.md\n"
+        "@@ -5,1 +4,0 @@\n"
+        "--- /dev/null\n"
+    )
+    fd = parse_unified_diff(devnull)["notes.md"]
+    assert fd.status == "modified"
+    assert fd.added_lines == set()
+    assert fd.deleted_lines_count == 1
+
+    # A 4-plus line escapes the `+++ ` header check (no space at index 3) but was
+    # then excluded by a `not startswith("+++")` guard, so line 12 vanished from
+    # added_lines while the counter kept advancing.
+    four = (
+        "diff --git a/x.md b/x.md\n"
+        "--- a/x.md\n"
+        "+++ b/x.md\n"
+        "@@ -10,0 +11,3 @@\n"
+        "+diff --git a/x.py b/x.py\n"
+        "++++ b/x.py\n"
+        "+@@ -1 +1 @@\n"
+    )
+    assert parse_unified_diff(four)["x.md"].added_lines == {11, 12, 13}
+
+
+def test_an_unparseable_file_header_does_not_bleed_into_the_previous_file():
+    """`diff --cc` and a git-quoted path both fail DIFF_GIT_RE -- and must still
+    end the previous file's block.
+
+    `current_hunk` used to be reset only on a successful DIFF_GIT_RE match, so a
+    header this parser cannot split arrived with the *previous* file's hunk still
+    open and its body lines were charged to that file. Phantom `added_lines` are
+    load-bearing: `analyze_diff_impact` selects changed symbols from exactly that
+    set, so the report names symbols the PR never touched.
+
+    Combined diffs are not supported (`@@@` is not `HUNK_RE`), and that is fine --
+    `get_git_diff` never asks git for one. What is not fine is a *supported* file
+    being corrupted by an unsupported one that follows it.
+    """
+    combined_after = (
+        "diff --git a/other.py b/other.py\n"
+        "index 1..2 100644\n"
+        "--- a/other.py\n"
+        "+++ b/other.py\n"
+        "@@ -1,0 +2,1 @@\n"
+        "+y\n"
+        "diff --cc m.py\n"
+        "index c376d89,45cf141..20b117f\n"
+        "--- a/m.py\n"
+        "+++ b/m.py\n"
+        "@@@ -1,1 -1,1 +1,1 @@@\n"
+        "- right\n"
+        " -left\n"
+        "++merged\n"
+    )
+    fd = parse_unified_diff(combined_after)["other.py"]
+    assert fd.added_lines == {2}, f"combined block leaked into other.py: {sorted(fd.added_lines)}"
+    assert fd.deleted_lines_count == 0
+
+    # git quotes a filename containing `"` whatever core.quotepath says.
+    quoted_path_after = (
+        "diff --git a/real.py b/real.py\n"
+        "--- a/real.py\n"
+        "+++ b/real.py\n"
+        "@@ -1,0 +2,1 @@\n"
+        "+ok\n"
+        'diff --git "a/we\\"ird.py" "b/we\\"ird.py"\n'
+        '--- "a/we\\"ird.py"\n'
+        '+++ "b/we\\"ird.py"\n'
+        "@@ -1,3 +1,1 @@\n"
+        "-a\n"
+        "-b\n"
+        "-c\n"
+        "+z\n"
+    )
+    fd2 = parse_unified_diff(quoted_path_after)["real.py"]
+    assert fd2.added_lines == {2}, f"quoted-path block leaked: {sorted(fd2.added_lines)}"
+    assert fd2.deleted_lines_count == 0
+
+
+def test_no_newline_at_end_of_file_does_not_advance_the_line_counter():
+    """`\\ No newline at end of file` is legal *mid*-hunk and is not a line.
+
+    It follows the last line of whichever side lacks the trailing newline, so it
+    can land between the `-` lines and the `+` lines. Counting it as a context
+    line pushed every later `+` in the hunk down by one.
+    """
+    diff_text = (
+        "diff --git a/n.txt b/n.txt\n"
+        "--- a/n.txt\n"
+        "+++ b/n.txt\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "\\ No newline at end of file\n"
+        "+new\n"
+        "\\ No newline at end of file\n"
+    )
+    fd = parse_unified_diff(diff_text)["n.txt"]
+    assert fd.added_lines == {1}, sorted(fd.added_lines)
+    assert fd.deleted_lines_count == 1
 
 
 def test_parse_unified_diff_added_and_deleted_files():
@@ -944,6 +1078,219 @@ def test_mcp_tool_repo_impact_depth_clamping(sample_graph_index):
     assert "metrics" in obj
 
 
+@pytest.fixture
+def flood_index():
+    """An index wide enough that the tool's output ceiling actually binds.
+
+    A bound asserted against a four-symbol fixture proves nothing (AGENTS.md's
+    MCP rule says so explicitly), so this builds 300 files x 4 public symbols,
+    each called from the next file, which is what makes the rendered report --
+    symbols, callers, modules, dependency paths -- exceed the ceiling.
+    """
+    idx = MockIndex()
+    n_files = 300
+    for f in range(n_files):
+        path = f"pkg/mod_{f:03d}.py"
+        idx.add_node(f"file:{path}", type="file", path=path)
+        for s in range(4):
+            name = f"public_api_{f:03d}_{s}"
+            idx.add_node(
+                f"sym:{path}::{name}",
+                type="symbol",
+                name=name,
+                qualname=name,
+                kind="function",
+                path=path,
+                start_line=1 + s * 20,
+                end_line=15 + s * 20,
+                signature=f"def {name}(a, b, c)",
+            )
+    for f in range(n_files):
+        path = f"pkg/mod_{f:03d}.py"
+        caller_path = f"pkg/mod_{(f + 1) % n_files:03d}.py"
+        for s in range(4):
+            idx.add_edge(
+                f"sym:{caller_path}::public_api_{(f + 1) % n_files:03d}_{s}",
+                f"sym:{path}::public_api_{f:03d}_{s}",
+                "CALLS",
+                confidence=1.0,
+                evidence={"path": caller_path, "line": 3 + s},
+            )
+    return idx
+
+
+def _flood_diff(index) -> str:
+    """A diff touching every indexed path, with a wide added-line range per file."""
+    paths = sorted({n["path"] for n in index.nodes.values() if n.get("path")})
+    parts = []
+    for p in paths:
+        parts.append(f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n@@ -1,120 +1,120 @@\n")
+        parts.extend(f"+line {i}\n" for i in range(120))
+    return "".join(parts)
+
+
+_IMPACT_RENDERERS = {
+    "json": format_json,
+    "markdown": format_markdown,
+    "pr-comment": format_pr_comment,
+}
+
+
+# Only the two formats that can actually exceed the ceiling. `pr-comment` is
+# deliberately NOT parametrized here: it caps every list (PR_COMMENT_MAX_APIS)
+# because GitHub rejects a comment body over 65536 chars, so it renders 594 tokens
+# on this fixture against a 12000 ceiling and *no* fixture size will make it
+# truncate. Including it read as a third truncation case while asserting nothing
+# about truncation; its real contract is the separate test below.
+@pytest.mark.parametrize("fmt", ["markdown", "json"])
+def test_mcp_tool_repo_impact_output_is_bounded(flood_index, fmt):
+    """Clamping the *input* does not bound the *output*.
+
+    `max_depth` was clamped from the start, but the rendered report grows with
+    the number of impacted symbols, and `diff` is accepted up to 1 MB. A diff
+    naming every indexed path rendered ~17.9k tokens as JSON -- 1.5x the ceiling
+    `repo_search` enforces on itself -- straight into an agent's context window.
+    """
+    from repo2graph.mcp import MCP_MAX_BUDGET_TOKENS
+    from repo2graph.query import count_tokens
+
+    diff_text = _flood_diff(flood_index)
+    report = analyze_diff_impact(flood_index, diff_text, base="main", head="HEAD", max_depth=2)
+
+    # Guard the guard: if the fixture stopped being wide enough to breach the
+    # ceiling, every assertion below would pass vacuously.
+    untruncated = count_tokens(_IMPACT_RENDERERS[fmt](report))
+    assert untruncated > MCP_MAX_BUDGET_TOKENS, (
+        f"fixture renders only {untruncated} {fmt} tokens, under the "
+        f"{MCP_MAX_BUDGET_TOKENS} ceiling -- this test would prove nothing"
+    )
+
+    out = tool_repo_impact(flood_index, diff=diff_text, format=fmt)
+    assert count_tokens(out) <= MCP_MAX_BUDGET_TOKENS, (
+        f"{fmt} output was {count_tokens(out)} tokens, over the {MCP_MAX_BUDGET_TOKENS} ceiling"
+    )
+
+    # Truncation must not destroy the format's own contract: `json` stays
+    # parseable (a line-boundary cut would not), and markdown says it was cut.
+    if fmt == "json":
+        obj = json.loads(out)
+        assert obj["truncated"] is True
+        assert obj["metrics"]["symbols_changed_count"] > 0
+        assert obj["risk_level"] and obj["blast_radius_score"] > 0
+    else:
+        assert "truncated" in out
+
+
+def test_mcp_tool_repo_impact_pr_comment_is_self_bounding_and_never_truncated(flood_index):
+    """`pr-comment` must come back whole, because it bounds itself.
+
+    It caps every list for GitHub's 65536-char comment limit, so it stays far
+    under the tool ceiling even on a diff touching every indexed path. The
+    contract is therefore the opposite of the test above: not "gets truncated"
+    but "is returned byte-identically, with no truncation notice bolted on".
+    """
+    from repo2graph.mcp import MCP_MAX_BUDGET_TOKENS
+    from repo2graph.query import count_tokens
+
+    diff_text = _flood_diff(flood_index)
+    report = analyze_diff_impact(flood_index, diff_text, base="main", head="HEAD", max_depth=2)
+
+    out = tool_repo_impact(flood_index, diff=diff_text, format="pr-comment")
+    assert count_tokens(out) <= MCP_MAX_BUDGET_TOKENS
+    assert out == format_pr_comment(report), "pr-comment was altered despite fitting the ceiling"
+    assert "truncated" not in out
+    # The self-bounding it relies on, pinned so a renderer change that drops the
+    # cap fails here rather than silently starting to truncate.
+    assert len(report.public_apis_affected) > PR_COMMENT_MAX_APIS
+    assert out.count("\n- `") <= PR_COMMENT_MAX_APIS * 4
+
+
+def test_mcp_tool_repo_impact_truncation_notice_never_breaks_its_own_ceiling(
+    sample_graph_index, monkeypatch
+):
+    """The notice is appended, so its own length must be paid for in advance.
+
+    `count_tokens` is a floor division and therefore not additive: `_fit_lines`
+    may return up to `4 * room + 3` characters, so simply subtracting the notice's
+    token count still let the sum land one token over -- 12001 against a 12000
+    bound, while the code claimed that could not happen. Swept across line widths
+    and counts because the overrun depends on `len(text) % 4`.
+
+    Uses the small fixture, not `flood_index`: the renderer is stubbed, so the
+    report's own size is irrelevant to what is under test, and 16 real
+    `analyze_diff_impact` runs over 300 files cost ~17s for nothing.
+    """
+    import repo2graph.impact as impact_mod
+
+    from repo2graph.mcp import MCP_MAX_BUDGET_TOKENS
+    from repo2graph.query import count_tokens
+
+    diff_text = (
+        "diff --git a/pkg/core.py b/pkg/core.py\n"
+        "--- a/pkg/core.py\n"
+        "+++ b/pkg/core.py\n"
+        "@@ -10,1 +10,1 @@\n"
+        "-def public_func(x: int) -> int:\n"
+        "+def public_func(x: int, y: int = 0) -> int:\n"
+    )
+    # Line *width* is what varies `len(kept) % 4`, which is where the overrun
+    # lived -- so the sweep walks four consecutive widths (covering all four
+    # residues) rather than four line counts. Wide lines keep the test fast:
+    # `_fit_lines` rebuilds its candidate string once per line it keeps, so 240
+    # wide lines cost milliseconds where 24,000 single-character lines cost ~1s
+    # per call. 400 lines x ~200 chars is ~80KB, comfortably over the 48KB the
+    # 12,000-token ceiling allows, so truncation really is reached.
+    over = []
+    for width in (199, 200, 201, 202):
+        monkeypatch.setattr(
+            impact_mod,
+            "format_markdown",
+            lambda _r, _w=width: "\n".join("x" * _w for _ in range(400)),
+        )
+        out = tool_repo_impact(sample_graph_index, diff=diff_text, format="markdown")
+        assert "truncated" in out, f"width={width} did not reach the truncation path"
+        if count_tokens(out) > MCP_MAX_BUDGET_TOKENS:
+            over.append((width, count_tokens(out)))
+    assert over == [], f"truncated output exceeded the ceiling it announces: {over}"
+
+
+def test_mcp_tool_repo_impact_git_failure_does_not_leak_host_paths(sample_graph_index, monkeypatch):
+    """`git -C <root>` names <root> in its stderr; that must not be relayed.
+
+    Every other served route goes out of its way to keep the absolute index path
+    server-side (`http_server.INDEX_UNAVAILABLE`, `_public_repo_label`). Relaying
+    `get_git_diff`'s exception text handed it back over MCP instead.
+
+    `get_git_diff` is stubbed with the exact RuntimeError shape it really raises
+    (it embeds git's stderr, and `git -C <root>` names <root> in its own "cannot
+    change to" message). The behaviour under test is whether `tool_repo_impact`
+    *relays* that text -- stubbing keeps the test off git's message wording,
+    which differs by git version and platform, and out of the `Path.cwd()`
+    fallback that would otherwise find this repo's own real `.git`.
+    """
+    secret = r"C:\Users\victim\private-monorepo"
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError(
+            f"git diff failed with code 128: fatal: cannot change to '{secret}': "
+            f"No such file or directory"
+        )
+
+    monkeypatch.setattr("repo2graph.impact.get_git_diff", _boom)
+
+    out = tool_repo_impact(sample_graph_index, base="main", head="HEAD", diff="")
+
+    assert "Error obtaining git diff" in out
+    assert "victim" not in out, f"host path leaked: {out!r}"
+    assert "private-monorepo" not in out, f"host path leaked: {out!r}"
+    assert secret not in out
+    # The caller's own refs are their input, so echoing them discloses nothing,
+    # and the exception *type* is kept so "bad ref" stays distinguishable from
+    # "not a repository".
+    assert "main...HEAD" in out
+    assert "RuntimeError" in out
+
+
 # ---------------------------------------------------------------------------
 # 6. CLI Command Integration Tests
 # ---------------------------------------------------------------------------
@@ -1311,3 +1658,237 @@ def test_pr_impact_doc_covers_every_impact_flag():
     documented = set(_documented_flags())
     undocumented = sorted(real - documented)
     assert undocumented == [], f"impact flags missing from PR_IMPACT.md: {undocumented}"
+
+
+def test_get_git_diff_ref_validation_prevents_command_injection(tmp_path):
+    """A leading-dash revision is a real capability, not a theoretical one.
+
+    The argv is a list and no shell is involved, so `;` and friends are inert --
+    but `git diff --output=<path>` writes a file and `--ext-cmd=<cmd>` runs a
+    command, and both arrive as an ordinary positional revision. `_validate_ref`
+    must reject them before `subprocess.run`.
+    """
+    from repo2graph.impact import _validate_ref, get_git_diff
+
+    for bad in ("--ext-cmd=evil", "--output=/tmp/pwned", "-x", "main; rm -rf /", ".hidden", ""):
+        with pytest.raises(ValueError, match="invalid git ref"):
+            _validate_ref(bad)
+    with pytest.raises(ValueError, match="invalid git ref"):
+        get_git_diff(tmp_path, base="--output=/tmp/pwned")
+    assert not (tmp_path / "pwned").exists()
+
+
+# Two families an allowlist-shaped validator silently breaks:
+#
+#  - revision *expressions*: `git check-ref-format` rejects `HEAD~1`, `HEAD^` and
+#    `main@{u}` as refnames, yet they are the ordinary way to name a diff base,
+#    and `HEAD~1` is the form `.github/ISSUE_TEMPLATE/feature_request.yml` puts
+#    in front of users;
+#  - refnames git *does* accept that a "safe characters" class omits: `+`, `#`,
+#    `=`, `,` and non-ASCII are all legal, so `--base feat+1` must not become
+#    "invalid git ref" for a branch the user really has.
+#
+# `main..dev` is here too: an interior `..` is a two-dot range, and it is not a
+# traversal risk because `get_git_diff` puts the revision before the `--`.
+@pytest.mark.parametrize(
+    "rev",
+    [
+        "HEAD",
+        "HEAD~1",
+        "HEAD^",
+        "HEAD~2",
+        "HEAD^^",
+        "main@{u}",
+        "@",
+        "origin/main",
+        "refs/heads/main",
+        "release/1.0",
+        "v1.0.0",
+        "feat+1",
+        "v1.0+build",
+        "fix#123",
+        "wip=2",
+        "caf,e",
+        "naïve",
+        "main..dev",
+        "main...dev",
+    ],
+)
+def test_validate_ref_accepts_every_revision_git_itself_accepts(rev):
+    from repo2graph.impact import _validate_ref
+
+    assert _validate_ref(rev) == rev
+
+
+def test_get_git_diff_returns_a_real_diff_between_two_refs(tmp_path):
+    """The only test that lets `get_git_diff` reach git, and the detector for `--`.
+
+    Everything else in this module feeds `parse_unified_diff` static text, so a
+    malformed *argv* was invisible: `git diff -U0 -- main...feat` reads the
+    revision as a **pathspec**, matches nothing, and exits **0** with empty
+    stdout. `get_git_diff` then returns `""`, `parse_unified_diff` returns `{}`,
+    and every impact report claims the PR changed no files -- with a zero exit
+    code, so neither the CLI nor `.github/workflows/pr-impact.yml` notices.
+
+    `added_lines == {2}` is hand-derived from the two writes below (line 1 is
+    unchanged `def a():`, line 2 becomes `return 2`), per the AGENTS.md rule
+    against asserting a value the code under test computed -- which also makes
+    this the only coverage of `parse_unified_diff`'s arithmetic against a diff
+    git actually produced rather than one a fixture hand-wrote.
+    """
+    import os
+    import subprocess
+
+    from repo2graph.impact import get_git_diff, parse_unified_diff
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+
+    # Identity via env, not `git config`: no dependency on the machine's global
+    # config, and nothing written outside tmp_path.
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
+        "GIT_CONFIG_SYSTEM": str(tmp_path / "gitconfig-absent"),
+    }
+
+    def git(*args: str) -> None:
+        # Bytes, never text=True -- the AGENTS.md git-decoding rule.
+        proc = subprocess.run(
+            ["git", "-C", str(tmp_path), *args],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            pytest.skip(f"git {args[0]} failed: {proc.stderr.decode('utf8', 'replace')[:200]}")
+
+    target = tmp_path / "f.py"
+    # newline="\n" so the hunk line numbers are identical on Windows and POSIX.
+    target.write_text("def a():\n    return 1\n", encoding="utf-8", newline="\n")
+    git("init", "-q", ".")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    git("branch", "-M", "main")
+    git("checkout", "-q", "-b", "feat")
+    target.write_text("def a():\n    return 2\n", encoding="utf-8", newline="\n")
+    git("add", "-A")
+    git("commit", "-qm", "two")
+
+    # Three-dot (merge-base), two-dot, and a revision expression the validator
+    # must admit -- all three reach git through a different argv branch.
+    for base, head in (("main", "feat"), ("main", None), ("HEAD~1", "HEAD")):
+        text = get_git_diff(tmp_path, base=base, head=head)
+        assert text.strip(), f"empty diff for base={base!r} head={head!r} between differing refs"
+        files = parse_unified_diff(text)
+        assert set(files) == {"f.py"}, f"base={base!r} head={head!r}: {sorted(files)}"
+        assert files["f.py"].added_lines == {2}, f"base={base!r} head={head!r}"
+
+    # A user's own gitconfig must not reshape what this parses. `diff.noprefix`
+    # and `diff.mnemonicPrefix` make git emit `diff --git f.py f.py` and
+    # `diff --git c/f.py w/f.py`; DIFF_GIT_RE requires `a/`...` b/`, so either one
+    # yields a real diff in which the parser finds nothing -- {} with exit 0.
+    for setting in ("diff.noprefix", "diff.mnemonicPrefix"):
+        git("config", setting, "true")
+    text = get_git_diff(tmp_path, base="main", head="feat")
+    assert text.startswith("diff --git a/"), f"gitconfig reshaped the header: {text[:60]!r}"
+    assert set(parse_unified_diff(text)) == {"f.py"}
+
+
+def test_get_git_diff_failure_paths_report_rather_than_returning_empty(tmp_path, monkeypatch):
+    """The restructured error paths, which nothing else reaches.
+
+    Three distinct branches, each of which previously could (or now must not)
+    quietly produce an empty diff -- the failure mode this whole area exists to
+    prevent, because an empty diff reads as "the PR changed nothing".
+    """
+    import subprocess as sp
+
+    from repo2graph.impact import get_git_diff
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+
+    # 1. git cannot be spawned at all -> RuntimeError, never a silent "".
+    def _no_exec(*_a, **_kw):
+        raise OSError("cannot spawn git")
+
+    monkeypatch.setattr(sp, "run", _no_exec)
+    with pytest.raises(RuntimeError, match="failed to run git diff"):
+        get_git_diff(tmp_path, base="main")
+    monkeypatch.undo()
+
+    # 2. base-only failure: the fallback command would be identical to the
+    #    primary, so it must not run again -- one error, reported once.
+    with pytest.raises(RuntimeError) as exc_base:
+        get_git_diff(tmp_path, base="no-such-ref-xyz")
+    msg = str(exc_base.value)
+    assert "git diff failed with code" in msg
+    assert "fallback" not in msg, f"base-only path ran the identical fallback: {msg}"
+
+    # 3. base+head failure: both the three-dot and two-dot errors are reported,
+    #    because the three-dot one ("bad revision") is the informative one.
+    with pytest.raises(RuntimeError) as exc_both:
+        get_git_diff(tmp_path, base="no-such-ref-xyz", head="also-missing-xyz")
+    both = str(exc_both.value)
+    assert "git diff failed with code" in both
+    assert "two-dot fallback also failed" in both
+
+
+def test_get_git_diff_falls_back_to_two_dot_when_there_is_no_merge_base(tmp_path):
+    """Unrelated histories have no merge base, so `A...B` fails and `A B` works.
+
+    This is the fallback's reason for existing (a shallow clone is the other), and
+    it is the one branch that returns a diff from the *second* subprocess.
+    """
+    import os
+    import subprocess
+
+    from repo2graph.impact import get_git_diff, parse_unified_diff
+
+    if shutil.which("git") is None:
+        pytest.skip("git is not on PATH")
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_CONFIG_GLOBAL": str(tmp_path / "gitconfig-absent"),
+        "GIT_CONFIG_SYSTEM": str(tmp_path / "gitconfig-absent"),
+    }
+
+    def git(*args: str) -> None:
+        proc = subprocess.run(
+            ["git", "-C", str(tmp_path), *args],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            timeout=60,
+        )
+        if proc.returncode != 0:
+            pytest.skip(f"git {args[0]} failed: {proc.stderr.decode('utf8', 'replace')[:200]}")
+
+    git("init", "-q", ".")
+    (tmp_path / "one.py").write_text("A = 1\n", encoding="utf-8", newline="\n")
+    git("add", "-A")
+    git("commit", "-qm", "one")
+    git("branch", "-M", "main")
+    # `--orphan` starts a branch with no common ancestor, so `main...other` has
+    # no merge base and git exits non-zero on the three-dot form.
+    git("checkout", "-q", "--orphan", "other")
+    git("rm", "-q", "-rf", ".")
+    (tmp_path / "two.py").write_text("B = 2\n", encoding="utf-8", newline="\n")
+    git("add", "-A")
+    git("commit", "-qm", "two")
+
+    text = get_git_diff(tmp_path, base="main", head="other")
+    assert text.strip(), "fallback returned an empty diff for unrelated histories"
+    files = parse_unified_diff(text)
+    assert set(files) == {"one.py", "two.py"}, sorted(files)
