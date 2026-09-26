@@ -765,6 +765,17 @@ class MCPHTTPServer(ThreadingHTTPServer):
         )
 
 
+#: How often `serve_forever` checks whether it has been asked to stop.
+#:
+#: `shutdown()` sets a flag and then waits for the serving loop to notice it on
+#: its next `selector.select(poll_interval)`, so this value *is* the shutdown
+#: latency -- and socketserver's default is 0.5s. That is the delay on Ctrl-C and
+#: on every `stop()`, paid for a loop that is otherwise idle. 0.05s wakes the
+#: selector 20 times a second instead of twice, which is an unmeasurable amount
+#: of work for a tenfold faster stop.
+SHUTDOWN_POLL_SECONDS = 0.05
+
+
 class HTTPTransport:
     """The HTTP server, on a daemon thread so it never blocks stdio.
 
@@ -847,12 +858,20 @@ class HTTPTransport:
             The port actually bound, which differs from the requested one when
             port 0 asked the OS to choose.
         """
-        self._httpd = MCPHTTPServer((self.host, self.port), self._handler)
-        self._httpd.daemon_threads = True
-        self.port = self._httpd.server_address[1]
+        httpd = MCPHTTPServer((self.host, self.port), self._handler)
+        self._httpd = httpd
+        httpd.daemon_threads = True
+        self.port = httpd.server_address[1]
         self._handler.base_url = f"http://{self.host}:{self.port}"
+        # The thread body closes over the local `httpd`, not `self._httpd`: the
+        # attribute is Optional and `stop()` sets it to None, so reading it from
+        # inside the thread is both unprovable to a type checker and an actual
+        # AttributeError if a caller stops the transport before the thread is
+        # scheduled.
         self._thread = threading.Thread(
-            target=self._httpd.serve_forever, name="repo2graph-http", daemon=True
+            target=lambda: httpd.serve_forever(poll_interval=SHUTDOWN_POLL_SECONDS),
+            name="repo2graph-http",
+            daemon=True,
         )
         self._thread.start()
         emit(

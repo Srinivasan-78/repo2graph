@@ -92,37 +92,59 @@ def _existing_checkout(tmp_path):
     return target
 
 
+def _no_subprocess(monkeypatch):
+    """Make any `git` spawn a test failure, not a recorded call.
+
+    A tripwire rather than a recorder on purpose: a validation check placed
+    *after* the first git call then fails with this AssertionError, instead of
+    passing on the ValueError that would eventually follow anyway.
+    """
+
+    def tripwire(cmd, *args, **kwargs):
+        raise AssertionError(f"subprocess spawned before ref validation: {list(cmd)!r}")
+
+    monkeypatch.setattr(fetch.subprocess, "run", tripwire)
+
+
+def _record_subprocess(monkeypatch, proc=None):
+    """Capture every git argv and return success, so the argv can be asserted."""
+    calls: list[list[str]] = []
+
+    def recorder(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        return proc() if proc else _FakeProc()
+
+    monkeypatch.setattr(fetch.subprocess, "run", recorder)
+    return calls
+
+
 # --------------------------------------------------------------------------- #
 # Rejection
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("ref", REJECTED)
+#: Refs that are not merely option-shaped but degenerate. Kept out of `REJECTED`
+#: because that list is also driven through `clone()`, where each entry costs a
+#: subprocess-tripwire run; these only need the parser. They used to be a `for`
+#: loop inside one test, which reported all three failures under a single test
+#: name -- as separate rows, the id says which string got through.
+REJECTED_DEGENERATE = ["", "main\x00", "\x00"]
+
+
+@pytest.mark.parametrize("ref", REJECTED + REJECTED_DEGENERATE)
 def test_iss237_parse_ref_rejects(ref):
     with pytest.raises(ValueError, match="not a valid git ref"):
         fetch.parse_ref(ref)
-
-
-def test_iss237_parse_ref_rejects_empty_and_nul():
-    for ref in ("", "main\x00", "\x00"):
-        with pytest.raises(ValueError, match="not a valid git ref"):
-            fetch.parse_ref(ref)
 
 
 @pytest.mark.parametrize("ref", REJECTED)
 def test_iss237_clone_rejects_before_any_subprocess(ref, tmp_path, monkeypatch, no_token):
     """The acceptance condition: ValueError, and git is never spawned.
 
-    subprocess.run is replaced by a tripwire rather than a recorder, so a check
-    placed *after* the first git call fails this test with AssertionError
-    instead of passing on the ValueError that eventually follows.
+    See `_no_subprocess` for why that second half is a tripwire.
     """
     _existing_checkout(tmp_path)
-
-    def tripwire(cmd, *args, **kwargs):
-        raise AssertionError(f"subprocess spawned before ref validation: {list(cmd)!r}")
-
-    monkeypatch.setattr(fetch.subprocess, "run", tripwire)
+    _no_subprocess(monkeypatch)
     with pytest.raises(ValueError, match="not a valid git ref"):
         fetch.clone("owner/repo", tmp_path, ref=ref)
 
@@ -131,10 +153,7 @@ def test_iss237_clone_rejects_before_any_subprocess(ref, tmp_path, monkeypatch, 
 def test_iss237_clone_rejects_on_the_fresh_clone_path_too(ref, tmp_path, monkeypatch, no_token):
     """No existing checkout: `git clone --branch` is option-safe, but still refuse."""
 
-    def tripwire(cmd, *args, **kwargs):
-        raise AssertionError(f"subprocess spawned before ref validation: {list(cmd)!r}")
-
-    monkeypatch.setattr(fetch.subprocess, "run", tripwire)
+    _no_subprocess(monkeypatch)
     with pytest.raises(ValueError, match="not a valid git ref"):
         fetch.clone("owner/repo", tmp_path, ref=ref)
 
@@ -142,10 +161,7 @@ def test_iss237_clone_rejects_on_the_fresh_clone_path_too(ref, tmp_path, monkeyp
 def test_iss237_index_github_rejects(tmp_path, monkeypatch, no_token):
     """The CLI entry point inherits the check through clone()."""
 
-    def tripwire(cmd, *args, **kwargs):
-        raise AssertionError(f"subprocess spawned before ref validation: {list(cmd)!r}")
-
-    monkeypatch.setattr(fetch.subprocess, "run", tripwire)
+    _no_subprocess(monkeypatch)
     with pytest.raises(ValueError, match="not a valid git ref"):
         fetch.index_github(
             "owner/repo", tmp_path / "out", ref="--upload-pack=/bin/false", formats="jsonl"
@@ -165,13 +181,7 @@ def test_iss237_parse_ref_accepts_ordinary_refs(ref):
 @pytest.mark.parametrize("ref", ACCEPTED)
 def test_iss237_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeypatch, no_token):
     target = _existing_checkout(tmp_path)
-    calls: list[list[str]] = []
-
-    def recorder(cmd, *args, **kwargs):
-        calls.append(list(cmd))
-        return _FakeProc()
-
-    monkeypatch.setattr(fetch.subprocess, "run", recorder)
+    calls = _record_subprocess(monkeypatch)
     assert fetch.clone("owner/repo", tmp_path, ref=ref) == target
     assert calls == [
         ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref],
@@ -182,13 +192,7 @@ def test_iss237_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeyp
 def test_iss237_no_ref_is_unaffected(tmp_path, monkeypatch, no_token):
     """ref=None must stay a full no-op on the reuse path (no fetch, no checkout)."""
     target = _existing_checkout(tmp_path)
-    calls: list[list[str]] = []
-
-    def recorder(cmd, *args, **kwargs):
-        calls.append(list(cmd))
-        return _FakeProc()
-
-    monkeypatch.setattr(fetch.subprocess, "run", recorder)
+    calls = _record_subprocess(monkeypatch)
     assert fetch.clone("owner/repo", tmp_path, ref=None) == target
     assert calls == []
 
@@ -200,13 +204,7 @@ def test_iss237_fetch_gets_double_dash_and_checkout_does_not(tmp_path, monkeypat
     the non-obvious half of the fix and would otherwise look like an oversight.
     """
     _existing_checkout(tmp_path)
-    calls: list[list[str]] = []
-
-    def recorder(cmd, *args, **kwargs):
-        calls.append(list(cmd))
-        return _FakeProc()
-
-    monkeypatch.setattr(fetch.subprocess, "run", recorder)
+    calls = _record_subprocess(monkeypatch)
     fetch.clone("owner/repo", tmp_path, ref="feature/foo-bar")
 
     fetch_cmd = calls[0]

@@ -49,7 +49,17 @@ class TestValidateOutdir:
         result = validate_outdir(tmp_path / "index")
         assert result == (tmp_path / "index").resolve()
 
-    def test_ok_for_existing_r2g_dir(self, tmp_path):
+    def test_ok_for_an_existing_index_dir(self, tmp_path):
+        """An `agent/` subdirectory is what marks a directory as ours to reuse.
+
+        That, and not the directory's name, is the recognition signal -- the
+        contrast is `test_rejects_foreign_dir` below, which is the same call
+        against a directory holding an unrelated file. A duplicate of this test
+        asserted the same thing under the name
+        `test_allows_dir_with_r2g_marker`, differing only in calling the
+        directory `idx` instead of `.r2g`; `validate_outdir` never looks at the
+        name, so it was the same case twice.
+        """
         from repo2graph.integrity import validate_outdir
 
         idx = tmp_path / ".r2g"
@@ -127,16 +137,6 @@ class TestValidateOutdir:
         (foreign / "some_file.txt").write_text("unrelated content", encoding="utf8")
         result = validate_outdir(foreign, force=True)
         assert result == foreign.resolve()
-
-    def test_allows_dir_with_r2g_marker(self, tmp_path):
-        from repo2graph.integrity import validate_outdir
-
-        idx = tmp_path / "idx"
-        idx.mkdir()
-        (idx / "agent").mkdir()
-        # populate with a marker so it's recognized
-        result = validate_outdir(idx)
-        assert result == idx.resolve()
 
 
 # ============================================================================

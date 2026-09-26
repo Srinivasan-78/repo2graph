@@ -316,7 +316,7 @@ jobs:
           python -m pip install -e . --no-deps
 
       - name: Run test suite before building
-        run: python -m pytest -q
+        run: python -m pytest -q -n auto
 
       - name: Build sdist and wheel
         run: |

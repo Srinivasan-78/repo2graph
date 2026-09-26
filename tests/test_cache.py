@@ -131,17 +131,19 @@ def test_the_cache_never_exceeds_max_size():
     assert cache.stats()["size"] == 10
 
 
-def test_size_zero_disables_the_cache():
-    cache = ResultCache(max_size=0)
+# Either knob at zero turns the cache off outright -- a `put` is accepted and
+# then never returned. The `ttl` row previously checked only the missing read;
+# both now assert `enabled` too, since a cache that reports itself enabled while
+# storing nothing is the shape that misleads a caller.
+@pytest.mark.parametrize(
+    "kwargs",
+    [pytest.param({"max_size": 0}, id="size-zero"), pytest.param({"ttl": 0}, id="ttl-zero")],
+)
+def test_zero_disables_the_cache(kwargs):
+    cache = ResultCache(**kwargs)
     cache.put("k", "v")
     assert cache.get("k") is None
     assert cache.enabled is False
-
-
-def test_ttl_zero_disables_the_cache():
-    cache = ResultCache(ttl=0)
-    cache.put("k", "v")
-    assert cache.get("k") is None
 
 
 def test_clear_drops_every_entry_but_keeps_the_counters():
