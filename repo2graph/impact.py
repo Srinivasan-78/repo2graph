@@ -136,6 +136,13 @@ PR_COMMENT_MARKER = "<!-- repo2graph-impact-comment -->"
 #: bounded; the full, uncapped report is the `markdown`/`json` format.
 PR_COMMENT_MAX_APIS = 20
 
+#: Below this, a CALLS edge's target is more of a guess than a resolution, and
+#: R2G-IMP-004 says so about the changed symbol it points at. `confidence` on a
+#: CALLS edge is P(this is the right target | a call exists here), which the
+#: resolver splits 1/n across n symbols sharing the name -- so 0.7 admits an
+#: unambiguous match and a two-way split, and excludes anything vaguer.
+AMBIGUOUS_CALL_CONFIDENCE = 0.7
+
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 DIFF_GIT_RE = re.compile(r"^diff --git a/(.*?) b/(.*)$")
 
@@ -646,10 +653,21 @@ def analyze_diff_impact(
                 )
 
     # Rule R2G-IMP-002: Untested Public APIs
+    #
+    # "No test caller in the graph" is only evidence of "untested" when the graph
+    # knows how the symbol is reached at all. A symbol with zero resolved callers
+    # of any kind is invoked from somewhere this analysis cannot see -- framework
+    # dispatch, an entry point, a plugin hook -- so the absence of a test edge
+    # says nothing about test coverage. `MCPRequestHandler.do_POST` and
+    # `.do_OPTIONS` are the worked example: the stdlib's BaseHTTPRequestHandler
+    # dispatches them, so no in-repo edge points at either, and both were
+    # reported as untested public APIs while 64 tests in
+    # tests/test_http_transport.py drive them over real HTTP.
     untested_public: list[SymbolChange] = []
     for pub in public_apis_affected:
         has_test = any(t.target_symbol_id == pub.id for t in impacted_tests)
-        if not has_test:
+        reachable_in_graph = any(c.target_symbol_id == pub.id for c in impacted_callers)
+        if not has_test and reachable_in_graph:
             untested_public.append(pub)
             suspicious.append(
                 SuspiciousFinding(
@@ -677,8 +695,18 @@ def analyze_diff_impact(
         # callers is how a suite is meant to look.
         if sc.change_type == "added" or is_test_path(sc.path):
             continue
+        # Confident callers only. The count is the whole claim, and an ambiguous
+        # name match inflates it without evidence: changing `HTTPTransport.start`
+        # scored 16 callers across 8 modules, of which 14 were `.start()` calls on
+        # regex matches and threads that happen to share the name (six symbols in
+        # this repo are called `start`). Counting those turns "this edit is risky"
+        # into "this method has a common name", which is not a fact about the diff.
         direct_callers = [
-            c for c in impacted_callers if c.target_symbol_id == sc.id and c.depth == 1
+            c
+            for c in impacted_callers
+            if c.target_symbol_id == sc.id
+            and c.depth == 1
+            and c.confidence >= AMBIGUOUS_CALL_CONFIDENCE
         ]
         unique_caller_files = {c.path for c in direct_callers if c.path != sc.path}
         if len(direct_callers) >= 8 or len(unique_caller_files) >= 3:
@@ -697,23 +725,61 @@ def analyze_diff_impact(
                 )
             )
 
-    # Rule R2G-IMP-004: Low-confidence call site
+    # Rule R2G-IMP-004: the caller list for a changed symbol is partly unresolved.
+    #
+    # Reported once per changed symbol and anchored on that symbol, not once per
+    # caller anchored on the caller. Per-caller was wrong on both counts. A low
+    # confidence is the *resolver* saying it could not tell which of n same-named
+    # symbols a call meant -- it is a fact about this analysis, not a defect in
+    # the calling code -- so filing it against the caller's line accuses a file
+    # that has nothing to do with the diff. Changing `HTTPTransport.start`
+    # produced 64 such findings, naming `secrets.py::_pem_spans` (which calls
+    # `match.start()`), `graph.py::add_cochange` and every other `.start()` call
+    # in the repo, because six symbols share that name and the resolver splits
+    # 1/n across them. As code-scanning alerts those arrived as inline review
+    # comments on untouched code.
+    #
+    # Same scoping reason as R2G-IMP-003 above: a claim a reader can act on. What
+    # is actionable here is "treat this symbol's caller list as incomplete",
+    # which belongs next to the symbol.
+    changed_by_id = {sc.id: sc for sc in symbols_changed}
+    ambiguous_by_symbol: dict[str, list[ImpactedCaller]] = {}
     for ic in impacted_callers:
-        if ic.confidence < 0.7:
-            suspicious.append(
-                SuspiciousFinding(
-                    rule_id="R2G-IMP-004",
-                    category="ambiguous_call",
-                    severity="note",
-                    path=ic.path,
-                    line=ic.line or 1,
-                    title=f"Ambiguous call resolution from `{ic.qualname}`",
-                    description=(
-                        f"Call from `{ic.qualname}` to `{ic.target_symbol_name}` resolved with fractional "
-                        f"confidence ({ic.confidence:.2f}), indicating potential name shadowing or dynamic dispatch."
-                    ),
-                )
+        # Test callers are excluded for the reason R2G-IMP-003 excludes them: a
+        # shared helper resolving loosely is how a suite looks, not a risk.
+        if is_test_path(ic.path):
+            continue
+        ambiguous_by_symbol.setdefault(ic.target_symbol_id, []).append(ic)
+
+    for sym_id, callers in ambiguous_by_symbol.items():
+        # Not `sc`: that name is bound by the R2G-IMP-003 loop above as a plain
+        # SymbolChange, so reusing it here for an Optional lookup is a type error.
+        changed = changed_by_id.get(sym_id)
+        if changed is None:
+            continue
+        low = [c for c in callers if c.confidence < AMBIGUOUS_CALL_CONFIDENCE]
+        if not low:
+            continue
+        suspicious.append(
+            SuspiciousFinding(
+                rule_id="R2G-IMP-004",
+                category="ambiguous_call",
+                severity="note",
+                path=changed.path,
+                line=changed.start_line,
+                title=(
+                    f"Caller list for `{changed.qualname}` is partly unresolved "
+                    f"({len(low)} of {len(callers)} call sites ambiguous)"
+                ),
+                description=(
+                    f"{len(low)} of {len(callers)} call sites attributed to `{changed.qualname}` "
+                    f"resolved by name with confidence below {AMBIGUOUS_CALL_CONFIDENCE:.2f}, so some "
+                    f"of them may call a different symbol of the same name. Treat the impacted-caller "
+                    f"list for this symbol as a superset: it is more likely to over-report than to "
+                    f"miss a caller."
+                ),
             )
+        )
 
     # 6. Blast Radius Score and Risk Level
     direct_callers_count = sum(1 for c in impacted_callers if c.depth == 1)

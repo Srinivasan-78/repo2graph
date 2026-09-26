@@ -568,6 +568,118 @@ def test_iss422_blast_radius_rule_ignores_added_and_test_symbols(blast_radius_in
     assert blast == {("pkg/hub.py", 10)}
 
 
+@pytest.fixture
+def ambiguous_caller_index():
+    """One modified symbol reached by four callers the resolver could not pin.
+
+    `confidence` on a CALLS edge is P(this is the right target | a call exists
+    here), which the name resolver splits 1/n across the n symbols sharing a
+    name. 0.25 is what four same-named candidates look like -- the shape a
+    common method name (`start`, `run`, `get`) produces across a whole repo.
+    """
+    idx = MockIndex()
+
+    def _sym(path, name, start, end):
+        idx.add_node(f"file:{path}", type="file", path=path)
+        idx.add_node(
+            f"sym:{path}::{name}",
+            type="symbol",
+            name=name,
+            qualname=name,
+            kind="function",
+            path=path,
+            start_line=start,
+            end_line=end,
+        )
+        return f"sym:{path}::{name}"
+
+    target = _sym("pkg/server.py", "start", 40, 60)
+    for i, caller_path in enumerate(
+        ("pkg/unrelated_a.py", "pkg/unrelated_b.py", "pkg/unrelated_c.py", "pkg/unrelated_d.py")
+    ):
+        caller = _sym(caller_path, f"uses_start_{i}", 1, 5)
+        idx.add_edge(
+            caller,
+            target,
+            "CALLS",
+            confidence=0.25,
+            evidence=edgemeta.evidence(caller_path, i + 2),
+        )
+    return idx
+
+
+AMBIGUOUS_DIFF = (
+    "diff --git a/pkg/server.py b/pkg/server.py\n"
+    "--- a/pkg/server.py\n"
+    "+++ b/pkg/server.py\n"
+    "@@ -42,1 +42,1 @@\n"
+    "-    poll()\n"
+    "+    poll(interval=0.05)\n"
+)
+
+
+def test_ambiguous_call_rule_reports_once_against_the_changed_symbol(ambiguous_caller_index):
+    """R2G-IMP-004 is a claim about the symbol, not about each caller.
+
+    A low confidence is the resolver saying it could not tell which same-named
+    symbol a call meant. That is a fact about this analysis, so filing it against
+    the *caller's* line accuses a file that has nothing to do with the diff --
+    and it multiplies: changing `HTTPTransport.start` emitted 64 findings naming
+    `secrets.py::_pem_spans` (which calls `match.start()`), `graph.py` and every
+    other `.start()` call in the repo. Uploaded as SARIF, those became inline
+    review comments on untouched code.
+
+    One finding, anchored on the changed symbol.
+    """
+    report = analyze_diff_impact(ambiguous_caller_index, diff=AMBIGUOUS_DIFF)
+    found = [f for f in report.suspicious_findings if f.rule_id == "R2G-IMP-004"]
+
+    assert len(found) == 1, [f.title for f in found]
+    assert (found[0].path, found[0].line) == ("pkg/server.py", 40)
+    # Never the callers' files -- that was the whole defect.
+    assert "unrelated" not in found[0].path
+
+
+def test_blast_radius_counts_only_confidently_resolved_callers(ambiguous_caller_index):
+    """R2G-IMP-003's count is its entire claim, so a guess must not inflate it.
+
+    Four caller modules would clear the `>= 3 modules` threshold on raw count.
+    All four are 0.25 name matches, which is what `.start()` on a regex match or
+    a thread looks like to the resolver -- counting them reports that a method
+    has a common name, not that an edit is risky.
+    """
+    report = analyze_diff_impact(ambiguous_caller_index, diff=AMBIGUOUS_DIFF)
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-003"] == []
+
+
+def test_untested_public_api_rule_needs_the_graph_to_know_the_caller(sample_graph_index):
+    """ "No test edge" only means "untested" if the graph sees any caller at all.
+
+    `scripts/disconnected.py::helper` is public and has no callers of any kind,
+    which is the shape of a symbol invoked from somewhere this analysis cannot
+    see -- framework dispatch, an entry point, a plugin hook.
+    `MCPRequestHandler.do_POST` and `.do_OPTIONS` are the real case: the stdlib
+    dispatches them, so no in-repo edge points at either, and both were reported
+    as untested public APIs while 64 tests in tests/test_http_transport.py drove
+    them over real HTTP.
+
+    It has to be a *public* symbol to be a detector at all: a private one never
+    reaches this rule, so asserting on one would pass with the fix reverted.
+    """
+    diff_text = (
+        "diff --git a/scripts/disconnected.py b/scripts/disconnected.py\n"
+        "--- a/scripts/disconnected.py\n"
+        "+++ b/scripts/disconnected.py\n"
+        "@@ -5,1 +5,1 @@\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    report = analyze_diff_impact(sample_graph_index, diff=diff_text)
+    assert is_public_symbol({"name": "helper", "path": "scripts/disconnected.py"}) is True
+    assert "helper" in {s.name for s in report.public_apis_affected}, "not a public API change"
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-002"] == []
+
+
 # ---------------------------------------------------------------------------
 # 4. Formatters Tests
 # ---------------------------------------------------------------------------

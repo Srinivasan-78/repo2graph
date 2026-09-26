@@ -30,7 +30,7 @@ Modern pull requests frequently introduce subtle architectural regressions: modi
 >
 > `repo2graph impact` follows strict guardrails:
 > 1. **No unsubstantiated breakage claims:** Reports state "potential exposure" or "impacted caller", citing concrete line numbers.
-> 2. **Confidence-weighted call chains:** Direct AST call sites have confidence `1.0`. Ambiguous symbol resolutions (e.g. methods with multiple candidate implementations) carry fractional confidence and trigger `R2G-IMP-004`.
+> 2. **Confidence-weighted call chains:** Direct AST call sites have confidence `1.0`. Ambiguous symbol resolutions (e.g. a method whose name is shared by several candidates) carry fractional confidence — the resolver splits `1/n` across the candidates — and are reported against the changed symbol by `R2G-IMP-004`, which says its caller list should be read as a superset.
 > 3. **Actionable test recommendations:** Direct test callers are surfaced so CI or developers can run targeted regression tests first.
 
 ---
@@ -198,9 +198,9 @@ non-empty — see *Index coverage is part of the report* below.
 | Rule ID | Name | Severity | Description |
 | :--- | :--- | :--- | :--- |
 | **`R2G-IMP-001`** | `DisconnectedOrphanChange` | `warning` | A modified file shares no graph connections (calls, imports, defs) with any other changed file in the diff. |
-| **`R2G-IMP-002`** | `UntestedPublicApiChange` | `warning` | A public function or class method changed, but no test node in the graph reaches it. |
-| **`R2G-IMP-003`** | `HighBlastRadiusModification`| `warning` | A modified symbol has \(\ge 8\) direct callers or spans \(\ge 3\) separate modules. |
-| **`R2G-IMP-004`** | `AmbiguousCallSite` | `note` | Downstream caller resolved with fractional confidence (< 0.70) due to dynamic or polymorphic naming. |
+| **`R2G-IMP-002`** | `UntestedPublicApiChange` | `warning` | A public symbol the graph can see a caller for changed, but no test node reaches it. |
+| **`R2G-IMP-003`** | `HighBlastRadiusModification`| `warning` | A modified symbol has \(\ge 8\) confidently-resolved direct callers or spans \(\ge 3\) separate modules. |
+| **`R2G-IMP-004`** | `AmbiguousCallSite` | `note` | Some call sites attributed to a changed symbol resolved by name below `0.70`, so its caller list is a superset. One finding per changed symbol. |
 
 Each rule is scoped so that a finding is a claim the graph can actually support:
 
@@ -210,11 +210,30 @@ Each rule is scoped so that a finding is a claim the graph can actually support:
   the other changes" would be true of every such file in every multi-file diff.
   For the same reason the rule needs **two** relatable files before it fires: a
   lone source file has nothing in the change it could have been connected to.
-- **`R2G-IMP-003`** only judges *modified* symbols outside test paths. An added
-  symbol has no pre-existing dependents — its callers arrived with it in the same
-  change — so counting them measures how well new code is wired in, not what the
-  edit puts at risk. A shared test helper with many callers is how a suite is
-  meant to look.
+- **`R2G-IMP-002`** only fires for a symbol the graph can see a caller for. "No
+  test edge" is evidence of "untested" only when the analysis knows how the symbol
+  is reached at all; a symbol with zero resolved callers is invoked from somewhere
+  it cannot see — framework dispatch, an entry point, a plugin hook.
+  `MCPRequestHandler.do_POST` is the worked example: the stdlib's
+  `BaseHTTPRequestHandler` dispatches it, so no in-repo edge points at it, and it
+  was reported as an untested public API while 64 tests drove it over real HTTP.
+- **`R2G-IMP-003`** only judges *modified* symbols outside test paths, and counts
+  only callers resolved at or above `AMBIGUOUS_CALL_CONFIDENCE`. An added symbol
+  has no pre-existing dependents — its callers arrived with it in the same change —
+  so counting them measures how well new code is wired in, not what the edit puts
+  at risk. A shared test helper with many callers is how a suite is meant to look.
+  And the count *is* the claim, so an ambiguous name match must not inflate it:
+  changing `HTTPTransport.start` scored 16 callers across 8 modules, of which 14
+  were `.start()` calls on regex matches and threads that happen to share the name.
+- **`R2G-IMP-004`** reports **once per changed symbol, anchored on that symbol** —
+  not once per caller anchored on the caller. A low confidence is the resolver
+  saying it could not tell which same-named symbol a call meant, which is a fact
+  about the analysis rather than a defect in the calling code; filing it against
+  the caller accuses a file that has nothing to do with the diff. Per-caller, one
+  change to `HTTPTransport.start` emitted 64 findings naming `secrets.py`,
+  `graph.py` and every other `.start()` call in the repository, which arrived as
+  inline review comments on untouched code. Test-path callers are excluded for the
+  same reason `R2G-IMP-003` excludes them.
 
 ### Index coverage is part of the report
 
