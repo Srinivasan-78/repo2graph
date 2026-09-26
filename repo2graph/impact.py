@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .edgemeta import cite
 from .query import Index
 
 
@@ -468,13 +469,17 @@ def analyze_diff_impact(
                 caller_path = caller_node.get("path", "")
                 if exclude_secrets and is_sec(caller_path):
                     continue
-                evidence = edge.get("evidence")
+                # An edge's `evidence` is an `{"path", "line"}` record, never a
+                # string: render it through `edgemeta.cite` rather than a local
+                # spelling, which is why that helper exists. Reading the line out
+                # of the record also has to go through the dict -- `":" in ev` on
+                # a mapping tests its *keys*, so it was always False and the call
+                # site's line never won over the symbol's own start_line.
+                evidence = cite(edge)
+                ev_record = edge.get("evidence")
                 line_no = caller_node.get("start_line")
-                if evidence and ":" in evidence:
-                    try:
-                        line_no = int(evidence.split(":")[-1])
-                    except ValueError:
-                        pass
+                if isinstance(ev_record, dict) and ev_record.get("line"):
+                    line_no = int(ev_record["line"])
 
                 is_test = is_test_path(caller_path)
                 caller_key = (neighbor_id, sc.id)
@@ -543,7 +548,7 @@ def analyze_diff_impact(
                                     target_symbol_id=fid,
                                     target_symbol_name=changed_path,
                                     confidence=1.0,
-                                    evidence=edge.get("evidence"),
+                                    evidence=cite(edge),
                                 )
                             )
 

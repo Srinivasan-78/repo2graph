@@ -55,7 +55,7 @@ repo2graph impact -i .repo2graph-index --diff path/to/patch.diff
 
 | Flag | Description | Default |
 | :--- | :--- | :--- |
-| `-i, --index <dir>` | Path to built repo2graph index directory (must contain `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`). | Required |
+| `-o, -i, --out, --index <dir>` | Path to the repo2graph index directory (must contain `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`). Built from the repo if absent. | `.r2g` |
 | `--base <ref>` | Base git ref to compare against. | `main` |
 | `--head <ref>` | Head git ref or commit to compare. | `HEAD` |
 | `--diff <file>` | Path to unified diff file, or `-` for stdin. | None (runs `git diff`) |
@@ -64,7 +64,8 @@ repo2graph impact -i .repo2graph-index --diff path/to/patch.diff
 | `--sarif` | Convenience alias for `--format sarif`. | False |
 | `--max-depth <n>` | Traversal depth for reverse callers (`CALLS in`). | `2` |
 | `--min-confidence <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
-| `-w, --write <file>` | Write output to file instead of stdout. | None |
+| `--write <file>` | Write output to file instead of stdout. | None |
+| `--no-auto-build` | Fail instead of building an index when `--index` holds none. | False (builds) |
 
 ### Examples
 
