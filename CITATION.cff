@@ -19,7 +19,7 @@ authors:
 repository-code: "https://github.com/Srinivasan-78/repo2graph"
 url: "https://github.com/Srinivasan-78/repo2graph"
 license: MIT
-version: 2.1.0
+version: 2.2.0
 keywords:
   - code-graph
   - graphrag
