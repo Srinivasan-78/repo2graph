@@ -40,7 +40,7 @@ repo2graph = "repo2graph.cli:main"
 repo2graph-mcp = "repo2graph.mcp:main"
 
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
