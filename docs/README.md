@@ -14,6 +14,12 @@ source), *unfamiliar* (getting oriented without reading everything).
   symptom → `doctor` check → fix table.
 - **[MCP client configuration](mcp.md#client-configuration)** — Claude Code, Claude Desktop,
   Cursor, and any other stdio client.
+- **[Claude Code integration](integrations/claude-code.md)** — the first-supported client, end to
+  end: install, verify, the six tools and their bounds, the five questions to start with, the
+  `CLAUDE.md` block that gets the agent to actually use them, and what not to rely on.
+- **[Cursor integration](integrations/cursor.md)** — the same server, and the three things that
+  differ: the config file, the scope model, and the rules file that is load-bearing here because
+  Cursor's own search is good enough to answer without calling a tool.
 - **[CLI reference](cli.md)** — every flag, what it counts, budget accounting.
 - **[Python API](python-api.md)** — `build()`, `dump_all()`, `Index`, the same objects the CLI uses.
 - **[GitHub Action](github-action.md)** — inputs, outputs, CI wiring.

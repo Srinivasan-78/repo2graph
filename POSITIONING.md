@@ -20,8 +20,8 @@ the repository has to keep:
 
 | Word | The promise | Where it is kept |
 |---|---|---|
-| **coding agents** | The primary consumer is a machine with a context window, not a human with a browser. The human-facing `graph.html` is a side artifact. | `repo2graph/mcp.py` — five read-only tools, every numeric argument clamped in the handler |
-| **trustworthy** | You can tell when it is wrong, and it tells you what it cannot see. | `confidence` on every `CALLS` edge; [docs/limitations.md](docs/limitations.md) |
+| **coding agents** | The primary consumer is a machine with a context window, not a human with a browser. The human-facing `graph.html` is a side artifact. | `repo2graph/mcp.py` — six read-only tools, every numeric argument clamped in the handler |
+| **trustworthy** | You can tell when it is wrong, and it tells you what it cannot see. | `method`, `confidence` and `evidence` on **every** edge, not just `CALLS`; [docs/OUTPUT_SCHEMA.md](docs/OUTPUT_SCHEMA.md), [docs/limitations.md](docs/limitations.md) |
 | **cited** | Every returned block names the file and line range it came from. | `[cite: path:start-end]` on every block out of `Index.pack_context()` |
 | **answers** | The source that answers the question comes back — not a map, not a subgraph, not a list of paths to go read. | `docs/comparison.md#the-axis-that-matters-what-comes-back-from-a-query` |
 | **unfamiliar** | The value is highest where your own knowledge is lowest. Zero setup is what makes that true: no config file, no language server, no build step. | `uvx repo2graph build .` on any folder |
@@ -212,8 +212,12 @@ long enough to have a limitations section:
 4. **Dependency injection** — the edge lands on the interface declaration, or fans out across every
    same-named implementation, never on the class the container injected.
 5. **Generated code** — indexed exactly like hand-written code, with no marker distinguishing it.
-6. **Stale indexes** — the index is a snapshot; nothing watches the filesystem; `doctor` checks
-   integrity and vector drift, not working-tree drift.
+6. **Stale indexes** — the index is a snapshot and nothing watches the filesystem. `index-status`
+   and `doctor`'s freshness check now *detect* working-tree drift (indexed commit vs `HEAD`, the
+   discovered file set vs `index.state.json`, and a sha256 for any file whose mtime is newer than
+   the manifest) and `--check` will fail a CI job on it — but detection is not subscription. A file
+   edited with its mtime preserved and left uncommitted is still missed, and answers keep citing
+   the old graph until you rebuild.
 7. **Cross-language boundaries** — Python → C++ through generated bindings is a `CALLS_EXTERNAL`
    edge, not a link.
 8. **Macro-heavy C/C++** — tree-sitter `ERROR` nodes around unexpanded macros; read `parse_errors`

@@ -15,6 +15,21 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Per-client integration guides.** `docs/integrations/claude-code.md` (first-supported) covers
+  install, verification, the six tools and their real argument ceilings, the five starter
+  questions, the `CLAUDE.md` block that gets the agent to actually prefer the tools, and an
+  explicit "what not to rely on". `docs/integrations/cursor.md` covers the same server and the
+  three things that differ -- config file, scope model, and the rules file that is load-bearing
+  there because Cursor's own search is good enough to answer without ever calling a tool.
+  `tests/test_doc_consistency.py` pins the guides' quoted MCP bounds against `mcp.py`, in context
+  rather than as bare substrings: `str(MCP_MAX_HOPS) in text` passes for any value whose digits
+  appear anywhere in the prose, which is not a check.
+- **`docs/distribution/`** -- a demo-video script and recording plan, a before/after case-study
+  template, launch-post drafts and design-partner outreach drafts. The posts and outreach are
+  **unpublished drafts pending human approval** and say so; a test fails if that marker is edited
+  out. Every number in them traces to `benchmarks/results.json` or `docs/limitations.md`, pinned
+  by a test, because the product claim is trustworthiness and a launch post that overstates the
+  call graph's completeness contradicts the thing being sold.
 - **Standard trust metadata on every graph edge** (`edge_schema_version: "2"`). Before this,
   only `CALLS` carried enough to audit a claim: `CONTAINS`, `DEFINES`, `IMPORTS` and `INHERITS`
   were bare `(src, dst, type)` triples, so "why do you think this file imports that one" had no
@@ -353,6 +368,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   recover `--exclude-group generated` from once the build exits, and the comparison applies them.
   An index written before that field existed falls back to defaults and says so rather than
   silently reporting phantom additions.
+- **POSITIONING.md's stale limitation #6.** It said `doctor` "checks integrity and vector drift,
+  not working-tree drift" -- true until `index-status` and the shared freshness check started
+  detecting exactly that. Corrected to say what is now true *and* what still is not: detection is
+  not subscription, and a file edited with its mtime preserved and left uncommitted is still
+  missed.
 - **The bug-report bundle could leak an absolute path through a diagnostic note.**
   `compute_freshness` interpolates an exception message into its notes, and an `OSError` carries
   the path that failed -- so a discovery failure put an absolute path *including a filename* into
