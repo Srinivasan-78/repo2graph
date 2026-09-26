@@ -11,6 +11,14 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .edgemeta import (
+    METHOD_FILESYSTEM,
+    METHOD_GIT_LOG,
+    METHOD_NAME_RESOLVER,
+    evidence as make_evidence,
+    normalize as normalize_edge,
+    tree_sitter_method,
+)
 from .parse import (
     CONFIG_EXT,
     DOC_EXT,
@@ -21,6 +29,7 @@ from .parse import (
     Symbol,
     discover,
     parse_source,
+    sniff_header_lang,
 )
 
 # Under this many files a process pool costs more to start than it saves.
@@ -103,6 +112,14 @@ class Graph:
         # by hand keeps the default, which is what build() would have used.
         self.max_call_candidates = max_call_candidates
         self.config = None
+        # The discovery filters this build actually used, recorded so
+        # index.state.json can persist them. Without them, anything that
+        # re-runs discovery to compare against the index -- `index-status`,
+        # `doctor`'s freshness check -- re-discovers with *default* filters
+        # and reports every deliberately excluded file as newly added, i.e. a
+        # build with any --exclude reads as permanently stale.
+        self.include_globs: list[str] | None = None
+        self.exclude_globs: list[str] | None = None
         self.nodes: dict[str, dict] = {}
         self.edges: list[dict] = []
         self._edge_seen: set[tuple] = set()
@@ -150,7 +167,11 @@ class Graph:
         if key in self._edge_seen:
             return
         self._edge_seen.add(key)
-        self.edges.append(dict(src=src, dst=dst, type=etype, **attrs))
+        # Every edge leaves here carrying the standard trust metadata, whatever
+        # the caller remembered to pass. Normalising at the one chokepoint is
+        # what stops a newly added edge type shipping as a bare triple, which
+        # is how four of the six ended up that way.
+        self.edges.append(normalize_edge(dict(src=src, dst=dst, type=etype, **attrs)))
         self.stats[f"edge:{etype}"] += 1
         self._warn_if_large()
 
@@ -626,6 +647,16 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     total_parse_errors = 0
     used_cpp = False
     undecodable_slices = 0
+    # The #377 `.h` sniff, on the one path that never holds the whole file:
+    # this reader streams slices, so the sniff runs against the first decodable
+    # one instead of the full bytes `_read_and_parse` has. A header's C++
+    # signals (`#include <string>`, `namespace`, `class`, `::`) are in its
+    # opening lines, and a slice is `max_file_bytes` -- 1.5 MB by default --
+    # so the first slice is the whole preamble of any real header. Without
+    # this, a `.h` over the chunking threshold (an amalgamated single-header
+    # C++ library is the ordinary case) took the C grammar regardless of
+    # content, unlike every smaller `.h` in the same build.
+    sniff_header = lang == "c" and abspath.suffix.lower() == ".h"
 
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
@@ -674,6 +705,10 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 undecodable_slices += 1
                 line_offset += buf.count(b"\n")
                 continue
+
+            if sniff_header:
+                lang = sniff_header_lang(buf)
+                sniff_header = False
 
             pf = parse_source(buf, lang, filepath=None)
             if pf is None:
@@ -801,6 +836,8 @@ def _read_and_parse(item):
         raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
+    if lang == "c" and abspath.suffix.lower() == ".h":
+        lang = sniff_header_lang(raw)
     policy = getattr(config, "parse_policy", "best-effort")
     pf = None
     try:
@@ -842,7 +879,7 @@ def _read_and_parse(item):
 # subtype='INHERITS' regardless of what it actually was, and every cached
 # file's import aliases would come back as [] -- an aliased call that should
 # resolve `import_alias` would instead fall through to unresolved_external.
-PARSE_CACHE_FORMAT = 3
+PARSE_CACHE_FORMAT = 4
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -880,6 +917,12 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             # that a full build resolves as `import_alias` falls back to
             # unresolved_external on the next incremental build instead.
             "import_details": [asdict(d) for d in getattr(pf, "import_details", [])],
+            # Index-aligned with "imports", and the IMPORTS edge's `evidence`
+            # comes from it. Without it here, an incremental build emits edges
+            # with no evidence where a full build emits a line -- which the
+            # byte-equality tests catch, and which would otherwise make a
+            # cached index quietly less citable than a fresh one.
+            "import_lines": list(getattr(pf, "import_lines", []) or []),
         },
     }
 
@@ -904,6 +947,7 @@ def entry_read(entry: dict) -> tuple | None:
             return size, lines, None, digest
         symbols = [Symbol(**s) for s in raw["symbols"]]
         import_details = [ImportDetail(**d) for d in raw.get("import_details", [])]
+        import_lines = [int(n) for n in raw.get("import_lines", [])]
         pf: ParsedFile
         # A chunked entry restores as the same class a fresh chunked read
         # produces, so a cached file and a re-parsed one are indistinguishable
@@ -919,6 +963,7 @@ def entry_read(entry: dict) -> tuple | None:
                 is_chunked=True,
                 undecodable_slices=int(raw.get("undecodable_slices") or 0),
                 import_details=import_details,
+                import_lines=import_lines,
             )
         else:
             pf = ParsedFile(
@@ -929,6 +974,7 @@ def entry_read(entry: dict) -> tuple | None:
                 used_cpp=bool(raw.get("used_cpp") or False),
                 is_chunked=False,
                 import_details=import_details,
+                import_lines=import_lines,
             )
         return size, lines, pf, digest
     except (KeyError, TypeError, ValueError):
@@ -971,6 +1017,8 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         except OSError:
             results[rel] = (rel, lang, None)
             continue
+        if lang == "c" and abspath.suffix.lower() == ".h":
+            lang = sniff_header_lang(raw)
         digest = hashlib.sha256(raw).hexdigest()
         entry = cache.get(rel)
         read = None
@@ -1147,6 +1195,8 @@ def build(
     root = Path(root).resolve()
     g = Graph(root, root.name, max_files=max_files, max_call_candidates=max_call_candidates)
     g.config = config
+    g.include_globs = list(include) if include else None
+    g.exclude_globs = list(exclude) if exclude else None
     repo_id = f"repo:{root.name}"
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
@@ -1174,6 +1224,10 @@ def build(
         g.file_hashes[rel] = digest
         g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
+        if ext == ".h":
+            # Auditable record of the #377 content sniff: how many `.h` files
+            # were kept on the C grammar vs. promoted to cpp.
+            g.stats["header_files_as_cpp" if lang == "cpp" else "header_files_as_c"] += 1
         ftype = (
             "code"
             if lang
@@ -1202,9 +1256,9 @@ def build(
             dpath = "/".join(parts[: i + 1])
             did = f"dir:{dpath}"
             g.add_node(did, type="dir", name=parts[i], path=dpath)
-            g.add_edge(parent, did, "CONTAINS")
+            g.add_edge(parent, did, "CONTAINS", method=METHOD_FILESYSTEM)
             parent = did
-        g.add_edge(parent, fid, "CONTAINS")
+        g.add_edge(parent, fid, "CONTAINS", method=METHOD_FILESYSTEM)
 
         if pf is None:
             continue
@@ -1241,18 +1295,49 @@ def build(
             )
             g.stats[f"symbol:{sym.kind}"] += 1
             owner = f"sym:{rel}::{sym.parent}" if sym.parent else fid
-            g.add_edge(owner, sid, "DEFINES")
+            g.add_edge(
+                owner,
+                sid,
+                "DEFINES",
+                method=tree_sitter_method(lang),
+                evidence=make_evidence(rel, sym.start_line),
+            )
 
-        for raw_imp in pf.imports:
+        import_lines = getattr(pf, "import_lines", None) or []
+        for i, raw_imp in enumerate(pf.imports):
+            # Index-aligned with `imports` by construction; a cache written by
+            # an older format has no lines at all, so fall back to None rather
+            # than guessing a line the reader would find nothing at.
+            imp_line = import_lines[i] if i < len(import_lines) else None
+            imp_evidence = make_evidence(rel, imp_line)
             for target in import_targets(raw_imp, lang):
                 resolved = resolve_import(target, rel, lang, file_index, ctx)
                 if resolved:
-                    g.add_edge(fid, f"file:{resolved}", "IMPORTS", target=target, internal=True)
+                    g.add_edge(
+                        fid,
+                        f"file:{resolved}",
+                        "IMPORTS",
+                        target=target,
+                        internal=True,
+                        # The statement is a parse fact; mapping the module
+                        # name onto a file in this repo is the resolver's
+                        # judgement, so that is the method that gets named.
+                        method=METHOD_NAME_RESOLVER,
+                        evidence=imp_evidence,
+                    )
                     g.stats["imports_resolved"] += 1
                 else:
                     mid = f"module:{target}"
                     g.add_node(mid, type="module", name=target, external=True)
-                    g.add_edge(fid, mid, "IMPORTS", target=target, internal=False)
+                    g.add_edge(
+                        fid,
+                        mid,
+                        "IMPORTS",
+                        target=target,
+                        internal=False,
+                        method=tree_sitter_method(lang),
+                        evidence=imp_evidence,
+                    )
                     g.stats["imports_unresolved"] += 1
 
     # ----- name index for call/inheritance resolution -----
@@ -1298,11 +1383,23 @@ def build(
         for sym in pf.symbols:
             sid = f"sym:{rel}::{sym.qualname}"
             call_kinds: dict[str, str] = {}
+            # name -> the first line this symbol calls that name on. One edge
+            # carries a `count` for every call of the same name, so a single
+            # line cannot represent all of them; the first is cited because it
+            # is the one a reader checking the claim will find, and `count`
+            # says how many more there are.
+            call_lines: dict[str, int] = {}
             for cd in getattr(sym, "call_details", []):
                 call_kinds[cd["name"]] = cd.get("kind", "static")
+                cd_line = cd.get("line")
+                if isinstance(cd_line, int) and cd_line > 0:
+                    prev = call_lines.get(cd["name"])
+                    if prev is None or cd_line < prev:
+                        call_lines[cd["name"]] = cd_line
 
             for callee, count in Counter(sym.calls).items():
                 call_kind = call_kinds.get(callee, "static")
+                call_evidence = make_evidence(rel, call_lines.get(callee))
                 all_cands = by_name.get(callee, [])
 
                 chosen_cands: list[str] = []
@@ -1365,6 +1462,14 @@ def build(
                         resolution_kind="unresolved_external",
                         candidate_count=0,
                         call_kind=call_kind,
+                        method=METHOD_NAME_RESOLVER,
+                        evidence=call_evidence,
+                        # `dst` is a synthetic external:<name> node meaning
+                        # "no definition for this name in the repository",
+                        # which is exactly what was determined -- so the
+                        # target is certain even though the callee is not
+                        # ours. See edgemeta on what confidence measures.
+                        confidence=1.0,
                     )
                     g.stats["calls_external"] += 1
                 elif len(chosen_cands) == 1:
@@ -1378,6 +1483,8 @@ def build(
                         candidate_count=len(all_cands),
                         scope_distance=scope_dist,
                         call_kind=call_kind,
+                        method=METHOD_NAME_RESOLVER,
+                        evidence=call_evidence,
                     )
                     if res_kind == "unique_global_name":
                         g.stats["calls_unique_global"] += 1
@@ -1398,6 +1505,8 @@ def build(
                             candidate_count=len(all_cands),
                             scope_distance=scope_dist,
                             call_kind=call_kind,
+                            method=METHOD_NAME_RESOLVER,
+                            evidence=call_evidence,
                         )
                     g.stats["calls_ambiguous"] += 1
                     g.stats["ambiguous_calls"] += 1
@@ -1408,7 +1517,18 @@ def build(
                 bd = base_details_map.get(base, {})
                 raw_base = bd.get("raw", base)
                 subtype = bd.get("subtype", "INHERITS")
-                clean_base = base.split("[")[0].split("<")[0].split(".")[-1].strip()
+                # #341: strip C++/Rust "::" and PHP "\" scope/namespace
+                # separators too, not just Python/Java "." -- otherwise a
+                # namespaced base like `NS::Base` or `\App\Models\Base` never
+                # matches the bare name `by_name` indexes symbols under.
+                clean_base = (
+                    base.split("[")[0]
+                    .split("<")[0]
+                    .split("::")[-1]
+                    .split("\\")[-1]
+                    .split(".")[-1]
+                    .strip()
+                )
 
                 base_cands = by_name.get(clean_base, [])
                 local_base = [c for c in base_cands if g.nodes[c].get("path") == rel]
@@ -1435,6 +1555,17 @@ def build(
                             "INHERITS",
                             subtype=subtype,
                             raw_base=raw_base,
+                            method=METHOD_NAME_RESOLVER,
+                            candidate_count=len(base_cands),
+                            confidence=round(1.0 / len(matched_base), 3)
+                            if len(matched_base) > 1
+                            else 1.0,
+                            ambiguous=len(matched_base) > 1,
+                            # The class header line, from base_details. Falls
+                            # back to the symbol's own start line, which is the
+                            # same line for every language whose base clause
+                            # sits in the class header.
+                            evidence=make_evidence(rel, bd.get("line") or sym.start_line),
                         )
                 else:
                     g.stats["unresolved_bases"] += 1
@@ -1477,7 +1608,13 @@ def mark_entrypoints(g: Graph):
     called, out = set(), defaultdict(list)
     for e in g.edges:
         if e["type"] == "CALLS":
-            called.add(e["dst"])
+            # #342: a self-recursive function's own CALLS edge (src == dst)
+            # must not disqualify it from being an entrypoint root -- nothing
+            # *else* calls it. `out` still records the self-edge so `_reach`
+            # sees it; it is just harmless there since `start` is already
+            # in `seen` before the BFS looks at its own outgoing edges.
+            if e["src"] != e["dst"]:
+                called.add(e["dst"])
             out[e["src"]].append(e["dst"])
     nested = {
         e["dst"]
@@ -1676,4 +1813,11 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
                 cochange_count=n,
                 sampled_commits=commits,
                 min_pairs=min_pairs,
+                method=METHOD_GIT_LOG,
+                # Correlational, never causal: these two files changed in the
+                # same commits. Confidence is the share of the sampled commits
+                # that touched both, so a pair co-edited 3 times in 500
+                # commits does not read the same as one co-edited 200 times.
+                confidence=round(n / commits, 3) if commits else 0.0,
+                evidence=None,
             )

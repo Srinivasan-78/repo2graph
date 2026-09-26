@@ -2,6 +2,10 @@
 
 Keyword search and graph traversal answer different questions. Neither replaces the other.
 
+The at-a-glance version is the
+[Why repo2graph instead of grep or vector search?](../README.md#vs-grep) table in the README. This
+page is the argument behind it.
+
 ```
 Search:  keyword -> files -> manual traversal
 Graph:   symbol  -> relationships -> callers -> dependencies -> impact
@@ -39,6 +43,19 @@ That is the concrete difference measured across this project's own real-reposito
 (see [examples/django/flows/](../examples/django/)) returns the middleware dispatch function *and*
 its neighbours in the call graph — the pieces a keyword match on "middleware" alone would not tell
 you were connected.
+
+## What about embedding search?
+
+An embeddings index fixes the half of grep's problem that is about vocabulary — it finds the
+authentication function when you asked about "login" — and leaves the other half untouched. Top-k
+nearest-neighbour chunks arrive without their callers, and nothing stops two chunks of the same
+file from consuming the whole budget while the function that actually implements the behaviour sits
+one `CALLS` edge away, unretrieved. Similarity is not structure.
+
+repo2graph spends the budget differently: BM25 (or, optionally, BM25 fused with dense vectors via
+`repo2graph embed`) picks the *seeds*, and everything after that is a graph hop rather than more
+text that merely resembles the query. The dense half is opt-in precisely because the graph half is
+what makes the difference — see [comparison.md](comparison.md#repo2graph-vs-plain-grep-or-an-embeddings-index).
 
 ## Where the graph is worse than search
 

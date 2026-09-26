@@ -8,12 +8,16 @@ body:
         Thanks for taking the time to file this. The more of the fields below you can fill
         in, the faster it is to reproduce and fix.
 
+        **If the bug is a wrong or missing edge in the graph** — a `CALLS` that should exist and
+        doesn't, an `INHERITS` pointing somewhere odd — use the **Incorrect or missing graph edge**
+        template instead. It asks for the things that actually diagnose those.
+
   - type: input
     id: version
     attributes:
       label: repo2graph version
       description: Output of `repo2graph --version`, or the pinned version in your lockfile.
-      placeholder: "1.5.1"
+      placeholder: "2.1.0"
     validations:
       required: true
 
@@ -99,12 +103,30 @@ body:
     validations:
       required: true
 
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `repo2graph doctor`
+      description: >
+        Diagnoses environment, dependencies, permissions and index integrity in one command.
+        Paste it if the bug involves an existing index — it rules out half the usual causes.
+      render: shell
+    validations:
+      required: false
+
   - type: checkboxes
     id: checks
     attributes:
       label: Checks
       options:
         - label: I searched existing issues and didn't find a duplicate.
+          required: true
+        - label: >
+            If this involves a query, retrieval or the graph: I rebuilt the index after the source
+            reached its current state. (The index is a snapshot — nothing watches the filesystem,
+            so an edited file keeps being described by the old graph until you rebuild.)
+          required: true
+        - label: I checked [docs/limitations.md](../../docs/limitations.md) and this is not documented behaviour.
           required: true
         - label: I'm on the latest release of repo2graph (or can confirm the bug reproduces there).
           required: false

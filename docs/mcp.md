@@ -9,6 +9,13 @@ It is an *additional* surface, not a replacement: every tool is a thin call into
 `repo2graph.query.Index`, the same object the CLI and the GitHub Action use, over
 the same artifacts.
 
+> **Before exposing the HTTP transport**, read
+> [docs/THREAT_MODEL.md §3.5](THREAT_MODEL.md#35-the-http-mcp-surface) — it names what the server
+> defends against, what it does not yet (TLS enforcement, rate limiting), and why the intended
+> shape is a loopback bind behind a reverse proxy. The hardened invocations are in
+> [docs/secure-configuration.md](secure-configuration.md). Stdio mode, the default, has no
+> listening socket and none of this applies to it.
+
 > **Note**: `repo2graph-mcp` needs the `mcp` SDK (`mcp>=1.0,<3.0`), which ships as
 > an optional extra: `pip install "repo2graph[mcp]"`. The CLI, the Action and the
 > Python API never import it.
@@ -29,6 +36,23 @@ pip install "repo2graph[mcp]"
 ```
 
 Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
+
+Prefer `npx`? [`repo2graph-mcp` on npm](https://www.npmjs.com/package/repo2graph-mcp) is a thin
+launcher that resolves `uvx` (falling back to an installed `repo2graph-mcp`, then `pipx`) and hands
+off to it — the server itself is still this same Python package, not a port. See
+[`npm/README.md`](../npm/README.md) for the resolution order and what it does when none of those is
+on `PATH`.
+
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "npx",
+      "args": ["-y", "repo2graph-mcp", "/path/to/project"]
+    }
+  }
+}
+```
 
 The extra pins `mcp>=1.0,<3.0`: `serve()` supports both the 1.x `Server`
 decorator API and the 2.x registration API it was replaced with. If neither is
@@ -201,10 +225,11 @@ deployment checklist that goes with the HTTP shape:
 | `repo_map` | none | Languages, hub files and top entry points. Stable across calls, so it caches. Read this first. |
 | `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
 | `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
+| `repo_impact` | optional `base`, `head`, `diff`, `max_depth`, `format` | PR and git diff impact analysis: changed symbols, affected public APIs, callers, tests, and blast radius. |
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
 
-The first three answer questions about the code and exclude secrets
+The first four answer questions about the code and exclude secrets
 unconditionally. The last two report on the server itself, never read a chunk,
 and are never served from the cache — a cached cache-stats or progress reading is
 the one answer guaranteed to be out of date.
@@ -221,6 +246,9 @@ here raises on a bad value; it is clamped and answered.
 | `hops` | `repo_search`, `repo_neighbours` | 1 | 4 |
 | `budget_tokens` | `repo_search` | 6 000 | 12 000 |
 | `limit` | `repo_neighbours` | 20 | 50 |
+| `max_depth` | `repo_impact` | 2 | 5 |
+| `diff` (length) | `repo_impact` | — | 1 000 000 chars |
+| output (tokens) | `repo_impact` | — | 12 000 |
 | `query` (length) | `repo_search` | — | 4 000 chars |
 | `node_id` (length) | `repo_neighbours` | — | 2 000 chars |
 | `task_id` (length) | `repo_build_status` | — | 200 chars |
@@ -228,6 +256,36 @@ here raises on a bad value; it is clamped and answered.
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and
 it says so instead of returning nothing.
+
+### `repo_impact`
+
+**Purpose:** Analyze PR or git diff impact against a base branch using the code graph. Detects changed symbols, affected public APIs, impacted callers across depth hops, test coverage, and blast radius with grounded citations.
+
+**Input parameters:**
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `base` | string (optional) | Base branch or commit ref to compare against (default `"main"`). |
+| `head` | string (optional) | Head branch or commit ref (default `"HEAD"`). |
+| `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
+| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to maximum 5). |
+| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
+
+Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](../PR_IMPACT.md).
+
+**Output is bounded too, not just the inputs.** The report grows with the number
+of impacted symbols rather than with `max_depth`, so a wide diff could render far
+past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
+
+- `markdown` and `pr-comment` are cut on a line boundary and end with a
+  `_[truncated to 12000 tokens…]_` note.
+- `json` is **not** cut — a line-boundary cut would stop being parseable. It is
+  replaced by a valid document carrying `"truncated": true`, a `reason`, and the
+  scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
+  per-symbol lists omitted.
+
+Run `repo2graph impact` for the full, unbounded report; the ceiling exists
+because this tool's output lands directly in an agent's context window.
 
 ### `repo_cache_stats`
 

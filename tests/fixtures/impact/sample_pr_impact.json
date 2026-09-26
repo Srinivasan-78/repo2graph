@@ -1,0 +1,114 @@
+{
+  "base_ref": "main",
+  "head_ref": "feature",
+  "risk_level": "MEDIUM",
+  "blast_radius_score": 15,
+  "metrics": {
+    "files_changed_count": 1,
+    "symbols_changed_count": 1,
+    "public_apis_affected_count": 1,
+    "direct_callers_count": 1,
+    "transitive_callers_count": 0,
+    "impacted_modules_count": 1,
+    "impacted_tests_count": 1,
+    "untested_public_apis_count": 0,
+    "suspicious_findings_count": 1
+  },
+  "files_changed": [
+    {
+      "path": "pkg/foo.py",
+      "old_path": null,
+      "status": "modified",
+      "added_lines": [
+        10,
+        11
+      ],
+      "deleted_lines_count": 0
+    }
+  ],
+  "symbols_changed": [
+    {
+      "id": "sym:pkg/foo.py::bar",
+      "name": "bar",
+      "qualname": "bar",
+      "kind": "function",
+      "path": "pkg/foo.py",
+      "start_line": 10,
+      "end_line": 20,
+      "signature": "def bar():",
+      "is_public": true,
+      "signature_changed": true,
+      "changed_lines_count": 5,
+      "change_type": "modified"
+    }
+  ],
+  "public_apis_affected": [
+    {
+      "id": "sym:pkg/foo.py::bar",
+      "name": "bar",
+      "qualname": "bar",
+      "kind": "function",
+      "path": "pkg/foo.py",
+      "start_line": 10,
+      "end_line": 20,
+      "signature": "def bar():",
+      "is_public": true,
+      "signature_changed": true,
+      "changed_lines_count": 5,
+      "change_type": "modified"
+    }
+  ],
+  "impacted_callers": [
+    {
+      "id": "sym:pkg/caller.py::use_bar",
+      "name": "use_bar",
+      "qualname": "use_bar",
+      "kind": "function",
+      "path": "pkg/caller.py",
+      "line": 30,
+      "target_symbol_id": "sym:pkg/foo.py::bar",
+      "target_symbol_name": "bar",
+      "depth": 1,
+      "confidence": 1.0,
+      "evidence": "pkg/caller.py:30",
+      "is_test": false
+    }
+  ],
+  "impacted_modules": [
+    "pkg/caller.py"
+  ],
+  "impacted_tests": [
+    {
+      "test_file": "tests/test_foo.py",
+      "test_node_id": "sym:tests/test_foo.py::test_bar",
+      "test_name": "test_bar",
+      "line": 12,
+      "target_symbol_id": "sym:pkg/foo.py::bar",
+      "target_symbol_name": "bar",
+      "confidence": 1.0,
+      "evidence": "tests/test_foo.py:12"
+    }
+  ],
+  "dependency_paths": [
+    {
+      "caller": "pkg/caller.py",
+      "changed_symbol": "sym:pkg/foo.py::bar",
+      "dependency": "pkg/foo.py",
+      "path_str": "pkg/caller.py -> sym:pkg/foo.py::bar -> pkg/foo.py"
+    }
+  ],
+  "suspicious_findings": [
+    {
+      "rule_id": "R2G-IMP-002",
+      "category": "untested_public_api",
+      "severity": "warning",
+      "path": "pkg/foo.py",
+      "line": 10,
+      "title": "Untested public API change: `bar`",
+      "description": "Public API bar modified without direct test coverage."
+    }
+  ],
+  "guardrails": {
+    "uncertainty_notice": "Static analysis cannot prove dynamic runtime breakage."
+  }
+}

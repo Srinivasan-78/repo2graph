@@ -14,8 +14,14 @@ name: prod-igy
 # point to it: it fires only on the events below, takes no instruction from the
 # pull request, and cannot run more than PRODIGY_AI_MAX_RUNS_PER_PR times.
 'on':
+  # `edited` deliberately absent: it fires whenever a PR's title or body
+  # changes, which the author controls (including a fork author) and can
+  # pull at will. The job holds pull-requests: write, issues: write and an
+  # API key, so a trigger the author can re-fire on demand is model spend
+  # and API surface the author rate-controls, not this workflow. `opened`,
+  # `synchronize` and `reopened` are unaffected.
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -56,19 +62,85 @@ jobs:
       pull-requests: write
       issues: write
       checks: read  # check-run results for the PR head
+    env:
+      # Promoted from the app-token step's own `env:` (#375): that step's
+      # `if:` read these from a block declared on the same step, which works
+      # but depends on evaluation-order behaviour GitHub documents loosely.
+      # A job-level env removes the question -- every step's `if:` and `env:`
+      # sees the same resolved value, in the same context expressions always
+      # use for job-level env.
+      HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
+      HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+      # Same promotion, for the same reason, applied to the one step #375
+      # missed: "Install Anthropic SDK" gated on `env.PRODIGY_AI` while
+      # declaring `PRODIGY_AI` in that same step's own `env:` block. A step's
+      # `env:` is not in scope for that step's `if:`, so the gate read an empty
+      # string and never opened -- the SDK was never installed even with
+      # `vars.PRODIGY_AI` set to `true`, and because the step is
+      # `continue-on-error` the script just fell back to its deterministic
+      # inspection. Silent, and invisible in any run where the var is unset.
+      PRODIGY_AI: ${{ vars.PRODIGY_AI }}
 
     steps:
       # Generate prod-igy installation token if GitHub App credentials exist
       - name: Generate prod-igy token
         id: app-token
         if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}
+        # continue-on-error: this step is the one place a credential problem can
+        # cost the PR its labels and its rebase warning. The GITHUB_TOKEN
+        # fallback below already handles an absent token; a *failed* mint has to
+        # reach it too, not abort the job.
+        continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         with:
           app-id: ${{ secrets.PRODIGY_APP_ID }}
           private-key: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Scope the minted token down from the App's full installation grant to
+          # what this job actually does -- an app token otherwise inherits every
+          # permission the installation has, regardless of what the job declares.
+          #
+          # `permission-*` requests that exact set, and the API rejects the whole
+          # request with 422 "The permissions requested are not granted to this
+          # installation" if even one entry is absent from the installation's
+          # grant -- so a well-meant extra mints nothing at all rather than a
+          # slightly wider token, and the job silently falls back to
+          # github-actions[bot]. This list may therefore only name permissions
+          # prod-igy is *installed* with. Probed one permission per token request
+          # (actions/runs/36200243473):
+          #
+          #   granted: pull_requests: write, contents: read, metadata: read
+          #   absent:  issues, checks
+          #
+          # `permission-issues: write` and `permission-checks: read` were both
+          # here and both 422'd. Nothing is lost by dropping them: for a *pull
+          # request*, GitHub accepts `pull_requests: write` on the issue-comment
+          # and label endpoints prod-igy.js uses, and the unscoped token this
+          # replaced never carried `checks` either -- so the check-run section of
+          # the comment has always been running on GITHUB_TOKEN's `checks: read`.
+          # Grant the App "Checks: read" if that section should survive a future
+          # tightening.
+          #
+          # The 422 was invisible on pull requests because `pull_request_target`
+          # runs the workflow from the *base* branch and main does not carry this
+          # block yet: it would have hit every PR the moment develop was promoted.
+          # Only a real token request proves a set; re-probe after editing it.
+          permission-contents: read
+          permission-pull-requests: write
+
+      # The GITHUB_TOKEN fallback below is silent otherwise: a revoked or
+      # unconfigured App key means every comment posts as github-actions[bot]
+      # with nothing in the run log to say so.
+      - name: Report posting identity
         env:
-          HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}
-          HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}
+          # Routed through env:, never interpolated straight into `run:` --
+          # the same rule examples.yml's header comment cites for issue #108.
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if [ -n "$APP_TOKEN" ]; then
+            echo "::notice::prod-igy is posting as the GitHub App installation token"
+          else
+            echo "::notice::prod-igy is posting as github-actions[bot] (GITHUB_TOKEN fallback: no App credentials configured or token generation failed)"
+          fi
 
       # Sparse checkout of the BASE repo: the trusted script only. Nothing from
       # the PR head is ever checked out, so fork-authored code never executes
@@ -76,6 +148,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
+          persist-credentials: false
           sparse-checkout: |
             .github/scripts/prod-igy.js
           sparse-checkout-cone-mode: false
@@ -89,8 +162,9 @@ jobs:
         # warning. If the install fails, `require` fails, and the script falls
         # back to the deterministic inspection it did before the AI existed.
         continue-on-error: true
-        env:
-          PRODIGY_AI: ${{ vars.PRODIGY_AI }}
+        # `PRODIGY_AI` now comes from the job-level `env:` above, so the `if:`
+        # can actually see it. A step-local block here would not be in scope for
+        # this step's own `if:`, which is the bug that kept this step dead.
         run: npm install --no-save --no-audit --no-fund --ignore-scripts '@anthropic-ai/sdk@0.127.0'
 
       - name: Run prod-igy PR Assistant
@@ -99,7 +173,9 @@ jobs:
           # Absent key or absent SDK => the AI step logs a warning and skips.
           # Deterministic triage always posts.
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PRODIGY_AI: ${{ vars.PRODIGY_AI }}
+          # PRODIGY_AI is not repeated here: it is on the job-level `env:` above
+          # (so the SDK step's `if:` can see it), and a step-level copy of the
+          # same expression would only be a second place to keep in sync.
           PRODIGY_AI_MODEL: ${{ vars.PRODIGY_AI_MODEL }}
           PRODIGY_AI_MAX_TOKENS: ${{ vars.PRODIGY_AI_MAX_TOKENS }}
           PRODIGY_AI_EFFORT: ${{ vars.PRODIGY_AI_EFFORT }}

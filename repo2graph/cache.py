@@ -17,15 +17,23 @@ code index is worse than no cache:
 * **Droppable.** `clear()` on any index rebuild, so a rebuilt index never
   serves an answer computed from the old one.
 
-The cache key is canonical JSON of the arguments, not `frozenset(params.items())`.
-The frozenset form looks equivalent and is not: it raises TypeError the moment
-any argument is a list or a dict, both of which JSON-Schema tool arguments
-permit, and it collapses `{"a": 1, "b": 2}` and `{"a": 2, "b": 1}` to different
-keys only by luck of hashing rather than by construction. Canonical JSON is
-total over every value a JSON-RPC caller can send, and equal inputs produce
-equal keys by definition.
+The cache key is a SHA-256 digest of canonical JSON of the arguments -- not
+`frozenset(params.items())`, and not the JSON itself. The frozenset form looks
+equivalent and is not: it raises TypeError the moment any argument is a list or a
+dict, both of which JSON-Schema tool arguments permit, and it collapses
+`{"a": 1, "b": 2}` and `{"a": 2, "b": 1}` to different keys only by luck of
+hashing rather than by construction. Canonical JSON is total over every value a
+JSON-RPC caller can send, and equal inputs produce equal keys by definition.
+
+The digest is what bounds the key. `dispatch` keys on the *raw* arguments, before
+a handler's own length caps apply, so retaining the serialised JSON meant a
+handful of megabyte-sized queries held hundreds of megabytes in keys alone -- for
+a cache whose values are bounded. Hashing keeps the only property callers rely on
+(equal arguments, equal keys) at a fixed 64 hex characters. Nothing parses a key;
+it is an opaque dict key.
 """
 
+import hashlib
 import json
 import threading
 import time
@@ -78,8 +86,9 @@ def make_key(tool: str, params: Any) -> str:
         params: The caller's arguments.
 
     Returns:
-        A string key. Equal arguments always produce equal keys, whatever the
-        insertion order, and no argument value can make this raise.
+        A string key of bounded length. Equal arguments always produce equal
+        keys, whatever the insertion order, and no argument value can make this
+        raise.
     """
     try:
         body = json.dumps(
@@ -90,7 +99,16 @@ def make_key(tool: str, params: Any) -> str:
         # they get a key nothing else will match: a guaranteed miss beats a
         # wrong hit.
         body = repr(params)
-    return f"{tool}\x00{body}"
+    # Digest, not the body itself. `dispatch` keys on the *raw* arguments, before
+    # the handler's own `_str(query, MCP_MAX_QUERY_CHARS)` cap applies, so the
+    # serialised params were retained verbatim for the whole TTL: 256 calls each
+    # carrying a ~1 MB query -- all inside the HTTP server's MAX_BODY_BYTES --
+    # held ~257 MB in keys alone, for a cache whose *values* are bounded. The
+    # digest keeps equal-arguments-equal-keys (the only property callers rely on)
+    # at 64 bytes regardless of argument size. `tool` stays in the clear so a key
+    # is still recognisable when debugging, and is separated by a byte that
+    # cannot occur in a hex digest.
+    return f"{tool}\x00{hashlib.sha256(body.encode('utf8', 'surrogatepass')).hexdigest()}"
 
 
 class ResultCache:

@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
+# edgemeta is stdlib-only (typing), so importing it here does not pull the
+# tree-sitter stack into a query-only install -- the constraint the graph
+# import below is deferred for.
+from .edgemeta import EDGE_SCHEMA_VERSION
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
 
 if TYPE_CHECKING:
@@ -703,6 +707,32 @@ EDGE_TYPES = {
     "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
 }
 
+# Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
+# and docs/OUTPUT_SCHEMA.md. Written into manifest.json so a consumer reading
+# an index does not have to find the source to learn what the fields mean.
+EDGE_FIELDS = {
+    "type": "the relationship; one of the edge_types above",
+    "method": (
+        "how the relationship was extracted: tree-sitter/<lang> (read from a parse tree), "
+        "name-resolver (a parsed name matched against this repo's definitions -- the only "
+        "method whose confidence is routinely below 1), filesystem, or git-log"
+    ),
+    "confidence": (
+        "P(dst is the correct target | the relationship at `evidence` exists), 0..1. "
+        "Not a probability that the relationship exists: that is what `evidence` is for. "
+        "An ambiguous name matching n candidates yields n edges at 1/n each. "
+        "Never encodes dynamic dispatch -- see call_kind and docs/limitations.md"
+    ),
+    "evidence": (
+        "{path, line} where the relationship is written, 1-based, or null when there is "
+        "none to cite: CONTAINS is a filesystem fact and CO_CHANGE is a history fact, and "
+        "citing a line for either would be a fabricated citation"
+    ),
+    "candidate_count": "how many definitions the name could have meant (CALLS, INHERITS)",
+    "ambiguous": "present and true when the name matched more than one definition",
+    "count": "how many times this relationship occurs; `evidence` cites the first",
+}
+
 ID_GRAMMAR = {
     "repo": "repo:<name>",
     "dir": "dir:<path>",
@@ -878,6 +908,8 @@ def write_manifest(
         },
         "node_types": NODE_TYPES,
         "edge_types": EDGE_TYPES,
+        "edge_fields": EDGE_FIELDS,
+        "edge_schema_version": EDGE_SCHEMA_VERSION,
         "id_grammar": ID_GRAMMAR,
         "chunk_fields": [
             "id",
@@ -952,7 +984,7 @@ def write_manifest(
 
 STATE_FORMAT = "repo2graph/state-1"
 
-INDEX_SCHEMA_VERSION = "1"
+INDEX_SCHEMA_VERSION = "2"
 
 
 def _stats_extra(g: "Graph") -> dict[str, Any]:
@@ -1073,11 +1105,29 @@ def register_written(outdir: Path | str, names: Iterable[str]) -> bool:
 
 
 def write_state(g: "Graph", path: Path, n_chunks: int) -> None:
-    """The per-file content hashes a later incremental build reads back."""
+    """The per-file content hashes a later incremental build reads back.
+
+    `filters` records the discovery filters this build used. Anything that
+    re-runs discovery to compare the tree against the index -- `index-status`,
+    `doctor`'s freshness check -- must apply the same ones, or a build with
+    any `--exclude` reports every deliberately excluded file as newly added
+    and therefore reads as permanently stale.
+    """
+    cfg = getattr(g, "config", None)
     state = {
         "format": STATE_FORMAT,
         "files": dict(getattr(g, "file_hashes", {}) or {}),
         "chunks": n_chunks,
+        "filters": {
+            "include": getattr(g, "include_globs", None),
+            "exclude": getattr(g, "exclude_globs", None),
+            "include_vendor": bool(getattr(cfg, "include_vendor", False)),
+            "include_secrets": bool(getattr(cfg, "include_secrets", False)),
+            "extra_exclude_dirs": list(getattr(cfg, "extra_exclude_dirs", None) or []),
+            "extra_secret_keywords": list(getattr(cfg, "extra_secret_keywords", None) or []),
+            "extra_secret_dirs": list(getattr(cfg, "extra_secret_dirs", None) or []),
+            "max_file_bytes": int(getattr(cfg, "max_file_bytes", 0) or 0),
+        },
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(state, indent=2) + "\n")

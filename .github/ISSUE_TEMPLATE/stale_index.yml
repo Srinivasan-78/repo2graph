@@ -1,0 +1,90 @@
+name: Stale index
+description: The index does not match the working tree, or will not refresh.
+labels: ["bug", "area/index"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Run `repo2graph index-status -o <out>` first.** It answers most of this form, and its
+        `Freshness` section distinguishes the three cases that look identical from outside:
+
+        - `[CURRENT]` — the index matches. If answers still cite code you deleted, this is a
+          *retrieval* issue, not a staleness one: use the **Answer unhelpful** template.
+        - `[STALE]` — repo2graph agrees with you. The interesting part is *why* it did not
+          refresh, not that it is stale.
+        - `[UNKNOWN]` — freshness could not be established (no `index.state.json`, not a git
+          checkout, or past the 50,000-file scan bound). That is a gap, not a staleness bug.
+
+        Two behaviours that are **working as documented**, both covered in
+        [docs/INDEXING.md](../../docs/INDEXING.md#staleness):
+
+        - A file edited *without* its mtime changing is not detected by the content check. The
+          commit comparison catches it once committed; `--incremental` re-hashes regardless.
+        - An index built with `--exclude` / `--exclude-group` compares against those same
+          filters. Files you excluded are absent, not missing.
+
+  - type: input
+    id: version
+    attributes:
+      label: repo2graph version
+      placeholder: "2.0.0 (repo2graph --version)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What is happening?
+      options:
+        - index-status says CURRENT but answers cite code that no longer exists
+        - index-status says STALE and a rebuild does not clear it
+        - index-status says STALE immediately after a successful build
+        - --incremental rebuilds everything, or rebuilds nothing
+        - index-status says UNKNOWN and I expected a real answer
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: "`repo2graph index-status -o <out> --json` output"
+      description: |
+        The whole JSON. It carries the indexed commit, the build time, the discovery filters that
+        were applied, and the freshness reasons — which is most of the diagnosis.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: build
+    attributes:
+      label: How was the index built?
+      description: The exact command, or the Action step. Include every flag.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: builder
+    attributes:
+      label: Built where?
+      options:
+        - Locally, by hand
+        - The GitHub Action
+        - Other CI
+        - The MCP server's auto-build
+        - Docker
+    validations:
+      required: true
+
+  - type: textarea
+    id: bundle
+    attributes:
+      label: Diagnostic bundle (optional)
+      description: |
+        `repo2graph bug-report -o <out> --category stale-index`
+
+        No source code, no environment variable values, no remote URL, no absolute paths, and no
+        file paths at all unless you pass `--include-paths`. Read it before you post it.
+      render: markdown

@@ -24,6 +24,7 @@ from .export import (
     rel as artifact_rel,
 )
 from .events import SAFE_ERRORS, encodable, write_safe
+from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
 from .viz import MAX_NODES
@@ -81,6 +82,32 @@ def _emit(text: str) -> None:
         write_safe(stream, text)
 
 
+def _effective_exclude(args) -> list[str] | None:
+    """`--exclude` globs plus whatever `--exclude-group` expands to.
+
+    Every caller that decides whether a path is indexed goes through this --
+    `build`, `github` and `explain-path` alike. `explain-path` sharing it is
+    the point: an "explain" that answers from a different rule set than the
+    build is worse than no explain at all.
+
+    `--exclude-group help` prints the table and exits 0 without building,
+    which is what a user asking what the groups cover wants.
+    """
+    from .exclusions import describe, globs_for
+
+    groups = list(getattr(args, "exclude_group", None) or [])
+    if "help" in groups:
+        _emit(describe())
+        raise SystemExit(0)
+
+    explicit = list(getattr(args, "exclude", None) or [])
+    if not groups:
+        # None, not [], so discovery keeps its "no exclude globs at all" path
+        # rather than running every candidate through an empty matcher.
+        return explicit or None
+    return explicit + globs_for(groups)
+
+
 def cmd_build(args):
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
@@ -89,6 +116,10 @@ def cmd_build(args):
         )
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
+    # Resolved before validate_outdir and the build lock: `--exclude-group
+    # help` prints a table and exits, and it should not have taken a lock on
+    # somebody else's output directory to do it.
+    exclude_globs = _effective_exclude(args)
 
     # --- Harden the output path before any work begins ---
     from .integrity import validate_outdir
@@ -151,7 +182,7 @@ def cmd_build(args):
             g = build(
                 repo_path,
                 include=args.include,
-                exclude=args.exclude,
+                exclude=exclude_globs,
                 git_history=args.git_history,
                 max_files=args.max_files,
                 jobs=args.jobs,
@@ -186,6 +217,7 @@ def cmd_github(args):
     from .parse import BuildConfig
 
     parse_formats(args.formats)  # fail before the clone, not after
+    exclude_globs = _effective_exclude(args)  # and `--exclude-group help` before it too
 
     outdir = Path(args.out)
 
@@ -235,7 +267,7 @@ def cmd_github(args):
                 git_history=args.git_history,
                 formats=args.formats,
                 include=args.include,
-                exclude=args.exclude,
+                exclude=exclude_globs,
                 max_files=args.max_files,
                 keep_clone=args.keep_clone,
                 token=args.token,
@@ -717,7 +749,7 @@ def cmd_explain_path(args):
         args.path,
         config=config,
         include_globs=args.include or None,
-        exclude_globs=args.exclude or None,
+        exclude_globs=_effective_exclude(args),
     )
     if getattr(args, "json", False):
         _emit(json.dumps(res, indent=2))
@@ -732,6 +764,80 @@ def cmd_explain_path(args):
             f"Reason:          {res['reason']}",
         ]
         _emit("\n".join(lines))
+    return 0
+
+
+def cmd_bug_report(args) -> int:
+    """Assemble a diagnostic bundle that is safe to paste into a public issue."""
+    from .bugreport import build_report, format_report
+
+    report = build_report(
+        Path(args.out),
+        repo=getattr(args, "repo", None),
+        category=getattr(args, "category", None),
+        include_paths=getattr(args, "include_paths", False),
+    )
+    text = json.dumps(report, indent=2) if getattr(args, "json", False) else format_report(report)
+
+    dest = getattr(args, "write", None)
+    if dest:
+        try:
+            Path(dest).write_text(text + "\n", encoding="utf8", newline="\n")
+        except OSError as exc:
+            raise SystemExit(f"error: could not write {dest}: {exc}") from None
+        _emit(f"wrote {dest}")
+        _emit("Review it before posting -- it is yours to check, not ours to promise.")
+    else:
+        _emit(text)
+    return 0
+
+
+def cmd_index_status(args) -> int:
+    """Report what an index contains and whether it still matches the tree."""
+    from .status import format_status, index_status
+
+    try:
+        report = index_status(Path(args.out), repo=getattr(args, "repo", None))
+    except FileNotFoundError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    except (OSError, ValueError) as exc:
+        raise SystemExit(
+            f"error: could not read the index at {args.out}: {exc}\n"
+            f"       check it with `repo2graph doctor {args.out}`"
+        ) from None
+
+    if getattr(args, "json", False):
+        _emit(json.dumps(report, indent=2))
+    else:
+        _emit(format_status(report))
+
+    # --check makes this a CI gate: "the committed index matches this commit"
+    # is a reviewable property, and a non-zero exit is how a workflow asserts
+    # it. Without the flag a stale index is a fact to report, not a failure.
+    if getattr(args, "check", False) and report["freshness"]["status"] != "current":
+        return 1
+    return 0
+
+
+def cmd_demo(args) -> int:
+    """Index the bundled demo repository and answer the five starter questions."""
+    from .demo import run_demo
+
+    try:
+        run_demo(
+            outdir=getattr(args, "out", None),
+            keep=getattr(args, "keep", False),
+            brief=not getattr(args, "full", False),
+            emit=_emit,
+        )
+    except OSError as exc:
+        # The only failure a first-run user actually hits here: no writable
+        # temp directory, or a --out they cannot create. Say which path and
+        # what to do, rather than a traceback on their first command.
+        raise SystemExit(
+            f"error: the demo could not write its scratch repository: {exc}\n"
+            "       pass a writable directory explicitly: repo2graph demo --out ./r2g-demo"
+        ) from None
     return 0
 
 
@@ -804,6 +910,98 @@ def cmd_explain(args) -> int:
     else:
         print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
         return 1
+
+
+def cmd_impact(args):
+    """Analyze PR / branch diff impact against a base branch using the code graph."""
+    from .impact import (
+        analyze_diff_impact,
+        format_json,
+        format_markdown,
+        format_pr_comment,
+        format_sarif,
+        get_git_diff,
+    )
+    from .query import Index
+
+    out = Path(args.out)
+    repo_path = Path(args.repo or ".")
+
+    # `--no-auto-build` can only mean something if building is the default, and
+    # the default is what makes a first run work at all: unlike `query`, there is
+    # no shipped-index case here. The diff's line numbers are head-side, so the
+    # index this needs is one of the tree that is already checked out -- exactly
+    # what there is to build. Progress goes to stderr because the report itself
+    # is on stdout and is often piped into a file or `jq`.
+    if getattr(args, "auto_build", True) and not artifact_path(out, "chunks.jsonl").is_file():
+        if not repo_path.is_dir():
+            raise SystemExit(
+                f"error: repository directory does not exist or is not a directory: {repo_path}"
+            )
+        sys.stderr.write(f"no index at {out}: building one from {repo_path}\n")
+        graph = build(repo_path)
+        dump_all(graph, iter_chunks(graph), out, {"jsonl", "overview"})
+
+    _require_index(out, "chunks.jsonl")
+    _require_index(out, "nodes.jsonl")
+    _require_index(out, "edges.jsonl")
+
+    try:
+        idx = Index(out)
+    except ValueError as exc:
+        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+
+    if getattr(args, "diff", None):
+        if args.diff == "-":
+            # `git diff main...HEAD | repo2graph impact --diff -`, the form
+            # PR_IMPACT.md documents and CI wants: no temp file to write, clean
+            # up, or leak. Read the raw bytes and decode them the way every
+            # other reader of git output here does -- a piped diff carries
+            # whatever encoding the paths and hunks are in, and a cp1252 stdin
+            # on Windows would otherwise raise before the diff is even parsed.
+            diff_text = sys.stdin.buffer.read().decode("utf8", "surrogateescape")
+        else:
+            diff_file = Path(args.diff)
+            if not diff_file.exists():
+                raise SystemExit(f"error: diff file {diff_file} does not exist")
+            diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
+    else:
+        try:
+            diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
+        except Exception as exc:
+            raise SystemExit(f"error: failed to retrieve git diff: {exc}") from None
+
+    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
+    if getattr(args, "sarif", False):
+        fmt = "sarif"
+
+    report = analyze_diff_impact(
+        idx,
+        diff_text,
+        base=args.base,
+        head=getattr(args, "head", None) or "HEAD",
+        max_depth=getattr(args, "max_depth", 2),
+        min_confidence=getattr(args, "min_confidence", None),
+    )
+
+    if fmt == "json":
+        rendered = format_json(report)
+    elif fmt == "sarif":
+        rendered = json.dumps(format_sarif(report), indent=2)
+    elif fmt == "pr-comment":
+        rendered = format_pr_comment(report)
+    else:
+        rendered = format_markdown(report)
+
+    if getattr(args, "write", None):
+        target = Path(args.write)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(rendered, encoding="utf-8")
+        if sys.stderr.isatty():
+            sys.stderr.write(f"Wrote impact report to {target}\n")
+    else:
+        _emit(rendered)
+    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -906,14 +1104,22 @@ def _max_file_mb(value: str) -> float:
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="repo2graph", description=__doc__)
+    p = argparse.ArgumentParser(
+        prog="repo2graph",
+        description=__doc__,
+        epilog="first time here? run `repo2graph demo` -- it indexes a bundled example "
+        "repo and answers five questions about it. Then `repo2graph build . -o .r2g`. "
+        "If something looks wrong, `repo2graph doctor .` says what and how to fix it.",
+    )
     p.add_argument("-v", "--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="cmd")
 
-    effective_argv = sys.argv[1:] if argv is None else argv
-    if not effective_argv:
-        p.print_help()
-        return 0
+    # No early `if not argv: print_help()` here. Bare `repo2graph` used to
+    # return before a single `sub.add_parser(...)` ran, so the help page a
+    # first-run user sees listed no commands at all -- "positional arguments:
+    # {}" -- while `repo2graph --help` listed all fourteen. The fall-through
+    # at the bottom of this function already prints help for an argv that
+    # names no subcommand, and by then the subparsers are registered.
 
     v = sub.add_parser("version", help="show repo2graph version")
     v.set_defaults(func=lambda _args: _emit(f"repo2graph {__version__}"))
@@ -936,6 +1142,18 @@ def main(argv=None):
     )
     common.add_argument("--include", nargs="*", default=None, help="glob(s) to include")
     common.add_argument("--exclude", nargs="*", default=None, help="glob(s) to exclude")
+    common.add_argument(
+        "--exclude-group",
+        action="append",
+        default=[],
+        choices=[*EXCLUSION_GROUP_NAMES, "all", "help"],
+        metavar="NAME",
+        help=(
+            "exclude a named group of paths (repeatable, composable with --exclude): "
+            + ", ".join(EXCLUSION_GROUP_NAMES)
+            + ", all. Use `--exclude-group help` to print what each one covers."
+        ),
+    )
     common.add_argument(
         "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
     )
@@ -1311,10 +1529,83 @@ def main(argv=None):
     )
     ep.add_argument("--include", action="append", default=[], help="glob to include")
     ep.add_argument("--exclude", action="append", default=[], help="glob to exclude")
+    ep.add_argument(
+        "--exclude-group",
+        action="append",
+        default=[],
+        choices=[*EXCLUSION_GROUP_NAMES, "all", "help"],
+        metavar="NAME",
+        help="exclude a named group, exactly as `build` would (repeatable)",
+    )
     ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)
     ep.add_argument("--json", action="store_true", help="output explanation as JSON")
     ep.set_defaults(func=cmd_explain_path)
+
+    from .bugreport import CATEGORIES as _BUG_CATEGORIES
+
+    br = sub.add_parser(
+        "bug-report",
+        help="assemble a privacy-preserving diagnostic bundle to attach to an issue",
+    )
+    br.add_argument("-o", "--out", default=".r2g", help="index directory (default: .r2g)")
+    br.add_argument("-r", "--repo", default=None, help="source tree the index describes")
+    br.add_argument(
+        "--category",
+        choices=sorted(_BUG_CATEGORIES),
+        default=None,
+        help="what went wrong; adds the extra evidence that category needs",
+    )
+    br.add_argument(
+        "--include-paths",
+        action="store_true",
+        help="include repo-relative file paths (off by default; a path can leak a roadmap)",
+    )
+    br.add_argument("--json", action="store_true", help="emit the raw bundle as JSON")
+    br.add_argument("--write", metavar="FILE", default=None, help="write to FILE instead of stdout")
+    br.set_defaults(func=cmd_bug_report)
+
+    ist = sub.add_parser(
+        "index-status",
+        help="report index provenance, contents, exclusions and freshness",
+    )
+    ist.add_argument("-o", "--out", default=".r2g", help="index directory (default: .r2g)")
+    ist.add_argument(
+        "-r",
+        "--repo",
+        default=None,
+        help="source tree the index describes (default: the index directory's parent)",
+    )
+    ist.add_argument("--json", action="store_true", help="output the report as JSON")
+    ist.add_argument(
+        "--check",
+        action="store_true",
+        help="exit 1 when the index is not current, for use as a CI gate",
+    )
+    ist.set_defaults(func=cmd_index_status)
+
+    dm = sub.add_parser(
+        "demo",
+        help="index a bundled example repo and answer the five starter questions",
+    )
+    dm.add_argument(
+        "-o",
+        "--out",
+        default=None,
+        metavar="DIR",
+        help="write the demo repo here and keep it (default: a temp dir, removed on exit)",
+    )
+    dm.add_argument(
+        "--keep",
+        action="store_true",
+        help="keep the temp demo repo and its index instead of deleting them",
+    )
+    dm.add_argument(
+        "--full",
+        action="store_true",
+        help="print each answer in full instead of the first few lines",
+    )
+    dm.set_defaults(func=cmd_demo)
 
     d = sub.add_parser(
         "doctor",
@@ -1384,6 +1675,79 @@ def main(argv=None):
     )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
+
+    imp = sub.add_parser(
+        "impact",
+        help="analyze PR / branch diff impact against a base branch using the code graph",
+    )
+    imp.add_argument(
+        "repo",
+        nargs="?",
+        default=".",
+        help="repository directory (default: current directory)",
+    )
+    imp.add_argument(
+        "-o",
+        "-i",
+        "--out",
+        "--index",
+        dest="out",
+        default=".r2g",
+        help="path to index directory (default: .r2g)",
+    )
+    imp.add_argument(
+        "--base",
+        default="main",
+        help="base ref or branch to compare against (default: main)",
+    )
+    imp.add_argument(
+        "--head",
+        default=None,
+        help="head ref or branch to compare (default: current working tree)",
+    )
+    imp.add_argument(
+        "--diff",
+        default=None,
+        metavar="FILE",
+        help="path to unified diff file (overrides git diff)",
+    )
+    imp.add_argument(
+        "--format",
+        choices=["markdown", "json", "sarif", "pr-comment"],
+        default="markdown",
+        help="output format (default: markdown)",
+    )
+    imp.add_argument("--json", action="store_true", help="output report as JSON")
+    imp.add_argument(
+        "--sarif",
+        action="store_true",
+        help="output report as SARIF v2.1.0 for Code Scanning",
+    )
+    imp.add_argument(
+        "--max-depth",
+        type=_nonneg,
+        default=2,
+        help="traversal hops for caller impact (default: 2)",
+    )
+    imp.add_argument(
+        "--min-confidence",
+        type=float,
+        default=None,
+        help="minimum confidence threshold for CALLS edges",
+    )
+    imp.add_argument(
+        "--no-auto-build",
+        dest="auto_build",
+        action="store_false",
+        help="do not build index if missing",
+    )
+    imp.add_argument(
+        "--write",
+        metavar="FILE",
+        default=None,
+        help="write report to FILE instead of stdout",
+    )
+    imp.set_defaults(func=cmd_impact)
 
     if argv is None:
         try:

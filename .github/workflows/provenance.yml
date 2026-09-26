@@ -12,11 +12,108 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+
 jobs:
   reuse:
+    name: License & Copyright Compliance (REUSE/SPDX)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
-      - name: REUSE / SPDX compliance
+        with:
+          persist-credentials: false
+      - name: Lint License Headers (reuse)
+        id: reuse_lint
         run: pipx run reuse lint
+
+      - name: Generate REUSE License Compliance Step Summary
+        if: always()
+        shell: bash
+        env:
+          # Reports the lint's real outcome. Hardcoding "✅ Passed" under
+          # `if: always()` rendered a green row in the summary of a run whose
+          # lint had just failed.
+          LINT: ${{ steps.reuse_lint.outcome }}
+        run: |
+          if [ "$LINT" = "success" ]; then
+            status="✅ Passed"
+          else
+            status="❌ Failed ($LINT)"
+          fi
+          # `printf '%s'`, not an unquoted heredoc. The summary now interpolates a
+          # variable, and `cat << EOF` (unquoted, as it must be for that) also
+          # performs command substitution -- so a single backtick or `$(` added to
+          # a table cell later would execute. A quoted `<< 'EOF'` cannot expand
+          # `$status` at all, so the table is printed with placeholders instead
+          # and nothing in it is ever evaluated.
+          {
+            printf '### 📜 License & Copyright Compliance (REUSE/SPDX)\n\n'
+            printf '| Policy | Status | Standard |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **SPDX Header & Licensing** | %s | %s |\n' \
+              "$status" "Free Software Foundation Europe (FSFE) REUSE 3.0"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  zizmor:
+    name: Workflow Security Audit (zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write  # upload SARIF to Code Scanning
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Two passes, because `--format sarif` makes zizmor exit 0 even when it
+      # has findings -- verified A/B on this tree at this pinned version:
+      # `--format plain` exits 12, `--format sarif` exits 0. Running only the
+      # SARIF pass therefore made this job structurally incapable of failing,
+      # and a real `self-repository` finding sat unsuppressed behind it. The
+      # SARIF pass still runs first and unconditionally so Code Scanning gets
+      # the upload even when the gate below fails.
+      - name: Audit workflows and the composite action (SARIF for Code Scanning)
+        run: |
+          pipx run "zizmor==1.30.1" --config .github/zizmor.yml \
+            --format sarif . > zizmor.sarif
+
+      - name: Gate on zizmor findings
+        id: zizmor_gate
+        run: |
+          pipx run "zizmor==1.30.1" --config .github/zizmor.yml \
+            --format plain .
+
+      - name: Generate Security Audit Step Summary
+        if: always()
+        shell: bash
+        env:
+          # Reports what the gate actually did. The previous hardcoded
+          # "✅ Passed" was written under `if: always()`, so a failed audit
+          # still rendered a green row in the run summary.
+          GATE: ${{ steps.zizmor_gate.outcome }}
+        run: |
+          if [ "$GATE" = "success" ]; then
+            status="✅ Passed"
+            detail="Zero unmitigated high/medium security anti-patterns"
+          else
+            status="❌ Failed ($GATE)"
+            detail="zizmor reported unsuppressed findings -- see the job log"
+          fi
+          # printf with placeholders rather than an unquoted heredoc -- see the
+          # REUSE summary above for why.
+          {
+            printf '### 🛡️ Workflow Security Audit (zizmor)\n\n'
+            printf '| Target | Status | Standard |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **GitHub Actions Workflows** | %s | %s |\n' "$status" "$detail"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
+        with:
+          sarif_file: zizmor.sarif

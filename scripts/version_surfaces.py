@@ -18,7 +18,7 @@ Two kinds of surface:
   release, so `vN` is a promise about the major and nothing more).
 
 `paths` is an allowlist on purpose, never a glob. `benchmarks/results.json`,
-`examples/*/manifest.json` and `BUILD_STATE.md` all record the version that
+`examples/*/manifest.json` and `docs/BUILD_STATE.md` all record the version that
 *produced* some artifact -- history, not a claim about the current release --
 and a pattern loose enough to reach them would rewrite the past. For the same
 reason the pin pattern matches `==` only: `docs/github-action.md`'s
@@ -81,6 +81,29 @@ SURFACES: tuple[Surface, ...] = (
         pattern=r'"version"\s*:\s*"(?P<v>[^"]+)"',
         paths=("server.json",),
         why="the version the MCP Registry publishes -- at the top level and once per package",
+    ),
+    Surface(
+        kind="version",
+        # The only `"version":` key in the file; `engines.node` is `">=18"`, which
+        # this pattern cannot reach because the key name differs.
+        pattern=r'"version"\s*:\s*"(?P<v>[^"]+)"',
+        paths=("npm/package.json",),
+        why=(
+            "npm/README.md's 'Release story' promises the npx launcher and the PyPI "
+            "release ship from one tag; it was outside this table for 2.1.0 and drifted"
+        ),
+    ),
+    Surface(
+        kind="version",
+        # `^version:` only -- `cff-version: 1.2.0` names the file *format* and must
+        # survive every bump, so the anchor is what keeps this off it.
+        pattern=rf"^version:\s*(?P<v>{SEMVER})\s*$",
+        paths=("CITATION.cff",),
+        why=(
+            "what GitHub's 'Cite this repository' box and every downstream .bib render; "
+            "it was outside this table for the 2.1.0 release and stayed on 2.0.0 while "
+            "every other surface moved"
+        ),
     ),
     Surface(
         kind="version",

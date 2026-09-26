@@ -5,8 +5,13 @@ Prevents drift between code and documentation:
 - Parser language support in LANG_CFG vs README
 - Action inputs and outputs in action.yml vs docs/github-action.md
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
+- CITATION.cff's version vs pyproject.toml's (Issue #404)
+- npm/package.json's version vs pyproject.toml's (Issue #399)
+- BUILD_STATE.md living at docs/, not the repo root (Issue #403)
+- docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -15,9 +20,63 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README_PATH = REPO_ROOT / "README.md"
 CLI_DOC_PATH = REPO_ROOT / "docs" / "cli.md"
+QUICKSTART_PATH = REPO_ROOT / "docs" / "quickstart.md"
+INDEXING_PATH = REPO_ROOT / "docs" / "INDEXING.md"
+INCREMENTAL_RFC_PATH = REPO_ROOT / "docs" / "rfc-incremental-indexing.md"
 ACTION_YML_PATH = REPO_ROOT / "action.yml"
 ACTION_DOC_PATH = REPO_ROOT / "docs" / "github-action.md"
 MCP_DOC_PATH = REPO_ROOT / "docs" / "mcp.md"
+PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
+CITATION_PATH = REPO_ROOT / "CITATION.cff"
+NPM_PACKAGE_PATH = REPO_ROOT / "npm" / "package.json"
+THREAT_MODEL_PATH = REPO_ROOT / "docs" / "THREAT_MODEL.md"
+# The operator-facing companion: docs/THREAT_MODEL.md enumerates assets, trust
+# boundaries and attacks; this one issues a supported/not-recommended verdict
+# per deployment shape. The per-mode topics and the transport constants below
+# are the second document's job, so they are checked against it.
+DEPLOYMENT_SECURITY_PATH = REPO_ROOT / "docs" / "deployment-security.md"
+
+
+def _pyproject_version() -> str:
+    """`pyproject.toml`'s `[project] version`, read by regex like
+    `scripts/version_surfaces.py` does -- `tomllib` is 3.11+ only and this
+    project's floor is 3.10, so a regex match on the one line that matters
+    avoids adding a TOML-parsing dependency just for this test.
+    """
+    text = PYPROJECT_PATH.read_text(encoding="utf-8")
+    m = re.search(r'^version\s*=\s*"(?P<v>[^"]+)"', text, re.MULTILINE)
+    assert m, "pyproject.toml has no top-level version= line"
+    return m.group("v")
+
+
+# Map internal grammar keys to the exact token the READMEs use for them
+# (JS/TS/TSX are documented abbreviated). One regex per LANG_CFG key: every
+# family repo2graph actually parses must have a matching entry here.
+#
+# Module-level rather than local to test_languages_documented() because
+# tests/test_i18n_consistency.py runs the same check against the five
+# translated READMEs -- the language list drifted in all six files at once
+# (all said 16 grammars / 28 extensions after Lua landed), so one mapping
+# guarding one file was exactly the gap.
+LANGUAGE_TOKENS = {
+    "python": r"\bPython\b",
+    "javascript": r"\bJS\b",
+    "typescript": r"\bTS\b",
+    "tsx": r"\bTSX\b",
+    "go": r"\bGo\b",
+    "rust": r"\bRust\b",
+    "java": r"\bJava\b",
+    "ruby": r"\bRuby\b",
+    "c": r"\bC\b(?!\+\+|#)",
+    "cpp": r"C\+\+",
+    "csharp": r"C#",
+    "php": r"\bPHP\b",
+    "kotlin": r"\bKotlin\b",
+    "swift": r"\bSwift\b",
+    "scala": r"\bScala\b",
+    "bash": r"\bBash\b",
+    "lua": r"\bLua\b",
+}
 
 
 def test_cli_commands_documented():
@@ -56,29 +115,7 @@ def test_languages_documented():
 
     readme_text = README_PATH.read_text(encoding="utf-8")
 
-    # Map internal grammar keys to the exact token README.md uses for them
-    # (JS/TS/TSX are documented abbreviated, as "JS/TS/TSX" -- see the
-    # "15 languages" row). One regex per LANG_CFG key: every family repo2graph
-    # actually parses must have a matching entry here.
-    families = {
-        "python": r"\bPython\b",
-        "javascript": r"\bJS\b",
-        "typescript": r"\bTS\b",
-        "tsx": r"\bTSX\b",
-        "go": r"\bGo\b",
-        "rust": r"\bRust\b",
-        "java": r"\bJava\b",
-        "ruby": r"\bRuby\b",
-        "c": r"\bC\b(?!\+\+|#)",
-        "cpp": r"C\+\+",
-        "csharp": r"C#",
-        "php": r"\bPHP\b",
-        "kotlin": r"\bKotlin\b",
-        "swift": r"\bSwift\b",
-        "scala": r"\bScala\b",
-        "bash": r"\bBash\b",
-        "lua": r"\bLua\b",
-    }
+    families = LANGUAGE_TOKENS
 
     assert set(families) == set(LANG_CFG), (
         f"families mapping is out of sync with LANG_CFG: "
@@ -127,3 +164,403 @@ def test_mcp_tools_documented():
         assert f"`{tool_name}`" in mcp_doc_text, (
             f"MCP tool '{tool_name}' is not documented in docs/mcp.md"
         )
+
+
+def test_citation_cff_matches_pyproject():
+    """Issue #404: CITATION.cff must parse and stay in lockstep with pyproject.toml."""
+    assert CITATION_PATH.exists(), "CITATION.cff is missing from the repo root"
+    cff = yaml.safe_load(CITATION_PATH.read_text(encoding="utf-8"))
+
+    assert cff["cff-version"] == "1.2.0"
+    assert cff["title"] == "repo2graph"
+    assert cff["license"] == "MIT"
+    assert cff["repository-code"] == "https://github.com/Srinivasan-78/repo2graph"
+
+    authors = cff["authors"]
+    assert len(authors) >= 1
+    assert authors[0]["given-names"] == "Srinivasan"
+    assert authors[0]["family-names"] == "Vijayaraghavan"
+
+    assert cff["version"] == _pyproject_version(), (
+        "CITATION.cff's version has drifted from pyproject.toml's -- bump both together"
+    )
+
+
+def test_npm_launcher_version_matches_pyproject():
+    """Issue #399: the npx launcher's package.json version stays paired with the PyPI release.
+
+    `npm/README.md`'s "Release story" section promises the two are published from the same
+    tag; this is the machine-checkable half of that promise.
+    """
+    assert NPM_PACKAGE_PATH.exists(), "npm/package.json is missing"
+    package = json.loads(NPM_PACKAGE_PATH.read_text(encoding="utf-8"))
+    assert package["name"] == "repo2graph-mcp"
+    assert package["version"] == _pyproject_version(), (
+        "npm/package.json's version has drifted from pyproject.toml's -- bump both together"
+    )
+    assert "bin" in package and "repo2graph-mcp" in package["bin"]
+    bin_path = REPO_ROOT / "npm" / package["bin"]["repo2graph-mcp"]
+    assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
+
+
+def test_build_state_lives_in_docs_not_repo_root():
+    """Issue #403: BUILD_STATE.md must not sit at the repository root.
+
+    `docs/BACKLOG.md` documents `docs/BUILD_STATE.md` as the current build-app run's location
+    (`docs/BUILD_STATE.graphrag-2026-09.md` is the archived one from a past run) -- this test
+    would catch a future change that puts a new BUILD_STATE.md back at the root.
+    """
+    assert not (REPO_ROOT / "BUILD_STATE.md").exists(), (
+        "BUILD_STATE.md is back at the repo root -- it belongs at docs/BUILD_STATE.md (Issue #403)"
+    )
+    backlog_text = (REPO_ROOT / "docs" / "BACKLOG.md").read_text(encoding="utf-8")
+    assert "docs/BUILD_STATE.md" in backlog_text
+
+
+def test_threat_model_covers_every_deployment_mode():
+    """Issue #263: docs/deployment-security.md must exist and name every required mode/topic.
+
+    A loose substring check rather than a hand-derived membership assertion (AGENTS.md's usual
+    rule for *behavioural* tests) -- this is a documentation-completeness check, so the thing
+    being pinned is "the required topic is discussed somewhere in the file," not a value the
+    code under test computes.
+    """
+    assert THREAT_MODEL_PATH.exists(), "docs/THREAT_MODEL.md is missing"
+    assert DEPLOYMENT_SECURITY_PATH.exists(), "docs/deployment-security.md is missing"
+    text = DEPLOYMENT_SECURITY_PATH.read_text(encoding="utf-8")
+
+    required_topics = [
+        "Trusted-local CLI",
+        "CI indexing",
+        "Stdio MCP",
+        "HTTP MCP on loopback",
+        "reverse proxy",
+        "Multi-tenant",
+        "--answer",
+        "GEMINI_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OLLAMA_HOST",
+        "exclude_secrets",
+        "Authenticated vs. authorized",
+        "ssl_certificate",  # the worked reverse-proxy example is a real TLS config, not prose only
+        "rotation",
+    ]
+    for topic in required_topics:
+        assert topic in text, f"docs/deployment-security.md is missing required topic: {topic!r}"
+
+
+def test_threat_model_numeric_claims_match_the_http_and_auth_source():
+    """docs/deployment-security.md cites specific constants from http_server.py/auth.py in prose --
+    this pins those constants so a future change to either module without a doc edit fails
+    here instead of leaving the threat model quietly wrong.
+    """
+    from repo2graph import auth, http_server
+
+    assert http_server.MAX_BODY_BYTES == 1 << 20
+    assert http_server.REQUEST_TIMEOUT_SECONDS == 30.0
+    assert auth.DEFAULT_MIN_REFRESH_INTERVAL == 5.0
+    assert set(auth.ALGORITHMS) == {"RS256", "RS384", "RS512"}
+
+
+def test_starter_questions_match_the_docs_verbatim():
+    """The five starter prompts are authored once, in repo2graph/demo.py.
+
+    README.md and docs/quickstart.md both render them, and `repo2graph demo`
+    runs them -- so a prompt edited in one place and not the others would
+    leave the docs telling users to run something the demo never exercises.
+    Both the template form (what a reader copies onto their own repo) and the
+    demo form (what actually runs) are pinned.
+    """
+    from repo2graph.demo import STARTER_QUESTIONS
+
+    readme_text = README_PATH.read_text(encoding="utf-8")
+    quickstart_text = QUICKSTART_PATH.read_text(encoding="utf-8")
+
+    assert len(STARTER_QUESTIONS) == 5
+    for q in STARTER_QUESTIONS:
+        assert f"`{q.template}`" in readme_text, (
+            f"starter prompt missing from README.md: {q.template!r}"
+        )
+        assert f"`{q.template}`" in quickstart_text, (
+            f"starter prompt missing from docs/quickstart.md: {q.template!r}"
+        )
+        # `shows` is the one-line explanation the table's right-hand column
+        # carries; it drifts just as easily as the prompt itself.
+        assert q.shows in readme_text, (
+            f"starter prompt rationale missing from README.md: {q.shows!r}"
+        )
+        assert q.shows in quickstart_text, (
+            f"starter prompt rationale missing from docs/quickstart.md: {q.shows!r}"
+        )
+
+
+def test_every_exclusion_group_is_documented():
+    """`--exclude-group` names come from one table; the docs must list them all.
+
+    A group added to `exclusions.GROUPS` and not documented is a flag nobody
+    can discover; a group documented and not implemented is a flag that
+    errors.
+    """
+    from repo2graph.exclusions import GROUPS
+
+    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    cli_text = CLI_DOC_PATH.read_text(encoding="utf-8")
+
+    for name, group in GROUPS.items():
+        assert f"`{name}`" in indexing_text, f"exclusion group '{name}' missing from INDEXING.md"
+        assert name in cli_text, f"exclusion group '{name}' missing from docs/cli.md"
+        assert group.globs, f"exclusion group '{name}' has no patterns"
+        assert group.representative, f"exclusion group '{name}' declares no representative paths"
+
+
+def test_indexing_doc_names_determinism_tests_that_exist():
+    """INDEXING.md's guarantee table points at specific tests by name.
+
+    A renamed or deleted test would leave the documented guarantee pointing
+    at nothing while still reading as though it were enforced.
+    """
+    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    determinism_src = (REPO_ROOT / "tests" / "test_determinism.py").read_text(encoding="utf-8")
+
+    # INDEXING.md also cites tests that live next door, in the index-status
+    # suite, so both files are searched rather than just the obvious one.
+    status_src = (REPO_ROOT / "tests" / "test_index_status.py").read_text(encoding="utf-8")
+    haystack = determinism_src + status_src
+
+    named = set(re.findall(r"`(test_[a-z0-9_]+)`", indexing_text))
+    assert named, "INDEXING.md no longer names any test"
+    for test_name in named:
+        assert f"def {test_name}(" in haystack, (
+            f"INDEXING.md names '{test_name}', which exists in neither "
+            "tests/test_determinism.py nor tests/test_index_status.py"
+        )
+
+
+def test_indexing_docs_and_rfc_are_cross_linked():
+    """The RFC carries the benchmarks INDEXING.md's performance section defers
+    to; a broken link between them leaves the numbers unfindable."""
+    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    rfc_text = INCREMENTAL_RFC_PATH.read_text(encoding="utf-8")
+
+    assert "rfc-incremental-indexing.md" in indexing_text
+    assert "INDEXING.md" in rfc_text
+    # The RFC's whole argument rests on these being reported, not asserted.
+    for required in ("Method", "best of 3", "Acceptance criteria"):
+        assert required in rfc_text, f"the incremental RFC no longer states '{required}'"
+
+
+def test_git_metadata_fields_are_documented():
+    """Every provenance field `index-status` surfaces is named in INDEXING.md.
+
+    `manifest.json`'s `source_revision` is a public surface -- `--json`
+    prints it verbatim -- so a field added without a doc edit is an
+    undocumented API. The *shape* of the report is asserted against a real
+    index in tests/test_index_status.py, not by scraping this source.
+    """
+    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    for field in ("base_branch", "merge_base", "dirty_files", "commits_ahead_of_base"):
+        assert field in indexing_text, f"git metadata field '{field}' missing from INDEXING.md"
+
+
+def test_quickstart_names_the_doctor_checks_it_promises():
+    """The quickstart's troubleshooting table routes each symptom to a named
+    doctor check. A check renamed or dropped without a doc edit leaves the
+    table pointing at output that never appears."""
+    quickstart_text = QUICKSTART_PATH.read_text(encoding="utf-8")
+    for check_name in (
+        "uv / pip Availability",
+        "Index Freshness",
+        "Parser Coverage",
+        "Ignored Paths",
+        "Generated / Vendored Code",
+        "MCP Client Configuration",
+        "Platform & Encoding",
+    ):
+        assert check_name in quickstart_text, (
+            f"docs/quickstart.md no longer mentions the '{check_name}' doctor check"
+        )
+
+
+def test_every_shipped_doc_is_listed_in_the_docs_index():
+    """A doc nobody can reach from docs/README.md is a doc nobody reads.
+
+    Caught four at once: quickstart, INDEXING, OUTPUT_SCHEMA and the
+    incremental RFC were all written and none was linked.
+    """
+    docs_dir = REPO_ROOT / "docs"
+    index_text = (docs_dir / "README.md").read_text(encoding="utf-8")
+
+    # Dated working notes and per-run reports are deliberately unlisted: they
+    # are a record of one investigation, not a page to navigate to.
+    unlisted_by_design = {
+        "README.md",
+        "BUILD_STATE.md",
+        "BUILD_STATE.graphrag-2026-09.md",
+        # A tracking matrix for one completed audit, kept as a record of what
+        # was found and fixed. Undated in the filename, so it needs naming
+        # here rather than matching the dated-working-note rule below.
+        "remediation-tracking.md",
+    }
+    for path in sorted(docs_dir.glob("*.md")):
+        if path.name in unlisted_by_design or re.search(r"\d{4}-\d{2}-\d{2}", path.name):
+            continue
+        assert path.name in index_text, (
+            f"docs/{path.name} is not linked from docs/README.md; add it to the section "
+            "it belongs in, or to unlisted_by_design here if it is a working note"
+        )
+
+
+def test_reference_and_output_schema_agree_on_the_standard_edge_fields():
+    """`docs/reference.md` claims to list every field an edge can carry.
+
+    It said `CALLS_EXTERNAL` carries no `confidence` -- true until every edge
+    type gained the standard trio, and wrong afterwards. Both pages describe
+    the same records, so both must name the same three fields.
+    """
+    from repo2graph.edgemeta import STANDARD_FIELDS
+
+    reference = (REPO_ROOT / "docs" / "reference.md").read_text(encoding="utf-8")
+    schema = (REPO_ROOT / "docs" / "OUTPUT_SCHEMA.md").read_text(encoding="utf-8")
+
+    for field in ("method", "confidence", "evidence"):
+        assert field in STANDARD_FIELDS
+        assert f"`{field}`" in reference, f"docs/reference.md does not mention `{field}`"
+        assert f"`{field}`" in schema, f"docs/OUTPUT_SCHEMA.md does not mention `{field}`"
+
+    # The specific claim that went stale.
+    assert "no\n  `scope_distance` or `ambiguous`" in reference or (
+        "`scope_distance` or `ambiguous`" in reference
+    ), "reference.md's CALLS_EXTERNAL field list no longer parses as expected"
+    assert "no `scope_distance`, `confidence` or `ambiguous`" not in reference, (
+        "docs/reference.md still claims CALLS_EXTERNAL carries no confidence; it does (1.0)"
+    )
+
+
+# --------------------------------------------------------------------------
+# Distribution assets make claims to an outside audience
+# --------------------------------------------------------------------------
+
+DISTRIBUTION_DIR = REPO_ROOT / "docs" / "distribution"
+INTEGRATIONS_DIR = REPO_ROOT / "docs" / "integrations"
+
+
+def test_benchmark_numbers_in_distribution_assets_match_the_measurements():
+    """POSITIONING.md forbids "benchmark numbers we did not measure".
+
+    These figures go on screen in a demo video and into launch copy, where a
+    reader will check them against `benchmarks/results.json`. Pinned here so a
+    re-benchmark cannot silently leave the assets overclaiming.
+    """
+    results = json.loads((REPO_ROOT / "benchmarks" / "results.json").read_text(encoding="utf-8"))
+    by_repo = {r["repository"].rsplit("/", 1)[-1]: r for r in results["results"]}
+
+    assets = "\n".join(p.read_text(encoding="utf-8") for p in DISTRIBUTION_DIR.glob("*.md"))
+    for name, files, seconds in (("django", 5629, 34), ("vscode", 6000, 71), ("linux", 3660, 78)):
+        row = by_repo[name]
+        if f"{files:,}" in assets or str(files) in assets:
+            assert row["files"] == files, (
+                f"distribution assets claim {files} files for {name}; "
+                f"benchmarks/results.json says {row['files']}"
+            )
+            assert round(row["build_seconds"]) == seconds, (
+                f"distribution assets claim {seconds}s for {name}; "
+                f"benchmarks/results.json says {row['build_seconds']}"
+            )
+
+
+def test_integration_guides_quote_the_real_mcp_bounds():
+    """The guides publish the argument ceilings as a contract with the reader.
+
+    A clamp loosened in mcp.py without a doc edit leaves a guide promising a
+    bound the server no longer enforces.
+    """
+    from repo2graph.mcp import (
+        MCP_BUDGET_TOKENS,
+        MCP_MAX_BUDGET_TOKENS,
+        MCP_MAX_HOPS,
+        MCP_MAX_K,
+        MCP_MAX_NEIGHBOURS,
+        TOOL_DESCRIPTIONS,
+    )
+
+    text = (INTEGRATIONS_DIR / "claude-code.md").read_text(encoding="utf-8")
+
+    # In context, not as a bare substring. `str(MCP_MAX_HOPS) in text` passes
+    # for any value whose digits appear anywhere in the prose -- "4" is in
+    # "doctor.py:1075" -- so that form is not a detector at all. Same trap
+    # test_languages_documented documents for its word-boundary regexes.
+    # Verified as a detector by raising MCP_MAX_HOPS and watching this fail.
+    for label, phrase in (
+        ("MCP_MAX_K", f"`k` ≤ {MCP_MAX_K}"),
+        ("MCP_MAX_HOPS", f"`hops` ≤ {MCP_MAX_HOPS}"),
+        ("MCP_MAX_NEIGHBOURS", f"`limit` ≤ {MCP_MAX_NEIGHBOURS}"),
+        ("MCP_MAX_BUDGET_TOKENS", f"budget ≤ {MCP_MAX_BUDGET_TOKENS:,} tokens"),
+        ("MCP_BUDGET_TOKENS", f"default {MCP_BUDGET_TOKENS:,}"),
+    ):
+        assert phrase in text, (
+            f"docs/integrations/claude-code.md does not state {label} as {phrase!r}; "
+            "the guide publishes these ceilings as a contract with the reader"
+        )
+
+    # "The six tools" is a heading in that guide; every tool must appear under it.
+    assert len(TOOL_DESCRIPTIONS) == 6, (
+        f"claude-code.md says 'The six tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    )
+    for tool in TOOL_DESCRIPTIONS:
+        assert tool in text, f"MCP tool '{tool}' is missing from docs/integrations/claude-code.md"
+
+
+def test_distribution_drafts_are_marked_unpublished():
+    """Two of these files are copy aimed at an audience. If the approval gate
+    is edited out, the next reader cannot tell a draft from a decision."""
+    for name in ("launch-posts.md", "design-partners.md"):
+        text = (DISTRIBUTION_DIR / name).read_text(encoding="utf-8")
+        head = text[:1200]
+        assert "DRAFT" in head.upper(), f"docs/distribution/{name} lost its draft marker"
+        assert "POSITIONING.md" in text, (
+            f"docs/distribution/{name} must point at the claim constraints it is written inside"
+        )
+
+
+def test_distribution_assets_carry_the_limitations_they_must():
+    """POSITIONING.md §5: any surface long enough to have a limitations section
+    carries the eight. Outward-facing copy is exactly such a surface, and the
+    two that get dropped first under editing pressure are the two that matter
+    most to a skeptical reader."""
+    for name in ("launch-posts.md", "design-partners.md", "demo-script.md"):
+        text = (DISTRIBUTION_DIR / name).read_text(encoding="utf-8").lower()
+        assert "name-based" in text, (
+            f"docs/distribution/{name} does not state that call resolution is name-based"
+        )
+        assert "absent edge is not proof" in text or "no edge does not prove" in text, (
+            f"docs/distribution/{name} does not state that an absent edge is not proof of "
+            "an absent call"
+        )
+
+
+def test_positioning_claims_match_the_code_it_cites():
+    """POSITIONING.md is the source of truth every outward surface derives from.
+
+    Its "where it is kept" column cites the code that keeps each promise, which
+    means a code change can silently make the messaging wrong. Two had already
+    drifted: it said "five read-only tools" after a sixth was added, and cited
+    `confidence` as a `CALLS`-only field after every edge type gained it.
+    """
+    from repo2graph.mcp import TOOL_DESCRIPTIONS
+
+    text = (REPO_ROOT / "POSITIONING.md").read_text(encoding="utf-8")
+
+    words = {5: "five", 6: "six", 7: "seven", 8: "eight"}
+    expected = f"{words[len(TOOL_DESCRIPTIONS)]} read-only tools"
+    assert expected in text, (
+        f"POSITIONING.md does not say {expected!r}; mcp.py exposes {len(TOOL_DESCRIPTIONS)} tools"
+    )
+    for wrong in (v for k, v in words.items() if k != len(TOOL_DESCRIPTIONS)):
+        assert f"{wrong} read-only tools" not in text, (
+            f"POSITIONING.md still claims {wrong!r} read-only tools"
+        )
+
+    assert "`confidence` on every `CALLS` edge" not in text, (
+        "POSITIONING.md still scopes confidence to CALLS edges; every edge type carries it"
+    )

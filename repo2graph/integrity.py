@@ -164,6 +164,41 @@ def compute_file_checksum(path: Path | str) -> str:
     return f"sha256:{hasher.hexdigest()}"
 
 
+def _is_own_transient(porcelain_line: str) -> bool:
+    """True for repo2graph's own in-flight files in a `git status --porcelain` line.
+
+    Two of them, both deliberately placed *beside* the output directory
+    rather than inside it, and both present at the moment provenance is
+    captured:
+
+    - `..r2g.r2glock` -- `BuildLock` keeps the lock outside `outdir` so it
+      survives dump_all's transactional directory swap (lock.py).
+    - `..r2g.staging.<pid>.<hex>/` -- dump_all stages every artifact in a
+      sibling directory and renames it into place on success, so a crashed
+      build never leaves a half-written index.
+
+    `.r2g/` in .gitignore covers neither, and `write_manifest` runs inside
+    both windows. The result was that every build of an otherwise clean
+    repository recorded `dirty: true`, blaming the user's tree for
+    repo2graph's own scratch files -- and `index-status` then reported a
+    dirty build for a pristine checkout.
+
+    Only untracked (`??`) entries are considered: anything git is tracking
+    is the user's, whatever it is called. `parse.discover` skips the lock
+    file for the same underlying reason.
+    """
+    status, _, rest = porcelain_line.partition(" ")
+    if status.strip() != "??":
+        return False
+    # Porcelain v1 quotes a path that needs escaping; the name tests below
+    # survive either form. Untracked directories are reported with a
+    # trailing "/".
+    name = rest.strip().strip('"').rstrip("/").rsplit("/", 1)[-1]
+    if not name.startswith("."):
+        return False
+    return name.endswith(".r2glock") or ".staging." in name
+
+
 def get_source_provenance(root: str | Path) -> dict[str, Any]:
     """Capture Git provenance metadata safely for the repository at `root`."""
     root_path = Path(root)
@@ -200,9 +235,47 @@ def get_source_provenance(root: str | Path) -> dict[str, Any]:
     if tag:
         provenance["tag"] = tag
 
-    # Dirty status: check if uncommitted changes exist
+    # Dirty status: check if uncommitted changes exist. The count rides along
+    # because "dirty: true" alone cannot distinguish one edited file from a
+    # half-finished merge, and `index-status` has to tell the reader which.
+    # split("\n") not splitlines(): --porcelain quotepath=false emits raw
+    # bytes, and a path containing U+2028 would otherwise be counted twice.
     status_out = _run_git(["status", "--porcelain"])
-    provenance["dirty"] = bool(status_out and status_out.strip())
+    dirty_lines = [
+        ln for ln in (status_out or "").split("\n") if ln.strip() and not _is_own_transient(ln)
+    ]
+    provenance["dirty"] = bool(dirty_lines)
+    if dirty_lines:
+        provenance["dirty_files"] = len(dirty_lines)
+
+    # Base branch: what this branch would merge into. `origin/HEAD` is the
+    # authoritative answer but is only present when the clone set it up
+    # (`git remote set-head`, or a non-shallow `git clone`); CI checkouts
+    # routinely lack it, so fall back to whichever conventional name exists.
+    base = None
+    head_ref = _run_git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+    if head_ref:
+        base = head_ref.split("/", 1)[1] if "/" in head_ref else head_ref
+    else:
+        for candidate in ("main", "master", "develop", "trunk"):
+            if _run_git(["rev-parse", "--verify", f"refs/remotes/origin/{candidate}"]) or _run_git(
+                ["rev-parse", "--verify", f"refs/heads/{candidate}"]
+            ):
+                base = candidate
+                break
+    if base:
+        provenance["base_branch"] = base
+        # Where this branch left the base. An index built on a feature branch
+        # describes base + this branch's diff, and the merge-base is the only
+        # thing that says how far back that common ancestor is.
+        merge_base = _run_git(["merge-base", "HEAD", f"origin/{base}"]) or _run_git(
+            ["merge-base", "HEAD", base]
+        )
+        if merge_base and merge_base != commit:
+            provenance["merge_base"] = merge_base
+            ahead = _run_git(["rev-list", "--count", f"{merge_base}..HEAD"])
+            if ahead and ahead.isdigit():
+                provenance["commits_ahead_of_base"] = int(ahead)
 
     # Remote origin URL with credentials scrubbed
     remote_url = _run_git(["config", "--get", "remote.origin.url"])

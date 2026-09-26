@@ -37,6 +37,7 @@ from typing import Any
 from . import __version__
 from .cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .export import path as artifact_path
+from .edgemeta import cite as edge_cite
 from .query import (
     ALL_EDGE_DIRS,
     DEFAULT_EDGE_TYPES,
@@ -100,6 +101,7 @@ TOOL_TITLES = {
     "repo_map": "Repository Map",
     "repo_search": "Search Codebase",
     "repo_neighbours": "Traverse Graph Neighbors",
+    "repo_impact": "Analyze PR Impact",
     "repo_cache_stats": "Cache Statistics",
     "repo_build_status": "Build Task Status",
 }
@@ -134,6 +136,15 @@ TOOL_DESCRIPTIONS = {
         "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
         "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+    ),
+    "repo_impact": (
+        "Analyze PR or git diff impact against a base branch using the code graph. "
+        "Detects changed symbols, affected public APIs, impacted callers, test coverage, "
+        "and architectural blast radius with grounded citations. Read-only, deterministic, "
+        "zero side effects. When to use: use when assessing PR risk, planning test execution, "
+        "evaluating breaking API changes, or investigating diff blast radius. When NOT to use: "
+        "do not use for generic lexical code search (use repo_search). "
+        "Output: structured markdown impact report or PR summary."
     ),
     "repo_cache_stats": (
         "Retrieve runtime diagnostic counters for the tool result cache (hits, misses, "
@@ -211,6 +222,32 @@ TOOL_SCHEMAS = {
             },
         },
         "required": ["node_id"],
+    },
+    "repo_impact": {
+        "type": "object",
+        "properties": {
+            "base": {
+                "type": "string",
+                "description": "Base ref or branch to compare against (default 'main').",
+            },
+            "head": {
+                "type": "string",
+                "description": "Head ref or branch to compare (default 'HEAD' or current working tree).",
+            },
+            "diff": {
+                "type": "string",
+                "description": "Optional raw unified diff text. If provided, overrides git diff.",
+            },
+            "max_depth": {
+                "type": "integer",
+                "description": f"Caller traversal hops around changed symbols (default 2, max {MCP_MAX_HOPS}).",
+            },
+            "format": {
+                "type": "string",
+                "enum": ["markdown", "json", "pr-comment"],
+                "description": "Report format: 'markdown' (full report), 'pr-comment' (compact PR summary), or 'json'.",
+            },
+        },
     },
     "repo_cache_stats": {"type": "object", "properties": {}},
     "repo_build_status": {
@@ -464,7 +501,7 @@ def tool_repo_neighbours(
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
-    for dst, etype, direction, _src in index.expand(
+    for dst, etype, direction, src in index.expand(
         [node_id],
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
@@ -478,12 +515,205 @@ def tool_repo_neighbours(
         if len(lines) - 1 >= limit:
             truncated = True
             break
-        lines.append(f"- {etype} {direction}: {_label(index, dst)}")
+        lines.append(
+            f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
+        )
     if truncated:
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
     return "\n".join(lines)
+
+
+def tool_repo_impact(
+    index: Index,
+    base: str = "main",
+    head: str = "HEAD",
+    diff: str = "",
+    max_depth: int = 2,
+    format: str = "markdown",
+) -> str:
+    """Analyze PR or git diff impact against a base branch using the code graph.
+
+    Enforces exclude_secrets=True unconditionally and clamps numeric arguments.
+    """
+    base_ref = _str(base, 256).strip() or "main"
+    head_ref = _str(head, 256).strip() or "HEAD"
+    diff_text = _str(diff, 1_000_000)
+    depth = _clamp(max_depth, 2, 1, MCP_MAX_HOPS)
+
+    from .impact import (
+        analyze_diff_impact,
+        format_json,
+        format_markdown,
+        format_pr_comment,
+        get_git_diff,
+    )
+
+    if not diff_text.strip():
+        root_path: Path = Path.cwd()
+        raw_root = getattr(index, "repo_root", None)
+        if not raw_root:
+            m = getattr(index, "manifest", {}) or {}
+            raw_root = m.get("root")
+        if not raw_root:
+            raw_root = getattr(index, "dir", None)
+        if raw_root:
+            try:
+                candidate = Path(str(raw_root))
+                if (candidate / ".git").exists():
+                    root_path = candidate
+            except Exception:
+                pass
+        try:
+            diff_text = get_git_diff(root_path, base=base_ref, head=head_ref)
+        except Exception as exc:
+            # The exception text is *not* relayed. `get_git_diff` embeds git's
+            # stderr, and `git -C <root>` names <root> in its own failure
+            # message, so passing `exc` through hands the caller the server's
+            # absolute index path -- exactly what `http_server`'s
+            # INDEX_UNAVAILABLE and `_public_repo_label` keep server-side for
+            # every other route. The refs are the caller's own input, so echoing
+            # those discloses nothing. Only the type is kept, which is enough to
+            # tell "bad ref" from "not a repository" without naming the host.
+            return (
+                f"Error obtaining git diff ({base_ref}...{head_ref}): "
+                f"{type(exc).__name__}. Check that both refs exist in the "
+                f"indexed repository, or pass the diff directly via `diff`."
+            )
+
+    report = analyze_diff_impact(
+        index=index,
+        diff=diff_text,
+        base=base_ref,
+        head=head_ref,
+        max_depth=depth,
+        exclude_secrets=True,
+    )
+
+    fmt = str(format).lower().strip()
+    if fmt == "json":
+        rendered = format_json(report)
+    elif fmt in ("pr-comment", "comment"):
+        rendered = format_pr_comment(report)
+    else:
+        rendered = format_markdown(report)
+
+    # Bound the rendered result, the second half of the AGENTS.md MCP rule: a
+    # clamped *input* does not bound the *output*. The report grows with the
+    # number of impacted symbols, not with `max_depth`, and `diff` is accepted up
+    # to 1 MB -- a diff naming every indexed path rendered 17,927 tokens as JSON,
+    # already 1.5x the ceiling `repo_search` enforces on itself. Measured after
+    # rendering rather than predicted, for the same reason `repo_search`
+    # re-measures `pack_context`'s own output instead of trusting it.
+    if count_tokens(rendered) <= MCP_MAX_BUDGET_TOKENS:
+        return rendered
+
+    if fmt == "json":
+        # `_fit_lines` would cut mid-structure and hand back a string that is no
+        # longer JSON, which for a machine-readable format is worse than the
+        # overrun: the caller gets a parse error instead of a result. Return the
+        # scalar summary -- which is what does not grow with the diff -- as a
+        # valid document, and say plainly that the lists were dropped.
+        # Function-local import, matching this module's other json call sites:
+        # the docstring's promise is that importing `mcp` costs nothing.
+        import json as _json
+
+        return _json.dumps(
+            {
+                "truncated": True,
+                "reason": (
+                    f"report exceeded the {MCP_MAX_BUDGET_TOKENS}-token tool ceiling; "
+                    f"per-symbol lists omitted. Narrow the diff, or run "
+                    f"`repo2graph impact` for the full report."
+                ),
+                "base_ref": report.base_ref,
+                "head_ref": report.head_ref,
+                "risk_level": report.risk_level,
+                "blast_radius_score": report.blast_radius_score,
+                "metrics": {
+                    "files_changed_count": len(report.files_changed),
+                    "symbols_changed_count": len(report.symbols_changed),
+                    "public_apis_affected_count": len(report.public_apis_affected),
+                    "impacted_callers_count": len(report.impacted_callers),
+                    "impacted_modules_count": len(report.impacted_modules),
+                    "impacted_tests_count": len(report.impacted_tests),
+                    "untested_public_apis_count": len(report.untested_public_apis),
+                    "suspicious_findings_count": len(report.suspicious_findings),
+                },
+            },
+            indent=2,
+        )
+
+    # Markdown and pr-comment are line-oriented, so a line-boundary cut degrades
+    # into a shorter report rather than a malformed one.
+    #
+    # The notice's cost is paid for *before* fitting -- appending it afterwards
+    # put the result back over the ceiling by its own length (12,013 against a
+    # 12,000 bound). A truncation notice that breaks the limit it announces is
+    # the one thing it must not do.
+    #
+    # Subtracting the notice's own `count_tokens` is not enough, because
+    # `count_tokens` is `len // 4` and so is not additive. `_fit_lines` only
+    # guarantees `len(fit) // 4 <= room`, i.e. up to `4 * room + 3` characters, so
+    # a notice whose length is not a multiple of 4 can carry the sum's floor one
+    # token over. Reserving `(len(notice) + 3) // 4` closes it arithmetically:
+    #
+    #     len(fit) + len(notice) <= 4 * room + 3 + len(notice)
+    #     => count_tokens(total) <= room + (len(notice) + 3) // 4 == ceiling
+    #
+    # -- exact, in one pass. Iterating `room` downward until it fit would also
+    # work but re-runs `_fit_lines`, which rebuilds its candidate string on every
+    # line and is therefore quadratic in line count; one call is the difference
+    # between ~0.3s and ~27s on a 60k-line report.
+    notice = (
+        f"\n\n_[truncated to {MCP_MAX_BUDGET_TOKENS} tokens. "
+        f"Narrow the diff, or run `repo2graph impact` for the full report.]_"
+    )
+    room = max(1, MCP_MAX_BUDGET_TOKENS - (len(notice) + 3) // 4)
+
+    # Hand `_fit_lines` only the prefix that could possibly survive. Every line it
+    # keeps lies inside the first `4 * room + 3` characters, so cutting to the
+    # last newline at or beyond that bound is loss-free -- and it stops the
+    # quadratic candidate rebuild from walking a report that may be megabytes of
+    # lines past the point where the budget was already spent.
+    head = rendered[: 4 * room + 4]
+    if len(head) < len(rendered):
+        cut = head.rfind("\n")
+        if cut > 0:
+            head = head[:cut]
+    return _fit_lines(head, room, count_tokens) + notice
+
+
+def _edge_note(index: "Index", src: str, dst: str, etype: str) -> str:
+    """Where the relationship is written, and how sure repo2graph is of it.
+
+    The node label already says where the *neighbour* is defined. For "what
+    calls this", the citation an agent actually needs is the call site, which
+    lives on the edge -- and without the confidence, an ambiguous name match
+    reads exactly like a certain one. `compute_freshness -> ResultCache.get`
+    is a real example from this repository: a `.get()` on a dict resolved to
+    one of three candidates at 0.5, and the tool presented it as fact.
+
+    Certain edges get only their evidence, so the common case stays terse.
+    """
+    edge = None
+    for other, other_type, _direction, record in index.adj.get(src, ()):
+        if other == dst and other_type == etype:
+            edge = record
+            break
+    if edge is None:
+        return ""
+
+    bits = []
+    where = edge_cite(edge)
+    if where:
+        bits.append(f"at {where}")
+    conf = edge.get("confidence")
+    if isinstance(conf, (int, float)) and conf < 1.0:
+        n = edge.get("candidate_count")
+        bits.append(f"AMBIGUOUS {conf} of {n} candidates" if n else f"AMBIGUOUS {conf}")
+    return f"  -- {', '.join(bits)}" if bits else ""
 
 
 def _label(index: Index, node_id: str) -> str:
@@ -628,6 +858,15 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
             hops=_int(args.get("hops"), 1),
             limit=_int(args.get("limit"), MCP_NEIGHBOUR_LIMIT),
         )
+    elif name == "repo_impact":
+        result = tool_repo_impact(
+            index,
+            base=str(args.get("base") or "main"),
+            head=str(args.get("head") or "HEAD"),
+            diff=str(args.get("diff") or ""),
+            max_depth=_int(args.get("max_depth"), 2),
+            format=str(args.get("format") or "markdown"),
+        )
     else:
         # Not cached: an unknown-tool message is cheap, and caching it would
         # fill the cache with whatever names a confused caller invents.
@@ -748,6 +987,7 @@ server = ServerWrapper("repo2graph", version=__version__)
 server.add_tool("repo_map", tool_repo_map, TOOL_SCHEMAS["repo_map"])
 server.add_tool("repo_search", tool_repo_search, TOOL_SCHEMAS["repo_search"])
 server.add_tool("repo_neighbours", tool_repo_neighbours, TOOL_SCHEMAS["repo_neighbours"])
+server.add_tool("repo_impact", tool_repo_impact, TOOL_SCHEMAS["repo_impact"])
 server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_stats"])
 server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])
 

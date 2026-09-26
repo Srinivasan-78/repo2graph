@@ -1,5 +1,5 @@
 name: repo2graph
-description: Build a code graph and graph-aware RAG chunks for a repository
+description: Build a browsable code graph and cited, budget-bounded context for your repo — in CI, no LLM call
 author: Srinivasan-78
 
 branding:

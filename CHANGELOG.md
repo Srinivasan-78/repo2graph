@@ -13,6 +13,275 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-client integration guides.** `docs/integrations/claude-code.md` (first-supported) covers
+  install, verification, the six tools and their real argument ceilings, the five starter
+  questions, the `CLAUDE.md` block that gets the agent to actually prefer the tools, and an
+  explicit "what not to rely on". `docs/integrations/cursor.md` covers the same server and the
+  three things that differ -- config file, scope model, and the rules file that is load-bearing
+  there because Cursor's own search is good enough to answer without ever calling a tool.
+  `tests/test_doc_consistency.py` pins the guides' quoted MCP bounds against `mcp.py`, in context
+  rather than as bare substrings: `str(MCP_MAX_HOPS) in text` passes for any value whose digits
+  appear anywhere in the prose, which is not a check.
+- **`docs/distribution/`** -- a demo-video script and recording plan, a before/after case-study
+  template, launch-post drafts and design-partner outreach drafts. The posts and outreach are
+  **unpublished drafts pending human approval** and say so; a test fails if that marker is edited
+  out. Every number in them traces to `benchmarks/results.json` or `docs/limitations.md`, pinned
+  by a test, because the product claim is trustworthiness and a launch post that overstates the
+  call graph's completeness contradicts the thing being sold.
+- **Standard trust metadata on every graph edge** (`edge_schema_version: "2"`). Before this,
+  only `CALLS` carried enough to audit a claim: `CONTAINS`, `DEFINES`, `IMPORTS` and `INHERITS`
+  were bare `(src, dst, type)` triples, so "why do you think this file imports that one" had no
+  answer in the artifact. Every edge now carries `method` (`tree-sitter/<lang>`, `name-resolver`,
+  `filesystem`, `git-log` — so a consumer can distrust one extraction path rather than a whole
+  edge type), `confidence`, and **`evidence`: the `{path, line}` where the relationship is
+  written**. Verified, not asserted: `tests/test_output_schema.py` opens each cited line and
+  checks the relationship is on it. `evidence` is `null` for `CONTAINS` and `CO_CHANGE` — a file
+  being in a directory is not written anywhere, and inventing a line for it would be the
+  fabricated citation this schema exists to prevent. `confidence` is defined precisely as
+  P(`dst` is the correct target | the relationship at `evidence` exists), which is what lets an
+  ambiguous name split 1/n across candidates while the call site stays certain; it never encodes
+  dynamic dispatch, which `call_kind` carries. Normalisation happens at the single `add_edge`
+  chokepoint so a future edge type cannot ship as a bare triple.
+- **A "Confidence and limitations" segment on every `rag --answer`.** Computed by repo2graph
+  from the pack that was actually sent, never asked of the model — a model rating its own
+  confidence produces a number with no referent, and it cannot know what retrieval never showed
+  it. Reports what the answer rests on, how many of the edges used were ambiguous, whether the
+  budget truncated the pack (an answer from a truncated pack can be wrong *by omission*, and
+  nothing else in the output would say so), and the standing limits. Same shape every time,
+  including when there is nothing to caveat: a section that appears only when something is wrong
+  teaches readers to skip it. Machine-readable form: `limits.confidence_report(pack)`.
+- **`repo2graph bug-report`** — a diagnostic bundle that is useful to a maintainer and safe to
+  post. Environment and versions, the non-passing `doctor` checks, index shape and freshness,
+  and an edge-quality histogram (by type, by method, by confidence bucket) — often what actually
+  explains a bad answer. **No file content, at any setting.** No environment variable values, no
+  remote URL, no repository or branch name, no absolute paths. File paths are off by default (a
+  path like `billing/stripe_migration_v2.py` says a lot about a private repo); changed files
+  appear as 8-character fingerprints, and `--include-paths` opts in. The commit sha *is*
+  included: it makes a wrong edge reproducible against a public repo and reveals nothing a
+  private repo's own history does not.
+- **Three new issue templates** — Stale index, Parser failure, Answer unhelpful — completing the
+  five feedback categories, which now match `bug-report --category` one-to-one
+  (`tests/test_output_schema.py` fails if a category has no template to file under). The
+  existing edge template gained the category selector and the bundle field.
+- **`docs/OUTPUT_SCHEMA.md`** — the contract for edge records, what `confidence` means and does
+  not mean, where each surface puts its citations, and what the bundle does and does not carry.
+- **`repo2graph index-status`** — one report joining `manifest.json`, `stats.json` and the working
+  tree: the indexed commit and branch, when the index was built, file/symbol/edge counts, detected
+  languages, what discovery skipped and why, parse failures, the index's size on disk, and whether
+  the tree has moved since the build. `--json` for CI, and `--check` to exit 1 when the index is
+  not current — which turns "the committed index matches this commit" into a reviewable gate.
+  Freshness is `current`, `stale` or `unknown`, the last meaning nothing could be checked; "I could
+  not tell" is a different claim from "it is out of date" and reporting the second when you mean the
+  first trains people to ignore the field. `doctor`'s Index Freshness check and this command share
+  one implementation (`status.compute_freshness`), pinned by
+  `test_doctor_and_index_status_never_disagree`.
+- **Git-aware provenance.** `source_revision` now records `base_branch` (from
+  `refs/remotes/origin/HEAD`, falling back to the first of `main`/`master`/`develop`/`trunk` that
+  exists — CI checkouts routinely lack the former), `merge_base`, `commits_ahead_of_base`, and a
+  `dirty_files` count alongside the existing `dirty` flag.
+- **`build --exclude-group NAME`** — named exclusion groups (`generated`, `vendor`, `build`,
+  `dependencies`, `sensitive`, `all`), repeatable and composable with `--exclude`;
+  `--exclude-group help` prints what each covers and builds nothing. One authored table
+  (`exclusions.GROUPS`) backs both this flag and `doctor`'s "Generated / Vendored Code" check, so a
+  shape the check can flag is always a shape the flag can exclude — the check's remediation now
+  names a group rather than reconstructing globs. Patterns use `**/vendor/**`, not `vendor/**`:
+  `parse._glob_re` anchors a pattern containing "/" at the repository root, so the latter misses
+  `packages/web/vendor/...`, which is where a monorepo keeps all of it. Every glob is asserted
+  against representative paths.
+- **`docs/INDEXING.md`** — the pipeline, the determinism guarantees and what backs them, the
+  four exclusion layers, how staleness is computed, and the failure-mode table.
+  **`docs/rfc-incremental-indexing.md`** — measurements and a proposal.
+- **`tests/test_determinism.py`** — reproducibility across five axes: two builds of one tree,
+  `--jobs 1` vs `--jobs 4`, filesystem enumeration order, git vs `os.walk` discovery, and
+  `--incremental` vs full.
+- **`repo2graph demo`** — the command to run first. It writes a small bundled repository (an
+  orders service: routes → auth guard → rules → SQL store, plus a test module and a JS client)
+  into a scratch directory, builds a real index over it through the same `build()`/`dump_all()`
+  path the `build` subcommand uses, and answers the five starter questions against it. No
+  network, no API key, no repository of your own, nothing to configure. `-o DIR` and `--keep`
+  leave the repo in place to poke at; `--full` prints each answer whole instead of its citation
+  table plus the first cited block. The fixture lives as source strings in `repo2graph/demo.py`
+  rather than as package data, so it is present under `uvx`, `pip`, Docker and a git checkout
+  alike — a `package-data` entry is one edit away from silently dropping out of the wheel.
+- **Five starter questions, authored once.** `demo.STARTER_QUESTIONS` is the single source for
+  the prompts in `README.md`, `docs/quickstart.md` and the demo itself; each carries the
+  copy-paste template for the reader's own repo, the form the demo actually runs, and the one
+  line saying what it demonstrates. `tests/test_doc_consistency.py` fails if a docs copy drifts,
+  and `tests/test_demo.py` asserts each question still cites the file that answers it — path
+  membership hand-derived from the fixture source, never a value the code under test produced.
+- **`docs/quickstart.md`** — two minutes from nothing installed to a cited answer, with the
+  expected output at each step, the five prompts, the MCP one-liner, and a symptom → `doctor`
+  check → fix table.
+- **Six new `doctor` checks**, covering the rest of what a first run gets wrong:
+  **uv / pip availability** (absent uv is not an error — only the `uvx` one-liner needs it —
+  but neither uv nor pip is); **index freshness** (the manifest's commit against `HEAD`, the
+  discovered file set against `index.state.json`, and a real sha256 for any file whose mtime is
+  newer than the manifest's, so a checkout that rewrites every mtime does not read as stale);
+  **parser coverage** (parse errors and grammar-less files *in this index*, as opposed to
+  whether the grammars load at all); **ignored paths** (discovery mode and per-rule skip counts,
+  warning past two thirds — the signature of a repo whose source sits under a
+  `DEFAULT_SKIP_DIRS` name and therefore indexes cleanly while answering nothing);
+  **generated / vendored code** that made it *into* the index, by path, by name and by
+  `@generated`/`DO NOT EDIT` header, with the `--exclude` globs to rebuild with; and **MCP
+  client configuration**, which finds the Claude Code, Claude Desktop, Cursor and Windsurf
+  config files and catches the four failures that all surface to the user as "server failed to
+  start" — a `command` not on `PATH`, `uvx` without `--from "repo2graph[mcp]"`, a relative or
+  non-existent repository path, and JSON that does not parse. It never reads or echoes an
+  entry's `env` values. Every scan over an index is bounded (`MAX_NODE_LINES`,
+  `MAX_FRESHNESS_FILES`, `MAX_GENERATED_CONTENT_SCANS`), because `doctor` is the documented way
+  to inspect an index built somewhere else.
+- **`docs/THREAT_MODEL.md`** — the page the five existing security documents now hang off, and what
+  issue #263 was actually asking for. Assets, five trust boundaries, and per-surface attacks with
+  the mitigation and the open gap for each: hostile repository, hostile index (an index is
+  untrusted input per `GHSA-6wrx-c2rg-mvm9`), prompt injection through retrieved source, secrets
+  reaching the index, the HTTP MCP surface, and supply chain. Includes an explicit out-of-scope
+  list and a table of every open security-relevant issue against the surface it belongs to, so the
+  page does not read as though the surface is closed.
+- **`docs/secure-configuration.md`** — copy-paste configurations: exclusion globs worth adding
+  beyond the defaults (Terraform state, Helm prod values, test fixtures with real data), a
+  `--network=none` build that *proves* the offline claim rather than asserting it, stdio and HTTP
+  MCP, the Action, how to forbid `rag --answer` in a shared environment, deletion, and a checklist
+  for a sensitive repository.
+- **`docs/privacy-audit-2026-09-25.md`** — the data-handling audit behind the above: every outbound
+  path and every write location enumerated from the code. 12 claims checked, 9 held as written,
+  3 were incomplete and are corrected, none was false.
+- **Repository governance docs.** **`docs/ARCHITECTURE.md`** — the contributor-facing module map
+  (what each of the 27 modules owns, which way dependencies run, the two import cycles
+  `export`↔`viz` and `mcp`↔`http_server`↔`tasks`, that `langs`/`walker`/`layout` are re-export
+  shims rather than modules, and where a change of each kind goes).
+  **`docs/parser-development.md`** — adding a language end to end: `LangConfig`'s four keys, how to
+  find real tree-sitter node types, `_BASE_NODES` for inheritance clauses, optional per-language
+  import resolution, the two tests to write, and the six documents a test will fail without.
+  **`docs/TRIAGE.md`** — what makes an issue workable, the triage buckets, what qualifies as
+  `good first issue`, and the proposed label taxonomy. **`docs/COMMUNITY.md`** — issues vs.
+  Discussions routing and the Discussions categories. **`docs/good-first-issues.md`** — seven
+  starter tasks, each with a file-and-line pointer, acceptance criteria, and the specific catch
+  that makes it harder than it reads.
+- **`docs/issue-triage-2026-09-25.md`** — a full pass over all 84 open issues. Classifies every one
+  into a single bucket (15 bug, 29 enhancement, 2 documentation, 8 chore/ci/refactor, 2 duplicate,
+  21 needs-reproduction, 4 proposed out-of-scope, 3 epic), and records what the pass turned up:
+  two duplicates (#295⊂#315, #291 superseded by #407), five issues describing behaviour that
+  already exists or is documented as deliberate (#289's edge filters, #283's MCP ceiling, #263's
+  deployment docs, #287's residual-chunk threshold, #349's documented import cycle), and four
+  issues about the same budget vocabulary with none referencing another. Drafted replies included;
+  **nothing was applied** — no issue was closed, relabelled or commented on.
+- **Two issue templates.** `incorrect_edge.yml` for a wrong or missing `CALLS`/`IMPORTS`/`INHERITS`
+  edge, which gates on the documented blind spots (dynamic dispatch, reflection, DI, generated
+  bindings) and on index freshness before the report is filed; and `language_support.yml`, which
+  asks for the tree-sitter node types and points at the parser guide.
+- **`tests/test_i18n_consistency.py`** — the first guard on any relationship
+  between the six READMEs, which is why all six had drifted together. 25 cases
+  pin, across every language at once: that each translation is linked from the
+  English switcher; that every `LANG_CFG` grammar appears in every README (the
+  exact drift recorded under *Changed* below); that `GraphRAG` never appears
+  above the `## 📐` architecture heading; that `GraphRAG`, `BM25`,
+  `pack_context()`, `AST` and `RRF` never appear before the `## 👥` persona
+  heading; and that each file still carries the positioning anchors
+  (`explain retrieval`, `build --incremental`, `[cite:`, `CO_CHANGE`,
+  `repo2graph-mcp`). Emoji section markers are the boundary because they are the
+  only headings identical in all six files. No assertion compares one README's
+  prose to another's — a translation legitimately differs in every sentence.
+  `test_doc_consistency.py`'s language-token map was hoisted to a module-level
+  `LANGUAGE_TOKENS` so both suites share one source of truth.
+
+### Changed
+
+- **The README and all five translations carried the two errors corrected
+  elsewhere in this release.** Their Security sections said `rag --answer` was
+  "the one opt-in exception" to making no network calls — the same
+  under-statement corrected in `PRIVACY.md`, and the more visible one, since the
+  README is the front page. All six now distinguish "makes a network call" from
+  "sends your code": four commands can reach the network and only `--answer`
+  transmits anything of yours. Their contributing blocks all said
+  `make lint test`, which runs two of the four gates CI runs; all six now say
+  `make lint format-check typecheck test`, and the English one states the branch
+  model. The README's "good first issues" pointer went to `docs/BACKLOG.md`,
+  which does not have such a section; it now points at
+  `docs/good-first-issues.md`.
+- **`CODE_OF_CONDUCT.md` says what enforcement means on a one-maintainer
+  project.** The Contributor Covenant text implies a body that does not exist
+  here: the person who receives a report is the person who acts on it, and if the
+  report concerns that person there is no internal escalation — GitHub's own
+  abuse reporting is the independent route. Also states plainly that a security
+  vulnerability is not a conduct issue and the conduct email is the wrong channel.
+- **`docs/PRIVACY.md` corrected on three counts, all under-statements of scope rather
+  than failed guarantees.** It described **two** opt-in network exceptions; there are
+  **four** outbound paths — `rag --answer` (the only one that transmits source),
+  `repo2graph github` (clones), `repo2graph embed` (downloads a ~90 MB model from
+  huggingface.co on first use), and the OIDC JWKS fetch. It said every disk artifact
+  is written only inside `-o`, which is true of `export.py` but not of the package:
+  the build lock lands *beside* the output directory (`<repo>/..r2g.r2glock` for
+  `-o .r2g`), `repo2graph github` clones into the system temp dir, and the embedding
+  model caches under `~/.cache/huggingface/`. And its environment-variable table
+  omitted `GOOGLE_API_KEY`, `GH_TOKEN`/`GITHUB_TOKEN`, `R2G_AUTH_TOKEN` and the two
+  Windows path variables while stating no others were read — `R2G_AUTH_TOKEN`
+  particularly mattered, since it is the way to pass the HTTP bearer token without
+  putting it in argv where `ps` can read it. Added: a "Deleting everything" section
+  covering all four locations, a "Keeping sensitive files out" section, and an
+  explicit bar for any future analytics proposal (opt-in, disclosed before the first
+  byte, and the no-socket tests extended rather than weakened).
+- **`.github/CONTRIBUTING.md` corrected on two points that would have cost a
+  contributor a round trip.** It said to fork and branch from `main`; feature and
+  fix PRs target **`develop`**, and `main` only moves via a promotion PR or the
+  release bump. And it listed two lint commands where CI runs three —
+  `ruff format --check .` is a gate separate from `ruff check .`, and
+  `make lint` alone does not include it. Also added: a routing table to the new
+  guides, the full CI gate list, the test house style (pin literal values; prove
+  a new test is a detector), and a pointer to the starter tasks — the "Good first
+  issues" section previously said none were filed.
+- **`.github/SECURITY.md` leads with how to report.** Reporting was the last
+  section of seven; it is now the first, with a direct private-advisory link,
+  acknowledgement and disclosure expectations, what to include, an explicit
+  in-scope list, and the three things that are documented behaviour rather than
+  vulnerabilities (a missing edge, a `1/n` ambiguous `CALLS` edge, a stale index).
+- **`docs/publishing.md` documents the branch model and a pre-release checklist.**
+  The automated release flow was covered; what was missing was that `develop` is
+  promoted to `main` first, that `develop` is protected from the repo-wide
+  auto-delete because promotion PRs use it as the head branch, and the six things
+  to verify before cutting.
+- **The bug and feature templates.** Bug report now gates on index freshness and
+  on `docs/limitations.md`, asks for `repo2graph doctor` output, and redirects
+  edge reports to the new template; its version placeholder was stale at `1.5.1`.
+  Feature request became **Feature proposal** and now asks which surface it lands
+  on, for one checkable acceptance criterion, and whether the filer wants to
+  implement it. The issue chooser's contact links now route questions, support,
+  ideas and showcases to Discussions.
+- **Positioning rewritten around one outcome: "give coding agents trustworthy,
+  cited answers about unfamiliar codebases."** The README hero no longer opens on
+  "AST-driven code graphs & zero-dependency GraphRAG"; `GraphRAG`, `AST-driven`,
+  `BM25` and `pack_context()` now appear only in "Architecture & token economics"
+  and below. Three sections are new: **Who it's for** (four personas — onboarding
+  developer, coding-agent user, PR reviewer, maintainer — each with the first
+  command to run), **Why repo2graph instead of grep or vector search?** (a
+  three-way table that concedes grep is the right tool for a literal string), and
+  **What it does — and what it does not** (eight limitations on the first-time
+  reader's path, not only in `docs/limitations.md`). The same outcome sentence now
+  drives the PyPI summary (`pyproject.toml`), the MCP registry entry
+  (`server.json`) and the Action's Marketplace blurb (`action.yml`); eight
+  audience-facing PyPI keywords were added. The rationale, the jargon policy, the
+  per-surface before/after audit and ready-to-paste copy for the surfaces that are
+  not files in this repository (GitHub description and topics, the landing page)
+  are in the new root **`POSITIONING.md`**.
+- **`docs/limitations.md` gained two limitations that were real but undocumented:**
+  dependency injection (the `CALLS` edge lands on the interface declaration or
+  fans out across every same-named implementation, never on the class the
+  container injected) and **stale indexes** (the index is a snapshot, nothing
+  watches the filesystem, and `repo2graph doctor` checks index integrity and
+  vector drift — not whether your working tree moved on). `docs/why-graph.md`
+  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  became a persona routing table.
+- **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
+  two places, the README's comparison table said 16, and all five translated
+  READMEs said "16 grammars / 28 extensions"; `LANG_CFG` has held 17 grammars
+  and 29 extensions since Lua landed.
+- **The five translated READMEs carry the new positioning.**
+  `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` were retranslated — not reduced to a
+  stub link — for the hero, the intro, the persona table, the grep/vector
+  comparison and the does/does-not table, at the same level of abridgement they
+  already used.
+
 ## [2.1.0] — 2026-09-24
 
 ### Added
@@ -75,6 +344,62 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **The same tree indexed on two machines produced different artifacts.** Discovery order *is*
+  artifact order — nodes are emitted as files are parsed, and edges and chunks follow. `git
+  ls-files` sorts its output; `os.walk` returns whatever the filesystem hands back, alphabetical
+  on NTFS and hash order on ext4 with `dir_index`. So a non-git build (a Docker image without git,
+  a source tarball, a plain folder) produced `nodes.jsonl`, `edges.jsonl` and `chunks.jsonl` that
+  differed byte-for-byte across machines while describing an identical graph — and no same-machine
+  A/B could see it, because on NTFS the unsorted and sorted orders coincide. `discover()` now
+  sorts both sources by the resolved path's **posix** form (`str(Path)` would sort on `\` on
+  Windows and `/` elsewhere, which is the same divergence one level down). `--max-files N` made
+  this worse than untidy: it takes the first N in discovery order, so two machines indexed
+  *different subsets* of one tree.
+- **Every build of a clean repository recorded `dirty: true`.** `BuildLock` writes
+  `..r2g.r2glock` and `dump_all` stages artifacts in `..r2g.staging.<pid>.<hex>/`, both *beside*
+  the output directory so they survive the transactional swap — so `.r2g/` in `.gitignore` covers
+  neither, and provenance is captured from inside both windows. The manifest blamed the user's
+  tree for repo2graph's own scratch files. Only untracked (`??`) entries are filtered; anything
+  git is tracking is the user's, whatever it is called.
+- **A build with any `--exclude` reported itself stale the instant it finished.** Freshness
+  re-runs discovery to compare the tree against the index, and it did so with *default* filters —
+  so every file the build deliberately excluded came back as newly added. `index.state.json` now
+  records the filters the build actually used (`filters`), because there is nowhere else to
+  recover `--exclude-group generated` from once the build exits, and the comparison applies them.
+  An index written before that field existed falls back to defaults and says so rather than
+  silently reporting phantom additions.
+- **POSITIONING.md's stale limitation #6.** It said `doctor` "checks integrity and vector drift,
+  not working-tree drift" -- true until `index-status` and the shared freshness check started
+  detecting exactly that. Corrected to say what is now true *and* what still is not: detection is
+  not subscription, and a file edited with its mtime preserved and left uncommitted is still
+  missed.
+- **The bug-report bundle could leak an absolute path through a diagnostic note.**
+  `compute_freshness` interpolates an exception message into its notes, and an `OSError` carries
+  the path that failed -- so a discovery failure put an absolute path *including a filename* into
+  a bundle whose entire premise is that it contains neither. The happy path produces no such
+  note, which is why the other privacy tests did not see it. Free text bound for the bundle is
+  now scrubbed at the boundary rather than in each producer: the guarantee has to hold for prose
+  written by code that has never heard of the bundle, including code added later.
+- **The MCP `repo_neighbours` tool presented an ambiguous edge as fact.** It showed where the
+  *neighbour* was defined but not the edge's own `evidence` -- so for "what calls this" an agent
+  got a list of definitions with no way to open the lines that do the calling -- and it showed no
+  confidence, so a name that matched three candidates read exactly like a unique resolution. Both
+  are now in the output, the ambiguous ones marked `AMBIGUOUS <conf> of <n> candidates`. This was
+  the one surface an agent actually reads, and it was the one surface the new edge metadata had
+  not reached.
+- **`docs/reference.md` claimed `CALLS_EXTERNAL` carries no `confidence`.** True until every edge
+  type gained the standard trio, and wrong afterwards; the page also did not mention `method` or
+  `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
+  `path`/`start_line` fields -- they return markdown strings. Both corrected, and
+  `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
+- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
+  which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
+  now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
+  working note.
+- **`explain-path` echoed every exclude glob instead of the one that matched.** Tolerable with a
+  handful of hand-written patterns; unreadable once `--exclude-group` expands to sixty. The
+  command exists to report the single rule that decided a path, so it now names that one pattern
+  and carries it as `matched_glob` in the JSON.
 - **The version bump covered five files; the version was written in eleven.**
   `bump_version.py` rewrote `pyproject.toml`, `server.json`,
   `repo2graph/__init__.py`, `CHANGELOG.md` and `uv.lock`, and

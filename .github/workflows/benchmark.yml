@@ -1,0 +1,86 @@
+name: Benchmark and Regression Corpus
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  FORCE_COLOR: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  benchmark:
+    name: Benchmark Regression Gate (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.13"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run benchmark suite and verify regression gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/benchmark_runner.py --ci --output benchmarks/results_ci_${{ matrix.os }}.json
+
+      - name: Generate Benchmark Step Summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          res_path = f"benchmarks/results_ci_${{ matrix.os }}.json"
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary_file or not os.path.exists(res_path):
+              exit(0)
+          with open(res_path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+          metrics = data.get("workflow_metrics", {})
+          with open(summary_file, "a", encoding="utf-8") as out:
+              out.write(f"### 📊 Benchmark Regression Gate Summary (${{ matrix.os }}, Python ${{ matrix.python-version }})\n\n")
+              out.write("| Metric | `repo2graph` | `ripgrep` Baseline | `agent_baseline` |\n")
+              out.write("| :--- | :---: | :---: | :---: |\n")
+              r2g = metrics.get("repo2graph", {})
+              rg = metrics.get("ripgrep", {})
+              ag = metrics.get("agent_baseline", {})
+              total = data.get("total_tasks", 25)
+              out.write(f"| **Task Accuracy** | **{r2g.get('accuracy_rate_pct', 0.0):.1f}%** ({r2g.get('correct_tasks', 0)}/{total}) | {rg.get('accuracy_rate_pct', 0.0):.1f}% ({rg.get('correct_tasks', 0)}/{total}) | {ag.get('accuracy_rate_pct', 0.0):.1f}% ({ag.get('correct_tasks', 0)}/{total}) |\n")
+              out.write(f"| **Citation Accuracy** | **{r2g.get('mean_citation_accuracy', 0.0):.1f}%** | {rg.get('mean_citation_accuracy', 0.0):.1f}% | {ag.get('mean_citation_accuracy', 0.0):.1f}% |\n")
+              out.write(f"| **Mean Query Latency** | **{r2g.get('mean_latency_ms', 0.0):.2f} ms** | {rg.get('mean_latency_ms', 0.0):.2f} ms | {ag.get('mean_latency_ms', 0.0):.2f} ms |\n")
+              out.write(f"| **Mean Tokens** | {r2g.get('mean_tokens_consumed', 0)} | {rg.get('mean_tokens_consumed', 0)} | {ag.get('mean_tokens_consumed', 0)} |\n\n")
+              status_badge = "✅ **PASSED (Accuracy >= 80%)**" if r2g.get("accuracy_rate_pct", 0) >= 80 else "❌ **FAILED (Accuracy < 80%)**"
+              out.write(f"**Regression Gate**: {status_badge}\n\n")
+          PY
+
+      - name: Upload benchmark results artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        if: always()
+        with:
+          name: benchmark-results-${{ matrix.os }}
+          path: benchmarks/results_ci_${{ matrix.os }}.json
+          retention-days: 14

@@ -189,7 +189,7 @@ function renderLedger(ledger) {
 //
 // The model's input is contributor-controlled (PR title, body, branch names,
 // diff) and its output is rendered under the bot identity by an App that holds
-// issues:write. Three things must not survive into the comment:
+// issues:write. Several things must not survive into the comment:
 //
 //   - `<!--` / `-->`: an HTML comment in the model's prose can close the ledger
 //     early or plant a second BOT_MARKER, and the step-10 lookup takes the
@@ -198,11 +198,21 @@ function renderLedger(ledger) {
 //   - `@name`: a fabricated mention pings a real account from a trusted
 //     identity. A zero-width space after the `@` renders identically and is
 //     inert to GitHub's mention parser.
+//   - markdown image/link syntax (`![](url)`, `[text](url)`, a reference-style
+//     `[label]: url` definition, an HTML `<img>`, or a bare `https://` in
+//     prose): `![](url)` is fetched server-side by GitHub's camo proxy the
+//     moment the comment renders, confirming the workflow ran and when, and
+//     any of these forms posts a plausible-looking link under the bot's
+//     trusted identity -- a reviewer-phishing primitive either way. The
+//     syntactic triggers (`![`, `](`, `<img`) and the URL itself are all
+//     defanged, so nested brackets and reference-style definitions cannot
+//     route around it: the URL is what does the fetching, wherever it sits.
 //   - unbounded length: the last line of defence if max_tokens is ever raised.
 //
 // ZWSP is built from a char code rather than written as a literal: an invisible
 // character in the source is one stray editor save away from vanishing, and it
-// would vanish silently -- mentions would start pinging again with no diff.
+// would vanish silently -- mentions and links would start going live again
+// with no diff.
 // ---------------------------------------------------------------------------
 
 const ZWSP = String.fromCharCode(0x200b);
@@ -211,6 +221,19 @@ function sanitizeAiText(text, maxChars = 4000) {
   let s = String(text === null || text === undefined ? '' : text);
   s = s.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
   s = s.replace(/@(?=[A-Za-z0-9])/g, '@' + ZWSP);
+  // HTML image embeds: sanitised comments render a restricted set of raw
+  // HTML tags, <img> among them, and GitHub camo-proxies its src too.
+  s = s.replace(/<img\b/gi, '&lt;img');
+  // Markdown image/link trigger characters. Matching only the two-character
+  // openers -- not the whole `![...](...)`  -- means nested brackets in the
+  // alt/link text cannot hide the destination from this pass.
+  s = s.replace(/!\[/g, '!' + ZWSP + '[');
+  s = s.replace(/\]\(/g, ']' + ZWSP + '(');
+  // The URL itself, wherever it appears: inline, reference-style definition,
+  // autolink, or bare in prose. Breaking the `//` after the scheme is enough
+  // to keep it from being treated as a live link or image source while
+  // leaving ordinary prose that happens to mention a URL readable.
+  s = s.replace(/\bhttps?:\/\//gi, (m) => m.replace('//', '/' + ZWSP + '/'));
   if (s.length > maxChars) s = s.slice(0, maxChars) + '… _(truncated)_';
   return s.trim();
 }

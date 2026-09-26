@@ -1,19 +1,45 @@
-name: Feature request
-description: Propose a new capability, CLI flag, MCP tool, or language.
+name: Feature proposal
+description: Propose a new capability, CLI flag, MCP tool, or output format.
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Before filing: [docs/BACKLOG.md](../../docs/BACKLOG.md) tracks known, deliberately
-        deferred work — check there first in case this is already scoped out, with the
-        reasoning for why it was deferred.
+        Two things to check first, because both regularly turn a proposal into a shorter
+        conversation:
+
+        - **[docs/BACKLOG.md](../../docs/BACKLOG.md)** — deliberately deferred work, each item with
+          the reason it was deferred. That reason usually changes how you'd frame the proposal.
+        - **[POSITIONING.md](../../POSITIONING.md)** — what repo2graph is for, and §1's list of
+          what it deliberately does not claim to be. A proposal that moves it toward being a
+          general-purpose code-search tool or a compiler-backed analyser is likely out of scope,
+          and it's better to know that before writing it up.
+
+        Requesting a **language**? Use the *Language / parser support* template instead.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface would this land on?
+      options:
+        - CLI
+        - MCP server
+        - GitHub Action
+        - Python API
+        - Graph model (a new node or edge kind)
+        - Output artifacts
+        - Not sure
+    validations:
+      required: true
 
   - type: textarea
     id: problem
     attributes:
       label: What problem does this solve?
-      description: What are you trying to do that repo2graph can't currently help with?
+      description: >
+        What are you trying to do that repo2graph can't currently help with? Describe the
+        situation, not the solution — the best proposals here have been reframed once the
+        underlying question was clear.
     validations:
       required: true
 
@@ -22,9 +48,24 @@ body:
     attributes:
       label: Proposed change
       description: >
-        A new CLI flag, MCP tool, output format, or supported language — whatever shape
-        the change takes. Concrete is better than abstract: a sample command or a sketch
-        of the output is more useful than a general description.
+        Concrete beats abstract. A sample command with its expected output, a sketch of the JSON,
+        or the tool call you'd want to make is far more useful than a general description.
+      placeholder: |
+        $ repo2graph diff -o .r2g --since HEAD~1
+        + sym:app/auth.py::verify_token
+        - sym:app/auth.py::check_token
+        ~ file:app/router.py  (3 new CALLS edges)
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: How would you know it works?
+      description: >
+        One thing that can be checked as true or false when it's done. "Audit every X" can't be;
+        "`repo2graph diff` exits non-zero when the graph changed" can. This is the single field
+        that most determines whether the issue is workable later.
     validations:
       required: true
 
@@ -32,14 +73,30 @@ body:
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Any existing flag/workaround you tried, and why it wasn't enough.
+      description: >
+        Any existing flag, command or workaround you tried, and why it wasn't enough. If the answer
+        is "I could post-process the JSONL myself", say so — that's useful signal about where the
+        boundary should sit.
     validations:
       required: false
+
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Would you like to implement it?
+      options:
+        - "Yes — I'll open a PR"
+        - "Yes, with guidance"
+        - "No, proposing only"
+    validations:
+      required: true
 
   - type: checkboxes
     id: checks
     attributes:
       label: Checks
       options:
-        - label: I searched existing issues and docs/BACKLOG.md for a duplicate.
+        - label: I searched existing issues and `docs/BACKLOG.md` for a duplicate.
+          required: true
+        - label: I checked [docs/limitations.md](../../docs/limitations.md) in case this is a documented trade-off rather than a gap.
           required: true

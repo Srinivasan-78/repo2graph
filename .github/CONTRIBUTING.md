@@ -2,6 +2,17 @@
 
 Thanks for helping out.
 
+**Start here depending on what you're doing:**
+
+| | |
+|---|---|
+| Looking for something to work on | **[docs/good-first-issues.md](../docs/good-first-issues.md)** — seven tasks with acceptance criteria and code pointers |
+| Need to find your way around the code | **[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)** — module map, dependency direction, where a change of each kind goes |
+| Adding a language | **[docs/parser-development.md](../docs/parser-development.md)** |
+| About to edit `query.py`, `chunks.py`, `graph.py` or `parse.py` | **[AGENTS.md](../AGENTS.md)** first — each has a documented footgun |
+| Wondering how issues get labelled | **[docs/TRIAGE.md](../docs/TRIAGE.md)** |
+| Want to ask rather than file | **[docs/COMMUNITY.md](../docs/COMMUNITY.md)** |
+
 ## Local setup
 
 ```bash
@@ -26,12 +37,32 @@ server:
 .venv/bin/python -m pytest
 ```
 
-Before opening a PR, also run the linters CI runs:
+Before opening a PR, run **all three** gates CI runs:
 
 ```bash
-.venv/bin/ruff check .
+.venv/bin/ruff check .           # lint
+.venv/bin/ruff format --check .  # formatting — a SEPARATE gate from the line above
 .venv/bin/mypy repo2graph
 ```
+
+`ruff format --check` is the one people miss. `ruff check` passing says nothing about it: a
+101-character assertion passes lint (`E501` is ignored) and fails formatting, which turns into a
+red CI run on an otherwise-finished PR.
+
+The Makefile has one target per gate, so the full set is:
+
+```bash
+make lint format-check typecheck test
+```
+
+Note that `make lint` alone is only `ruff check .` — it does **not** include the format check.
+
+Two things about `ruff format` that surprise people here:
+
+- It formats **Python code blocks inside Markdown**, so a `python` fence in a doc you add is
+  subject to the same rules as the source. Run the check after editing docs, not just code.
+- `E501` is in the ignore list, so an over-long line passes `ruff check` and fails
+  `ruff format --check`. The two gates disagree on purpose; satisfy both.
 
 `mypy` is strict but only on the modules listed in `pyproject.toml`'s `[[tool.mypy.overrides]]` —
 legacy modules are excluded by name on purpose (see the comment above that table), so a new module
@@ -47,36 +78,56 @@ is strict-checked by default.
 
 ## Submitting a PR
 
-1. Fork and branch from `main`.
-2. Keep changes focused; add or update tests.
-3. Open a pull request describing the change and its motivation.
+1. Fork, and branch from **`develop`** — not `main`.
+2. Keep changes focused; add or update tests for behaviour you touch.
+3. Open the pull request **against `develop`**.
+4. Add a `CHANGELOG.md` entry under `## [Unreleased]`, in the right subsection
+   (`Added` / `Changed` / `Fixed` / `Security` / `Removed`).
 
-When you open a PR, our automated bot `prod-igy` will inspect your branch against `main`, apply relevant labels (type, size, component area), and verify whether your branch is up to date and conflict-free. If your branch has drifted behind `main` or conflicts arise, `prod-igy` will tag you with rebase instructions to keep CI accurate.
+`main` is the release branch. Feature and fix branches merge into `develop`; `develop` is promoted
+to `main` as a single PR when a release is cut (see [docs/publishing.md](../docs/publishing.md)). A
+PR opened against `main` will be asked to retarget, which is a wasted round trip for you.
 
+When you open a PR, the `prod-igy` bot inspects your branch against its base, applies type/size/area
+labels, and reports whether the branch is up to date and conflict-free. If it has drifted or
+conflicts, the bot comments with rebase instructions so the CI result stays meaningful.
+
+### What CI will check
+
+| Gate | Command |
+|---|---|
+| Tests, 9-cell matrix (3 OSes × 3 Python versions) | `pytest` |
+| Lint | `ruff check .` |
+| **Formatting — separate gate** | `ruff format --check .` |
+| Types | `mypy repo2graph/` |
+| Packaging + a real MCP stdio round trip | `scripts/mcp_roundtrip.py` |
+| Licence/provenance | `reuse lint` |
+| Windows cp1252 pipe behaviour | a dedicated job — see AGENTS.md on git output decoding |
+
+### Tests have a house style, and it is not the usual one
+
+Two rules from [AGENTS.md](../AGENTS.md) that reviewers will hold you to:
+
+- **Pin literal values; never assert against something the code under test computed.** A test
+  asserting `stdout == format_pack(Index(out).retrieve(...))` moves with the implementation and
+  stayed green straight through a real traversal regression. Hand-derive the expected
+  `(node_id, why)` tuples from the fixture source, and assert set membership — no scores, ranks or
+  ordering, which drift with any scoring change.
+- **Prove a new test is a detector.** Revert the fix in your working copy, watch the new test fail
+  and the old ones pass, then restore and confirm `git hash-object` is unchanged. Say in the PR
+  that you did it.
 
 ## Good first issues
 
-There are no currently-filed `good first issue` GitHub issues — the backlog below is tracked in
-[docs/BACKLOG.md](../docs/BACKLOG.md) but not yet split into filed issues. Good starting points,
-smallest first:
+**[docs/good-first-issues.md](../docs/good-first-issues.md)** has seven, each with a file and line
+to start from, acceptance criteria, and the specific thing that makes it trickier than it looks —
+because every one of them has one. They range from a one-regex fix to a small refactor that has to
+break an import cycle.
 
-- **No coverage measurement anywhere in the repo.** ~130+ tests exist on judgment alone; nobody can
-  currently answer "which branch of `embed.py` never runs." Wire up `pytest-cov` (or `coverage.py`
-  directly) as a dev dependency and a CI step that reports the number, without necessarily gating
-  on a threshold yet. `docs/BACKLOG.md` item 7.
-- **No MCP test fixture crosses `PARALLEL_MIN_FILES` (64 files).** `graph.build()`'s process-pool
-  path is therefore never exercised by the MCP test suite. Add a synthetic fixture above 64 files
-  so that branch gets real coverage. `docs/BACKLOG.md` item 9 — read the note above it first, since
-  it also documents a related pool-hang bug that's still open and this fixture is a prerequisite
-  for fixing it, not the fix itself.
-- **No real `sentence-transformers` smoke test.** Every embedder in the test suite is a
-  `StubEmbedder`; nothing proves the real wrapper's `model_id`/`dim` agree with what
-  `vectors.meta.json` records. Add one opt-in test, network-gated (skipped unless a marker or env
-  var is set), that exercises `default_embedder()` for real. `docs/BACKLOG.md` item 5.
-
-For anything larger — the MCP server's 2.x SDK port, incremental-build follow-ups, the process-pool
-hang itself — read the relevant section of `docs/BACKLOG.md` first; each one explains why it was
-deliberately deferred rather than just forgotten, which usually changes how you'd approach it.
+For anything larger, **[docs/BACKLOG.md](../docs/BACKLOG.md)** records deliberately deferred work
+with the reason for each deferral — which usually changes how you would approach it. The current
+state of the open issues, including which are duplicates and which are already partly shipped, is
+in **[docs/issue-triage-2026-09-25.md](../docs/issue-triage-2026-09-25.md)**.
 
 ## Real-world examples and benchmarks
 

@@ -5,6 +5,33 @@ the network, how the repository itself is protected, and how to report a vulnera
 [TECHNICAL.md](../TECHNICAL.md) for how the code works, and [README.md](../README.md) for how to
 use it.
 
+## Reporting a vulnerability
+
+**[Open a private advisory →](https://github.com/Srinivasan-78/repo2graph/security/advisories/new)**
+
+Do not open a public issue, a pull request or a discussion thread for an undisclosed vulnerability.
+If the advisory flow is unavailable to you, email
+[@Srinivasan-78](https://github.com/Srinivasan-78) directly and say the report is security-related.
+
+| | |
+|---|---|
+| **Acknowledgement** | Within 72 hours |
+| **Supported versions** | The latest release on PyPI only. Please confirm the issue reproduces there. |
+| **Disclosure** | Coordinated. A fix ships first, then the advisory is published with credit unless you ask otherwise. |
+
+**Useful in a report:** the version, the surface (CLI / MCP stdio / MCP HTTP / GitHub Action /
+Python API), whether the attacker is assumed to control the repository being indexed, an index
+being loaded, or the network, and a reproduction. The first two of those three attacker positions
+are in scope and have prior advisories — see "Further reading".
+
+**In scope:** anything that reads an untrusted repository or an untrusted index
+(`GHSA-6wrx-c2rg-mvm9` established that an index is untrusted input), the HTTP MCP transport and
+its authentication, secret exclusion and redaction, and the generated `graph.html`.
+
+**Not a vulnerability, though still worth reporting as a bug:** a missing graph edge, an ambiguous
+`CALLS` edge at `confidence = 1/n`, or a stale index — all three are documented behaviour in
+[docs/limitations.md](../docs/limitations.md).
+
 ## What never leaves your machine
 
 `repo2graph build`, `repo2graph query`, `repo2graph rag`, and the `repo2graph-mcp` server make
@@ -71,13 +98,16 @@ or a released package, independent of anything the tool does at runtime:
   branch cannot be removed.
 - **Every change reaches `main` through a pull request**, with review threads required to be
   resolved and stale approvals dismissed on push.
-- **Twelve status checks gate every merge**, all of which must pass before the PR is mergeable:
-  `tests` across the full matrix (`ubuntu-latest`, `windows-latest`, `macos-latest` × Python 3.10,
-  3.11, 3.12), plus `packaging` (the no-extra refusal and a real stdio MCP round trip),
-  `action` (the composite Action run against this repository) and `windows-cp1252-pipe` (the
-  non-UTF-8 console regression leg). `reuse` — SPDX/licence-header compliance via
-  [REUSE.toml](../REUSE.toml) — runs on every push in `provenance.yml` but is not one of the
-  required contexts.
+- **Status checks gate every merge**, all of which must pass before the PR is mergeable:
+  `Code Quality & Static Analysis` (ruff lint, formatting, mypy, and version surfaces),
+  `Test Suite` across `ubuntu-latest`, `windows-latest` and `macos-latest` (Python 3.10, 3.11, 3.12, 3.13),
+  `Package Distribution & MCP Stdio Smoke Test`, `GitHub Action Composite Integration Test`,
+  `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (evaluating 25 tasks across 5 archetypes).
+
+  CI *runs* more than it *requires*. In `provenance.yml`, `License & Copyright Compliance (REUSE/SPDX)`
+  and `Workflow Security Audit (zizmor)` run on every push and PR to audit licenses and GitHub Actions configuration.
+  Verify against the live ruleset rather than this list if you are relying on it:
+  `gh api repos/Srinivasan-78/repo2graph/rules/branches/main --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'`.
 
   Commit signing is *not* currently enforced by the ruleset. It was, until 2026-09-21; treat an
   unsigned commit on `main` as expected rather than as evidence of a bypass, and verify the live
@@ -93,23 +123,32 @@ or a released package, independent of anything the tool does at runtime:
 - **Dependabot** watches `pyproject.toml`/`uv.lock` and the pinned Action SHAs for known
   vulnerabilities; `uv.lock` is committed, so every install — local, CI, or a hosted MCP build — is
   reproducible from the exact dependency graph that was reviewed.
-- **A dependency-review workflow** runs on every PR that touches dependencies, blocking new
-  packages with a disallowed license or a known advisory before merge.
+- **A dependency-review workflow** runs on every PR that touches dependencies and fails its own
+  check when a new package carries a disallowed license or a known advisory. Like the REUSE and
+  zizmor audits above, it is *not* in the required-status-check list, so it reddens the run rather
+  than hard-blocking the merge button — read it as a reviewable signal, not a gate, and use the
+  `gh api` command above to see what actually gates today.
 
 ## Further reading
 
-- [docs/SECURITY-AUDIT.md](../docs/SECURITY-AUDIT.md) — architecture, threat model, trust
-  boundaries, and a prioritized findings list with `file:line` evidence for every claim.
-- [docs/PRIVACY.md](../docs/PRIVACY.md) — exactly what leaves the machine, what's cached, and what's
-  logged.
+- [docs/THREAT_MODEL.md](../docs/THREAT_MODEL.md) — **start here**: assets, trust boundaries, what
+  an attacker could try against each surface, what stops it, and what is explicitly out of scope.
+  Every open security gap is named there with its issue number rather than left implied.
+- [docs/secure-configuration.md](../docs/secure-configuration.md) — copy-paste hardened
+  configurations: exclusion patterns, an offline build, stdio and HTTP MCP, CI, and how to
+  forbid `rag --answer` in a shared environment.
+- [docs/SECURITY-AUDIT.md](../docs/SECURITY-AUDIT.md) — the most recent whole-repository security
+  pass, with a prioritized findings list and `file:line` evidence for every claim.
+- [docs/PRIVACY.md](../docs/PRIVACY.md) — exactly what leaves the machine, what is written where,
+  what is logged, and how to delete all of it.
+- [docs/privacy-audit-2026-09-25.md](../docs/privacy-audit-2026-09-25.md) — the data-handling audit
+  behind that page: every outbound path and every write location, enumerated from the code.
 - [docs/ENTERPRISE_DEPLOYMENT.md](../docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
   scoping, and package-pinning guidance for a shared or regulated deployment.
 - [docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating
   with evidence and remaining risk for each.
 
-## Reporting a Vulnerability
+---
 
-Please report security issues privately to [@Srinivasan-78](https://github.com/Srinivasan-78) via a GitHub Security Advisory or email. Do not open a public issue for undisclosed vulnerabilities.
-
-We aim to acknowledge reports within 72 hours. Only the latest release on PyPI is supported;
-please confirm the issue reproduces there before reporting.
+Reporting is at [the top of this page](#reporting-a-vulnerability), where someone arriving to
+report something will actually see it.
