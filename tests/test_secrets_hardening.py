@@ -937,3 +937,165 @@ def test_every_allowlisted_key_actually_matches_the_regex():
     for key in NON_SECRET_KEYS:
         assert SECRET_KEY_RE.search(key), f"{key!r} never needed allowlisting"
         assert key == key.lower(), f"{key!r} must be lowercased to be matched"
+
+
+# ---------------------------------------------------------------------------
+# Terraform state / vars and JSON `"password": "..."` pairs (audit round 1)
+# ---------------------------------------------------------------------------
+
+TF_PASSWORD = "Xq9vLm2PzR7tKw4N"
+JSON_PASSWORD = "Hk3pQz8WmN2vLr7T"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "terraform.tfstate",
+        "infra/terraform.tfstate.backup",
+        "prod.tfvars",
+        "terraform.tfvars",
+        "env/staging.auto.tfvars",
+        "vars.tfvars.json",
+        "auth.json",
+        "wp-config.php",
+        "config/credentials.yml.enc",
+        "keys/proj-firebase-adminsdk-a1b2c.json",
+        "firebase-adminsdk.json",
+        "htpasswd",
+        ".htpasswd",
+        "key.json",
+    ],
+)
+def test_terraform_and_vendor_credential_files_are_secret(path):
+    assert _is_secret_path(path), path
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "main.tf",
+        "variables.tf",
+        "src/auth.py",
+        "keys.json",
+        "keymap.json",
+        "tokenizer.json",
+        "adminsdk.py",
+        "wp-content/functions.php",
+        "backup.py",
+        "notes.py.backup.py",
+    ],
+)
+def test_neighbouring_ordinary_files_stay_indexable(path):
+    assert not _is_secret_path(path), path
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'{{"password": "{JSON_PASSWORD}"}}',
+        f'"db_password":"{JSON_PASSWORD}"',
+        f'  "client_secret" : "{JSON_PASSWORD}",',
+        f'"apiKey": "{JSON_PASSWORD}"',
+        f'"access_key": "{JSON_PASSWORD}"',
+        # JSON escapes inside the value: `\n` and `\"` as two characters each.
+        rf'"private_key": "-----BEGIN\n{JSON_PASSWORD}"',
+        rf'"password": "a\"{JSON_PASSWORD}"',
+    ],
+)
+def test_json_credential_pairs_are_redacted(text):
+    out, n = redact_content(text)
+    assert n == 1
+    assert JSON_PASSWORD not in out
+    assert "[REDACTED:CREDENTIAL_JSON]" in out
+    assert out.count("\n") == text.count("\n")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"password": "Enter your password"',  # i18n prose
+        '"password": "Passwort"',  # i18n label: no digit, two classes
+        '"tokenType": "access-token"',
+        '"client_secret": "${CLIENT_SECRET}"',
+        '"password": "{{ vault_password }}"',
+        '"apiKey": "********"',
+        '"max_tokens": "12345678"',  # a number, not a credential
+        '"password": "short1"',  # under 8 characters
+    ],
+)
+def test_json_placeholders_and_prose_are_left_alone(text):
+    assert redact_content(text) == (text, 0)
+
+
+def test_json_pair_redaction_preserves_lines_across_a_wrapped_pair():
+    text = f'{{\n  "password":\n    "{JSON_PASSWORD}"\n}}\n'
+    out, n = redact_content(text)
+    assert n == 1 and JSON_PASSWORD not in out
+    assert out.count("\n") == text.count("\n")
+
+
+def test_terraform_state_and_json_passwords_never_reach_any_output(tmp_path):
+    """The reviewer's fixture: a default build must not carry the tfstate or
+    tfvars password anywhere, and a JSON `"password"` in an ordinary config
+    file is redacted -- in chunks.jsonl, pack_context and MCP repo_search."""
+    from repo2graph import mcp
+    from repo2graph.query import Index
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "main.py").write_text("def main():\n    return connect_database()\n", encoding="utf8")
+    (src / "terraform.tfstate").write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "resources": [
+                    {
+                        "type": "aws_db_instance",
+                        "instances": [
+                            {"attributes": {"username": "admin", "password": TF_PASSWORD}}
+                        ],
+                    }
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf8",
+    )
+    (src / "terraform.tfstate.backup").write_text(
+        (src / "terraform.tfstate").read_text(encoding="utf8"), encoding="utf8"
+    )
+    (src / "prod.tfvars").write_text(
+        f'db_password = "{TF_PASSWORD}"\nregion = "us-east-1"\n', encoding="utf8"
+    )
+    (src / "config.json").write_text(
+        json.dumps(
+            {"database": {"host": "db.internal", "user": "admin", "password": JSON_PASSWORD}},
+            indent=2,
+        ),
+        encoding="utf8",
+    )
+    out = tmp_path / "out"
+    assert main(["build", str(src), "-o", str(out), "--formats", "jsonl,overview"]) == 0
+
+    chunks_text = (out / "agent" / "chunks.jsonl").read_text(encoding="utf8")
+    assert "config.json" in chunks_text  # the config file *is* indexed ...
+    assert JSON_PASSWORD not in chunks_text  # ... with its password redacted
+    assert TF_PASSWORD not in chunks_text
+    assert "tfstate" not in chunks_text and "tfvars" not in chunks_text
+    for artefact in out.rglob("*"):
+        if artefact.is_file():
+            data = artefact.read_bytes()
+            assert TF_PASSWORD.encode() not in data, artefact
+            assert JSON_PASSWORD.encode() not in data, artefact
+
+    idx = Index(out)
+    for query in ("database password admin", "aws_db_instance password", "db_password region"):
+        pack = idx.pack_context(query, budget_chars=0, exclude_secrets=True)
+        assert JSON_PASSWORD not in pack["markdown"]
+        assert TF_PASSWORD not in pack["markdown"]
+        tool_out = mcp.tool_repo_search(idx, query)
+        assert JSON_PASSWORD not in tool_out
+        assert TF_PASSWORD not in tool_out
+    # The redacted config chunk is still retrievable -- the fix is redaction, not loss.
+    pack = idx.pack_context("database password admin", budget_chars=0, exclude_secrets=True)
+    assert "[REDACTED:CREDENTIAL_JSON]" in pack["markdown"]
