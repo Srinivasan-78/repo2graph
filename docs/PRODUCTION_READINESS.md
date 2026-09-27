@@ -80,7 +80,7 @@ tool as validated for it; see `docs/PERFORMANCE.md`'s recommendations.
 
 **Ready.**
 
-Two prior whole-repository hardening runs are documented in `DONE.md` and `docs/BACKLOG.md` with
+Two prior whole-repository hardening runs are documented in `docs/BACKLOG.md` and `CHANGELOG.md` with
 what shipped, what was deliberately deferred and why, and what regressed and got caught. `AGENTS.md`
 encodes five recurring bug classes as standing repo rules specifically so they don't recur a third
 time. `ruff` is clean; `mypy --strict` is clean on the modules not explicitly relaxed by name (a
@@ -144,7 +144,7 @@ privacy, deployment, and measured performance with evidence rather than assertio
 
 **Ready.**
 
-838 tests passing (up from 825 at the last recorded baseline in `DONE.md`, plus the regression
+838 tests passing (up from 825 at the last recorded baseline, plus the regression
 tests added by this audit). Negative security tests exist for path traversal, secret redaction (in
 both directions), auth rejection (`alg:none`, forged signatures, expired/wrong-audience tokens),
 and XSS in generated HTML — not only "valid input works" tests. `docs/BACKLOG.md` transparently

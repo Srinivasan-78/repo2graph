@@ -317,7 +317,7 @@ the CI — there was no `retry: 3` to remove, and none was added.
 ### Test selection was considered and rejected
 
 Skipping the suite on docs-only changes would save runner minutes, but this repo
-has `tests/test_doc_consistency.py`, `test_i18n_consistency.py`,
+has `tests/test_doc_consistency.py`, the since-removed `test_i18n_consistency.py`,
 `test_version_surfaces.py` and `test_output_schema.py`, all of which fail when a
 *document* and the code disagree. A docs-only path filter would route changes
 around the tests written specifically to catch docs-only mistakes. Not worth the

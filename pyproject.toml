@@ -137,7 +137,7 @@ ignore_missing_imports = true
 # 179 errors remain, concentrated in mcp (40), graph (39), parse (27) and
 # cli (23). query.py and export.py are done -- they were taken first because
 # everything else imports them, so their `Any` returns were what made callers
-# unprovable. See DONE.md for the ranked plan.
+# unprovable. See docs/BACKLOG.md for the ranked plan.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]

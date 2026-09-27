@@ -26,7 +26,7 @@ day" numbers are guesses. If the before-state is already gone, mark the field
 a headline.
 
 **Show the limitation you hit.** Every real use hits one of the eight in
-[POSITIONING.md §5](../../POSITIONING.md). A case study with an empty
+[POSITIONING.md §5](../positioning.md). A case study with an empty
 limitations section reads as either a toy task or an edited one, and a technical
 reader discounts the whole thing.
 

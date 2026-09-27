@@ -26,7 +26,7 @@ source), *unfamiliar* (getting oriented without reading everything).
 
 ## Understanding repo2graph
 
-- **[TECHNICAL.md](../TECHNICAL.md)** — the tree-sitter pipeline, the graph model, confidence
+- **[TECHNICAL.md](technical.md)** — the tree-sitter pipeline, the graph model, confidence
   scoring, budget accounting, "where it guesses and why."
 - **[Reference: what is in the index](reference.md)** — every file, node type and edge type the
   output can contain.
@@ -41,8 +41,10 @@ source), *unfamiliar* (getting oriented without reading everything).
   case.
 - **[Limitations](limitations.md)** — static-analysis limitations generally, plus what parsing five
   real repositories actually showed (parse-error rates, call ambiguity, cross-language resolution).
-- **[How it compares](comparison.md)** — repo2graph against Graphify, the Obsidian Code Graph
-  plugin, grep and embedding RAG, including where each of them is the better answer.
+- **[How it compares](comparison.md)** — repo2graph against Claude Code's own search, Cursor's
+  index, Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph, Graphify and
+  plain grep, including where each of them is the better answer.
+- **[PR impact](pr-impact.md)** — blast-radius analysis of a diff, locally and in CI.
 
 ## Start here, by what you're trying to do
 
@@ -54,7 +56,7 @@ source), *unfamiliar* (getting oriented without reading everything).
 | **Maintaining an open-source project** and answering "where do I start" for the tenth time | [github-action.md](github-action.md) — inputs, outputs, publishing the map to a branch | add `Srinivasan-78/repo2graph@v2` to a workflow with `commit-branch: graph` |
 
 The positioning behind those four framings — the message hierarchy, the proof point for each
-claim, and the copy for every surface — is in [POSITIONING.md](../POSITIONING.md).
+claim, and the copy for every surface — is in [POSITIONING.md](positioning.md).
 
 Also a good fit:
 
@@ -95,7 +97,8 @@ the reproduction command documented:
 
 ## Performance and benchmarks
 
-- **[BENCHMARK.md](../BENCHMARK.md)** — canonical evaluation across 25 reproducible tasks and 5 archetypes: query correctness (100% vs ripgrep 80% / agent 56%), citation accuracy, context footprint, and query latency.
+- **[retrieval-benchmark.md](retrieval-benchmark.md)** — retrieval quality on Flask, requests, FastAPI and Hono: repo2graph vs grep-then-read at equal token budgets, including where repo2graph loses and why.
+- **[regression-suite.md](regression-suite.md)** — the synthetic `benchmarks/corpus/` suite CI gates on, and why it is not a benchmark.
 - **[docs/benchmarks.md](benchmarks.md)** — real numbers from the five large-scale public repositories (Kubernetes, TensorFlow, Django, VS Code, Linux kernel): clone/build time, node/edge counts, methodology, staleness.
 - **[docs/PERFORMANCE.md](PERFORMANCE.md)** — controlled, hardware-comparable numbers on a synthetic
   fixture and this project's own self-hosted graph.
@@ -141,7 +144,7 @@ the reproduction command documented:
   a test will fail without.
 - **[docs/good-first-issues.md](good-first-issues.md)** — seven starter tasks, each with a code
   pointer, acceptance criteria, and the catch that makes it harder than it looks.
-- **[LANGUAGE_SUPPORT.md](../LANGUAGE_SUPPORT.md)** — strategic language support, parser failure analysis, priority tiers (TypeScript, Python, JVM, Go), and ecosystem relationship opportunities.
+- **[LANGUAGE_SUPPORT.md](language-support.md)** — strategic language support, parser failure analysis, priority tiers (TypeScript, Python, JVM, Go), and ecosystem relationship opportunities.
 - **[Language RFCs](rfcs/rfc-framework-relationship-graph.md)** — proposals for ecosystem relationship expansion, deep TypeScript, deep Python, and JVM vs Go support.
 - **[Roadmap Issues](ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues for language and ecosystem features.
 - **[AGENTS.md](../AGENTS.md)** — repo-specific rules that override default behavior (encoding,
@@ -163,7 +166,7 @@ the reproduction command documented:
   qualifies as `good first issue`, and the label taxonomy.
 - **[docs/issue-triage-2026-09-25.md](issue-triage-2026-09-25.md)** — the most recent full pass over
   every open issue: classification, duplicates, what is already shipped, and drafted replies.
-- **[POSITIONING.md](../POSITIONING.md)** — what repo2graph claims, what it deliberately does not,
+- **[POSITIONING.md](positioning.md)** — what repo2graph claims, what it deliberately does not,
   and the copy for every outward-facing surface.
 - **[CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1, applying to issues,
   pull requests and discussion threads alike.

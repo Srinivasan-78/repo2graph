@@ -1,6 +1,6 @@
 # Technical details
 
-[README.md](README.md) covers what repo2graph does and how to run it. This page covers how it
+[README.md](../README.md) covers what repo2graph does and how to run it. This page covers how it
 actually works — the pipeline, the graph model, where it guesses, and the Python API. It assumes
 you've already read the README.
 
@@ -34,7 +34,7 @@ generation are all pure Python — no NetworkX, no vendored graph library with i
 tree. The only two required third-party packages, for the whole core pipeline, are `tree-sitter`
 and `tree-sitter-language-pack` — both parsers, nothing else. `sentence-transformers`/`numpy` (the
 `rag` extra) and the MCP SDK (the `mcp` extra) are optional and never import unless you ask for
-them; see [.github/SECURITY.md](.github/SECURITY.md) for why that boundary is treated as load-bearing,
+them; see [.github/SECURITY.md](../.github/SECURITY.md) for why that boundary is treated as load-bearing,
 not incidental.
 
 ## Where it guesses, and why
@@ -52,14 +52,14 @@ exactly what repo2graph exists to avoid. That trade-off shows up in a few specif
 - **Import resolution is per-language**, matching each language's actual module/package
   conventions (relative imports, package `__init__`-style re-exports, Go's module paths, and so
   on) rather than one generic heuristic applied everywhere. The full per-language breakdown is in
-  [docs/reference.md#where-it-guesses](docs/reference.md#where-it-guesses).
+  [docs/reference.md#where-it-guesses](reference.md#where-it-guesses).
 - **No arrow does not prove no call.** Code that decides at runtime which function to invoke
   (dynamic dispatch via a string, a plugin registry, `getattr`-style dispatch) is invisible to a
   static reader like this one — there is no execution trace here, only what tree-sitter can parse
   and what name resolution can infer from it.
 - **Some files never become graph nodes at all:** non-text files, anything over 1.5 MB, and the
   usual vendor/build directories are skipped during discovery; `.gitignore` is respected in a git
-  checkout. See [docs/reference.md](docs/reference.md) for the exact skip list.
+  checkout. See [docs/reference.md](reference.md) for the exact skip list.
 
 `Index.pack_context()`'s `min_confidence` gate only applies to `CALLS` edges — `IMPORTS`, `DEFINES`
 and `INHERITS` records carry no `confidence` key at all (they're structural facts, not name-match
@@ -98,7 +98,7 @@ oversight; new retrieval surfaces should be built on `pack_context()`.
 
 Streaming exports one artifact at a time, expanding your own externally-sourced vector hits through
 the same graph traversal, and loading the graph straight into Neo4j via `graph.cypher`:
-**[docs/python-api.md](docs/python-api.md)**.
+**[docs/python-api.md](python-api.md)**.
 
 ## The output layout, in full
 
@@ -125,15 +125,15 @@ external vector database, keep each chunk's `node_id`: that's the handle that le
 back onto the graph.
 
 Every file, every node and edge kind, and the exact chunk schema:
-**[docs/reference.md](docs/reference.md)**.
+**[docs/reference.md](reference.md)**.
 
 ## Further reading
 
-- [docs/cli.md](docs/cli.md) — full CLI flag tables, budget accounting, retrieval internals.
-- [docs/mcp.md](docs/mcp.md) — the MCP server's contract: the five tools, client configs, the
+- [docs/cli.md](cli.md) — full CLI flag tables, budget accounting, retrieval internals.
+- [docs/mcp.md](mcp.md) — the MCP server's contract: the five tools, client configs, the
   bounds it enforces that the CLI leaves to you.
-- [docs/reference.md](docs/reference.md) — every artifact, every node/edge kind, the chunk format,
+- [docs/reference.md](reference.md) — every artifact, every node/edge kind, the chunk format,
   the full "where it guesses" per-language breakdown.
-- [docs/python-api.md](docs/python-api.md) — the Python API in full: streaming exports, expanding
+- [docs/python-api.md](python-api.md) — the Python API in full: streaming exports, expanding
   external vector hits, Neo4j loading.
-- [docs/github-action.md](docs/github-action.md) — GitHub Action inputs and outputs.
+- [docs/github-action.md](github-action.md) — GitHub Action inputs and outputs.

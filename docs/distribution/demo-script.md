@@ -228,7 +228,7 @@ One session should yield four assets:
 ## Review gate
 
 This script makes claims on camera. Before recording, check each against
-[POSITIONING.md §1](../../POSITIONING.md) "What we are *not* claiming":
+[POSITIONING.md §1](../positioning.md) "What we are *not* claiming":
 
 - [ ] Nothing in the cut says or implies "understands your codebase".
 - [ ] Nothing implies the call graph is complete.

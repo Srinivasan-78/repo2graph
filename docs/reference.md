@@ -5,7 +5,7 @@ schema, the languages it parses, and the places it is guessing rather than
 knowing. This is the page to read when you are consuming `.r2g` from your own
 code and need to know exactly what a field means. For how to *produce* it, see
 [the CLI reference](cli.md); for how the pipeline works, see
-[TECHNICAL.md](../TECHNICAL.md).
+[TECHNICAL.md](technical.md).
 
 ## The `.r2g` folder
 

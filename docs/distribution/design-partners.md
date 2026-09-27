@@ -8,7 +8,7 @@
 >
 > The drafts below make factual claims — ambiguity percentages, "no network
 > calls on the default path", the licence. They are written inside
-> [POSITIONING.md §1](../../POSITIONING.md) "What we are *not* claiming", and
+> [POSITIONING.md §1](../positioning.md) "What we are *not* claiming", and
 > the numbers trace to `docs/limitations.md`. Check both before editing any of
 > them: a cold message to a maintainer is the worst possible place to be caught
 > overstating.

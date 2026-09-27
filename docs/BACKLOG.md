@@ -32,10 +32,9 @@ file as a claim to verify against current code before acting on it, same as any 
 past state.
 
 Route back to the work the 2026-09 whole-repo audit found but did not fix in the
-first batch. Full detail lives in `docs/BUILD_STATE.graphrag-2026-09.md`, the
-archived state file from that run (`## Plan` MASTER ISSUE TABLE = all 53
-findings; `## Improve` = the grouped backlog and loop retro). `docs/BUILD_STATE.md`
-always holds the *current* build-app run, not that one.
+first batch. The run's working state file was removed from the tree (build-loop
+state files are now gitignored); it is in git history before the 2026-09-28
+cleanup if you need the full 53-finding table.
 
 **Epic:** [#31 — Epic: post-audit backlog](https://github.com/Srinivasan-78/repo2graph/issues/31)
 
@@ -157,7 +156,7 @@ shape is present.
 
 ## Language Support & Ecosystem Relationship Roadmap (2026-09)
 
-Strategic priorities from [`LANGUAGE_SUPPORT.md`](../LANGUAGE_SUPPORT.md) and [`docs/ROADMAP_LANGUAGE_ISSUES.md`](ROADMAP_LANGUAGE_ISSUES.md):
+Strategic priorities from [`LANGUAGE_SUPPORT.md`](language-support.md) and [`docs/ROADMAP_LANGUAGE_ISSUES.md`](ROADMAP_LANGUAGE_ISSUES.md):
 
 | Issue | Scope | Tier / Priority | Related RFC |
 |---|---|---|---|

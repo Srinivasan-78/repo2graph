@@ -7,12 +7,13 @@ Prevents drift between code and documentation:
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
-- BUILD_STATE.md living at docs/, not the repo root (Issue #403)
+- agent working files (BUILD_STATE*.md, DONE.md) kept out of the tree (Issue #403)
 - docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -203,18 +204,25 @@ def test_npm_launcher_version_matches_pyproject():
     assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
 
 
-def test_build_state_lives_in_docs_not_repo_root():
-    """Issue #403: BUILD_STATE.md must not sit at the repository root.
+def test_agent_working_files_are_not_committed():
+    """Issue #403, widened: build-loop state and run logs are working files.
 
-    `docs/BACKLOG.md` documents `docs/BUILD_STATE.md` as the current build-app run's location
-    (`docs/BUILD_STATE.graphrag-2026-09.md` is the archived one from a past run) -- this test
-    would catch a future change that puts a new BUILD_STATE.md back at the root.
+    They were committed at the root, then under docs/, and read to every visitor as
+    an agent's scratchpad. `.gitignore` now keeps them out wherever they are written.
     """
-    assert not (REPO_ROOT / "BUILD_STATE.md").exists(), (
-        "BUILD_STATE.md is back at the repo root -- it belongs at docs/BUILD_STATE.md (Issue #403)"
+    tracked = (
+        subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, check=False)
+        .stdout.decode("utf8", "surrogateescape")
+        .split()
     )
-    backlog_text = (REPO_ROOT / "docs" / "BACKLOG.md").read_text(encoding="utf-8")
-    assert "docs/BUILD_STATE.md" in backlog_text
+    offenders = [
+        p
+        for p in tracked
+        if re.fullmatch(r"(.*/)?(BUILD_STATE[^/]*\.md|DONE\.md)", p) and (REPO_ROOT / p).exists()
+    ]
+    assert offenders == [], f"agent working files committed: {offenders}"
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "BUILD_STATE*.md" in gitignore and "DONE.md" in gitignore
 
 
 def test_threat_model_covers_every_deployment_mode():
@@ -395,12 +403,6 @@ def test_every_shipped_doc_is_listed_in_the_docs_index():
     # are a record of one investigation, not a page to navigate to.
     unlisted_by_design = {
         "README.md",
-        "BUILD_STATE.md",
-        "BUILD_STATE.graphrag-2026-09.md",
-        # A tracking matrix for one completed audit, kept as a record of what
-        # was found and fixed. Undated in the filename, so it needs naming
-        # here rather than matching the dated-working-note rule below.
-        "remediation-tracking.md",
     }
     for path in sorted(docs_dir.glob("*.md")):
         if path.name in unlisted_by_design or re.search(r"\d{4}-\d{2}-\d{2}", path.name):
@@ -549,7 +551,7 @@ def test_positioning_claims_match_the_code_it_cites():
     """
     from repo2graph.mcp import TOOL_DESCRIPTIONS
 
-    text = (REPO_ROOT / "POSITIONING.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "docs" / "positioning.md").read_text(encoding="utf-8")
 
     words = {5: "five", 6: "six", 7: "seven", 8: "eight"}
     expected = f"{words[len(TOOL_DESCRIPTIONS)]} read-only tools"

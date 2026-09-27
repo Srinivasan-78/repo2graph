@@ -610,7 +610,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--min-confidence <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
 | `-w`, `--write <path>` | none | Write output to target file path. |
 
-Full architecture, schema details, and GitHub Actions recipes are in [PR_IMPACT.md](../PR_IMPACT.md).
+Full architecture, schema details, and GitHub Actions recipes are in [PR_IMPACT.md](pr-impact.md).
 
 
 ## `completion` — shell tab completion

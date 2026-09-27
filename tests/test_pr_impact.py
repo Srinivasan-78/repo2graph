@@ -1591,7 +1591,7 @@ def test_iss422_workflow_interpolates_no_expression_into_a_run_body():
 # and nothing in the suite looked at the table.
 # ---------------------------------------------------------------------------
 
-PR_IMPACT_DOC = Path(__file__).resolve().parent.parent / "PR_IMPACT.md"
+PR_IMPACT_DOC = Path(__file__).resolve().parent.parent / "docs" / "pr-impact.md"
 
 
 def _impact_help() -> str:

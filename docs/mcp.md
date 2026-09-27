@@ -271,7 +271,7 @@ it says so instead of returning nothing.
 | `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to maximum 5). |
 | `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
 
-Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](../PR_IMPACT.md).
+Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](pr-impact.md).
 
 **Output is bounded too, not just the inputs.** The report grows with the number
 of impacted symbols rather than with `max_depth`, so a wide diff could render far
