@@ -1222,3 +1222,43 @@ def test_authenticator_unconfigured_refusal():
     who._jwks = None
     with pytest.raises(AuthError, match="invalid bearer token"):
         who.authenticate("Bearer nonmatching")
+
+
+# --------------------------------------------- hostile nesting (audit) ----
+
+
+def _nested_header_token(depth: int) -> str:
+    """A JWT whose header is `[` * depth + `]` * depth: tiny, but deep."""
+    return b64u(b"[" * depth + b"]" * depth) + "." + b64u(json.dumps(claims()).encode()) + ".eA"
+
+
+@pytest.mark.parametrize("depth", [10, 3000, 50000])
+def test_a_deeply_nested_header_is_refused_not_raised(depth):
+    """Repro jwt_srv.py: at depth 3000 `json.loads` raised RecursionError,
+    which escaped decode_jwt (it caught only ValueError)."""
+    jwks, _ = cache()
+    with pytest.raises(AuthError):
+        decode_jwt(_nested_header_token(depth), jwks, ISSUER, AUDIENCE)
+
+
+def test_a_deeply_nested_payload_is_refused_not_raised():
+    header = b64u(json.dumps({"alg": "RS256", "kid": KID}).encode())
+    jwks, _ = cache()
+    with pytest.raises(AuthError, match="not JSON"):
+        decode_jwt(f"{header}.{b64u(b'{' + b'[' * 5000)}.eA", jwks, ISSUER, AUDIENCE)
+
+
+@pytest.mark.parametrize("exc", [TypeError, KeyError, OverflowError, RecursionError, ValueError])
+def test_authenticate_turns_any_input_shaped_decode_failure_into_a_refusal(monkeypatch, exc):
+    """Backstop: whatever decode_jwt misses must still be a 401, never an
+    exception that escapes the transport's AuthError-only refusal path."""
+
+    def boom(*_a, **_k):
+        raise exc("hostile token")
+
+    monkeypatch.setattr(auth, "decode_jwt", boom)
+    authn = auth.Authenticator(
+        AuthConfig(oidc_issuer=ISSUER, audience=AUDIENCE), opener=FakeIssuer()
+    )
+    with pytest.raises(AuthError, match="could not be validated"):
+        authn.authenticate("Bearer a.b.c")
