@@ -1,6 +1,6 @@
 # Architecture
 
-A map of the codebase for people changing it. [TECHNICAL.md](../TECHNICAL.md) explains how
+A map of the codebase for people changing it. [TECHNICAL.md](technical.md) explains how
 repo2graph works for people *using* it — the pipeline, the graph model, where it guesses. This page
 is the other half: which module owns what, which direction dependencies run, and where a change of
 a given kind belongs.
@@ -187,7 +187,6 @@ Each of these has cost someone a debugging session. Full versions in [AGENTS.md]
 | File | Guards |
 |---|---|
 | `test_doc_consistency.py` | Every CLI subcommand and every `LANG_CFG` grammar appears in the README and `docs/cli.md`; every Action input in `docs/github-action.md`; every MCP tool in `docs/mcp.md`. |
-| `test_i18n_consistency.py` | The same grammar list across all six READMEs, plus the positioning contract in [POSITIONING.md](../POSITIONING.md). |
 | `test_compat.py` | Byte-identical `query`/`rag` output against a pinned baseline; the Action's input/output contract; the `action.yml` shell-vs-expression truthiness gate. |
 | `test_version_surfaces.py` | The version string in every surface that carries it, and that the bump script covers all of them. |
 | `test_encoding.py` | The cp1252 / non-ASCII path class that has caused every historical regression here. |

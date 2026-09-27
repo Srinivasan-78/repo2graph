@@ -7,6 +7,15 @@ this file disagree, this file is the bug report.
 
 Audited and rewritten 2026-09-25 against repo2graph 2.1.0.
 
+> **2026-09-28 update.** The README was cut from 649 lines to about 150, the five translated
+> READMEs and their drift test were removed (they multiplied every claim by six for a project with
+> no non-English users yet), and the synthetic-corpus comparison (100% vs ripgrep 80%) was
+> withdrawn in favour of a [benchmark on third-party repositories](retrieval-benchmark.md) where
+> repo2graph currently loses to grep at 4k+ tokens. §1 and §2 still hold. The audit tables below
+> describe the 2026-09-25 rewrite and mention files that no longer exist; they are kept as a
+> record. One rule is added to §1's "not claiming" list: **no retrieval-quality claim that is not
+> backed by `benchmarks/real/`.**
+
 ---
 
 ## 1. The core outcome
@@ -21,7 +30,7 @@ the repository has to keep:
 | Word | The promise | Where it is kept |
 |---|---|---|
 | **coding agents** | The primary consumer is a machine with a context window, not a human with a browser. The human-facing `graph.html` is a side artifact. | `repo2graph/mcp.py` — six read-only tools, every numeric argument clamped in the handler |
-| **trustworthy** | You can tell when it is wrong, and it tells you what it cannot see. | `method`, `confidence` and `evidence` on **every** edge, not just `CALLS`; [docs/OUTPUT_SCHEMA.md](docs/OUTPUT_SCHEMA.md), [docs/limitations.md](docs/limitations.md) |
+| **trustworthy** | You can tell when it is wrong, and it tells you what it cannot see. | `method`, `confidence` and `evidence` on **every** edge, not just `CALLS`; [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md), [docs/limitations.md](limitations.md) |
 | **cited** | Every returned block names the file and line range it came from. | `[cite: path:start-end]` on every block out of `Index.pack_context()` |
 | **answers** | The source that answers the question comes back — not a map, not a subgraph, not a list of paths to go read. | `docs/comparison.md#the-axis-that-matters-what-comes-back-from-a-query` |
 | **unfamiliar** | The value is highest where your own knowledge is lowest. Zero setup is what makes that true: no config file, no language server, no build step. | `uvx repo2graph build .` on any folder |
@@ -31,7 +40,7 @@ the repository has to keep:
 Stated here so no surface drifts into them:
 
 - **Not** "understands your codebase." It parses it. Those are different, and the difference is the
-  entire [limitations](docs/limitations.md) page.
+  entire [limitations](limitations.md) page.
 - **Not** "complete call graph." Call resolution is name-based. An absent edge is not proof of an
   absent call, and we say so on the first screen.
 - **Not** "replaces grep." `repo2graph query` *runs* BM25 as its first step. A tool that needs its
@@ -175,10 +184,10 @@ the proof they will check, and the first command they should run.
 
 ## 4. Why repo2graph instead of grep or search?
 
-The canonical table lives in the [README](README.md#vs-grep) so it is seen; it is reproduced here
+The canonical table lives in the [README](../README.md#vs-grep) so it is seen; it is reproduced here
 so it can be maintained in one place. The argument behind it is
-[docs/why-graph.md](docs/why-graph.md); the tool-vs-tool version is
-[docs/comparison.md](docs/comparison.md).
+[docs/why-graph.md](why-graph.md); the tool-vs-tool version is
+[docs/comparison.md](comparison.md).
 
 | | grep / ripgrep | Embedding search | repo2graph |
 |---|---|---|---|
@@ -200,8 +209,8 @@ A comparison that concedes nothing gets believed by nobody.
 
 ## 5. What it does / does not do
 
-The full table is in the [README](README.md#does-and-doesnt); the measurements are in
-[docs/limitations.md](docs/limitations.md). The eight limitations that must appear on *any* surface
+The full table is in the [README](../README.md#does-and-doesnt); the measurements are in
+[docs/limitations.md](limitations.md). The eight limitations that must appear on *any* surface
 long enough to have a limitations section:
 
 1. **Ambiguous call resolution** — name-based, not type-based; up to 5 candidates at

@@ -685,6 +685,40 @@ def _callee_name(src: bytes, node) -> str | None:
     return txt or None
 
 
+# Receivers that name the calling object itself. A call on one of these can be
+# resolved against the enclosing class; a call on anything else has a receiver
+# whose type the parser does not know.
+_SELF_RECEIVERS = frozenset(
+    {"self", "cls", "this", "super", "super()", "$this", "base", "Self", "static", "parent", "@"}
+)
+
+
+def _receiver_kind(src: bytes, node) -> str:
+    """Classify what a call is made on: "none", "self" or "other".
+
+    "none" is a bare call (`helper()`), "self" is a call on the calling object
+    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
+    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
+    drops the receiver, so without this `graph.build` cannot tell
+    `self.get()` from `some_dict.get()`.
+    """
+    recv = node.child_by_field_name("object") or node.child_by_field_name("receiver")
+    if recv is not None:
+        head = _text(src, recv).strip()
+    else:
+        fn = node.child_by_field_name("function")
+        if fn is None:
+            return "none"
+        txt = _text(src, fn).strip()
+        cut = max(txt.rfind(sep) for sep in (".", "->", "::"))
+        if cut <= 0:
+            return "none"
+        head = txt[:cut].strip().rstrip("?").strip()
+    if not head:
+        return "none"
+    return "self" if head in _SELF_RECEIVERS else "other"
+
+
 _ATTR_OR_COMMENT_TYPES = (
     "comment",
     "line_comment",
@@ -1304,7 +1338,12 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     call_kind = "dynamic"
                 owner.calls.append(callee)
                 owner.call_details.append(
-                    {"name": callee, "kind": call_kind, "line": node.start_point[0] + 1}
+                    {
+                        "name": callee,
+                        "kind": call_kind,
+                        "line": node.start_point[0] + 1,
+                        "receiver": _receiver_kind(source, node),
+                    }
                 )
         kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner

@@ -2,7 +2,7 @@
 
 This is the canonical security policy for repo2graph — what the tool does and doesn't send over
 the network, how the repository itself is protected, and how to report a vulnerability. See
-[TECHNICAL.md](../TECHNICAL.md) for how the code works, and [README.md](../README.md) for how to
+[docs/technical.md](../docs/technical.md) for how the code works, and [README.md](../README.md) for how to
 use it.
 
 ## Reporting a vulnerability
@@ -102,7 +102,7 @@ or a released package, independent of anything the tool does at runtime:
   `Code Quality & Static Analysis` (ruff lint, formatting, mypy, and version surfaces),
   `Test Suite` across `ubuntu-latest`, `windows-latest` and `macos-latest` (Python 3.10, 3.11, 3.12, 3.13),
   `Package Distribution & MCP Stdio Smoke Test`, `GitHub Action Composite Integration Test`,
-  `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (evaluating 25 tasks across 5 archetypes).
+  `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (the synthetic regression suite in `benchmarks/corpus/`).
 
   CI *runs* more than it *requires*. In `provenance.yml`, `License & Copyright Compliance (REUSE/SPDX)`
   and `Workflow Security Audit (zizmor)` run on every push and PR to audit licenses and GitHub Actions configuration.

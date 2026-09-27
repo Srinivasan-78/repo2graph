@@ -356,8 +356,8 @@ entirely at the default `0`.
 
 - [rfc-incremental-indexing.md](rfc-incremental-indexing.md) — benchmarks and
   the proposal for what incremental indexing should become
-- [LANGUAGE_SUPPORT.md](../LANGUAGE_SUPPORT.md) — language scorecard generator, parse quality, symbol and edge extraction rates across 17 grammars
-- [BENCHMARK.md](../BENCHMARK.md) — 25-task evaluation across 5 application archetypes with citation accuracy and query latency
+- [LANGUAGE_SUPPORT.md](language-support.md) — language scorecard generator, parse quality, symbol and edge extraction rates across 17 grammars
+- [retrieval-benchmark.md](retrieval-benchmark.md) — retrieval quality on four real repositories, repo2graph vs grep at equal token budgets
 - [cli.md](cli.md) — every flag
 - [limitations.md](limitations.md) — what the graph does not model
 - [quickstart.md](quickstart.md) — two minutes from install to a cited answer

@@ -197,7 +197,7 @@ def test_pointer_capture_is_released_on_both_pointerup_and_pointercancel():
     JS runtime (jsdom or playwright), and this repo has no Node toolchain in its
     dev extra. It pins the property that actually regressed -- a handler losing
     its release call -- but it cannot prove the released id matches the captured
-    one. Noted in DONE.md as the one untested-in-a-browser property here.
+    one. This is the one untested-in-a-browser property here.
     """
     for event in ("pointerup", "pointercancel"):
         handler = re.search(r'svg\.addEventListener\("%s",.*?\n\}\);' % event, TEMPLATE, re.S)

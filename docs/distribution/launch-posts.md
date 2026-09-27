@@ -24,7 +24,7 @@
 
 ## Positioning constraints
 
-Every draft below is written inside [POSITIONING.md §1](../../POSITIONING.md).
+Every draft below is written inside [POSITIONING.md §1](../positioning.md).
 When editing, the five things no surface may say:
 
 | Never | Because |

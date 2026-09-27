@@ -65,6 +65,32 @@ LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # not of repo2graph -- which is why the Graph carries the value it was built
 # with and manifest.json reports that value rather than this default (#245).
 DEFAULT_MAX_CALL_CANDIDATES = 5
+# Method names of the built-in collection, string and promise types across the
+# indexed languages. `x.get()` on a receiver whose type the parser cannot see is
+# far more often `dict.get` / `Map.get` than the repository's own `get`, so an
+# in-repo match for one of these names on an untyped receiver is recorded at
+# UNTYPED_RECEIVER_CONFIDENCE (split 1/n across candidates) instead of 1.0.
+# `self.get()`, `this.get()` and a bare `get()` are unaffected.
+UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
+    {
+        # mappings / sets
+        "get", "set", "setdefault", "pop", "popitem", "update", "keys", "values",
+        "items", "clear", "copy", "add", "discard", "has", "delete", "put",
+        "containsKey", "getOrDefault", "putIfAbsent", "entries",
+        # sequences
+        "append", "extend", "insert", "remove", "index", "count", "sort",
+        "reverse", "push", "shift", "unshift", "slice", "splice", "concat",
+        "map", "filter", "reduce", "forEach", "find", "findIndex", "some",
+        "every", "includes", "indexOf", "contains", "size", "isEmpty",
+        # strings
+        "join", "split", "strip", "lstrip", "rstrip", "replace", "format",
+        "startswith", "endswith", "startsWith", "endsWith", "lower", "upper",
+        "trim", "encode", "decode", "toString", "toLowerCase", "toUpperCase",
+        # promises / objects
+        "then", "catch", "finally", "equals", "hashCode",
+    }
+)  # fmt: skip
+UNTYPED_RECEIVER_CONFIDENCE = 0.2
 # Base types common enough across languages (object/Exception/Error/...) that a
 # same-named class anywhere in the repo would false-link unrelated hierarchies
 # together. A same-file or imported definition still wins over this filter --
@@ -879,7 +905,10 @@ def _read_and_parse(item):
 # subtype='INHERITS' regardless of what it actually was, and every cached
 # file's import aliases would come back as [] -- an aliased call that should
 # resolve `import_alias` would instead fall through to unresolved_external.
-PARSE_CACHE_FORMAT = 4
+# 5: each "call_details" entry gained "receiver". A format-4 entry would restore
+# every call as receiver-less, so an incremental build would keep binding
+# `d.get()` to an in-repo `get` at 1.0 where a full build prices it as a guess.
+PARSE_CACHE_FORMAT = 5
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -1389,8 +1418,17 @@ def build(
             # is the one a reader checking the claim will find, and `count`
             # says how many more there are.
             call_lines: dict[str, int] = {}
+            # Names called *only* on a receiver of unknown type (`d.get()`, never
+            # `self.get()` or a bare `get()`). One edge covers every call of a
+            # name, so a single typed call keeps the name out of this set.
+            untyped_only: set[str] = set()
+            typed: set[str] = set()
             for cd in getattr(sym, "call_details", []):
                 call_kinds[cd["name"]] = cd.get("kind", "static")
+                if cd.get("receiver") == "other":
+                    untyped_only.add(cd["name"])
+                else:
+                    typed.add(cd["name"])
                 cd_line = cd.get("line")
                 if isinstance(cd_line, int) and cd_line > 0:
                     prev = call_lines.get(cd["name"])
@@ -1450,6 +1488,21 @@ def build(
                 elif len(all_cands) > 1:
                     chosen_cands, res_kind, scope_dist = all_cands, "ambiguous_global_name", 5
 
+                # `os.environ.get(k)` reduces to the name "get", and without
+                # this the tiers above bind it to any `get` method in the same
+                # directory at confidence 1.0 -- on Flask that made
+                # `_AppCtxGlobals.get` the second most-called symbol from dict
+                # lookups alone. When every call of a builtin-collection method
+                # name is on a receiver of unknown type, the in-repo candidate
+                # is kept (it may be right) but priced as the guess it is.
+                untyped_builtin = (
+                    bool(chosen_cands)
+                    and res_kind != "self_recursive"
+                    and callee in untyped_only
+                    and callee not in typed
+                    and callee in UNTYPED_RECEIVER_BUILTIN_METHODS
+                )
+
                 # Add edges
                 if not chosen_cands:
                     eid = f"external:{callee}"
@@ -1472,7 +1525,7 @@ def build(
                         confidence=1.0,
                     )
                     g.stats["calls_external"] += 1
-                elif len(chosen_cands) == 1:
+                elif len(chosen_cands) == 1 and not untyped_builtin:
                     g.add_edge(
                         sid,
                         chosen_cands[0],
@@ -1492,7 +1545,9 @@ def build(
                         g.stats["calls_scoped"] += 1
                 else:
                     limit = min(len(chosen_cands), max_call_candidates)
-                    conf = round(1.0 / limit, 3) if limit > 0 else 0.0
+                    ceiling = UNTYPED_RECEIVER_CONFIDENCE if untyped_builtin else 1.0
+                    conf = round(ceiling / limit, 3) if limit > 0 else 0.0
+                    extra = {"untyped_receiver": True} if untyped_builtin else {}
                     for c in chosen_cands[:limit]:
                         g.add_edge(
                             sid,
@@ -1507,9 +1562,12 @@ def build(
                             call_kind=call_kind,
                             method=METHOD_NAME_RESOLVER,
                             evidence=call_evidence,
+                            **extra,
                         )
                     g.stats["calls_ambiguous"] += 1
                     g.stats["ambiguous_calls"] += 1
+                    if untyped_builtin:
+                        g.stats["calls_untyped_receiver"] += 1
 
             # Inheritance resolution
             base_details_map = {bd["name"]: bd for bd in getattr(sym, "base_details", [])}

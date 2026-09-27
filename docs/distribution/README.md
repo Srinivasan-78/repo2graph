@@ -29,8 +29,8 @@ Every claim traces to a committed artifact. Concretely:
 | Build times, file/node/edge counts | `benchmarks/results.json` |
 | Per-repository graph stats | `examples/*/stats.json` |
 | Ambiguity percentages | `docs/limitations.md` |
-| What must never be claimed | [POSITIONING.md §1](../../POSITIONING.md) |
-| The eight limitations any long surface must carry | [POSITIONING.md §5](../../POSITIONING.md) |
+| What must never be claimed | [POSITIONING.md §1](../positioning.md) |
+| The eight limitations any long surface must carry | [POSITIONING.md §5](../positioning.md) |
 
 This is not caution for its own sake. The product claim is *trustworthiness* —
 answers you can open and verify, edges that admit when they are guesses. A

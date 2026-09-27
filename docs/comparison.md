@@ -7,6 +7,40 @@ where repo2graph is the wrong choice, and the one axis that separates them.
 Everything said here about another project is taken from its own documentation, linked inline.
 Where a claim about repo2graph is checkable in this repository, the file is named.
 
+## The short answer: which tool for which job
+
+These are the tools people actually ask about. Facts about each come from its own documentation,
+checked on 2026-09-28; they move fast, so follow the links before relying on a detail.
+
+| Tool | How it understands code | What a query returns | Setup | Where it beats repo2graph |
+|---|---|---|---|---|
+| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s built-in search** | No index. The agent runs Glob / Grep / Read on demand. | Whatever files and line ranges the agent chooses to read | None | Always fresh, zero setup, and the model picks its own search terms. On our [real-repo benchmark](retrieval-benchmark.md) a *mechanical* grep-then-read loop already finds more of the answer than repo2graph at 4k+ tokens. |
+| **[Cursor](https://cursor.com/docs) codebase indexing** | Chunks embedded and stored by Cursor's service, synced incrementally | Nearest-neighbour chunks inside the Cursor agent | Automatic, inside Cursor | Handles vocabulary mismatch well; nothing to install. Only available inside Cursor, and code chunks leave the machine for embedding. |
+| **[Serena](https://github.com/oraios/serena)** | Language servers (LSP) for 40+ languages, or a JetBrains backend | Symbols, type-aware references, and symbol-level **edits** (rename, replace body) over MCP | `uv` + a language server per language | **Precision.** References come from a real type checker, not name matching, and it can edit. If you want your agent to find *every* caller of a method correctly, use Serena. |
+| **[Aider](https://aider.chat/docs/repomap.html)'s repo map** | tree-sitter + graph ranking of files by dependency | Signatures of the most relevant symbols repo-wide, ~1k tokens by default (`--map-tokens`) | Built into Aider | A compact whole-repo overview in very few tokens. Part of Aider's own workflow, not a separate service. |
+| **[CodeGraphContext](https://github.com/CodeGraphContext/CodeGraphContext)** | tree-sitter into a graph database (FalkorDB Lite, Kuzu, Neo4j, …), 23 languages | Graph query results: callers, callees, call chains, dead code, complexity | A graph DB backend | Richer graph queries (dead code, complexity, arbitrary call chains) and more languages. |
+| **[code-graph-rag](https://github.com/vitali87/code-graph-rag)** | tree-sitter into Memgraph | Answers from an LLM that turns your question into Cypher; can also edit | Memgraph + an LLM | Natural-language questions over the full graph, plus editing. Needs a model on every query. |
+| **[Sourcegraph](https://sourcegraph.com) (Code Search, Cody Enterprise)** | Precise code intelligence (SCIP indexers) across many repositories | Cross-repo search results; Cody Enterprise answers | Server deployment; Cody Free/Pro ended July 2025 | Organisation-scale, cross-repository, compiler-accurate navigation. A different weight class. |
+| **repo2graph** | tree-sitter, name-based call resolution, 17 languages, plus `CO_CHANGE` from git history | Source blocks, each headed `[cite: path:start-end]`, packed under a hard token ceiling | `uvx repo2graph build .`; no model, no DB, no language server, no network | See below. |
+
+**Where repo2graph is actually different**, and only where:
+
+- **The token ceiling is enforced, not advisory.** The whole returned pack is measured, clamped
+  and re-measured before it leaves the MCP server (`repo2graph/mcp.py`). An agent cannot flood its
+  own context through this tool.
+- **Every block carries a citation**, so a wrong answer shows you where it went wrong.
+- **It runs headless in CI.** The GitHub Action and `repo2graph impact` report a PR's blast radius
+  (callers, importers, subclasses, and the files git history says usually change with it) with
+  no model and no account. None of the tools above do that out of the box.
+- **`CO_CHANGE`**: files that keep changing together, mined from git. No parser can see this.
+- **Zero-infrastructure.** No graph database, no language server, no embedding service, no
+  network call on the default path.
+
+**Where it is not different:** retrieval quality. On code it did not write, repo2graph's
+cited packs currently find *less* of the answer than grep at the same budget
+([numbers and diagnosis](retrieval-benchmark.md)). If raw recall is what you need today, a good
+agent with grep (or Serena, for exact references) is the better choice.
+
 ## The axis that matters: what comes back from a query
 
 Three tools can all parse the same file with the same tree-sitter grammar and still be different
@@ -74,9 +108,8 @@ install the plugin — the two do not compete for the same slot.
 ## repo2graph vs plain grep or an embeddings index
 
 This is the comparison that actually comes up in practice, because it is what most agents do today.
-The side-by-side table is in the README
-([Why repo2graph instead of grep or vector search?](../README.md#vs-grep)); what follows is the
-reasoning behind it.
+What follows is the design reasoning. Whether it pays off in practice is measured, not argued, in
+[retrieval-benchmark.md](retrieval-benchmark.md), and right now grep wins more often than it loses.
 
 - **grep** is exact and structureless. It finds the token, not the relationship: it cannot tell you
   who calls this function, and a match inside a comment ranks identically to the definition. When
@@ -102,6 +135,8 @@ Stated plainly, because a comparison page that concludes "we win everything" is 
   system, use a compiler-backed tool.
 - **Your codebase is mostly dynamic dispatch, reflection or codegen.** A parser cannot see those
   edges, and absence of an edge is not proof of absence of a call (`docs/limitations.md`).
+- **You need every reference to a symbol, exactly.** Use a language-server tool such as
+  [Serena](https://github.com/oraios/serena).
 - **You want the graph itself as the deliverable** — communities, layout, path queries between
   arbitrary concepts. That is Graphify's shape, not this one.
 - **Your language is outside the 17 with symbol support.** The files still appear on the map and
@@ -109,7 +144,8 @@ Stated plainly, because a comparison page that concludes "we win everything" is 
 
 ## Reproducing any of this
 
-The numbers in the README's benchmark table come from `benchmarks/results.json`, generated against
-five pinned public repositories; `docs/benchmarks.md` has the methodology and
-`examples/README.md` the exact reproduction command per repository. Nothing on this page is
-estimated — where a figure is not measured, it is not given.
+Retrieval-quality numbers come from `benchmarks/real/results.json`
+([retrieval-benchmark.md](retrieval-benchmark.md), `scripts/bench_real_repos.py`). Build-scale
+numbers come from `benchmarks/results.json`, generated against five pinned public repositories;
+`docs/benchmarks.md` has the methodology and `examples/README.md` the exact reproduction command
+per repository. Nothing on this page is estimated: where a figure is not measured, it is not given.

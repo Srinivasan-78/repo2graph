@@ -508,12 +508,20 @@ def write_cypher(g: "Graph", path: Path) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
+OVERVIEW_MIN_CALL_CONFIDENCE = 0.5
+
+
 def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     """Human/LLM-readable repo map: top directories, hub files, entry points."""
     indeg: Counter[str] = Counter()
     outdeg: Counter[str] = Counter()
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
+            # A CALLS edge below this is a guess (a 3+-way name split, or a
+            # builtin method name on an untyped receiver). Counting guesses is
+            # what ranked Flask's `_AppCtxGlobals.get` second by `dict.get`s.
+            if e["type"] == "CALLS" and e.get("confidence", 1.0) < OVERVIEW_MIN_CALL_CONFIDENCE:
+                continue
             indeg[e["dst"]] += 1
             outdeg[e["src"]] += 1
     files = [n for n in g.nodes.values() if n["type"] == "file"]
@@ -730,6 +738,10 @@ EDGE_FIELDS = {
     ),
     "candidate_count": "how many definitions the name could have meant (CALLS, INHERITS)",
     "ambiguous": "present and true when the name matched more than one definition",
+    "untyped_receiver": (
+        "present and true when a builtin-collection method name (get, pop, append, ...) was "
+        "called on a receiver of unknown type; confidence is capped at 0.2"
+    ),
     "count": "how many times this relationship occurs; `evidence` cites the first",
 }
 

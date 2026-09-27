@@ -205,7 +205,7 @@ you pass `--include-paths`.
 - **The graph as a substitute for running the code.** An edge says a name
   resolves; it does not say the line executes.
 
-Full list: [POSITIONING.md §5](../../POSITIONING.md).
+Full list: [POSITIONING.md §5](../positioning.md).
 
 ## See also
 

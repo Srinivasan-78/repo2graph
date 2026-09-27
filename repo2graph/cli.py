@@ -954,7 +954,7 @@ def cmd_impact(args):
     if getattr(args, "diff", None):
         if args.diff == "-":
             # `git diff main...HEAD | repo2graph impact --diff -`, the form
-            # PR_IMPACT.md documents and CI wants: no temp file to write, clean
+            # docs/pr-impact.md documents and CI wants: no temp file to write, clean
             # up, or leak. Read the raw bytes and decode them the way every
             # other reader of git output here does -- a piped diff carries
             # whatever encoding the paths and hunks are in, and a cp1252 stdin
