@@ -65,6 +65,12 @@ from typing import Any
 # `evidence` will be absent rather than null.
 EDGE_SCHEMA_VERSION = "2"
 
+# A CALLS edge below this confidence is a guess (a 3+-way name split, or a
+# builtin method name on an untyped receiver). Every ranking that answers "what
+# is called most / at all" -- the repo map, changelog hotspots, entrypoint
+# detection -- skips it, so one number keeps them in agreement.
+OVERVIEW_MIN_CALL_CONFIDENCE = 0.5
+
 METHOD_TREE_SITTER = "tree-sitter"
 METHOD_NAME_RESOLVER = "name-resolver"
 METHOD_FILESYSTEM = "filesystem"

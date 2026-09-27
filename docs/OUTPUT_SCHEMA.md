@@ -46,8 +46,8 @@ fields in this order:
 | `confidence` | float 0..1 | P(`dst` is the right target) — see below |
 | `evidence` | `{path, line}` or `null` | Where the relationship is *written*, 1-based |
 | `candidate_count` | int | How many definitions the name could have meant |
-| `ambiguous` | bool | Present and true when more than one matched |
-| `untyped_receiver` | bool | Present and true when a builtin-collection method name (`get`, `pop`, `append`, …) was called on a receiver whose type is unknown (`d.get()`, not `self.get()`). Confidence is capped at `0.2`, split across candidates. |
+| `ambiguous` | bool | Present and true when more than one matched, **or** when the edge is an `untyped_receiver` guess — a demoted single-candidate edge carries `ambiguous: true` with `candidate_count: 1` |
+| `untyped_receiver` | bool | Present and true when a builtin-collection method name (`get`, `pop`, `append`, …) was called on a receiver whose type is unknown (`d.get()`, not `self.get()`, and not a receiver that names the candidate's module or type — `store.get()` with `store` imported, `Util.remove()`, `Config::get()`). Confidence is capped at `0.2`, split across candidates. |
 | `count` | int | How many times the relationship occurs; `evidence` cites the first |
 
 Type-specific fields (`resolution_kind`, `scope_distance`, `call_kind`,

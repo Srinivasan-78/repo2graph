@@ -15,6 +15,7 @@ from .edgemeta import (
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
+    OVERVIEW_MIN_CALL_CONFIDENCE,
     evidence as make_evidence,
     normalize as normalize_edge,
     tree_sitter_method,
@@ -22,6 +23,7 @@ from .edgemeta import (
 from .parse import (
     CONFIG_EXT,
     DOC_EXT,
+    SUPER_RECEIVERS,
     EXT_LANG,
     ImportDetail,
     ParseError,
@@ -88,9 +90,53 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
         "trim", "encode", "decode", "toString", "toLowerCase", "toUpperCase",
         # promises / objects
         "then", "catch", "finally", "equals", "hashCode",
+        # JVM / Kotlin / Swift collections and strings
+        "addAll", "removeAll", "containsAll", "removeAt", "removeLast",
+        "removeFirst", "lastIndexOf", "substring", "charAt", "flatMap",
+        "sorted", "toList",
+        # .NET: collections, strings, LINQ and Task are PascalCase
+        "Add", "AddRange", "Remove", "RemoveAt", "RemoveAll", "Insert", "Clear",
+        "Contains", "ContainsKey", "ContainsValue", "TryGetValue", "TryAdd",
+        "TryRemove", "GetValueOrDefault", "IndexOf", "Count", "Any", "All",
+        "Where", "Select", "First", "FirstOrDefault", "Last", "LastOrDefault",
+        "Single", "SingleOrDefault", "ToList", "ToArray", "ToDictionary",
+        "OrderBy", "Sort", "Reverse", "Find", "Exists", "Push", "Pop", "Peek",
+        "Enqueue", "Dequeue", "CopyTo", "ToString", "Equals", "GetHashCode",
+        "Split", "Join", "Trim", "Replace", "StartsWith", "EndsWith", "ToLower",
+        "ToUpper", "Substring", "Format", "Wait", "ContinueWith",
+        "ConfigureAwait", "GetAwaiter",
     }
 )  # fmt: skip
 UNTYPED_RECEIVER_CONFIDENCE = 0.2
+# Tiers that reached the candidate through the calling file's own imports.
+IMPORT_RESOLUTION_KINDS = ("import_alias", "imported_symbol")
+# File stems that stand for their directory (`pkg/__init__.py` is `pkg`).
+PACKAGE_STEMS = frozenset({"__init__", "index", "mod", "lib"})
+
+
+def _module_leaves(target: str) -> set[str]:
+    """Last-segment names an import target can be referred to by.
+
+    `pkg.store` -> {"store"}; `./store.js` -> {"store"}; a Go path
+    `example.com/m/cache` -> {"cache"}.
+    """
+    seg = target.strip().rstrip("/").rsplit("/", 1)[-1].rsplit("\\", 1)[-1].lstrip(".")
+    return {x for x in (seg.split(".")[0], seg.rsplit(".", 1)[-1], seg.rsplit("::", 1)[-1]) if x}
+
+
+def _home_names(node: dict) -> set[str]:
+    """Names a receiver could use for the module/type a candidate lives in."""
+    path = node.get("path", "")
+    stem = Path(path).stem
+    names = {stem}
+    if stem in PACKAGE_STEMS or node.get("lang") == "go":
+        names.add(path.rpartition("/")[0].rsplit("/", 1)[-1])
+    owner = node.get("qualname", "").rpartition(".")[0]
+    if owner:
+        names.add(owner.rsplit(".", 1)[-1])
+    return names
+
+
 # Base types common enough across languages (object/Exception/Error/...) that a
 # same-named class anywhere in the repo would false-link unrelated hierarchies
 # together. A same-file or imported definition still wins over this filter --
@@ -908,7 +954,11 @@ def _read_and_parse(item):
 # 5: each "call_details" entry gained "receiver". A format-4 entry would restore
 # every call as receiver-less, so an incremental build would keep binding
 # `d.get()` to an in-repo `get` at 1.0 where a full build prices it as a guess.
-PARSE_CACHE_FORMAT = 5
+# 6: call_details gained "receiver_head"/"receiver_static", decorator entries
+# gained "receiver", and Kotlin/Swift/Go receivers are classified. A format-5
+# entry has no head, so `store.get()` on an imported module would stay demoted
+# on an incremental build while a full build binds it at 1.0.
+PARSE_CACHE_FORMAT = 6
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -1384,7 +1434,29 @@ def build(
             if imp.alias:
                 import_aliases[rel][imp.alias] = (imp.module, imp.name)
 
+    # Per file: name bound by an import -> the module leaf names it can mean
+    # (`import store`, `from pkg import store`, `import pkg.store as s`, Go's
+    # package name). `store.get()` is then a module-qualified call when the
+    # candidate lives in `store.py`; `_cv_request.get()` (a from-imported
+    # value) is not, because no candidate lives in a module of that name.
+    import_bound: dict[str, dict[str, set[str]]] = defaultdict(dict)
+    for rel, pf in parsed.items():
+        for imp in getattr(pf, "import_details", []):
+            target = imp.name if imp.name and imp.name not in ("*", "default") else imp.module
+            if not target:
+                continue
+            leaves = _module_leaves(target)
+            bound = import_bound[rel]
+            for b in {imp.alias} if imp.alias else {target, *leaves}:
+                bound.setdefault(b, set()).update(leaves)
+
     by_name: dict[str, list[str]] = defaultdict(list)
+    # class id -> (file, raw base names), for `super().m()` resolution.
+    class_bases: dict[str, tuple[str, list[str]]] = {}
+    for rel, pf in parsed.items():
+        for s_ in pf.symbols:
+            if s_.bases:
+                class_bases[f"sym:{rel}::{s_.qualname}"] = (rel, list(s_.bases))
     # node id -> its file's directory. Tier 4 below used to rebuild
     # `Path(...).parent` once per candidate per callee inside the build's hot
     # loop; precomputing it here turns that into a dict lookup.
@@ -1393,6 +1465,62 @@ def build(
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
             sym_dir[nid] = n.get("path", "").rpartition("/")[0]
+
+    def match_bases(rel: str, base: str) -> tuple[list[str], list[str]]:
+        """(matched base class ids, all same-named candidates) for one base."""
+        # #341: strip C++/Rust "::" and PHP "\" scope/namespace separators
+        # too, not just Python/Java "." -- otherwise a namespaced base like
+        # `NS::Base` or `\App\Models\Base` never matches the bare name
+        # `by_name` indexes symbols under.
+        clean_base = (
+            base.split("[")[0].split("<")[0].split("::")[-1].split("\\")[-1].split(".")[-1].strip()
+        )
+        base_cands = by_name.get(clean_base, [])
+        local_base = [c for c in base_cands if g.nodes[c].get("path") == rel]
+        imp_base = [
+            c for c in base_cands if g.nodes[c].get("path") in imported_files.get(rel, set())
+        ]
+        if local_base:
+            return local_base[:1], base_cands
+        if imp_base:
+            return imp_base[:1], base_cands
+        if clean_base not in COMMON_STDLIB_BASES:
+            return base_cands[:max_call_candidates], base_cands
+        return [], base_cands
+
+    def base_methods(cls_id: str, callee: str) -> list[str]:
+        """Same-named methods on `cls_id`'s resolved bases, nearest level first."""
+        seen, level = {cls_id}, [cls_id]
+        for _depth in range(10):
+            nxt: list[str] = []
+            for cid in level:
+                crel, bases = class_bases.get(cid, ("", []))
+                for b in bases:
+                    for bid in match_bases(crel, b)[0]:
+                        if bid not in seen:
+                            seen.add(bid)
+                            nxt.append(bid)
+            found = [f"{b}.{callee}" for b in nxt if f"{b}.{callee}" in g.nodes]
+            if found or not nxt:
+                return found
+            level = nxt
+        return []
+
+    def names_home(rel: str, cd: dict, cand: str) -> bool:
+        """Whether a call's receiver visibly names where `cand` lives.
+
+        `Util.remove()` -> a method of `Util`; `store.get()` with `store`
+        imported -> a function in `store.py`; `Config::get()` -> a `::` scope.
+        """
+        if cd.get("receiver_static"):
+            return True
+        head = cd.get("receiver_head", "")
+        if not head:
+            return False
+        home = _home_names(g.nodes[cand])
+        if head.rsplit(".", 1)[-1] in home and head.rsplit(".", 1)[-1][:1].isupper():
+            return True  # a type name: Util.remove(), models.User.get()
+        return bool(import_bound.get(rel, {}).get(head, set()) & home)
 
     def tier3_imported(rel: str, callee: str, all_cands: list[str]) -> tuple[list[str], str]:
         """Candidates reachable through `rel`'s own imports, and how they matched."""
@@ -1418,17 +1546,25 @@ def build(
             # is the one a reader checking the claim will find, and `count`
             # says how many more there are.
             call_lines: dict[str, int] = {}
-            # Names called *only* on a receiver of unknown type (`d.get()`, never
-            # `self.get()` or a bare `get()`). One edge covers every call of a
-            # name, so a single typed call keeps the name out of this set.
-            untyped_only: set[str] = set()
-            typed: set[str] = set()
+            # Every call_details entry per name. One edge covers every call of a
+            # name, so the untyped-receiver check below asks whether *all* of
+            # them are on a receiver of unknown type (`d.get()`, never
+            # `self.get()`, a bare `get()`, or `store.get()` on a module).
+            details: dict[str, list[dict]] = defaultdict(list)
+            # Names called through super/base/parent and never on self/bare:
+            # the caller itself is then never the target.
+            super_calls: set[str] = set()
+            self_calls: set[str] = set()
             for cd in getattr(sym, "call_details", []):
                 call_kinds[cd["name"]] = cd.get("kind", "static")
-                if cd.get("receiver") == "other":
-                    untyped_only.add(cd["name"])
-                else:
-                    typed.add(cd["name"])
+                details[cd["name"]].append(cd)
+                head = cd.get("receiver_head", "")
+                if cd.get("receiver") == "self" and (
+                    head in SUPER_RECEIVERS or head.startswith("super(")
+                ):
+                    super_calls.add(cd["name"])
+                elif cd.get("receiver") != "other":
+                    self_calls.add(cd["name"])
                 cd_line = cd.get("line")
                 if isinstance(cd_line, int) and cd_line > 0:
                     prev = call_lines.get(cd["name"])
@@ -1443,8 +1579,20 @@ def build(
                 chosen_cands: list[str] = []
                 res_kind = ""
                 scope_dist = 0
-
-                if not sym.parent and sid in all_cands:
+                if callee in super_calls and callee not in self_calls:
+                    # `super().__init__()` names an ancestor's implementation:
+                    # never the caller itself or its own class's method (that
+                    # was a self-loop CALLS edge on every overriding method).
+                    # Only a same-named method on a resolved base class is a
+                    # candidate. The name tiers are not consulted: they bind a
+                    # stdlib/third-party base's method to an unrelated class
+                    # -- even a subclass -- at 1.0. No in-repo ancestor defines
+                    # it -> CALLS_EXTERNAL, which is exactly what is known.
+                    if sym.parent and (
+                        inherited := base_methods(f"sym:{rel}::{sym.parent}", callee)
+                    ):
+                        chosen_cands, res_kind, scope_dist = inherited, "base_class", 0
+                elif not sym.parent and sid in all_cands:
                     # Tier 0: direct recursion. `sid` is in `all_cands` only when
                     # the callee is this symbol's own name, and for a top-level
                     # function that is unambiguously a self-call. Without it the
@@ -1498,9 +1646,24 @@ def build(
                 untyped_builtin = (
                     bool(chosen_cands)
                     and res_kind != "self_recursive"
-                    and callee in untyped_only
-                    and callee not in typed
                     and callee in UNTYPED_RECEIVER_BUILTIN_METHODS
+                    # every call of the name is on a receiver of unknown type,
+                    # none of which names the candidate's module or type
+                    and all(
+                        cd.get("receiver") == "other"
+                        and not any(names_home(rel, cd, c) for c in chosen_cands)
+                        for cd in details.get(callee, [{}])
+                    )
+                    # A top-level function reached through this file's imports
+                    # can only be called on its module, never on a `dict`.
+                    and not (
+                        res_kind in IMPORT_RESOLUTION_KINDS
+                        and all(
+                            g.nodes[c].get("kind") == "function"
+                            and "." not in g.nodes[c].get("qualname", "")
+                            for c in chosen_cands
+                        )
+                    )
                 )
 
                 # Add edges
@@ -1575,35 +1738,7 @@ def build(
                 bd = base_details_map.get(base, {})
                 raw_base = bd.get("raw", base)
                 subtype = bd.get("subtype", "INHERITS")
-                # #341: strip C++/Rust "::" and PHP "\" scope/namespace
-                # separators too, not just Python/Java "." -- otherwise a
-                # namespaced base like `NS::Base` or `\App\Models\Base` never
-                # matches the bare name `by_name` indexes symbols under.
-                clean_base = (
-                    base.split("[")[0]
-                    .split("<")[0]
-                    .split("::")[-1]
-                    .split("\\")[-1]
-                    .split(".")[-1]
-                    .strip()
-                )
-
-                base_cands = by_name.get(clean_base, [])
-                local_base = [c for c in base_cands if g.nodes[c].get("path") == rel]
-                imp_base = [
-                    c
-                    for c in base_cands
-                    if g.nodes[c].get("path") in imported_files.get(rel, set())
-                ]
-
-                if local_base:
-                    matched_base = local_base[:1]
-                elif imp_base:
-                    matched_base = imp_base[:1]
-                elif clean_base not in COMMON_STDLIB_BASES:
-                    matched_base = base_cands[:max_call_candidates]
-                else:
-                    matched_base = []
+                matched_base, base_cands = match_bases(rel, base)
 
                 if matched_base:
                     for c in matched_base:
@@ -1671,7 +1806,11 @@ def mark_entrypoints(g: Graph):
             # *else* calls it. `out` still records the self-edge so `_reach`
             # sees it; it is just harmless there since `start` is already
             # in `seen` before the BFS looks at its own outgoing edges.
-            if e["src"] != e["dst"]:
+            #
+            # A guess (confidence below the repo map's threshold -- a 3+-way
+            # name split or an untyped-receiver builtin) does not make its
+            # target "called": `d.get()` must not hide the `views.get` handler.
+            if e["src"] != e["dst"] and e.get("confidence", 1.0) >= OVERVIEW_MIN_CALL_CONFIDENCE:
                 called.add(e["dst"])
             out[e["src"]].append(e["dst"])
     nested = {
@@ -1749,6 +1888,10 @@ def _reap_child(proc, reader=None) -> None:
         pass
 
 
+# One `--pretty=format:%H` header line: a SHA-1 or SHA-256 object name.
+_COMMIT_HASH = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
 def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
     """CO_CHANGE edges from files edited together in the last N commits.
 
@@ -1760,12 +1903,15 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     - Pair counting: Each commit touching 2..25 files increments pair count by +1 for all pairs.
     - Threshold: Emits an edge if pair count >= `min_pairs` (default: 3, configurable).
     """
-    g.stats["cochange_sampled_commits"] = commits
+    # "requested" is what --git-history asked for; "sampled" is overwritten
+    # below with the number of commits git actually returned -- a shallow clone
+    # with one commit must not report 50.
+    g.stats["cochange_requested_commits"] = commits
+    g.stats["cochange_sampled_commits"] = 0
     g.stats["cochange_min_pairs"] = min_pairs
     if commits > MAX_COCHANGE_COMMITS:
         g.stats["cochange_history_capped"] = commits
         commits = MAX_COCHANGE_COMMITS
-        g.stats["cochange_sampled_commits"] = commits
     try:
         # Popen, not run(capture_output=True): run() reads the child's stdout to
         # EOF before it returns, so a byte cap applied to its result bounds only
@@ -1847,6 +1993,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         stdout = stdout[: m.end()] if m else b""
     pairs: Counter = Counter()
     current: list[str] = []
+    sampled = 0
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index (same bug class as ISS-22).
@@ -1861,6 +2008,10 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             current = []
         elif line in file_index:
             current.append(line)
+        elif _COMMIT_HASH.fullmatch(line):
+            sampled += 1
+    g.stats["cochange_sampled_commits"] = sampled
+    commits = sampled
     for (a, b), n in pairs.items():
         if n >= min_pairs:
             g.add_edge(

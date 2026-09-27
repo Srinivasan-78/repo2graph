@@ -176,7 +176,9 @@ def test_cochange_threshold_and_metadata(tmp_path: Path):
     g_default = Graph(repo, "test")
     add_cochange(g_default, repo, commits=10, file_index=file_index)
     assert not any(e["type"] == "CO_CHANGE" for e in g_default.edges)
-    assert g_default.stats["cochange_sampled_commits"] == 10
+    # 10 were requested but the repo has only 2: the stat is what was read.
+    assert g_default.stats["cochange_sampled_commits"] == 2
+    assert g_default.stats["cochange_requested_commits"] == 10
     assert g_default.stats["cochange_min_pairs"] == 3
 
     # Custom threshold (min_pairs=2): 2 co-edits meets threshold -> edge emitted with enriched metadata
@@ -187,7 +189,8 @@ def test_cochange_threshold_and_metadata(tmp_path: Path):
     edge = co_edges[0]
     assert edge["count"] == 2
     assert edge["cochange_count"] == 2
-    assert edge["sampled_commits"] == 10
+    assert edge["sampled_commits"] == 2
+    assert edge["confidence"] == 1.0
     assert edge["min_pairs"] == 2
 
 

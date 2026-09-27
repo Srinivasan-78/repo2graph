@@ -700,6 +700,7 @@ def format_stats_summary(data: dict) -> str:
         f"  Unique Global:         {data.get('calls_unique_global', 0)}",
         f"  Ambiguous:             {data.get('calls_ambiguous', data.get('ambiguous_calls', 0))}",
         f"  External / Unresolved: {data.get('calls_external', 0)}",
+        f"  Untyped Receiver:      {data.get('calls_untyped_receiver', 0)}",
         "",
         "Imports & Bases:",
         f"  Imports Resolved:      {data.get('imports_resolved', 0)}",

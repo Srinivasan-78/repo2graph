@@ -693,6 +693,75 @@ _SELF_RECEIVERS = frozenset(
 )
 
 
+# The subset of `_SELF_RECEIVERS` that names the *base* implementation, not the
+# calling object: `super().__init__()` never means the calling method itself.
+SUPER_RECEIVERS = frozenset({"super", "super()", "base", "parent"})
+
+
+def _split_receiver_text(txt: str) -> tuple[str, bool]:
+    """Split callee text like `a.b.get` into (`a.b`, static_scope).
+
+    `static_scope` is True when the last separator is `::` (`Config::get`,
+    `std::find`, Ruby `Foo::bar`): the head names a type or namespace, never a
+    value of unknown type. Returns ("", False) for a bare name.
+    """
+    cut, sep = -1, ""
+    for s in (".", "->", "::"):
+        i = txt.rfind(s)
+        if i > cut:
+            cut, sep = i, s
+    if cut <= 0:
+        return "", False
+    return txt[:cut].strip().rstrip("?").strip(), sep == "::"
+
+
+def _receiver_of(src: bytes, node) -> tuple[str, bool]:
+    """(receiver head text, static_scope) of a call node; ("", False) if bare."""
+    recv = node.child_by_field_name("object") or node.child_by_field_name("receiver")
+    if recv is None and node.child_by_field_name("function") is None and node.named_child_count:
+        # Kotlin/Swift: `call_expression` has no `function` field; a member
+        # call's first child is a `navigation_expression` whose first child is
+        # the target (`list` in `list.add(1)`).
+        first = node.named_children[0]
+        if first.type == "navigation_expression" and first.named_child_count:
+            recv = first.child_by_field_name("target") or first.named_children[0]
+    if recv is not None:
+        head = _text(src, recv).strip().rstrip("?").strip()
+        # Ruby's `call` keeps `::` / `.` as a bare token between the receiver
+        # and the method field.
+        meth = node.child_by_field_name("method") or node.child_by_field_name("name")
+        gap = src[recv.end_byte : meth.start_byte] if meth is not None else b""
+        return head, b"::" in gap
+    fn = node.child_by_field_name("function")
+    if fn is None:
+        return "", False
+    return _split_receiver_text(_text(src, fn).strip())
+
+
+def _classify_receiver(head: str, self_names: frozenset[str] = frozenset()) -> str:
+    if not head:
+        return "none"
+    if head in _SELF_RECEIVERS or head in self_names or head.startswith("super("):
+        return "self"
+    return "other"
+
+
+def _receiver_fields(head: str, static: bool, self_names: frozenset[str] = frozenset()) -> dict:
+    """The receiver keys of one `call_details` entry.
+
+    "receiver" is always present (none/self/other). "receiver_head" is the
+    receiver's source text when there is one, so `graph.build` can tell an
+    imported module (`store.get()`) or a type (`Util.remove()`) from a value of
+    unknown type (`d.get()`); "receiver_static" marks a `::`-scoped call.
+    """
+    out: dict = {"receiver": _classify_receiver(head, self_names)}
+    if head:
+        out["receiver_head"] = head[:200]
+    if static:
+        out["receiver_static"] = True
+    return out
+
+
 def _receiver_kind(src: bytes, node) -> str:
     """Classify what a call is made on: "none", "self" or "other".
 
@@ -702,21 +771,30 @@ def _receiver_kind(src: bytes, node) -> str:
     drops the receiver, so without this `graph.build` cannot tell
     `self.get()` from `some_dict.get()`.
     """
-    recv = node.child_by_field_name("object") or node.child_by_field_name("receiver")
-    if recv is not None:
-        head = _text(src, recv).strip()
-    else:
-        fn = node.child_by_field_name("function")
-        if fn is None:
-            return "none"
-        txt = _text(src, fn).strip()
-        cut = max(txt.rfind(sep) for sep in (".", "->", "::"))
-        if cut <= 0:
-            return "none"
-        head = txt[:cut].strip().rstrip("?").strip()
-    if not head:
-        return "none"
-    return "self" if head in _SELF_RECEIVERS else "other"
+    return _classify_receiver(_receiver_of(src, node)[0])
+
+
+def _go_receiver_name(src: bytes, node) -> str | None:
+    """The receiver identifier of a Go `func (c *T) M()` -- Go's `self`."""
+    params = node.child_by_field_name("receiver")
+    if params is None:
+        return None
+    for p in params.named_children:
+        name = p.child_by_field_name("name")
+        if name is not None:
+            return _text(src, name).strip() or None
+    return None
+
+
+def _decorator_receiver(src: bytes, node) -> dict:
+    """Receiver keys for a decorator/annotation entry.
+
+    `@router.get("/x")` is a call of `get` on `router`. Without these keys the
+    entry looked receiver-less -- a typed call -- and kept every untyped
+    `d.get()` in the decorated function bound at 1.0.
+    """
+    txt = _text(src, node).strip().lstrip("@").split("(")[0].strip()
+    return _receiver_fields(*_split_receiver_text(txt))
 
 
 _ATTR_OR_COMMENT_TYPES = (
@@ -1298,6 +1376,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
     # (long chained expressions, big literals) to blow the interpreter's limit.
     stack: list[tuple[Node, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
+    # id(Go method symbol) -> its receiver identifier: `c.find()` inside
+    # `func (c *Cache) Lookup()` is a call on the calling object.
+    go_self: dict[int, frozenset[str]] = {}
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -1337,12 +1418,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 elif callee in DYNAMIC_CALLEES.get(lang, frozenset()):
                     call_kind = "dynamic"
                 owner.calls.append(callee)
+                recv_head, recv_static = _receiver_of(source, node)
                 owner.call_details.append(
                     {
                         "name": callee,
                         "kind": call_kind,
                         "line": node.start_point[0] + 1,
-                        "receiver": _receiver_kind(source, node),
+                        **_receiver_fields(
+                            recv_head, recv_static, go_self.get(id(owner), frozenset())
+                        ),
                     }
                 )
         kind = kind_map.get(ntype)
@@ -1396,6 +1480,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                                         "name": dec_text,
                                         "kind": "decorator",
                                         "line": child.start_point[0] + 1,
+                                        **_decorator_receiver(source, child),
                                     }
                                 )
                 else:
@@ -1410,9 +1495,14 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                                     "name": ann_text,
                                     "kind": "decorator",
                                     "line": prev.start_point[0] + 1,
+                                    **_decorator_receiver(source, prev),
                                 }
                             )
 
+                if lang == "go" and ntype == "method_declaration":
+                    go_recv = _go_receiver_name(source, node)
+                    if go_recv:
+                        go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
                 child_scope, child_owner = scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
