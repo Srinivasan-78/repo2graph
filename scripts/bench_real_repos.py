@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Retrieval benchmark on pinned third-party repositories.
+
+Asks each question in `benchmarks/real/tasks.json` of three retrievers, each
+held to the same token budget, and scores what came back against the
+definitions that answer it:
+
+* ``repo2graph``      -- ``Index.pack_context`` with the MCP server's defaults
+                         (k=8, hops=1, secrets excluded).
+* ``repo2graph-bm25`` -- the same call with ``expand_graph=False``: the BM25
+                         seeds alone, so the difference is what the graph adds.
+* ``ripgrep``         -- ``rg`` for the question's words, then read +/-15 lines
+                         around the best-scoring hits until the budget is spent.
+                         This is the grep-then-read loop a coding agent runs,
+                         without the model choosing better search terms.
+
+An evidence definition counts as *found* only when its first line and the next
+nine lines (or the whole definition, if shorter) are all in the returned text.
+A file path in passing, or a compressed signature-only neighbour, is not enough.
+
+This measures retrieval, not end-to-end agent success: no model reads the
+output. Tokens are ``len(text) // 4`` for every retriever.
+
+Usage:
+    python scripts/bench_real_repos.py [--cache DIR] [--budgets 2000,4000,8000]
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from repo2graph.cli import main as cli_main  # noqa: E402
+from repo2graph.query import Index, count_tokens  # noqa: E402
+
+BENCH = ROOT / "benchmarks" / "real"
+WINDOW = 15
+HEAD_LINES = 10
+STOPWORDS = frozenset(
+    "a an and are as at be by does do for from get gets how in into is it its like "
+    "of on or the their then to up what when where which who why with".split()
+)
+RG_TYPES = {"python": "py", "typescript": "ts"}
+
+
+def checkout(repo: dict, cache: Path) -> Path:
+    dest = cache / repo["name"]
+    if not dest.exists():
+        subprocess.run(
+            ["git", "clone", "-q", "--depth", "1", "--branch", repo["ref"], repo["url"], str(dest)],
+            check=True,
+        )
+    sha = (
+        subprocess.run(
+            ["git", "-C", str(dest), "rev-parse", "HEAD"], capture_output=True, check=True
+        )
+        .stdout.decode()
+        .strip()
+    )
+    if sha != repo["sha"]:
+        raise SystemExit(
+            f"{repo['name']}: {repo['ref']} is {sha}, tasks were written at {repo['sha']}"
+        )
+    return dest / repo["root"]
+
+
+def covered_lines_r2g(pack: dict) -> dict[str, set[int]]:
+    """Lines whose text is actually in the pack, per path."""
+    out: dict[str, set[int]] = defaultdict(set)
+    for c in pack["chunks"]:
+        start = c.get("start_line") or 0
+        n = (c.get("text") or "").count("\n") + 1
+        end = c.get("end_line") or start
+        # A neighbour compressed to its signature carries fewer lines than its
+        # cite range claims; only the lines really present count.
+        out[c["path"]].update(range(start, min(end, start + n - 1) + 1))
+    return out
+
+
+def terms_of(query: str) -> list[str]:
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_\-]*", query.lower())
+    seen: list[str] = []
+    for w in words:
+        if len(w) >= 3 and w not in STOPWORDS and w not in seen:
+            seen.append(w)
+    return seen
+
+
+def ripgrep(
+    rg: list[str], root: Path, query: str, language: str, budget: int
+) -> tuple[str, dict[str, set[int]]]:
+    terms = terms_of(query)
+    cmd = [*rg, "-n", "-i", "-F", "--no-heading", "-t", RG_TYPES[language]]
+    for t in terms:
+        cmd += ["-e", t]
+    res = subprocess.run(cmd + ["."], cwd=root, capture_output=True)
+    hits: dict[str, dict[int, str]] = defaultdict(dict)
+    for raw in res.stdout.decode("utf8", "replace").split("\n"):
+        m = re.match(r"^(.+?):(\d+):(.*)$", raw)
+        if m:
+            hits[m.group(1).replace("\\", "/").removeprefix("./")][int(m.group(2))] = m.group(
+                3
+            ).lower()
+
+    # Score every hit line by the distinct query terms within its window.
+    windows = []
+    for path, lines in hits.items():
+        for ln in lines:
+            near = [lines[x] for x in lines if abs(x - ln) <= WINDOW]
+            score = sum(1 for t in terms if any(t in s for s in near))
+            windows.append((score, len(near), path, ln))
+    windows.sort(key=lambda w: (-w[0], -w[1], w[2], w[3]))
+
+    text, taken = "", defaultdict(set)
+    file_cache: dict[str, list[str]] = {}
+    for _score, _n, path, ln in windows:
+        if ln in taken[path]:
+            continue
+        src = file_cache.setdefault(
+            path, (root / path).read_text(encoding="utf8", errors="replace").split("\n")
+        )
+        lo, hi = max(1, ln - WINDOW), min(len(src), ln + WINDOW)
+        new = [x for x in range(lo, hi + 1) if x not in taken[path]]
+        block = f"\n### {path}:{new[0]}-{new[-1]}\n" + "\n".join(src[x - 1] for x in new) + "\n"
+        if count_tokens(text + block) > budget:
+            continue
+        text += block
+        taken[path].update(new)
+    return text, taken
+
+
+def found(evidence: list[dict], lines: dict[str, set[int]]) -> list[bool]:
+    out = []
+    for ev in evidence:
+        s, e = ev["lines"]
+        need = range(s, min(e, s + HEAD_LINES - 1) + 1)
+        out.append(all(x in lines.get(ev["path"], ()) for x in need))
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--cache", type=Path, default=Path(tempfile.gettempdir()) / "r2g-bench-real")
+    ap.add_argument("--budgets", default="2000,4000,8000")
+    ap.add_argument("--out", type=Path, default=BENCH / "results.json")
+    ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
+    args = ap.parse_args()
+    rg = shlex.split(args.rg)
+    if shutil.which(rg[0]) is None:
+        raise SystemExit("ripgrep (rg) is required for the baseline")
+    budgets = [int(b) for b in args.budgets.split(",")]
+
+    repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
+    tasks = json.loads((BENCH / "tasks.json").read_text())["tasks"]
+    args.cache.mkdir(parents=True, exist_ok=True)
+
+    indexes: dict[str, Index] = {}
+    roots: dict[str, Path] = {}
+    for name, repo in repos.items():
+        roots[name] = checkout(repo, args.cache)
+        out = args.cache / f"{name}.r2g"
+        if out.exists():
+            shutil.rmtree(out)
+        with contextlib.redirect_stdout(io.StringIO()):
+            if cli_main(["build", str(roots[name]), "-o", str(out)]) != 0:
+                raise SystemExit(f"{name}: repo2graph build failed")
+        indexes[name] = Index(out)
+
+    rows = []
+    for t in tasks:
+        repo, idx, root = repos[t["repo"]], indexes[t["repo"]], roots[t["repo"]]
+        for budget in budgets:
+            full = idx.pack_context(t["query"], budget_tokens=budget, exclude_secrets=True)
+            bm25 = idx.pack_context(
+                t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
+            )
+            rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
+            for method, lines, used in (
+                ("repo2graph", covered_lines_r2g(full), full["tokens_used"]),
+                ("repo2graph-bm25", covered_lines_r2g(bm25), bm25["tokens_used"]),
+                ("ripgrep", rg_lines, count_tokens(rg_text)),
+            ):
+                hit = found(t["evidence"], lines)
+                rows.append(
+                    {
+                        "task": t["id"],
+                        "repo": t["repo"],
+                        "kind": t["kind"],
+                        "budget": budget,
+                        "method": method,
+                        "tokens_used": used,
+                        "found": sum(hit),
+                        "evidence": len(hit),
+                        "missed": [ev["symbol"] for ev, h in zip(t["evidence"], hit) if not h],
+                    }
+                )
+
+    summary = []
+    for budget in budgets:
+        for method in ("repo2graph", "repo2graph-bm25", "ripgrep"):
+            sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
+            summary.append(
+                {
+                    "budget": budget,
+                    "method": method,
+                    "evidence_recall": round(
+                        sum(r["found"] for r in sel) / sum(r["evidence"] for r in sel), 3
+                    ),
+                    "tasks_fully_answered": sum(r["found"] == r["evidence"] for r in sel),
+                    "tasks_any_evidence": sum(r["found"] > 0 for r in sel),
+                    "tasks": len(sel),
+                    "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
+                }
+            )
+    from repo2graph import __version__
+
+    args.out.write_text(
+        json.dumps({"repo2graph_version": __version__, "summary": summary, "rows": rows}, indent=1)
+        + "\n",
+        encoding="utf8",
+        newline="\n",
+    )
+    print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
+    print("|---:|---|---:|---:|---:|---:|")
+    for s in summary:
+        print(
+            f"| {s['budget']:,} | {s['method']} | {s['evidence_recall']:.0%} | "
+            f"{s['tasks_fully_answered']}/{s['tasks']} | {s['tasks_any_evidence']}/{s['tasks']} | "
+            f"{s['mean_tokens_used']:,} |"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
