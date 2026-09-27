@@ -92,7 +92,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
     commit-branch: graph     # optional: publish graph.html to a browsable branch
 ```
 
-`@v2` follows every 2.x release; pin an exact tag (`@v2.1.0`) to upgrade by hand. The Action never
+`@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
 calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/github-action.md](docs/github-action.md),
 [docs/pr-impact.md](docs/pr-impact.md).
 

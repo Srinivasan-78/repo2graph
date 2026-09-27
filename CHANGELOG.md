@@ -45,6 +45,8 @@ makes keeping it current a release-blocking step rather than a good intention.
   now gitignored. Still available in git history.
 - The five translated READMEs and `tests/test_i18n_consistency.py`.
 
+## [2.2.0] — 2026-09-26
+
 ### Added
 
 - **Per-client integration guides.** `docs/integrations/claude-code.md` (first-supported) covers
