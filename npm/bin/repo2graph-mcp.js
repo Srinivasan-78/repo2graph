@@ -67,11 +67,16 @@ function quoteForCmd(arg) {
   // operators. Three characters have no in-band escape on a `shell: true`
   // command line, so `run()` rejects any value carrying one rather than
   // silently mangling it: `%` and `!` still expand *inside* quotes, and an
-  // embedded `"` cannot be escaped at all -- the `\"` below is a C-runtime
-  // convention that cmd.exe does not honour. The replace is kept as a
-  // belt-and-braces measure for a future caller that has not gone through
-  // `run()`'s refusal; for every current caller it is unreachable.
-  return `"${String(arg).replace(/"/g, '\\"')}"`;
+  // embedded `"` cannot be escaped at all. Escaping it as `\"` (a C-runtime
+  // convention cmd.exe does not honour) was both wrong and incomplete, since
+  // backslashes went unescaped (CodeQL js/incomplete-sanitization). So refuse
+  // here too: a future caller that skips `run()`'s check fails loudly instead
+  // of producing a command line cmd.exe will mangle.
+  const s = String(arg);
+  if (s.includes('"')) {
+    throw new Error(`cannot quote an argument containing '"' for cmd.exe: ${s}`);
+  }
+  return `"${s}"`;
 }
 
 function run(resolved, args) {
