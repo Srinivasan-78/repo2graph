@@ -1184,3 +1184,20 @@ def test_a_missing_index_does_not_tell_the_caller_where_it_looked(tmp_path):
     audited = [r for r in server.audit_lines() if r.get("outcome") == "error"]
     assert len(audited) == 1
     assert "no_index_here" in audited[0]["error"]
+
+
+def test_a_deeply_nested_jwt_header_gets_a_401_and_an_audit_record(make_server):
+    """Repro C:/bench/audit_code/jwt_srv.py: a 3000-deep JWT header used to
+    raise RecursionError out of authenticate(), dropping the connection with no
+    401 and writing no `auth_rejected` record."""
+    import base64
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    token = b64(b"[" * 3000 + b"]" * 3000) + "." + b64(b"{}") + "." + b64(b"x")
+    server = make_server(oidc(), opener=FakeIssuer())
+    status, body = server.call("repo_map", token=token)
+    assert status == 401, body
+    records = [r for r in server.audit_lines() if r["event"] == "tool_call"]
+    assert records and records[0]["outcome"] == "auth_rejected"

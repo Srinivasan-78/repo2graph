@@ -141,8 +141,8 @@ Four mechanisms; the first two are on by default and compose with the others.
 
 | Layer | Default | What it does |
 |---|---|---|
-| **Path exclusion** | **On** | `.env*`, private keys, certificates, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more are never read. `--include-secrets` opts out. |
-| **Content scanning** | **On** (`--secret-policy redact-match`) | Chunk text is scanned for vendor key formats, JWTs, DB URLs with inline credentials, PEM private keys and high-entropy assignments; matches are redacted line-preservingly. |
+| **Path exclusion** | **On** | `.env*`, private keys, certificates, Terraform state and `.tfvars`, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more are never read. `--include-secrets` opts out. |
+| **Content scanning** | **On** (`--secret-policy redact-match`) | Chunk text is scanned for vendor key formats, JWTs, DB URLs with inline credentials, PEM private keys, high-entropy assignments and JSON `"password": "..."`-style pairs; matches are redacted line-preservingly. |
 | **`.gitignore`** | **On in a git checkout** | Discovery runs through `git ls-files`, so ignored files are never candidates. Unavailable in a plain-folder build — there, `DEFAULT_SKIP_DIRS` and your own `--exclude` are the controls. |
 | **`--include` / `--exclude`** | Off | Explicit globs, for whatever the defaults do not know about. |
 

