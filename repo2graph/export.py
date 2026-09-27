@@ -19,7 +19,7 @@ from typing import IO, TYPE_CHECKING, Any
 # edgemeta is stdlib-only (typing), so importing it here does not pull the
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
-from .edgemeta import EDGE_SCHEMA_VERSION
+from .edgemeta import EDGE_SCHEMA_VERSION, OVERVIEW_MIN_CALL_CONFIDENCE
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
 
 if TYPE_CHECKING:
@@ -508,9 +508,6 @@ def write_cypher(g: "Graph", path: Path) -> None:
         fh.write("\n".join(lines) + "\n")
 
 
-OVERVIEW_MIN_CALL_CONFIDENCE = 0.5
-
-
 def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     """Human/LLM-readable repo map: top directories, hub files, entry points."""
     indeg: Counter[str] = Counter()
@@ -955,6 +952,7 @@ def write_manifest(
             "calls_unique_global": g.stats.get("calls_unique_global", 0),
             "calls_ambiguous": g.stats.get("calls_ambiguous", 0),
             "calls_external": g.stats.get("calls_external", 0),
+            "calls_untyped_receiver": g.stats.get("calls_untyped_receiver", 0),
         },
         "entrypoints": [
             {

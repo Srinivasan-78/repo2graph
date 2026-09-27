@@ -1150,3 +1150,261 @@ def test_repo_map_ignores_low_confidence_callers(tmp_path: Path):
     assert main(["build", str(tmp_path), "-o", str(out)]) == 0
     overview = (out / "agent" / "overview.md").read_text(encoding="utf8")
     assert "Globals.get" not in overview
+
+
+# ==============================================================================
+# Audit round: qualified receivers, decorators, Kotlin/Swift/C#, gates, super()
+# ==============================================================================
+
+
+def _write(root: Path, files: dict[str, str]) -> Path:
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf8")
+    return root
+
+
+def _call_edges(g, src: str) -> dict[str, dict]:
+    return {e["dst"]: e for e in g.edges if e["type"] == "CALLS" and e["src"] == src}
+
+
+@pytest.mark.parametrize(
+    ("files", "caller", "callee"),
+    [
+        # module-qualified: `store` is an imported module, not a dict
+        (
+            {
+                "store.py": "TABLE = {'a': 1}\ndef get(k):\n    return TABLE[k]\n",
+                "app.py": "import store\n\ndef handler():\n    return store.get('a')\n",
+            },
+            "sym:app.py::handler",
+            "sym:store.py::get",
+        ),
+        # type-qualified (static method on an imported class)
+        (
+            {
+                "util.py": "class Util:\n    @staticmethod\n    def remove(x):\n        return x\n",
+                "app.py": "from util import Util\n\ndef run():\n    return Util.remove(1)\n",
+            },
+            "sym:app.py::run",
+            "sym:util.py::Util.remove",
+        ),
+        # Java static call
+        (
+            {
+                "Util.java": "class Util { static int remove(int x){return x;} }\n",
+                "App.java": "class App { int run(){ return Util.remove(1); } }\n",
+            },
+            "sym:App.java::App.run",
+            "sym:Util.java::Util.remove",
+        ),
+        # `::` static scope
+        (
+            {
+                "lib.rs": "struct Config;\nimpl Config { fn get(k: &str) -> i32 { 0 } }\n"
+                'fn run() -> i32 { Config::get("x") }\n'
+            },
+            "sym:lib.rs::run",
+            "sym:lib.rs::Config.get",
+        ),
+        # Go method receiver is the calling object
+        (
+            {
+                "c.go": "package c\ntype Cache struct{}\n"
+                "func (c *Cache) find(k string) int { return 0 }\n"
+                "func (c *Cache) Lookup(k string) int { return c.find(k) }\n"
+            },
+            "sym:c.go::Lookup",
+            "sym:c.go::find",
+        ),
+    ],
+)
+def test_qualified_receiver_is_not_demoted(tmp_path: Path, files, caller, callee):
+    g = build(_write(tmp_path, files))
+    edge = _call_edges(g, caller)[callee]
+    assert edge["confidence"] == 1.0
+    assert "untyped_receiver" not in edge
+    assert "ambiguous" not in edge
+
+
+def test_from_imported_value_receiver_is_still_demoted(tmp_path: Path):
+    """Flask's `_cv_request.get(None)`: the head is from-imported, but it is a
+    value, not the module `ctx` the only `get` lives in."""
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "ctx.py": "class Globals:\n    def get(self, k):\n        return k\n\ncurrent = {}\n",
+                "use.py": "from ctx import current\n\ndef read():\n    return current.get('x')\n",
+            },
+        )
+    )
+    edge = _call_edges(g, "sym:use.py::read")["sym:ctx.py::Globals.get"]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+    assert edge["ambiguous"] is True
+    assert edge["candidate_count"] == 1
+
+
+def test_go_receiver_classified_as_self():
+    pf = parse_source(
+        b"package c\nfunc (c *Cache) Lookup(k string) int { return c.find(k) + m.find(k) }\n",
+        "go",
+    )
+    (sym,) = [s for s in pf.symbols if s.qualname == "Lookup"]
+    assert [(d["receiver"], d.get("receiver_head")) for d in sym.call_details] == [
+        ("self", "c"),
+        ("other", "m"),
+    ]
+
+
+def test_receiver_head_and_static_scope_recorded():
+    pf = parse_source(b"fn run() { Config::get(1); v.push(2); get(3); }\n", "rust")
+    (sym,) = pf.symbols
+    got = [
+        (d["name"], d["receiver"], d.get("receiver_head"), d.get("receiver_static"))
+        for d in sym.call_details
+    ]
+    assert got == [
+        ("get", "other", "Config", True),
+        ("push", "other", "v", None),
+        ("get", "none", None, None),
+    ]
+
+
+def test_decorator_does_not_rescue_untyped_call(tmp_path: Path):
+    """`@router.get(...)` is a call on `router`: it used to count as a typed
+    call of `get` and kept `d.get()` bound at 1.0."""
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "store.py": "class Store:\n    def get(self, k):\n        return k\n",
+                "api.py": "from fastapi import APIRouter\nrouter = APIRouter()\n\n"
+                "@router.get('/items')\ndef list_items(d):\n    return d.get('x')\n",
+            },
+        )
+    )
+    edge = _call_edges(g, "sym:api.py::list_items")["sym:store.py::Store.get"]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+    pf = parse_source(b"@router.get('/x')\ndef h():\n    pass\n", "python")
+    (dec,) = pf.symbols[0].call_details
+    assert (dec["kind"], dec["receiver"], dec["receiver_head"]) == ("decorator", "other", "router")
+
+
+@pytest.mark.parametrize(
+    ("lang", "src", "caller", "self_head", "tail", "head"),
+    [
+        ("kotlin", b"class A { fun f(){ this.get(); super.get(); obj?.get(); get(); list.add(1) } }\n", "A", "this", "add", "list"),
+        ("swift", b"class A { func f(){ self.get(); super.get(); obj?.get(); get(); arr.append(1) } }\n", "A.f", "self", "append", "arr"),
+    ],
+)  # fmt: skip
+def test_kotlin_swift_receivers(lang, src, caller, self_head, tail, head):
+    # Kotlin `fun` declarations are not indexed as symbols (their name is a
+    # `simple_identifier`), so Kotlin calls land on the enclosing class.
+    pf = parse_source(src, lang)
+    sym = next(s for s in pf.symbols if s.qualname == caller)
+    got = [(d["name"], d["receiver"], d.get("receiver_head")) for d in sym.call_details]
+    assert got == [
+        ("get", "self", self_head),
+        ("get", "self", "super"),
+        ("get", "other", "obj"),
+        ("get", "none", None),
+        (tail, "other", head),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("files", "caller", "callee"),
+    [
+        (
+            {
+                "A.cs": "class Bag { public void Add(int x){} }\n"
+                "class A { void F(System.Collections.Generic.List<int> l){ l.Add(1); } }\n"
+            },
+            "sym:A.cs::A.F",
+            "sym:A.cs::Bag.Add",
+        ),
+        (
+            {
+                "A.swift": "class Bag { func append(_ x: Int) {} }\n"
+                "class A { func f() { var arr = [1]; arr.append(1) } }\n"
+            },
+            "sym:A.swift::A.f",
+            "sym:A.swift::Bag.append",
+        ),
+    ],
+)
+def test_csharp_and_swift_builtins_on_untyped_receiver_are_demoted(
+    tmp_path: Path, files, caller, callee
+):
+    g = build(_write(tmp_path, files))
+    edge = _call_edges(g, caller)[callee]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+
+
+def test_low_confidence_calls_do_not_count_for_hotspots_or_entrypoints(tmp_path: Path):
+    from repo2graph.changelog import _indegree
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "views.py": "def get(request):\n    return 1\n",
+                "util.py": "".join(f"def f{i}(d):\n    return d.get({i})\n\n" for i in range(4)),
+            },
+        )
+    )
+    assert set(_call_edges(g, "sym:util.py::f0")) == {"sym:views.py::get"}  # guess kept
+    assert "sym:views.py::get" not in _indegree(g.edges)
+    assert g.nodes["sym:views.py::get"].get("entrypoint") is True
+
+
+def test_untyped_receiver_count_in_stats_text_and_manifest(tmp_path: Path):
+    from repo2graph.cli import format_stats_summary
+
+    assert "Untyped Receiver:      7" in format_stats_summary({"calls_untyped_receiver": 7})
+    _write(
+        tmp_path / "repo",
+        {
+            "ctx.py": "class Globals:\n    def get(self, k):\n        return k\n",
+            "use.py": "def f(d):\n    return d.get(1)\n",
+        },
+    )
+    out = tmp_path / "out"
+    assert main(["build", str(tmp_path / "repo"), "-o", str(out)]) == 0
+    manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf8"))
+    assert manifest["quality_metrics"]["calls_untyped_receiver"] == 1
+
+
+def test_super_call_binds_base_method_never_itself(tmp_path: Path):
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "base.py": "class Base:\n    def __init__(self):\n        self.x = 1\n",
+                "child.py": "from base import Base\n\n"
+                "class Child(Base):\n    def __init__(self):\n        super().__init__()\n",
+                "other.py": "class Other:\n    def get(self, k):\n        return k\n",
+                "store.py": "class Store(dict):\n"
+                "    def get(self, k, default=None):\n"
+                "        return super().get(k, default)\n",
+            },
+        )
+    )
+    child = _call_edges(g, "sym:child.py::Child.__init__")
+    assert set(child) == {"sym:base.py::Base.__init__"}
+    assert child["sym:base.py::Base.__init__"]["resolution_kind"] == "base_class"
+    assert child["sym:base.py::Base.__init__"]["confidence"] == 1.0
+    # `dict.get` is not in the repo: no self-loop, no bind to Other.get.
+    assert _call_edges(g, "sym:store.py::Store.get") == {}
+    ext = [
+        e["dst"]
+        for e in g.edges
+        if e["type"] == "CALLS_EXTERNAL" and e["src"] == "sym:store.py::Store.get"
+    ]
+    assert "external:get" in ext
+    assert not [e for e in g.edges if e["type"] == "CALLS" and e["src"] == e["dst"]]

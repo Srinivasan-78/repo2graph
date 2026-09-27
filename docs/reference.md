@@ -179,6 +179,7 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   |---|---|---|---|
   | 0 | `self_recursive` | 0 | a top-level function calling its own name — unambiguously recursion |
   | 1 | `same_class` | 0 | another method of the enclosing class. Never the caller itself: see below. |
+  | 1 | `base_class` | 0 | `super().m()` / `base.M()` / `parent::m()`: the same-named method on the nearest resolved in-repo base class. Never the caller or its own class; with no in-repo ancestor defining it, the call is `unresolved_external`. |
   | 2 | `same_file` | 1 | another function or class defined in the calling file |
   | 3 | `import_alias` | 2 | reached through an aliased import (`import X as Y`) |
   | 3 | `imported_symbol` | 2 | reached through the calling file's own imports, unaliased |
@@ -193,12 +194,20 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   … — `UNTYPED_RECEIVER_BUILTIN_METHODS` in `graph.py`) is made on a receiver other
   than `self`/`this`/`super`, the in-repo candidate is kept but the edge is marked
   `untyped_receiver: true`, `ambiguous: true`, and capped at confidence `0.2`
-  (split `1/n`). `self.get()`, a bare `get()`, and domain names like
-  `svc.create_order()` are unaffected. The repo map's "Most called symbols" counts
-  only `CALLS` edges at confidence `0.5` or above.
+  (split `1/n`) — `ambiguous: true` even when `candidate_count` is 1. `self.get()`,
+  a bare `get()`, and domain names like `svc.create_order()` are unaffected, and so
+  is a receiver that names where the candidate lives: an imported module
+  (`store.get()` → `store.py`), a type (`Util.remove()`), a `::` scope
+  (`Config::get()`), a Go method's own receiver (`c.find()` in
+  `func (c *Cache) Lookup()`), or a top-level function reached through the file's
+  imports. Decorators count as calls on their receiver (`@router.get` is a call on
+  `router`). The repo map's "Most called symbols" counts
+  only `CALLS` edges at confidence `0.5` or above; changelog hotspots and
+  entrypoint detection use the same threshold.
 
   Every `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`,
-  `ambiguous` (true once tier 6 splits confidence across candidates) and
+  `ambiguous` (true once more than one candidate splits confidence, or on an
+  `untyped_receiver` guess) and
   `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
   `CALLS_EXTERNAL` carries `resolution_kind` (always `unresolved_external`),
   `candidate_count` (always `0`), `count` and `call_kind` — but no
@@ -208,9 +217,9 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   certain even though the callee is not ours. See
   [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#what-confidence-means).
 
-  **A method's own name is never resolved outright.** The receiver is not
-  recorded, so inside `Report.to_dict` the calls `self.to_dict()` and
-  `c.to_dict()` both arrive here as the bare name `to_dict` — recursion and a
+  **A method's own name is never resolved outright.** The receiver's type is
+  not known, so inside `Report.to_dict` the calls `self.to_dict()` and
+  `c.to_dict()` both resolve by the bare name `to_dict` — recursion and a
   call to a sibling class's identically named method are the same input. Tier 1
   therefore declines a self-target and lets tier 2 answer, with the caller left
   in the candidate set: alone, that is one self-edge at confidence 1.0; next to

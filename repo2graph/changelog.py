@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .edgemeta import OVERVIEW_MIN_CALL_CONFIDENCE
 from .export import atomic_write, make_path, path as artifact_path
 from .graph import Graph
 from .query import read_jsonl
@@ -108,6 +109,10 @@ def _indegree(edges: list[dict[str, Any]]) -> dict[str, int]:
     deg: dict[str, int] = {}
     for e in edges:
         if e.get("type") in INDEGREE_EDGE_TYPES:
+            # Same gate as the repo map: a low-confidence CALLS guess (e.g.
+            # `d.get()` capped as an untyped receiver) is not a caller.
+            if e.get("type") == "CALLS" and e.get("confidence", 1.0) < OVERVIEW_MIN_CALL_CONFIDENCE:
+                continue
             dst = e.get("dst")
             if dst is not None:
                 deg[dst] = deg.get(dst, 0) + 1
