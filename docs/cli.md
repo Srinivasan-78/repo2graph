@@ -169,8 +169,10 @@ functions around each answer come along too.
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
-| `--min-conf` | off | Drop `CALLS` arrows below this confidence. |
+| `--min-conf`, `--min-confidence` | off | Drop `CALLS` arrows below this confidence. |
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
+| `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
+| `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -221,7 +223,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
-| `--min-conf` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
+| `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
 | `--no-expand` | off | Text search only, no arrow walking. |
@@ -229,6 +231,8 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#answer-sends-your-code-elsewhere). |
 | `--model` | provider default | Override the best-effort default model, only with `--answer`. |
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
+| `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
+| `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
@@ -238,6 +242,16 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 repo2graph rag "how does export write the manifest" -o .r2g --format json \
   | jq '{used: .used_chars, budget: .budget_chars, cut: .truncated}'
 ```
+
+### Secrets at query time
+
+`query` and `rag` leave secret-looking files — dotenv files, `.pem`/`.key`,
+keystores, credential stores — out of what they return unless you pass
+`--include-secrets` **on that command**. The build-time flag decides what goes
+*into* the index; it does not decide what every later reader gets back, so an
+index built with `build --include-secrets` still answers a plain `rag` or
+`query` without them. (Previously a plain `rag` only excluded them with
+`--answer`; `--exclude-secrets` is now a deprecated no-op that prints a warning.)
 
 ## `embed` — meaning-based search on top of the words
 
@@ -346,7 +360,7 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   repo2graph: sending 18423 chars of repository context to provider openai at api.openai.com (selected by OPENAI_API_KEY)
   ```
 
-- **Secret-ish files are dropped from the pack when `--answer` is on.** Dotfiles,
+- **Secret-ish files are dropped from the pack** (with or without `--answer`, unless you pass `--include-secrets`). Dotfiles,
   `.env`, `.pem`, `.key`, keystores and friends are excluded. This is a guard, not
   a guarantee: a secret pasted into an ordinary `.py` file is still ordinary
   source and still goes.

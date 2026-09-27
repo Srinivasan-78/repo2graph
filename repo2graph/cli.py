@@ -158,6 +158,7 @@ def cmd_build(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        output_dir=str(outdir),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -446,6 +447,15 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     }
 
 
+def _warn_exclude_secrets_deprecated(args) -> None:
+    """`--exclude-secrets` is accepted for compatibility; it is the default now."""
+    if getattr(args, "exclude_secrets", False):
+        sys.stderr.write(
+            "warning: --exclude-secrets is deprecated and has no effect; secret-looking "
+            "files are excluded by default (pass --include-secrets to include them)\n"
+        )
+
+
 def cmd_query(args):
     from .query import Index, format_pack
 
@@ -461,6 +471,7 @@ def cmd_query(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args)
+    _warn_exclude_secrets_deprecated(args)
     res = idx.retrieve(
         args.query,
         k=args.k,
@@ -469,6 +480,10 @@ def cmd_query(args):
         min_confidence=getattr(args, "min_conf", None),
         vectors=vectors,
         embedder=embedder,
+        # Secret-looking paths (.env, keys, credentials) are excluded unless the
+        # caller opts in *now*: an index built with --include-secrets must not
+        # hand them to every later plain query.
+        exclude_secrets=not getattr(args, "include_secrets", False),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -500,6 +515,7 @@ def _rag_index_dir(args) -> Path:
             secret_policy=getattr(args, "secret_policy", "redact-match"),
             extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
             extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+            output_dir=str(out),
         )
         g = build(tpath, config=cfg)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
@@ -620,20 +636,11 @@ def cmd_rag(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args, out)
-    if getattr(args, "exclude_secrets", False):
-        if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --exclude-secrets is deprecated; secret exclusion is now enabled by default\n"
-            )
-
-    include_secrets = getattr(args, "include_secrets", False)
-    exclude_secrets = (
-        args.answer
-        or getattr(args, "exclude_secrets", False)
-        or bool(
-            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
-        )
-    ) and not include_secrets
+    _warn_exclude_secrets_deprecated(args)
+    # Excluded by default, --answer or not: an index built with
+    # --include-secrets must not hand `.env` to every later plain `rag`.
+    # --include-secrets at *query* time is the only opt-in.
+    exclude_secrets = not getattr(args, "include_secrets", False)
 
     pack = idx.pack_context(
         args.query,
@@ -1384,7 +1391,14 @@ def main(argv=None):
         "--include-secrets",
         action="store_true",
         default=False,
-        help="include secret files in query results",
+        help="include secret-looking files (.env, keys, credentials) in results "
+        "(default: excluded, even if the index was built with --include-secrets)",
+    )
+    q.add_argument(
+        "--exclude-secrets",
+        action="store_true",
+        default=False,
+        help="deprecated no-op: secret-looking files are excluded by default",
     )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
@@ -1436,7 +1450,9 @@ def main(argv=None):
         "--include-secrets",
         action="store_true",
         default=False,
-        help="include sensitive secret/credential files (default: off)",
+        help="include secret-looking files (.env, keys, credentials) in the pack "
+        "(default: excluded, even if the index was built with --include-secrets); "
+        "with a source-directory target, also index them",
     )
     r.add_argument(
         "--secret-policy",
@@ -1448,7 +1464,7 @@ def main(argv=None):
         "--exclude-secrets",
         action="store_true",
         default=False,
-        help="exclude secret files from pack even when --answer is not set",
+        help="deprecated no-op: secret-looking files are excluded by default",
     )
     r.add_argument(
         "--secret-keyword",
@@ -1574,7 +1590,8 @@ def main(argv=None):
         "-r",
         "--repo",
         default=None,
-        help="source tree the index describes (default: the index directory's parent)",
+        help="source tree the index describes (default: the root the build recorded, "
+        "else the index directory's parent)",
     )
     ist.add_argument("--json", action="store_true", help="output the report as JSON")
     ist.add_argument(

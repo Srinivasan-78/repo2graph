@@ -908,6 +908,12 @@ def write_manifest(
         "source_revision": source_revision,
         "checksums": checksums or {},
         "repo": g.name,
+        # The absolute source tree this index was built from. `index-status`
+        # and `doctor <index>` compare against it, so an `-o` outside the repo
+        # is not mistaken for "the index's parent is the source tree" (which
+        # read every fresh build as stale). Readers ignore it when it no longer
+        # exists -- a moved or shipped index -- and fall back to that parent.
+        "source_root": str(Path(g.root).resolve()) if getattr(g, "root", None) else None,
         "written": written,
         "secret_filter_policy": secret_filter_policy,
         "sections": {

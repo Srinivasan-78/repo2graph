@@ -478,7 +478,12 @@ def _repo_root_for(path: Path, idx_dir: Path | None) -> Path:
     if idx_dir is None:
         return path
     if idx_dir == path:
-        return path.parent
+        # Pointed at the index itself: prefer the source root the build
+        # recorded -- an index built with `-o` outside the repo has no useful
+        # parent -- and fall back to the conventional `<repo>/.r2g` layout.
+        from .status import stored_source_root
+
+        return stored_source_root(_agent_dir(idx_dir)) or path.parent
     return path
 
 

@@ -151,6 +151,9 @@ class Index:
     # fused query has run on this Index yet. A class-level default so every
     # Index has the attribute without __init__ having to care.
     fusion_coverage: tuple[int, int] | None = None
+    # The source tree this index describes, when the caller knows it (the MCP
+    # server sets it from its --repo). None means "not known here".
+    repo_root: Path | None = None
 
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
@@ -547,6 +550,9 @@ class Index:
         min_confidence: float | None = None,
         vectors: Mapping[Any, Vector] | None = None,
         embedder: "Embedder | None" = None,
+        exclude_secrets: bool = False,
+        extra_secret_keywords: list[str] | None = None,
+        extra_secret_dirs: list[str] | None = None,
     ) -> list[Record]:
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
@@ -557,8 +563,19 @@ class Index:
         this method's historical behaviour. With `vectors` and `embedder` both
         None -- the default -- seeds come from `score()` exactly as they always
         have; supply either and they come from the fused ranking instead.
+        `exclude_secrets` drops secret-looking paths (same rule as
+        pack_context); False, the default, is the historical behaviour.
         """
         conf = 0.0 if min_confidence is None else min_confidence
+
+        def _secret(c: Record, nid: str) -> bool:
+            if not exclude_secrets:
+                return False
+            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            return _is_secret_path(
+                c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            )
+
         ranked = (
             self.score(query)
             if vectors is None and embedder is None
@@ -572,7 +589,7 @@ class Index:
         for s, i in scored:
             c = self.chunks[i]
             nid = c["node_id"]
-            if nid in seen_nodes_set:
+            if nid in seen_nodes_set or _secret(c, nid):
                 continue
             chunk_len = len(c.get("text") or "")
             # ISS-37: test budget before appending so we do not overshoot by a whole chunk
@@ -595,6 +612,8 @@ class Index:
             if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
+                if _secret(c, nid):
+                    break
                 chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break

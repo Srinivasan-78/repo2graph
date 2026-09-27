@@ -328,6 +328,42 @@ class BuildConfig:
     extra_secret_keywords: list[str] = field(default_factory=list)
     extra_secret_dirs: list[str] = field(default_factory=list)
     parse_policy: str = "best-effort"
+    # The directory this build writes its artifacts to. When it lies inside
+    # the indexed root, discovery must never index it: `git ls-files -co`
+    # lists untracked files and os.walk sees everything, so without this a
+    # second `build . -o .r2g` cites its own chunks.jsonl / manifest.json.
+    output_dir: str | None = None
+
+
+# `<out>/agent/manifest.json` whose "format" starts with this marks a repo2graph index.
+INDEX_MARKER_FORMAT = "repo2graph/"
+
+
+def _is_index_dir(d: Path) -> bool:
+    """True when `d` is a repo2graph output directory (any build, any -o)."""
+    manifest = d / "agent" / "manifest.json"
+    try:
+        if not manifest.is_file() or manifest.stat().st_size > 5_000_000:
+            return False
+        import json
+
+        with open(manifest, encoding="utf8", errors="replace") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and str(data.get("format", "")).startswith(INDEX_MARKER_FORMAT)
+
+
+def _output_rel_prefix(root: Path, config: "BuildConfig") -> tuple[str, ...] | None:
+    """The configured output dir's path parts relative to `root`, if inside it."""
+    if not config.output_dir:
+        return None
+    try:
+        out = Path(config.output_dir).resolve()
+        rel = out.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return rel.parts or None
 
 
 def _git_files(root: Path):
@@ -496,10 +532,29 @@ def discover(
     # the same cross-machine divergence one level down.
     files = sorted(files, key=lambda p: p.as_posix())
 
+    out_parts = _output_rel_prefix(root, config)
+    index_dir_cache: dict[tuple[str, ...], bool] = {}
+
+    def _inside_index(parts: tuple[str, ...]) -> bool:
+        # Never index a repo2graph output directory: the one this build writes
+        # to (explicit), or any directory an earlier build left behind (marker).
+        if out_parts is not None and parts[: len(out_parts)] == out_parts:
+            return True
+        for i in range(1, len(parts)):
+            prefix = parts[:i]
+            hit = index_dir_cache.get(prefix)
+            if hit is None:
+                hit = index_dir_cache[prefix] = _is_index_dir(root.joinpath(*prefix))
+            if hit:
+                return True
+        return False
+
     for abspath in files:
         try:
             rel = abspath.relative_to(root)
         except ValueError:
+            continue
+        if _inside_index(rel.parts):
             continue
         # A skip_dirs hit is either a hidden/dot directory (.git, .idea, ...)
         # or a vendor/build directory (node_modules, dist, target, ...); tell
