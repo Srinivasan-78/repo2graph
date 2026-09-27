@@ -1767,3 +1767,41 @@ def test_http_auto_build_disabled_by_default(mini_repo, monkeypatch):
     # Explicit --allow-auto-build: repo is passed
     assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--allow-auto-build"]) == 0
     assert seen_repos[-1] == mini_repo
+
+
+# ==========================================================================
+# Non-finite numbers: JSON `1e999` is float("inf"), and int(inf) overflows
+# ==========================================================================
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_int_coerces_non_finite_floats_to_the_fallback(bad):
+    mcp = mcp_module()
+    assert mcp._int(bad, 7) == 7
+    assert mcp._clamp(bad, 7, 1, 10) == 7
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"k": 1e999},
+        {"budget_tokens": 1e999},
+        {"hops": -1e999},
+        {"k": float("nan"), "budget_tokens": float("nan")},
+    ],
+)
+def test_a_non_finite_numeric_argument_is_bad_input_not_a_tool_error(mini_index, arguments):
+    """`json.loads('{"k": 1e999}')` yields inf; the handler used to raise
+    OverflowError out of `_int` and the call became a tool error."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    parsed = json.loads(json.dumps({"query": MINI_QUERY, **arguments}))
+    out = mcp.dispatch(idx, "repo_search", parsed)
+    assert out == mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY})
+
+
+def test_a_non_finite_limit_or_depth_is_also_bad_input(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    mcp.dispatch(idx, "repo_neighbours", {"node_id": SYM_ROUTE, "limit": 1e999, "hops": 1e999})
+    assert mcp._int(json.loads("1e999"), 2) == 2

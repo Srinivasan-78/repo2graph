@@ -726,10 +726,17 @@ def _label(index: Index, node_id: str) -> str:
 
 
 def _int(value, fallback: int) -> int:
-    """An MCP client's arguments are JSON a model wrote: coerce, never raise."""
+    """An MCP client's arguments are JSON a model wrote: coerce, never raise.
+
+    `OverflowError` too: Python's `json` parses `1e999` as `float("inf")` (and
+    `NaN`/`Infinity` literally), and `int(inf)` raises OverflowError rather than
+    ValueError. NaN already lands in ValueError. Both are malformed input and
+    take the fallback, like a string or a null -- a caller asking for an
+    infinite budget gets the default, not the ceiling.
+    """
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
 
 
