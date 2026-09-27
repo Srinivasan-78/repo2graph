@@ -187,6 +187,16 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   | 6 | `ambiguous_global_name` | 5 | more than one candidate; confidence is split `1/n` across up to `--max-call-candidates` of them (default 5) |
   | 7 | `unresolved_external` | *(not set)* | no in-repo candidate at all; recorded on a `CALLS_EXTERNAL` edge, not `CALLS` |
 
+  **Untyped receivers.** `os.environ.get(k)` reduces to the name `get`, and the
+  tiers above would bind it to any `get` method nearby. When every call of a
+  builtin-collection method name (`get`, `pop`, `append`, `items`, `join`, `then`,
+  … — `UNTYPED_RECEIVER_BUILTIN_METHODS` in `graph.py`) is made on a receiver other
+  than `self`/`this`/`super`, the in-repo candidate is kept but the edge is marked
+  `untyped_receiver: true`, `ambiguous: true`, and capped at confidence `0.2`
+  (split `1/n`). `self.get()`, a bare `get()`, and domain names like
+  `svc.create_order()` are unaffected. The repo map's "Most called symbols" counts
+  only `CALLS` edges at confidence `0.5` or above.
+
   Every `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`,
   `ambiguous` (true once tier 6 splits confidence across candidates) and
   `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).

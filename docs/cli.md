@@ -285,7 +285,7 @@ repo2graph stats -o .r2g --format text   # human-readable quality summary
 `stats` prints `agent/stats.json` verbatim by default — that has always been the
 default, and `--json` is just an explicit way to ask for it. Pass `--format text`
 for a formatted summary of the same counts, covering:
-- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
+- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, `calls_untyped_receiver` (the subset of ambiguous calls that are builtin method names on an untyped receiver), and `calls_external`.
 - **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
 - **Import resolution**: `imports_resolved` vs `imports_unresolved`.
 - **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.

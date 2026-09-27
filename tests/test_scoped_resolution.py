@@ -1041,3 +1041,112 @@ def test_repo_context_cargo_toml(tmp_path: Path):
     cargo.write_text('[package]\nname = "my-awesome-crate"\nversion = "0.1.0"\n', encoding="utf8")
     ctx = graph_mod.repo_context(tmp_path)
     assert ctx.get("rust_crate") == "my_awesome_crate"
+
+
+# ==============================================================================
+# Untyped receivers: `d.get()` is not a call to the repository's own `get`
+# ==============================================================================
+
+
+@pytest.mark.parametrize(
+    ("lang", "src", "caller", "expected"),
+    [
+        ("python", b"def f(d):\n    return d.get(1)\n", "f", "other"),
+        ("python", b"def f():\n    return os.environ.get('X')\n", "f", "other"),
+        ("python", b"class C:\n    def f(self):\n        return self.get()\n", "C.f", "self"),
+        ("python", b"class C:\n    def f(self):\n        return self.m.get()\n", "C.f", "other"),
+        ("python", b"class C:\n    def f(self):\n        return super().get()\n", "C.f", "self"),
+        ("python", b"def f():\n    return get()\n", "f", "none"),
+        ("javascript", b"function f(m) { return m.get(1); }\n", "f", "other"),
+        ("javascript", b"class C { f() { return this.get(); } }\n", "C.f", "self"),
+        ("java", b"class C { void f() { m.get(1); } }\n", "C.f", "other"),
+        ("java", b"class C { void f() { this.get(); } }\n", "C.f", "self"),
+    ],
+)
+def test_call_details_record_the_receiver(lang, src, caller, expected):
+    pf = parse_source(src, lang)
+    sym = next(s for s in pf.symbols if s.qualname == caller)
+    receivers = {d["name"]: d["receiver"] for d in sym.call_details}
+    assert receivers["get"] == expected
+
+
+def _calls_to(g, dst_suffix):
+    return [e for e in g.edges if e["type"] == "CALLS" and e["dst"].endswith(dst_suffix)]
+
+
+def test_builtin_method_on_untyped_receiver_is_not_bound_confidently(tmp_path: Path):
+    """Flask regression: `os.environ.get(...)` in a sibling module was bound to
+    `_AppCtxGlobals.get` at confidence 1.0, ranking it the 2nd most-called symbol."""
+    (tmp_path / "ctx.py").write_text(
+        "class Globals:\n    def get(self, name):\n        return self.__dict__.get(name)\n",
+        encoding="utf8",
+    )
+    (tmp_path / "helpers.py").write_text(
+        "import os\n\ndef flag():\n    return os.environ.get('DEBUG')\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    edges = _calls_to(g, "Globals.get")
+    assert edges, "the in-repo candidate is kept, not dropped"
+    for e in edges:
+        assert e["confidence"] <= graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+        assert e["ambiguous"] is True
+        assert e["untyped_receiver"] is True
+    assert g.stats["calls_untyped_receiver"] == len(edges)
+
+
+def test_self_and_bare_calls_keep_full_confidence(tmp_path: Path):
+    (tmp_path / "store.py").write_text(
+        "class Store:\n"
+        "    def get(self, k):\n"
+        "        return k\n"
+        "    def load(self, k):\n"
+        "        return self.get(k)\n"
+        "\n"
+        "def get(k):\n"
+        "    return k\n"
+        "\n"
+        "def run():\n"
+        "    return get(1)\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    by_src = {e["src"]: e for e in g.edges if e["type"] == "CALLS"}
+    assert by_src["sym:store.py::Store.load"]["confidence"] == 1.0
+    assert by_src["sym:store.py::Store.load"]["dst"] == "sym:store.py::Store.get"
+    # Two `get`s in one file split 1/2 under the same-file tier, as before;
+    # a bare call is never priced as an untyped-receiver guess.
+    assert by_src["sym:store.py::run"]["confidence"] == 0.5
+    assert "untyped_receiver" not in by_src["sym:store.py::run"]
+
+
+def test_domain_method_on_untyped_receiver_is_unaffected(tmp_path: Path):
+    """Only builtin-collection names are demoted: `svc.create_order()` still
+    resolves at full confidence, because no builtin type has that method."""
+    (tmp_path / "svc.py").write_text(
+        "class OrderService:\n    def create_order(self):\n        return 1\n",
+        encoding="utf8",
+    )
+    (tmp_path / "api.py").write_text(
+        "from svc import OrderService\n\ndef handler(svc):\n    return svc.create_order()\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    (edge,) = _calls_to(g, "OrderService.create_order")
+    assert edge["confidence"] == 1.0
+    assert "untyped_receiver" not in edge
+
+
+def test_repo_map_ignores_low_confidence_callers(tmp_path: Path):
+    (tmp_path / "ctx.py").write_text(
+        "class Globals:\n    def get(self, name):\n        return name\n",
+        encoding="utf8",
+    )
+    (tmp_path / "use.py").write_text(
+        "".join(f"def f{i}(d):\n    return d.get({i})\n\n" for i in range(5)),
+        encoding="utf8",
+    )
+    out = tmp_path / "out"
+    assert main(["build", str(tmp_path), "-o", str(out)]) == 0
+    overview = (out / "agent" / "overview.md").read_text(encoding="utf8")
+    assert "Globals.get" not in overview
