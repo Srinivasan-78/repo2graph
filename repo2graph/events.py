@@ -140,7 +140,10 @@ def emit(
             for k, v in fields.items():
                 record[k] = sanitize_value(str(k), v)
         except Exception:
-            record.update(fields)
+            # Fail closed: if the sanitiser itself breaks, the raw values are
+            # exactly what must not reach stderr. Keep the keys so the event
+            # stays diagnosable, drop every value (code-scanning #3/#4).
+            record.update({str(k): "[unsanitised value dropped]" for k in fields})
     try:
         line = json.dumps(record, ensure_ascii=False, default=str)
     except (TypeError, ValueError):

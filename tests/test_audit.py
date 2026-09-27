@@ -681,3 +681,20 @@ def test_fsync_is_available_for_deployments_that_need_it(tmp_path, fsync_calls):
     assert len(fsync_calls) == 3
     assert len(read_lines(path)) == 3
     log.close()
+
+
+def test_emit_fails_closed_when_the_sanitiser_raises(monkeypatch):
+    """Code-scanning #3/#4: if sanitize_value itself raises, emit() used to
+    fall back to writing the raw field values to stderr. It must drop them."""
+    import io
+
+    from repo2graph import events, secrets
+
+    def boom(key, value):
+        raise RuntimeError("sanitiser broke")
+
+    monkeypatch.setattr(secrets, "sanitize_value", boom)
+    out = io.StringIO()
+    record = events.emit("probe", stream=out, token="ghp_" + "x" * 36)
+    assert "ghp_" not in out.getvalue()
+    assert record["token"] == "[unsanitised value dropped]"
