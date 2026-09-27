@@ -201,7 +201,7 @@ the whole package is annotated.
 
 This is issue #312's smallest tractable piece. The rest of #312 — "define the public API surface
 and add typed return models" — is an API-design decision across six entry points and is **not** a
-first issue; see [docs/issue-triage-2026-09-25.md §2.5](issue-triage-2026-09-25.md#25-good-first-issue--6-proposed-1-today).
+first issue.
 
 ---
 

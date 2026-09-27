@@ -3,7 +3,7 @@
 Keyword search and graph traversal answer different questions. Neither replaces the other.
 
 The at-a-glance version is the
-[Why repo2graph instead of grep or vector search?](../README.md#vs-grep) table in the README. This
+[Why repo2graph instead of grep or vector search?](../README.md#is-it-better-than-grep) table in the README. This
 page is the argument behind it.
 
 ```
@@ -38,11 +38,13 @@ manifest" does not just return the function named `export`, it returns the funct
 and the functions it calls, in the same answer, each one labeled with *why* it is there (the actual
 edge type, e.g. `CALLS out of cmd_build`).
 
-That is the concrete difference measured across this project's own real-repository examples
+That is the intended difference, illustrated by this project's real-repository examples
 (see [examples/](../examples/)): a query like "how does a request travel through Django middleware"
 (see [examples/django/flows/](../examples/django/)) returns the middleware dispatch function *and*
 its neighbours in the call graph — the pieces a keyword match on "middleware" alone would not tell
-you were connected.
+you were connected. Whether it improves *recall* is a separate, measured question, and right now
+it does not: on the [retrieval benchmark](retrieval-benchmark.md) graph expansion finds nothing
+BM25 alone misses, and grep-then-read finds more at 4k+ tokens.
 
 ## What about embedding search?
 
@@ -54,8 +56,9 @@ one `CALLS` edge away, unretrieved. Similarity is not structure.
 
 repo2graph spends the budget differently: BM25 (or, optionally, BM25 fused with dense vectors via
 `repo2graph embed`) picks the *seeds*, and everything after that is a graph hop rather than more
-text that merely resembles the query. The dense half is opt-in precisely because the graph half is
-what makes the difference — see [comparison.md](comparison.md#repo2graph-vs-plain-grep-or-an-embeddings-index).
+text that merely resembles the query. The dense half is opt-in because the graph half is the bet
+this project is making. The bet does not yet pay off on recall
+([retrieval-benchmark.md](retrieval-benchmark.md)); see also [comparison.md](comparison.md#repo2graph-vs-plain-grep-or-an-embeddings-index).
 
 ## Where the graph is worse than search
 
@@ -64,10 +67,11 @@ what makes the difference — see [comparison.md](comparison.md#repo2graph-vs-pl
 - **Anything the parser cannot see.** Dynamic dispatch, reflection, and generated code all limit
   what edges exist to walk — see [docs/limitations.md](limitations.md). Search does not have this
   blind spot, because it never claimed to understand structure in the first place.
-- **A tiny codebase.** Building an index for a 10-file script costs more than it returns — see
-  "When to use repo2graph" in [the documentation index](README.md#when-to-use-repo2graph).
+- **A tiny codebase.** Building an index for a 10-file script costs more than it returns.
+- **Finding the code that answers a question, today.** At equal token budgets grep-then-read
+  finds more of the answer ([retrieval-benchmark.md](retrieval-benchmark.md)).
 
-## The honest summary
+## Summary
 
 Search finds occurrences of a string. The graph finds relationships between named things. Most real
 questions about a codebase ("what calls this," "what would changing this break," "how does a

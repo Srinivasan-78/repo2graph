@@ -55,9 +55,6 @@ source), *unfamiliar* (getting oriented without reading everything).
 | **Reviewing a PR** and need the blast radius of a changed symbol | [reference.md](reference.md) for what each edge kind means · [limitations.md](limitations.md) for what an absent edge does *not* prove | `repo2graph build . -o .r2g --git-history 500` then `repo2graph explain node "sym:<path>::<name>" -o .r2g` |
 | **Maintaining an open-source project** and answering "where do I start" for the tenth time | [github-action.md](github-action.md) — inputs, outputs, publishing the map to a branch | add `Srinivasan-78/repo2graph@v2` to a workflow with `commit-branch: graph` |
 
-The positioning behind those four framings — the message hierarchy, the proof point for each
-claim, and the copy for every surface — is in [POSITIONING.md](positioning.md).
-
 Also a good fit:
 
 - **A large monorepo.** [examples/kubernetes](../examples/kubernetes/) is the concrete case:
@@ -107,7 +104,7 @@ the reproduction command documented:
 ## Security and privacy
 
 - **[.github/SECURITY.md](../.github/SECURITY.md)** — the policy and how to report a vulnerability
-  privately. (The root `SECURITY.md` is a redirect stub kept only so old links don't 404.)
+  privately.
 - **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — assets, trust boundaries, what an attacker could
   try against each surface, what stops it, and what is explicitly out of scope. Every open security
   gap is named with its issue number.
@@ -130,7 +127,6 @@ the reproduction command documented:
 - **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
 - **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP
   server inside an organization.
-- **[docs/PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)** — the audit findings, classified.
 
 ## Development
 
@@ -153,7 +149,7 @@ the reproduction command documented:
   release ships to PyPI, the MCP Registry and the Marketplace.
 - **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
   fallback order, and the release story that pairs it with the PyPI release.
-- **[docs/rfc-incremental-indexing.md](rfc-incremental-indexing.md)** — where an incremental
+- **[docs/rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md)** — where an incremental
   rebuild actually spends its time, measured, and the proposal that follows from it. The
   conclusion is not the intuitive one.
 - **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
@@ -164,9 +160,5 @@ the reproduction command documented:
   Discussions category is for.
 - **[docs/TRIAGE.md](TRIAGE.md)** — how an issue gets classified, what makes one workable, what
   qualifies as `good first issue`, and the label taxonomy.
-- **[docs/issue-triage-2026-09-25.md](issue-triage-2026-09-25.md)** — the most recent full pass over
-  every open issue: classification, duplicates, what is already shipped, and drafted replies.
-- **[POSITIONING.md](positioning.md)** — what repo2graph claims, what it deliberately does not,
-  and the copy for every outward-facing surface.
 - **[CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)** — Contributor Covenant 2.1, applying to issues,
   pull requests and discussion threads alike.

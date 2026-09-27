@@ -39,7 +39,7 @@ repos:
         # surfaces too: a commit that edits only README.md can stale the `@vN`
         # tag, and the old regex named three files and would not have fired.
         files: >-
-          ^(pyproject\.toml|server\.json|uv\.lock|repo2graph/__init__\.py|README\.md|\.github/SECURITY\.md|docs/(github-action|ACTION_SECURITY|SECURITY-AUDIT|PRODUCTION_READINESS|ENTERPRISE_DEPLOYMENT)\.md|scripts/(version_surfaces|check_version|bump_version)\.py)$
+          ^(pyproject\.toml|server\.json|uv\.lock|repo2graph/__init__\.py|README\.md|\.github/SECURITY\.md|docs/(github-action|ACTION_SECURITY|SECURITY-AUDIT|ENTERPRISE_DEPLOYMENT)\.md|scripts/(version_surfaces|check_version|bump_version)\.py)$
 
       - id: mypy-strict
         # Strict, and green, on the modules that are annotated. The legacy

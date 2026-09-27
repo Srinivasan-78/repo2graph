@@ -257,7 +257,7 @@ it is keyed on the same sha256.
 
 ## See also
 
-- [INDEXING.md](INDEXING.md) — the pipeline, the determinism guarantees, and
+- [INDEXING.md](../INDEXING.md) — the pipeline, the determinism guarantees, and
   what `--incremental` already promises
-- [PERFORMANCE.md](PERFORMANCE.md) — build-time benchmarks across repositories
-- [cli.md](cli.md#--incremental) — the flag
+- [PERFORMANCE.md](../PERFORMANCE.md) — build-time benchmarks across repositories
+- [cli.md](../cli.md#--incremental) — the flag

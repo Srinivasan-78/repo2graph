@@ -37,7 +37,7 @@ Two properties of the middle of that chain matter more than they look:
 - **Resolution is global, not per-file.** The name index, CALLS confidences,
   INHERITS and reach are computed over the *whole* symbol set every build,
   including an incremental one. This is why `--incremental` is exact rather
-  than approximate — see [the RFC](rfc-incremental-indexing.md).
+  than approximate — see [the RFC](rfcs/rfc-incremental-indexing.md).
 
 `dump_all` stages every artifact in a sibling directory and renames it into
 place on success, so an interrupted build leaves the previous index intact
@@ -322,7 +322,7 @@ this process's to trust.
 
 Measured on this repository. The figures and the method live in one place
 so they cannot drift apart:
-**[rfc-incremental-indexing.md](rfc-incremental-indexing.md)**.
+**[rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md)**.
 
 What dominates, in order:
 
@@ -354,7 +354,7 @@ entirely at the default `0`.
 
 ## See also
 
-- [rfc-incremental-indexing.md](rfc-incremental-indexing.md) — benchmarks and
+- [rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md) — benchmarks and
   the proposal for what incremental indexing should become
 - [LANGUAGE_SUPPORT.md](language-support.md) — language scorecard generator, parse quality, symbol and edge extraction rates across 17 grammars
 - [retrieval-benchmark.md](retrieval-benchmark.md) — retrieval quality on four real repositories, repo2graph vs grep at equal token budgets

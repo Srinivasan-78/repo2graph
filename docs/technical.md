@@ -120,7 +120,7 @@ The split exists because people and programs want different things from the same
 is a machine-readable instruction sheet describing every other file, every node/edge kind, and the
 id scheme, so a program needs nothing else to make sense of the directory. `agent/chunks.jsonl` is
 the retrieval unit — each entry already carries its graph neighbourhood in its header, which is
-what makes graph-expanded answers better than a plain top-k text search. If you push chunks into an
+what lets a search hit carry its graph neighbourhood with it. If you push chunks into an
 external vector database, keep each chunk's `node_id`: that's the handle that lets a search hit jump
 back onto the graph.
 

@@ -236,8 +236,8 @@ All of these, or CI fails or the docs lie:
 - [ ] `docs/reference.md` — the language table.
 - [ ] `CHANGELOG.md` — under `## [Unreleased]` → `### Added`.
 
-The counts drifted across all six READMEs once already (they said 16 grammars / 28 extensions for
-some time after Lua made it 17/29), which is why the assertion in §5 now exists.
+The counts drifted once already (the docs said 16 grammars / 28 extensions for some time after
+Lua made it 17/29), which is why the assertion in §5 now exists.
 
 ---
 
@@ -256,5 +256,4 @@ than discovered by a user:
   bug in your entry.
 
 If either applies, add a note to `docs/limitations.md` in the same PR. Overstating coverage is
-worse than not adding the language — see [POSITIONING.md](positioning.md) §1, "What we are not
-claiming".
+worse than not adding the language.

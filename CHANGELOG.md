@@ -1028,7 +1028,7 @@ makes keeping it current a release-blocking step rather than a good intention.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
   [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
-  [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md),
+  `docs/PRODUCTION_READINESS.md` (since removed),
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
   [docs/PRIVACY.md](docs/PRIVACY.md) and
   [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).

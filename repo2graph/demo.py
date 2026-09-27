@@ -414,12 +414,12 @@ STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
     StarterQuestion(
         template="Where is authentication enforced?",
         demo="Where is authentication enforced?",
-        shows="the guard itself, plus every route that calls it",
+        shows="the guard itself, plus the routes that call it",
     ),
     StarterQuestion(
         template="What calls <function>?",
         demo="What calls place_order?",
-        shows="CALLS edges in, so callers come back even when the name is shadowed",
+        shows="CALLS edges into it, each with a confidence score",
     ),
     StarterQuestion(
         template="What tests cover <module>?",
@@ -434,7 +434,7 @@ STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
     StarterQuestion(
         template="Trace <a request> from route to persistence.",
         demo="Trace an order request from route to persistence.",
-        shows="a whole path across modules, each block cited to file and line",
+        shows="the handler and its callees one hop at a time, each block cited to file and line",
     ),
 )
 

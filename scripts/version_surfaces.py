@@ -135,7 +135,6 @@ SURFACES: tuple[Surface, ...] = (
             "README.md",
             "docs/github-action.md",
             ".github/SECURITY.md",
-            "docs/PRODUCTION_READINESS.md",
             "docs/SECURITY-AUDIT.md",
         ),
         why="prose about the floating tag, which is wrong about a tag that no longer moves",

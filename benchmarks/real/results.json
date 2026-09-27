@@ -4,81 +4,81 @@
   {
    "budget": 2000,
    "method": "repo2graph",
-   "evidence_recall": 0.396,
-   "tasks_fully_answered": 13,
-   "tasks_any_evidence": 17,
+   "evidence_recall": 0.348,
+   "tasks_fully_answered": 12,
+   "tasks_any_evidence": 15,
    "tasks": 35,
    "mean_tokens_used": 1976
   },
   {
    "budget": 2000,
    "method": "repo2graph-bm25",
-   "evidence_recall": 0.396,
-   "tasks_fully_answered": 13,
-   "tasks_any_evidence": 17,
+   "evidence_recall": 0.348,
+   "tasks_fully_answered": 12,
+   "tasks_any_evidence": 15,
    "tasks": 35,
    "mean_tokens_used": 1828
   },
   {
    "budget": 2000,
    "method": "ripgrep",
-   "evidence_recall": 0.375,
+   "evidence_recall": 0.348,
    "tasks_fully_answered": 9,
-   "tasks_any_evidence": 14,
+   "tasks_any_evidence": 13,
    "tasks": 35,
    "mean_tokens_used": 1962
   },
   {
    "budget": 4000,
    "method": "repo2graph",
-   "evidence_recall": 0.458,
-   "tasks_fully_answered": 15,
-   "tasks_any_evidence": 20,
+   "evidence_recall": 0.391,
+   "tasks_fully_answered": 14,
+   "tasks_any_evidence": 17,
    "tasks": 35,
    "mean_tokens_used": 3978
   },
   {
    "budget": 4000,
    "method": "repo2graph-bm25",
-   "evidence_recall": 0.458,
-   "tasks_fully_answered": 15,
-   "tasks_any_evidence": 20,
+   "evidence_recall": 0.391,
+   "tasks_fully_answered": 14,
+   "tasks_any_evidence": 17,
    "tasks": 35,
    "mean_tokens_used": 3700
   },
   {
    "budget": 4000,
    "method": "ripgrep",
-   "evidence_recall": 0.625,
+   "evidence_recall": 0.609,
    "tasks_fully_answered": 18,
-   "tasks_any_evidence": 24,
+   "tasks_any_evidence": 23,
    "tasks": 35,
    "mean_tokens_used": 3873
   },
   {
    "budget": 8000,
    "method": "repo2graph",
-   "evidence_recall": 0.604,
-   "tasks_fully_answered": 18,
-   "tasks_any_evidence": 26,
+   "evidence_recall": 0.543,
+   "tasks_fully_answered": 17,
+   "tasks_any_evidence": 23,
    "tasks": 35,
    "mean_tokens_used": 7904
   },
   {
    "budget": 8000,
    "method": "repo2graph-bm25",
-   "evidence_recall": 0.604,
-   "tasks_fully_answered": 18,
-   "tasks_any_evidence": 26,
+   "evidence_recall": 0.543,
+   "tasks_fully_answered": 17,
+   "tasks_any_evidence": 23,
    "tasks": 35,
    "mean_tokens_used": 5793
   },
   {
    "budget": 8000,
    "method": "ripgrep",
-   "evidence_recall": 0.729,
+   "evidence_recall": 0.717,
    "tasks_fully_answered": 22,
-   "tasks_any_evidence": 27,
+   "tasks_any_evidence": 26,
    "tasks": 35,
    "mean_tokens_used": 7652
   }
@@ -863,8 +863,8 @@
    "budget": 2000,
    "method": "repo2graph",
    "tokens_used": 1952,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -874,8 +874,8 @@
    "budget": 2000,
    "method": "repo2graph-bm25",
    "tokens_used": 1952,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -885,8 +885,8 @@
    "budget": 2000,
    "method": "ripgrep",
    "tokens_used": 1950,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -896,8 +896,8 @@
    "budget": 4000,
    "method": "repo2graph",
    "tokens_used": 3979,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -907,8 +907,8 @@
    "budget": 4000,
    "method": "repo2graph-bm25",
    "tokens_used": 3469,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -918,8 +918,8 @@
    "budget": 4000,
    "method": "ripgrep",
    "tokens_used": 3953,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -929,8 +929,8 @@
    "budget": 8000,
    "method": "repo2graph",
    "tokens_used": 7890,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -940,8 +940,8 @@
    "budget": 8000,
    "method": "repo2graph-bm25",
    "tokens_used": 3469,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -951,8 +951,8 @@
    "budget": 8000,
    "method": "ripgrep",
    "tokens_used": 7936,
-   "found": 2,
-   "evidence": 2,
+   "found": 1,
+   "evidence": 1,
    "missed": []
   },
   {
@@ -1003,9 +1003,10 @@
    "budget": 4000,
    "method": "repo2graph",
    "tokens_used": 3976,
-   "found": 1,
+   "found": 0,
    "evidence": 2,
    "missed": [
+    "find_best_app",
     "locate_app"
    ]
   },
@@ -1016,9 +1017,10 @@
    "budget": 4000,
    "method": "repo2graph-bm25",
    "tokens_used": 3976,
-   "found": 1,
+   "found": 0,
    "evidence": 2,
    "missed": [
+    "find_best_app",
     "locate_app"
    ]
   },
@@ -1042,9 +1044,10 @@
    "budget": 8000,
    "method": "repo2graph",
    "tokens_used": 7924,
-   "found": 1,
+   "found": 0,
    "evidence": 2,
    "missed": [
+    "find_best_app",
     "locate_app"
    ]
   },
@@ -1055,9 +1058,10 @@
    "budget": 8000,
    "method": "repo2graph-bm25",
    "tokens_used": 7476,
-   "found": 1,
+   "found": 0,
    "evidence": 2,
    "missed": [
+    "find_best_app",
     "locate_app"
    ]
   },
@@ -1521,9 +1525,11 @@
    "budget": 2000,
    "method": "repo2graph",
    "tokens_used": 1989,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "HTTPDigestAuth.build_digest_header"
+   ]
   },
   {
    "task": "requests-05",
@@ -1532,9 +1538,11 @@
    "budget": 2000,
    "method": "repo2graph-bm25",
    "tokens_used": 1726,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "HTTPDigestAuth.build_digest_header"
+   ]
   },
   {
    "task": "requests-05",
@@ -1832,8 +1840,8 @@
    "budget": 2000,
    "method": "repo2graph",
    "tokens_used": 1980,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1845,8 +1853,8 @@
    "budget": 2000,
    "method": "repo2graph-bm25",
    "tokens_used": 1929,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1858,8 +1866,8 @@
    "budget": 2000,
    "method": "ripgrep",
    "tokens_used": 1830,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1871,8 +1879,8 @@
    "budget": 4000,
    "method": "repo2graph",
    "tokens_used": 3996,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1884,8 +1892,8 @@
    "budget": 4000,
    "method": "repo2graph-bm25",
    "tokens_used": 3066,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1897,8 +1905,8 @@
    "budget": 4000,
    "method": "ripgrep",
    "tokens_used": 1830,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1910,8 +1918,8 @@
    "budget": 8000,
    "method": "repo2graph",
    "tokens_used": 8000,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1923,8 +1931,8 @@
    "budget": 8000,
    "method": "repo2graph-bm25",
    "tokens_used": 3066,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -1936,8 +1944,8 @@
    "budget": 8000,
    "method": "ripgrep",
    "tokens_used": 1830,
-   "found": 1,
-   "evidence": 2,
+   "found": 0,
+   "evidence": 1,
    "missed": [
     "Session.request"
    ]
@@ -2869,9 +2877,11 @@
    "budget": 4000,
    "method": "repo2graph",
    "tokens_used": 3970,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "APIRouter.include_router"
+   ]
   },
   {
    "task": "fastapi-08",
@@ -2880,9 +2890,11 @@
    "budget": 4000,
    "method": "repo2graph-bm25",
    "tokens_used": 3802,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "APIRouter.include_router"
+   ]
   },
   {
    "task": "fastapi-08",
@@ -2902,9 +2914,11 @@
    "budget": 8000,
    "method": "repo2graph",
    "tokens_used": 7951,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "APIRouter.include_router"
+   ]
   },
   {
    "task": "fastapi-08",
@@ -2913,9 +2927,11 @@
    "budget": 8000,
    "method": "repo2graph-bm25",
    "tokens_used": 7028,
-   "found": 1,
+   "found": 0,
    "evidence": 1,
-   "missed": []
+   "missed": [
+    "APIRouter.include_router"
+   ]
   },
   {
    "task": "fastapi-08",

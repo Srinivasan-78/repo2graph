@@ -2,7 +2,7 @@
 
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
-pasting a pack into a chat window. This page is its full contract: the five tools,
+pasting a pack into a chat window. This page is its full contract: the six tools,
 their argument bounds, the server's own flags, and a config block per client.
 
 It is an *additional* surface, not a replacement: every tool is a thin call into

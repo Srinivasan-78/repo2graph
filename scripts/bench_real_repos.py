@@ -77,16 +77,34 @@ def checkout(repo: dict, cache: Path) -> Path:
     return dest / repo["root"]
 
 
-def covered_lines_r2g(pack: dict) -> dict[str, set[int]]:
-    """Lines whose text is actually in the pack, per path."""
+def covered_lines_r2g(pack: dict, root: Path) -> dict[str, set[int]]:
+    """Source lines whose text is actually in the pack, per path.
+
+    A chunk's `start_line`/`end_line` describe the whole symbol, not the text
+    returned: a split symbol's later parts, a file residual with its symbols cut
+    out, and a neighbour compressed to its signature all return less than that
+    range. So each returned line is aligned, in order, to the next source line
+    in the symbol's range with the same text. Synthetic header lines
+    (`# file:`, `# calls:`, ...) match nothing and earn nothing.
+    """
     out: dict[str, set[int]] = defaultdict(set)
+    sources: dict[str, list[str]] = {}
     for c in pack["chunks"]:
-        start = c.get("start_line") or 0
-        n = (c.get("text") or "").count("\n") + 1
-        end = c.get("end_line") or start
-        # A neighbour compressed to its signature carries fewer lines than its
-        # cite range claims; only the lines really present count.
-        out[c["path"]].update(range(start, min(end, start + n - 1) + 1))
+        path = c["path"]
+        src = sources.get(path)
+        if src is None:
+            raw = (root / path).read_text(encoding="utf8", errors="replace")
+            src = sources[path] = [ln.rstrip("\r") for ln in raw.split("\n")]
+        start = max(1, c.get("start_line") or 1)
+        end = min(len(src), c.get("end_line") or len(src))
+        cursor = start
+        for line in (c.get("text") or "").split("\n"):
+            line = line.rstrip("\r")
+            for n in range(cursor, end + 1):
+                if src[n - 1] == line:
+                    out[path].add(n)
+                    cursor = n + 1
+                    break
     return out
 
 
@@ -189,8 +207,8 @@ def main() -> int:
             )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
-                ("repo2graph", covered_lines_r2g(full), full["tokens_used"]),
-                ("repo2graph-bm25", covered_lines_r2g(bm25), bm25["tokens_used"]),
+                ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)

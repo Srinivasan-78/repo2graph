@@ -8,7 +8,7 @@ what running the pipeline against five real, large, public repositories
 only show up at scale.
 
 The short version — one row per limitation, no numbers — is the
-["What it does — and what it does not"](../README.md#does-and-doesnt) table in the README. This page
+["What it does — and what it does not"](../README.md#what-it-cant-do) table in the README. This page
 is the long version, with the measurements behind each row.
 
 ## Static analysis, generally
@@ -32,7 +32,7 @@ is the long version, with the measurements behind each row.
   or fans out across every same-named implementation at `1/n` confidence, and never on the class the
   container actually injected. The candidates are still enumerable — walk `INHERITS` *into* the
   interface node to list every type that implements it — but which one runs is a runtime fact, and
-  repo2graph never runs anything. See proposed framework edge extractors in **[LANGUAGE_SUPPORT.md](language-support.md#ecosystem-relationship-extraction-opportunities)**.
+  repo2graph never runs anything. See proposed framework edge extractors in **[LANGUAGE_SUPPORT.md](language-support.md#4-ecosystem-aware-relationship-extraction-opportunities)**.
 - **Reflection and dynamic imports are invisible.** `importlib.import_module(some_variable)`,
   Java reflection, JavaScript's dynamic `import()` with a computed specifier — none of these name a
   literal string tree-sitter can resolve, so no `IMPORTS`/`CALLS` edge is drawn for them.
