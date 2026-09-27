@@ -595,7 +595,7 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
     body = content[content.index("function sanitizeAiText(") :]
     body = body[: body.index("\n}")]
     assert "s.replace(/<!--/g, '&lt;!--')" in body, "HTML-comment escaping was removed"
-    assert ".replace(/-->/g, '--&gt;')" in body, "HTML-comment escaping was removed"
+    assert ".replace(/--(!?)>/g, '--$1&gt;')" in body, "HTML-comment escaping was removed"
     assert "s.replace(/@(?=[A-Za-z0-9])/g, '@' + ZWSP)" in body, "mention defanging was removed"
     assert "s.slice(0, maxChars)" in body, "the length cap was removed"
 
@@ -603,7 +603,7 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
 
     def sanitize(text, max_chars=4000):
         s = "" if text is None else str(text)
-        s = s.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+        s = re.sub(r"--(!?)>", r"--&gt;", s.replace("<!--", "&lt;!--"))
         s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
         if len(s) > max_chars:
             s = s[:max_chars] + "… _(truncated)_"
@@ -612,6 +612,8 @@ def test_ai_text_cannot_forge_a_marker_or_a_mention():
     forged = sanitize("nice <!-- prod-igy-bot-comment --> and cc @torvalds @github")
     assert "<!-- prod-igy-bot-comment -->" not in forged
     assert "<!-- prod-igy-ledger" not in sanitize('x <!-- prod-igy-ledger {"runs":0} -->')
+    # `--!>` also closes a comment in browsers (CodeQL alert #792).
+    assert "--!>" not in sanitize("a <!-- hidden --!> b")
 
     # No live mention survives: every @ that led a name now leads a ZWSP.
     assert not re.search(r"@(?!" + zwsp + r")[A-Za-z0-9]", forged)
@@ -655,7 +657,7 @@ def test_ai_text_strips_markdown_images_and_links():
 
     def sanitize(text, max_chars=4000):
         s = "" if text is None else str(text)
-        s = s.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+        s = re.sub(r"--(!?)>", r"--&gt;", s.replace("<!--", "&lt;!--"))
         s = re.sub(r"@(?=[A-Za-z0-9])", "@" + zwsp, s)
         s = re.sub(r"<img\b", "&lt;img", s, flags=re.I)
         s = s.replace("![", "!" + zwsp + "[")

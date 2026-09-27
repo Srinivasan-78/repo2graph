@@ -219,7 +219,9 @@ const ZWSP = String.fromCharCode(0x200b);
 
 function sanitizeAiText(text, maxChars = 4000) {
   let s = String(text === null || text === undefined ? '' : text);
-  s = s.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
+  // `--!>` closes a comment as well as `-->` (HTML spec, "incorrectly closed
+  // comment"), so both forms are escaped (CodeQL js/bad-tag-filter).
+  s = s.replace(/<!--/g, '&lt;!--').replace(/--(!?)>/g, '--$1&gt;');
   s = s.replace(/@(?=[A-Za-z0-9])/g, '@' + ZWSP);
   // HTML image embeds: sanitised comments render a restricted set of raw
   // HTML tags, <img> among them, and GitHub camo-proxies its src too.
