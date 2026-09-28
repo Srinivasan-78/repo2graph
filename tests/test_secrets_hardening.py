@@ -1163,3 +1163,52 @@ def test_policy_off_index_is_redacted_at_serve_time_for_agents(tmp_path):
     got = idx.retrieve("OPENAI_API_KEY load_settings", exclude_secrets=True)
     assert got and all(LIVE_KEY not in (c.get("text") or "") for c in got)
     assert LIVE_KEY not in mcp.tool_repo_search(idx, "OPENAI_API_KEY load_settings")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '"tokenUrl": "https://auth.example.com/oauth2/token"',
+        '"token_endpoint": "/oauth2/v1/tok3n"',
+        '"tokenizer": "t5-small"',
+        '"secretName": "db-creds-v2"',
+        '"passwordField": "input#password1"',
+        '"api_key_header": "X-API-Key-V2"',
+        '"token_type": "Bearer2x"',
+        '"password_policy": "min8-upper1"',
+        '"client_secret": "https://vault.local/v1/x"',  # a URL is an endpoint
+    ],
+)
+def test_json_credential_properties_are_not_redacted(text):
+    assert redact_content(text) == (text, 0)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"{{'password': '{JSON_PASSWORD}'}}",  # Python dict literal
+        f'db_password: "{JSON_PASSWORD}"',  # YAML
+        f"  - api_key: '{JSON_PASSWORD}'",  # YAML list item
+        f'"password": "it\'s{JSON_PASSWORD}"',  # the other quote inside the value
+    ],
+)
+def test_single_quoted_and_yaml_credential_pairs_are_redacted(text):
+    out, n = redact_content(text)
+    assert n == 1 and JSON_PASSWORD not in out
+    assert out.count("\n") == text.count("\n")
+
+
+@pytest.mark.parametrize(
+    ("path", "secret"),
+    [
+        ("locales/en/auth.json", False),
+        ("src/i18n/de/auth.json", False),
+        ("public/lang/fr/auth.json", False),
+        ("app/translations/auth.json", False),
+        ("auth.json", True),
+        ("config/auth.json", True),
+        ("locales/en/.env", True),
+    ],
+)
+def test_auth_json_under_a_translation_dir_is_not_secret(path, secret):
+    assert _is_secret_path(path) is secret

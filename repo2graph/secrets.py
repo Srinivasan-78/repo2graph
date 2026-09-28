@@ -331,10 +331,24 @@ ASSIGNMENT_RE = re.compile(
 # a space is prose (`"password": "Enter your password"` in every i18n bundle),
 # and one without a raw newline keeps the redaction trivially line-preserving. `_json_secret_value_ok` then decides
 # whether the value is non-trivial.
+#
+# The same rule covers a single-quoted key (a Python dict literal,
+# `'password': 'Sup3r...'`) and an unquoted key at the start of a line (YAML
+# `db_password: "..."`); the value must still be quoted.
 JSON_SECRET_RE = re.compile(
-    r'(?i)"[A-Za-z0-9_.-]{0,40}?'
+    r"(?im)(?:(?P<kq>[\"'])|^[ \t]*(?:-[ \t]+)?)"
+    r"[A-Za-z0-9_.-]{0,40}?"
     r"(?:pass(?:word|wd)|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)"
-    r'[A-Za-z0-9_.-]{0,40}"\s*:\s*"((?:[^"\\\s]|\\[^\r\n]){8,1024})"'
+    r"(?P<suffix>[A-Za-z0-9_.-]{0,40})(?(kq)(?P=kq))\s*:\s*(?P<vq>[\"'])"
+    r"(?P<value>(?:(?!(?P=vq))[^\\\s]|\\[^\r\n]){8,1024})(?P=vq)"
+)
+
+#: A secret word followed by one of these names a *property of* the credential
+#: -- where to send it, what to call it, how long it is -- never the credential:
+#: `tokenUrl`, `token_endpoint`, `tokenizer`, `secretName`, `passwordField`,
+#: `api_key_header`, `token_type`, `password_policy`.
+_NON_SECRET_SUFFIX_RE = re.compile(
+    r"(?i)^[_.-]?(?:url|uri|endpoint|name|field|header|izer|type|id|length|policy)"
 )
 
 #: Values that are placeholders rather than credentials: `${DB_PASSWORD}`,
@@ -364,9 +378,12 @@ def _json_secret_value_ok(value: str) -> bool:
 def _json_secret_spans(text: str) -> list[tuple[int, int]]:
     """Spans of the *values* of JSON credential pairs in `text`."""
     return [
-        (m.start(1), m.end(1))
+        (m.start("value"), m.end("value"))
         for m in JSON_SECRET_RE.finditer(text)
-        if _json_secret_value_ok(m.group(1))
+        if not _NON_SECRET_SUFFIX_RE.match(m.group("suffix"))
+        # a URL is an endpoint; one carrying credentials is DB_URL_RE's job
+        and "://" not in m.group("value")
+        and _json_secret_value_ok(m.group("value"))
     ]
 
 
@@ -387,6 +404,15 @@ def _fingerprint(value: str) -> str:
 def redact(value: str, why: str) -> str:
     """Replace a secret with a structured tag useful for correlation."""
     return f"[redacted:{why} len={len(value)} fp={_fingerprint(value)}]"
+
+
+#: Exact secret names that are also ordinary translation-bundle names: Composer's
+#: `auth.json` holds credentials, but `locales/en/auth.json` holds the login
+#: page's strings. Under a translation directory these are not secret paths.
+I18N_AMBIGUOUS_NAMES = frozenset({"auth.json"})
+I18N_DIR_NAMES = frozenset(
+    {"locale", "locales", "i18n", "l10n", "lang", "langs", "translations", "messages"}
+)
 
 
 def _is_secret_path(
@@ -433,7 +459,9 @@ def _is_secret_path(
     name = parts[-1]
     if not name:
         return False
-    if name in SECRET_EXACT_NAMES:
+    if name in SECRET_EXACT_NAMES and not (
+        name in I18N_AMBIGUOUS_NAMES and any(part in I18N_DIR_NAMES for part in parts[:-1])
+    ):
         return True
     if name.startswith(".env") or name.endswith(".env") or ".env." in name:
         return True
