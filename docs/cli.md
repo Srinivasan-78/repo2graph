@@ -625,6 +625,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--sarif` | off | Convenience shortcut for `--format sarif`. |
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
 | `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
+| `--no-auto-build` | off | Fail instead of building the index when it is missing. |
 | `--write <path>` | none | Write output to target file path. |
 
 Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).
