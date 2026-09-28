@@ -15,7 +15,7 @@ from .edgemeta import (
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
-    OVERVIEW_MIN_CALL_CONFIDENCE,
+    counts_as_call,
     evidence as make_evidence,
     normalize as normalize_edge,
     tree_sitter_method,
@@ -1897,10 +1897,11 @@ def mark_entrypoints(g: Graph):
             # sees it; it is just harmless there since `start` is already
             # in `seen` before the BFS looks at its own outgoing edges.
             #
-            # A guess (confidence below the repo map's threshold -- a 3+-way
-            # name split or an untyped-receiver builtin) does not make its
-            # target "called": `d.get()` must not hide the `views.get` handler.
-            if e["src"] != e["dst"] and e.get("confidence", 1.0) >= OVERVIEW_MIN_CALL_CONFIDENCE:
+            # A guess (edgemeta.counts_as_call -- an untyped-receiver builtin
+            # or a repo-wide name split) does not make its target "called":
+            # `d.get()` must not hide the `views.get` handler. An overload
+            # fan-out (3 overloads -> 0.333 each) does.
+            if e["src"] != e["dst"] and counts_as_call(e):
                 called.add(e["dst"])
             out[e["src"]].append(e["dst"])
     nested = {

@@ -19,7 +19,7 @@ from typing import IO, TYPE_CHECKING, Any
 # edgemeta is stdlib-only (typing), so importing it here does not pull the
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
-from .edgemeta import EDGE_SCHEMA_VERSION, OVERVIEW_MIN_CALL_CONFIDENCE
+from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
 from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
 
 if TYPE_CHECKING:
@@ -514,10 +514,11 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     outdeg: Counter[str] = Counter()
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
-            # A CALLS edge below this is a guess (a 3+-way name split, or a
-            # builtin method name on an untyped receiver). Counting guesses is
-            # what ranked Flask's `_AppCtxGlobals.get` second by `dict.get`s.
-            if e["type"] == "CALLS" and e.get("confidence", 1.0) < OVERVIEW_MIN_CALL_CONFIDENCE:
+            # A guess (a builtin method name on an untyped receiver, or a
+            # repo-wide name split) is not a call. Counting guesses is what
+            # ranked Flask's `_AppCtxGlobals.get` second by `dict.get`s.
+            # Overload fan-outs still count: see edgemeta.counts_as_call.
+            if e["type"] == "CALLS" and not counts_as_call(e):
                 continue
             indeg[e["dst"]] += 1
             outdeg[e["src"]] += 1
@@ -540,7 +541,10 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     out += [f"- {n['path']} (in={indeg[n['id']]})" for n in hubs if indeg[n["id"]]]
     out += ["", "## Most called symbols"]
     out += [
-        f"- {n['path']}::{n['qualname']} ({n['kind']}, in={indeg[n['id']]})"
+        # The node id minus `sym:` -- `path::qualname` for a first definition,
+        # `path::qualname@L<line>` for a later one (an overload), so two
+        # overloads never print the same label (chunks.label does the same).
+        f"- {n['id'].removeprefix('sym:')} ({n['kind']}, in={indeg[n['id']]})"
         for n in key_syms
         if indeg[n["id"]]
     ]

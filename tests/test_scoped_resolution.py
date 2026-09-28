@@ -1512,3 +1512,60 @@ def test_php_parent_static_call_is_recorded_as_a_super_call():
     assert [(d["name"], d["receiver"], d.get("receiver_head")) for d in m.call_details] == [
         ("f", "self", "parent")
     ]
+
+
+def test_overload_fan_out_still_counts_as_called(tmp_path: Path):
+    """Reviewer repro p6/L.java: three overloads split 1/3 each, but they are
+    the caller's own class -- none is an entrypoint or absent from hotspots.
+    A repo-wide guess (`d.get()` on an untyped receiver) still does not count."""
+    from repo2graph.changelog import _indegree
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "L.java": "public class L {\n"
+                "    private void log(String a) { }\n"
+                "    private void log(String a, Object b) { }\n"
+                "    private void log(String a, Object b, Object c) { }\n"
+                '    public void run() { log("x"); }\n'
+                "}\n",
+                "views.py": "def get(request):\n    return 1\n",
+                "util.py": "def f(d):\n    return d.get(1)\n",
+            },
+        )
+    )
+    logs = {"sym:L.java::L.log", "sym:L.java::L.log@L3", "sym:L.java::L.log@L4"}
+    assert set(_call_edges(g, "sym:L.java::L.run")) == logs
+    deg = _indegree(g.edges)
+    for nid in logs:
+        assert not g.nodes[nid].get("entrypoint"), nid
+        assert deg.get(nid) == 1, nid
+    assert g.nodes["sym:L.java::L.run"].get("entrypoint") is True
+    assert "sym:views.py::get" not in deg
+    assert g.nodes["sym:views.py::get"].get("entrypoint") is True
+
+
+def test_repo_map_labels_overloads_by_node_key(tmp_path: Path):
+    """Reviewer repro p5/O.java: `O.f` twice in Most called -- use `O.f@L3`."""
+    from repo2graph.export import write_overview
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "O.java": "class O {\n"
+                "    int f(int x) { return x; }\n"
+                "    int f(String s) { return g(s.length()); }\n"
+                "    int g(int y) { return f(y); }\n"
+                "}\n",
+            },
+        )
+    )
+    out = tmp_path / "overview.md"
+    write_overview(g, out)
+    lines = out.read_text(encoding="utf8").split("\n")
+    called = lines[lines.index("## Most called symbols") + 1 :]
+    assert "- O.java::O.f (method, in=1)" in called
+    assert "- O.java::O.f@L3 (method, in=1)" in called
+    assert len(called) == len(set(called))
