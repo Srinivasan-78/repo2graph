@@ -608,15 +608,15 @@ retrieval they actually run; `--min-conf` is accepted as an alias of
 ## `impact` — PR & diff architectural impact analysis
 
 ```bash
-repo2graph impact -i <index_dir> [--base <ref>] [--head <ref>] [--diff <file>] [--format <format>]
+repo2graph impact [repo] [-i <index_dir>] [--base <ref>] [--head <ref>] [--diff <file>] [--format <format>]
 ```
 
 Computes the architectural blast radius of a working branch or PR against a base branch using the code graph. Intersects diff hunks with symbol spans, traverses reverse callers (`CALLS in`) and dependent modules (`IMPORTS in`), traces test coverage, and detects suspicious orphan changes or untested public APIs.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-i`, `--index <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
-| `-r`, `--repo <path>` | current directory | Local repository path containing git history. |
+| `-i`, `-o`, `--index`, `--out <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
+| `repo` (positional) | current directory | Local repository path containing git history. |
 | `--base <ref>` | `main` | Base git ref to compare against. If git fails and the repository has no `main`, the error ends with a hint to pass `--base`. |
 | `--head <ref>` | working tree | Head git ref or commit to compare; omitted, the working tree (including uncommitted changes) is compared against `--base`. |
 | `--diff <file>` | none | Path to raw unified diff file, or `-` for stdin (bypasses git). |
@@ -625,9 +625,9 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--sarif` | off | Convenience shortcut for `--format sarif`. |
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
 | `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
-| `-w`, `--write <path>` | none | Write output to target file path. |
+| `--write <path>` | none | Write output to target file path. |
 
-Full architecture, schema details, and GitHub Actions recipes are in [PR_IMPACT.md](pr-impact.md).
+Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).
 
 
 ## `completion` — shell tab completion
