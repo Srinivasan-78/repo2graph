@@ -435,3 +435,42 @@ def test_discovery_sort_key_is_posix(tmp_path):
 
     rels = [rel for rel, _abs in discover(src, config=BuildConfig())]
     assert rels == sorted(rels), f"discovery is not sorted: {rels}"
+
+
+def test_explain_path_knows_discover_never_indexes_an_index(tmp_path, capsys, monkeypatch):
+    """`explain-path .r2g/agent/nodes.jsonl` said INCLUDED; no build indexes it.
+
+    discover() skips the -o directory and any directory holding a repo2graph
+    agent/manifest.json before any other rule; explain-path must say so.
+    """
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "a.py").write_text("X = 'module residue for a chunk here'\n", encoding="utf-8")
+    assert main(["build", str(src), "-o", str(src / ".r2g")]) == 0
+    old = src / "old-index"
+    assert main(["build", str(src), "-o", str(old)]) == 0
+    capsys.readouterr()
+
+    from repo2graph.parse import BuildConfig, discover
+
+    indexed = {rel for rel, _ in discover(src, config=BuildConfig(output_dir=str(src / ".r2g")))}
+    assert ".r2g/agent/nodes.jsonl" not in indexed
+    assert "old-index/agent/nodes.jsonl" not in indexed
+
+    monkeypatch.chdir(src)  # default -o .r2g resolves where `build` would put it
+    for target, rule in (
+        (".r2g/agent/nodes.jsonl", "output_dir"),
+        ("old-index/agent/nodes.jsonl", "index_dir"),
+    ):
+        assert main(["explain-path", target, "--json"]) == 0
+        res = json.loads(capsys.readouterr().out)
+        assert res["included"] is False, target
+        assert res["rule"] == rule, res
+
+    # -o names the output dir explicitly, from anywhere
+    monkeypatch.chdir(tmp_path)
+    argv = ["explain-path", ".r2g/agent/nodes.jsonl", "-r", str(src), "-o", str(src / ".r2g")]
+    assert main([*argv, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["rule"] == "output_dir"
+    assert main(["explain-path", "a.py", "-r", str(src), "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["included"] is True

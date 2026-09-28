@@ -213,6 +213,11 @@ Four layers, applied in this order. `repo2graph explain-path <path> -r .`
 reports which single rule decided any given path, using the same rule set
 `build` would.
 
+Before any of them, discovery drops repo2graph's own output: the `-o`
+directory of the build in progress, and any directory holding a repo2graph
+`agent/manifest.json` left by an earlier build (`explain-path` reports these
+as `output_dir` and `index_dir`; pass it the build's `-o`).
+
 **1. Built-in skip directories** (`parse.DEFAULT_SKIP_DIRS`) — matched as a
 path *segment* at any depth: `.git`, `node_modules`, `venv`, `dist`, `build`,
 `target`, `vendor`, `__pycache__`, `.next`, tool caches. Add more with

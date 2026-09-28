@@ -749,6 +749,39 @@ def cmd_stats(args):
             _emit(raw)
 
 
+def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
+    """The rule discover() applies *first*: never index a repo2graph output dir.
+
+    `explain_path` does not model it, so `explain-path .r2g/agent/nodes.jsonl`
+    answered INCLUDED for a file no build ever indexes. Two shapes, checked in
+    discover()'s order: the `-o` directory this build would write to, and any
+    directory holding a repo2graph `agent/manifest.json` (an earlier build).
+    """
+    from .parse import BuildConfig, _is_index_dir, _output_rel_prefix
+
+    root = repo.resolve()
+    parts = tuple(Path(rel).parts)
+    out_parts = _output_rel_prefix(root, BuildConfig(output_dir=out)) if out else None
+    if out_parts is not None and parts[: len(out_parts)] == out_parts:
+        return {
+            "included": False,
+            "rule": "output_dir",
+            "reason": f"Path is inside the output directory -o {out}; a build never "
+            "indexes its own artifacts",
+            "precedence_step": 2,
+        }
+    for i in range(1, len(parts)):
+        if _is_index_dir(root.joinpath(*parts[:i])):
+            return {
+                "included": False,
+                "rule": "index_dir",
+                "reason": f"Path is inside '{'/'.join(parts[:i])}', a repo2graph index "
+                "(it holds agent/manifest.json); builds never index an index",
+                "precedence_step": 2,
+            }
+    return None
+
+
 def cmd_explain_path(args):
     from .parse import BuildConfig, explain_path
 
@@ -771,6 +804,10 @@ def cmd_explain_path(args):
         include_globs=args.include or None,
         exclude_globs=_effective_exclude(args),
     )
+    if res["rule"] not in ("outside_root", "not_found"):
+        index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
+        if index_hit is not None:
+            res.update(index_hit)
     if getattr(args, "json", False):
         _emit(json.dumps(res, indent=2))
     else:
@@ -1651,6 +1688,12 @@ def main(argv=None):
         choices=[*EXCLUSION_GROUP_NAMES, "all", "help"],
         metavar="NAME",
         help="exclude a named group, exactly as `build` would (repeatable)",
+    )
+    ep.add_argument(
+        "-o",
+        "--out",
+        default=".r2g",
+        help="the build's output directory, never indexed (default: .r2g, as build)",
     )
     ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)

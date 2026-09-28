@@ -527,16 +527,21 @@ maps each symptom to the check that names it.
 ## `explain-path` — explain file inclusion or exclusion
 
 ```bash
-repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
-                         [--include-vendor] [--include-secrets] [--json]
+repo2graph explain-path <path> [-r REPO] [-o OUT] [--include GLOB] [--exclude GLOB]
+                         [--exclude-group NAME] [--include-vendor] [--include-secrets]
+                         [--json]
 ```
 
 Evaluates one path against the same rules `build`'s discovery uses, and reports
 the single rule that decided it — not a trace of every rule that was checked.
 `<path>` is relative to `-r`/`--repo` (default: the current directory) or
 absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
-There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
-no size flags, so it cannot explain a build that used them: the size check
+`-o`/`--out` (default `.r2g`, resolved exactly as `build`'s) names the output
+directory a build would write to: discovery never indexes it, nor any directory
+holding a repo2graph `agent/manifest.json` (an earlier build's index), and
+`explain-path` reports those as `output_dir` / `index_dir` at step 2 — so
+`explain-path .r2g/agent/nodes.jsonl` says EXCLUDED, as the build behaves. It
+never opens the index. It also takes no size flags, so it cannot explain a build that used them: the size check
 below is always evaluated against the 1.5 MB `--max-file-mb` default with
 `--chunk-large-files` off, whatever the build was actually run with.
 
