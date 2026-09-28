@@ -271,7 +271,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
-| `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. |
+| `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. `rag_extra_installed` is always `true`/`false`, even for an index with no vectors. |
 
 Three things worth knowing:
 
@@ -596,10 +596,13 @@ repo2graph explain edge "file:src/main.py" "file:src/util.py" -o .r2g
 repo2graph explain node "sym:src/main.py::Runner.run" -o .r2g
 
 # Trace retrieval ranking, candidate seeds, and graph expansion
-repo2graph explain retrieval "how does authentication work" -o .r2g -k 5 --hops 1
+repo2graph explain retrieval "how does authentication work" -o .r2g -k 8 --hops 1
 ```
 
-All explain subcommands support `--json` for machine-readable output.
+All explain subcommands support `--json` for machine-readable output. `explain
+retrieval` defaults to `-k 8`, the same as `rag` and `query`, so it traces the
+retrieval they actually run; `--min-conf` is accepted as an alias of
+`--min-confidence`.
 
 
 ## `impact` — PR & diff architectural impact analysis
@@ -614,14 +617,14 @@ Computes the architectural blast radius of a working branch or PR against a base
 |---|---|---|
 | `-i`, `--index <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
 | `-r`, `--repo <path>` | current directory | Local repository path containing git history. |
-| `--base <ref>` | `main` | Base git ref to compare against. |
-| `--head <ref>` | `HEAD` | Head git ref or commit to compare. |
+| `--base <ref>` | `main` | Base git ref to compare against. If git fails and the repository has no `main`, the error ends with a hint to pass `--base`. |
+| `--head <ref>` | working tree | Head git ref or commit to compare; omitted, the working tree (including uncommitted changes) is compared against `--base`. |
 | `--diff <file>` | none | Path to raw unified diff file, or `-` for stdin (bypasses git). |
 | `--format <format>` | `markdown` | Output format: `markdown`, `json`, `sarif`, `pr-comment`. |
 | `--json` | off | Convenience shortcut for `--format json`. |
 | `--sarif` | off | Convenience shortcut for `--format sarif`. |
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
-| `--min-confidence <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
+| `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
 | `-w`, `--write <path>` | none | Write output to target file path. |
 
 Full architecture, schema details, and GitHub Actions recipes are in [PR_IMPACT.md](pr-impact.md).

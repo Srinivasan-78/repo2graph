@@ -560,7 +560,9 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
         "embedder_model_id": None,
         "embedder_dim": None,
-        "rag_extra_installed": None,
+        # Known without loading a model: false/true, never null, so a script
+        # can branch on it even when the index has no vectors yet.
+        "rag_extra_installed": _rag_extra_installed(),
     }
     if not idx.vectors:
         return report, (
@@ -600,6 +602,15 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
             f"ranking. Re-run `repo2graph embed -o {out}`."
         )
     return report, None
+
+
+def _rag_extra_installed() -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("sentence_transformers") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def cmd_verify_rag(args):
@@ -909,7 +920,7 @@ def cmd_explain(args) -> int:
         _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
         return 0 if res.get("found") else 1
     elif subcmd == "retrieval":
-        k = getattr(args, "k", 5)
+        k = getattr(args, "k", 8)
         hops = getattr(args, "hops", 1)
         conf = getattr(args, "min_confidence", None)
         res = explain_retrieval(outdir, args.query, k=k, hops=hops, min_confidence=conf)
@@ -918,6 +929,22 @@ def cmd_explain(args) -> int:
     else:
         print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
         return 1
+
+
+def _git_ref_exists(repo: Path, ref: str) -> bool:
+    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see AGENTS.md)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True  # cannot tell: do not claim it is missing
+    return proc.returncode == 0
 
 
 def cmd_impact(args):
@@ -977,7 +1004,13 @@ def cmd_impact(args):
         try:
             diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
         except Exception as exc:
-            raise SystemExit(f"error: failed to retrieve git diff: {exc}") from None
+            hint = ""
+            if args.base == "main" and not _git_ref_exists(repo_path, "main"):
+                hint = (
+                    "\nhint: this repository has no 'main' ref; pass the branch to "
+                    "compare against, e.g. --base master or --base origin/develop"
+                )
+            raise SystemExit(f"error: failed to retrieve git diff: {exc}{hint}") from None
 
     fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
     if getattr(args, "sarif", False):
@@ -1413,6 +1446,13 @@ def main(argv=None):
         default=None,
         help="drop CALLS edges below this confidence (0.0-1.0)",
     )
+    q.add_argument(
+        "--min-confidence",
+        dest="min_conf",
+        type=_unit_float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-conf",
+    )
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
     q.add_argument(
@@ -1459,6 +1499,13 @@ def main(argv=None):
         type=_unit_float,
         default=1.0,
         help="drop CALLS edges below this confidence (0.0-1.0)",
+    )
+    r.add_argument(
+        "--min-confidence",
+        dest="min_conf",
+        type=_unit_float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-conf",
     )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
@@ -1708,7 +1755,9 @@ def main(argv=None):
     exp_ret.add_argument(
         "-o", "--out", default=".r2g", help="path to index directory (default: .r2g)"
     )
-    exp_ret.add_argument("-k", type=_nonneg, default=5, help="number of seed chunks (default: 5)")
+    exp_ret.add_argument(
+        "-k", type=_nonneg, default=8, help="number of seed chunks (default: 8, as rag/query)"
+    )
     exp_ret.add_argument(
         "--hops", type=_nonneg, default=1, help="graph traversal hops (default: 1)"
     )
@@ -1717,6 +1766,13 @@ def main(argv=None):
         type=float,
         default=None,
         help="confidence threshold for CALLS edges",
+    )
+    exp_ret.add_argument(
+        "--min-conf",
+        dest="min_confidence",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-confidence",
     )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
@@ -1779,6 +1835,13 @@ def main(argv=None):
         type=float,
         default=None,
         help="minimum confidence threshold for CALLS edges",
+    )
+    imp.add_argument(
+        "--min-conf",
+        dest="min_confidence",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-confidence",
     )
     imp.add_argument(
         "--no-auto-build",

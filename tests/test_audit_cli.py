@@ -395,3 +395,63 @@ def test_explicit_pythonioencoding_is_respected(tmp_path, capsys):
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip()
+
+
+# ---------------------------------------------------------------- item 7
+
+
+def test_min_confidence_aliases_parse(git_index, capsys):
+    _repo, out = git_index
+    main(["query", "greet", "-o", str(out), "--min-confidence", "0.5"])
+    main(["rag", "greet", "-o", str(out), "--min-confidence", "0.5"])
+    main(["explain", "retrieval", "greet", "-o", str(out), "--min-conf", "0.5", "--json"])
+    assert capsys.readouterr().out.strip()
+
+
+def test_explain_retrieval_default_k_matches_rag(git_index, monkeypatch, capsys):
+    import repo2graph.explain as explain_mod
+
+    seen = {}
+    real = explain_mod.explain_retrieval
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(explain_mod, "explain_retrieval", spy)
+    _repo, out = git_index
+    main(["explain", "retrieval", "greet", "-o", str(out), "--json"])
+    capsys.readouterr()
+    assert seen["k"] == 8
+
+
+def test_impact_without_main_hints_at_base(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text(SRC, encoding="utf8")
+    _git(repo, "init", "-q", "-b", "trunk")
+    _git(repo, "add", "app.py")
+    _git(repo, "commit", "-qm", "init")
+    with pytest.raises(SystemExit) as exc:
+        main(["impact", str(repo), "-o", str(tmp_path / "idx")])
+    assert "--base" in str(exc.value) and "hint" in str(exc.value)
+
+
+def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):
+    _repo, out = git_index
+    with pytest.raises(SystemExit):
+        main(["embed", "-o", str(out), "--verify-rag"])
+    report = json.loads(capsys.readouterr().out)
+    assert report["rag_extra_installed"] in (True, False)
+
+
+def test_doctor_names_files_with_parse_errors(tmp_path, capsys):
+    from repo2graph.doctor import check_parsers
+
+    repo = _make_repo(tmp_path, git=False)
+    (repo / "broken.py").write_text("def broken(:\n    return ((\n", encoding="utf8")
+    main(["build", str(repo), "-o", str(repo / ".r2g")])
+    capsys.readouterr()
+    res = check_parsers(repo)
+    assert res.status in ("warn", "fail"), res
+    assert any("broken.py" in d for d in res.details), res.details
