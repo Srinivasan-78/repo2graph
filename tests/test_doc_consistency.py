@@ -486,3 +486,50 @@ def test_integration_guides_quote_the_real_mcp_bounds():
     )
     for tool in TOOL_DESCRIPTIONS:
         assert tool in text, f"MCP tool '{tool}' is missing from docs/integrations/claude-code.md"
+
+
+def _cli_doc_section(command: str) -> str:
+    """The `## `command` ...` section of docs/cli.md, up to the next `## `` heading."""
+    text = (REPO_ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+    parts = re.split(r"(?m)^## (?=`)", text)
+    hits = [p for p in parts if p.startswith(f"`{command}`")]
+    assert hits, f"docs/cli.md has no section for {command}"
+    return hits[0]
+
+
+def _help_long_flags(argv: list[str]) -> set[str]:
+    import contextlib
+    import io
+
+    from repo2graph.cli import main
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            main([*argv, "--help"])
+        except SystemExit:
+            pass
+    flags = set(re.findall(r"(?<![\w-])(--[a-zA-Z][\w-]*)", buf.getvalue()))
+    return flags - {"--help"}
+
+
+def test_cli_doc_tables_cover_every_flag_of_build_query_and_impact():
+    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md."""
+    for command in ("build", "query", "impact"):
+        section = _cli_doc_section(command)
+        missing = sorted(
+            f
+            for f in _help_long_flags([command])
+            if not re.search(re.escape(f) + r"(?![\w-])", section)
+        )
+        assert missing == [], f"docs/cli.md `{command}` section lacks {missing}"
+    explain = _cli_doc_section("explain")
+    for flag in _help_long_flags(["explain", "retrieval"]) - {"--out", "--json"}:
+        assert flag in explain, flag
+
+
+def test_quickstart_build_output_shows_the_real_out_field():
+    """`build` prints the resolved, absolute index path, not the `-o` argument."""
+    text = QUICKSTART_PATH.read_text(encoding="utf-8")
+    assert '"out": ".r2g"' not in text
+    assert '"out": "/path/to/your/project/.r2g"' in text

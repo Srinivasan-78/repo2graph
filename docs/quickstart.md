@@ -93,14 +93,16 @@ cd /path/to/your/project
 repo2graph build . -o .r2g
 ```
 
-Expected output — a JSON summary on stdout, and `.r2g/` next to your code:
+Expected output — a JSON summary on stdout (abridged here: `written` lists
+every artifact and `stats` every counter), and `.r2g/` next to your code.
+`out` is the **absolute** path of the index directory:
 
 ```json
 {
-  "out": ".r2g",
+  "out": "/path/to/your/project/.r2g",
   "written": ["agent/nodes.jsonl", "agent/edges.jsonl", "agent/chunks.jsonl",
-              "human/graph.html", "human/overview.md", "agent/manifest.json"],
-  "stats": {"files": 227, "parsed": 80, "nodes": 2552, "edges": 11118},
+              "human/graph.html", "human/overview.md", "agent/manifest.json", "..."],
+  "stats": {"files": 227, "parsed": 80, "nodes": 2552, "edges": 11118, "...": "..."},
   "chunks": 3341
 }
 ```

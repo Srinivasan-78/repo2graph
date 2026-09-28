@@ -76,6 +76,8 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
+| `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
+| `--max-nodes` | `0` (unbounded) | Fail the build with `GraphLimitExceeded` once the graph holds more than this many nodes — a guard for CI or shared machines against an unexpectedly huge tree. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
@@ -173,6 +175,8 @@ functions around each answer come along too.
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
+| `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -616,7 +620,11 @@ repo2graph explain retrieval "how does authentication work" -o .r2g -k 8 --hops 
 All explain subcommands support `--json` for machine-readable output. `explain
 retrieval` defaults to `-k 8`, the same as `rag` and `query`, so it traces the
 retrieval they actually run; `--min-conf` is accepted as an alias of
-`--min-confidence`.
+`--min-confidence`. Like `rag` and `query`, `explain retrieval` leaves
+secret-looking paths (`.env`, keys, credentials) out of the trace -- they are
+neither listed as candidates, walked to, nor retrieved, and the text report
+counts how many were hidden. `--include-secrets` opts back in;
+`--secret-keyword KEYWORD` and `--secret-dir DIR` (repeatable) extend the rule.
 
 
 ## `impact` — PR & diff architectural impact analysis
@@ -640,6 +648,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
 | `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
 | `--no-auto-build` | off | Fail instead of building the index when it is missing. |
+| `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
 | `--write <path>` | none | Write output to target file path. |
 
 Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).
