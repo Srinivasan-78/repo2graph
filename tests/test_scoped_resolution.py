@@ -1215,8 +1215,8 @@ def _call_edges(g, src: str) -> dict[str, dict]:
                 "func (c *Cache) find(k string) int { return 0 }\n"
                 "func (c *Cache) Lookup(k string) int { return c.find(k) }\n"
             },
-            "sym:c.go::Lookup",
-            "sym:c.go::find",
+            "sym:c.go::Cache.Lookup",
+            "sym:c.go::Cache.find",
         ),
     ],
 )
@@ -1252,7 +1252,7 @@ def test_go_receiver_classified_as_self():
         b"package c\nfunc (c *Cache) Lookup(k string) int { return c.find(k) + m.find(k) }\n",
         "go",
     )
-    (sym,) = [s for s in pf.symbols if s.qualname == "Lookup"]
+    (sym,) = [s for s in pf.symbols if s.qualname == "Cache.Lookup"]
     assert [(d["receiver"], d.get("receiver_head")) for d in sym.call_details] == [
         ("self", "c"),
         ("other", "m"),
@@ -1297,13 +1297,11 @@ def test_decorator_does_not_rescue_untyped_call(tmp_path: Path):
 @pytest.mark.parametrize(
     ("lang", "src", "caller", "self_head", "tail", "head"),
     [
-        ("kotlin", b"class A { fun f(){ this.get(); super.get(); obj?.get(); get(); list.add(1) } }\n", "A", "this", "add", "list"),
+        ("kotlin", b"class A { fun f(){ this.get(); super.get(); obj?.get(); get(); list.add(1) } }\n", "A.f", "this", "add", "list"),
         ("swift", b"class A { func f(){ self.get(); super.get(); obj?.get(); get(); arr.append(1) } }\n", "A.f", "self", "append", "arr"),
     ],
 )  # fmt: skip
 def test_kotlin_swift_receivers(lang, src, caller, self_head, tail, head):
-    # Kotlin `fun` declarations are not indexed as symbols (their name is a
-    # `simple_identifier`), so Kotlin calls land on the enclosing class.
     pf = parse_source(src, lang)
     sym = next(s for s in pf.symbols if s.qualname == caller)
     got = [(d["name"], d["receiver"], d.get("receiver_head")) for d in sym.call_details]

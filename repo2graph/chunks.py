@@ -170,7 +170,10 @@ def iter_chunks(g, include_files: bool = True):
         if not n:
             return nid
         if n["type"] == "symbol":
-            return f"{n['path']}::{n['qualname']}"
+            # The id minus its `sym:` prefix -- `path::qualname` for every
+            # first definition, `path::qualname@L<line>` for a later duplicate,
+            # so a label always round-trips to exactly one node.
+            return nid.removeprefix("sym:")
         return n.get("path") or n.get("name") or nid
 
     covered: dict[str, list[tuple[int, int]]] = defaultdict(list)

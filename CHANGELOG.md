@@ -15,6 +15,26 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **Kotlin functions are indexed.** `_name_of` did not recognise Kotlin's `simple_identifier`
+  function name, so no `fun` ever became a symbol and every member's calls were attributed to
+  its class. Top-level, member, `object` and companion functions are now symbols (companion
+  members qualify on the class, `A.make`); extension functions qualify on their receiver type
+  (`String.ext`); `interface` declarations get kind `interface`.
+- **Go methods are qualified by receiver type.** `func (a *A) Run()` and `func (b B) Run()` in one
+  file were both `Run`, so they shared a node id and one body vanished from `chunks.jsonl`. Methods
+  are now `A.Run` / `B.Run` (pointer and generic parameters stripped), and a call on the receiver
+  (`a.step()`) resolves through the `same_class` tier to `A.step` — across files of the package.
+- **Same-qualname definitions no longer collapse into one node.** Overloads (Java/C#/Kotlin/Swift/
+  Scala/C++), conditional redefinitions (Python/JS/Bash), and Rust `struct A` + `impl A` produced
+  one node and one chunk for several bodies. The first definition keeps its id; each later one
+  gets `sym:<path>::<qualname>@L<line>` (manifest `id_grammar` now reads
+  `sym:<path>::<qualname>[@L<line>]`). The same-class tier returns the whole overload set, so a
+  call fans out at `1/n`. Oversized (chunked) files use the same `@L` scheme instead of renaming
+  the qualname `<qualname>_<n>`. TypeScript overload signatures stay unindexed; the
+  implementation is the symbol. `PARSE_CACHE_FORMAT` is now 7. Committed `examples/` graphs
+  (e.g. `examples/kubernetes`) are pinned artifacts and were not regenerated, so their Go method
+  ids still show the old bare form.
+
 - **Builtin method calls on untyped receivers no longer bind to in-repo methods at full
   confidence.** `os.environ.get(k)` reduced to the name `get` and was bound to any `get` method
   nearby at confidence 1.0; on Flask that ranked `_AppCtxGlobals.get` the second most-called

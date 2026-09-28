@@ -703,7 +703,7 @@ def test_manifest_describes_the_agent_output(tmp_path, sample_repo):
     assert "agent/chunks.jsonl" in m["written"]
     assert set(m["files"]) >= {"nodes.jsonl", "edges.jsonl", "chunks.jsonl", "manifest.json"}
     assert "CALLS" in m["edge_types"] and "symbol" in m["node_types"]
-    assert m["id_grammar"]["symbol"] == "sym:<path>::<qualname>"
+    assert m["id_grammar"]["symbol"] == "sym:<path>::<qualname>[@L<line>]"
     assert any(e["qualname"] == "entry" for e in m["entrypoints"])
     assert m["how_to_read"] and m["approximations"]
 

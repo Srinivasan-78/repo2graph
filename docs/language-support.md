@@ -100,9 +100,9 @@ Evaluating all 17 languages across core static analysis features in [`repo2graph
 | **TypeScript** | Yes | `function`, `class`, `method`, `interface`, `type`, `enum`, `maybe_function` | `call_expression`, `new_expression` | 3 callees | Yes (`@decorator`) | Yes | Yes (relative, `.js`->`.ts`, `src/`) | **No (`tsconfig` paths missing)** | Full (`extends`, `implements`) |
 | **TSX** | Yes | Same as TypeScript | Same as TypeScript | 3 callees | Yes | Yes | Same as TypeScript | No | Full |
 | **JavaScript** | Yes | `function`, `class`, `method`, `maybe_function` | `call_expression`, `new_expression` | 3 callees | Yes | Yes | Yes (relative, `src/`) | No | Full (`extends`) |
-| **Go** | Yes | `function`, `method`, `type` | `call_expression` | None | No | Yes | Yes (package directory mapping) | **Yes (`go.mod` module path)** | **None (no struct embedding)** |
+| **Go** | Yes | `function`, `method` (qualified `<ReceiverType>.<name>`), `type` | `call_expression` | None | No | Yes | Yes (package directory mapping) | **Yes (`go.mod` module path)** | **None (no struct embedding)** |
 | **Java** | Yes | `method`, `class`, `interface`, `enum` | `method_invocation`, `object_creation` | None | Yes (`@annotation`) | Yes | Yes (package dot to slash) | No (`pom.xml`/Gradle missing) | Full (`extends`, `implements`) |
-| **Kotlin** | Yes | `function`, `class`, `object` | `call_expression` | None | Yes | Yes | Yes (package path) | No | Full (`extends`, `implements`) |
+| **Kotlin** | Yes | `function` (top-level, member, extension as `<Receiver>.<name>`, companion members on the class), `class`, `interface`, `object` | `call_expression` | None | Yes | Yes | Yes (package path) | No | Full (`extends`, `implements`) |
 | **Rust** | Yes | `function`, `struct`, `enum`, `trait`, `impl`, `module` | `call_expression`, `macro_invocation` | None | No (outer attributes in doc) | Yes | Yes (`crate::`, `super::`, `self::`) | **Yes (`Cargo.toml` crate name)** | Traits in bases |
 | **CSharp** | Yes | `method`, `class`, `interface`, `struct` | `invocation`, `object_creation` | None | Yes | Yes | Yes (`using` alias & namespace) | No | Full (`extends`, `implements`) |
 | **PHP** | Yes | `function`, `method`, `class`, `interface` | `function_call`, `member_call`, `object_creation` | 3 callees | Yes | Yes | Yes (`App\` -> `app/`, `src/`) | No | Full (`\` namespace stripping) |
