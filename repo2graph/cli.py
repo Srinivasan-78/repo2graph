@@ -1012,6 +1012,15 @@ def cmd_impact(args):
             if not diff_file.exists():
                 raise SystemExit(f"error: diff file {diff_file} does not exist")
             diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
+        from .impact import parse_unified_diff
+
+        if diff_text.strip() and not parse_unified_diff(diff_text):
+            # Non-empty text with no file header is not "a PR that changed
+            # nothing"; answering LOW RISK for it is a confident wrong result.
+            raise SystemExit(
+                "error: --diff input is not a unified diff (no `diff --git a/<path> "
+                "b/<path>` file header found); pass the output of `git diff`"
+            )
     else:
         try:
             diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))

@@ -1918,3 +1918,115 @@ def test_cli_impact_excludes_secret_paths_by_default(tmp_path, capsys):
     argv = ["impact", str(repo), "-o", str(out), "--diff", str(diff), "--json"]
     assert main([*argv, "--include-secrets"]) == 0
     assert ".env" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Signature-changed means the definition line(s), and a body-only change is
+# not HIGH risk on its own (review round 2: a comment in requests'
+# should_strip_auth scored HIGH 27 and flagged the enclosing class too).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def method_index():
+    idx = MockIndex()
+    idx.add_node("file:pkg/s.py", type="file", path="pkg/s.py")
+    idx.add_node(
+        "sym:pkg/s.py::Mixin",
+        type="symbol",
+        name="Mixin",
+        qualname="Mixin",
+        kind="class",
+        path="pkg/s.py",
+        start_line=1,
+        end_line=40,
+        signature="class Mixin:",
+    )
+    idx.add_node(
+        "sym:pkg/s.py::Mixin.strip",
+        type="symbol",
+        name="strip",
+        qualname="Mixin.strip",
+        kind="function",
+        path="pkg/s.py",
+        start_line=10,
+        end_line=20,
+        # parse._signature runs to the body, so it can end in a comment line
+        signature="def strip(self, old, new):\n        # keep in sync with RFC",
+    )
+    for i in range(8):
+        cid = f"sym:pkg/c{i}.py::use{i}"
+        idx.add_node(
+            cid,
+            type="symbol",
+            name=f"use{i}",
+            qualname=f"use{i}",
+            kind="function",
+            path=f"pkg/c{i}.py",
+            start_line=1,
+            end_line=5,
+        )
+        idx.add_edge(
+            cid,
+            "sym:pkg/s.py::Mixin.strip",
+            "CALLS",
+            confidence=1.0,
+            evidence=edgemeta.evidence(f"pkg/c{i}.py", 2),
+        )
+    return idx
+
+
+def _one_line_diff(line: int, text: str) -> str:
+    return (
+        "diff --git a/pkg/s.py b/pkg/s.py\n--- a/pkg/s.py\n+++ b/pkg/s.py\n"
+        f"@@ -{line - 1},0 +{line},1 @@\n+{text}\n"
+    )
+
+
+def test_body_comment_is_not_a_signature_change_nor_high_risk(method_index):
+    report = analyze_diff_impact(method_index, _one_line_diff(15, "        # changed"))
+    # the method owns the line; its enclosing class is not "changed" by it
+    assert [s.id for s in report.symbols_changed] == ["sym:pkg/s.py::Mixin.strip"]
+    assert report.symbols_changed[0].signature_changed is False
+    assert len([c for c in report.impacted_callers if c.depth == 1]) == 8
+    assert report.risk_level not in ("HIGH", "CRITICAL")
+
+
+def test_comment_on_a_definition_line_number_is_not_a_signature_change(method_index):
+    """A comment added just above a def lands on the def's line number whenever
+    the index lags the diff by a line (the reviewer's repro); and one inside the
+    recorded signature span (def .. body) is still only a comment."""
+    for line in (10, 11):
+        report = analyze_diff_impact(method_index, _one_line_diff(line, "        # changed"))
+        strip = next(s for s in report.symbols_changed if s.name == "strip")
+        assert strip.signature_changed is False, line
+
+
+def test_definition_line_change_is_a_signature_change_and_scores_higher(method_index):
+    sig = analyze_diff_impact(
+        method_index, _one_line_diff(10, "    def strip(self, old, new, strict=False):")
+    )
+    body = analyze_diff_impact(method_index, _one_line_diff(15, "        x = old or new"))
+    assert sig.symbols_changed[0].signature_changed is True
+    assert body.symbols_changed[0].signature_changed is False
+    assert sig.risk_level == "HIGH"  # 8 direct callers of a changed contract
+    assert body.risk_level == "MEDIUM"
+
+
+def test_cli_impact_rejects_text_that_is_not_a_diff(tmp_path):
+    from repo2graph.cli import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def run():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "idx"
+    assert main(["build", str(repo), "-o", str(out)]) == 0
+    junk = tmp_path / "junk.diff"
+    junk.write_text("not a diff at all\n", encoding="utf8")
+    with pytest.raises(SystemExit) as exc:
+        main(["impact", str(repo), "-o", str(out), "--diff", str(junk)])
+    assert "not a unified diff" in str(exc.value.code)
+    # an empty diff (nothing changed) is still a valid, empty report
+    empty = tmp_path / "empty.diff"
+    empty.write_text("", encoding="utf8")
+    assert main(["impact", str(repo), "-o", str(out), "--diff", str(empty), "--json"]) == 0

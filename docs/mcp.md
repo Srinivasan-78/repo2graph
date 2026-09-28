@@ -239,9 +239,12 @@ the one answer guaranteed to be out of date.
 Every numeric argument is coerced and clamped **in the handler**, so `dispatch()`,
 a direct Python caller and the stdio server all inherit the same bounds. Nothing
 here raises on a bad value; a value below the minimum is raised to it, one above
-the maximum is lowered to it, and a non-number takes the default. The one
-exception is `budget_tokens`: zero or negative is not a budget anyone means, so it
-takes the **default** and the reply starts with a one-line note saying so.
+the maximum is lowered to it, and a non-number (`"abc"`, `null` excepted,
+non-finite) takes the default **and the reply starts with a one-line
+`_note: k='abc' is not an integer; used the default 8._`** so the substitution is
+visible (for `repo_impact`, only in the `markdown` and `pr-comment` formats -- a
+prefix would stop `json`/`sarif` parsing). `budget_tokens` also treats zero or
+negative as "not a budget anyone means": it takes the **default** with a note.
 
 | Argument | Tool | Default | Minimum | Maximum |
 | --- | --- | ---: | ---: | ---: |
@@ -264,7 +267,10 @@ it says so instead of returning nothing.
 
 A call the server cannot answer — a missing `query` or `node_id`, a `node_id`
 that is not in the graph, an unknown tool name, a `repo_impact` whose `git diff`
-failed — still comes back with a sentence saying what went wrong and how to fix
+failed, whose `diff` text is not a unified diff or whose `format` is not one of
+`markdown`/`json`/`sarif`/`pr-comment`, a `repo_build_status` with no or an
+unknown `task_id` (or on a server without `--async-build`, whose error body is
+still the JSON object below) — still comes back with a sentence saying what went wrong and how to fix
 it, but the result carries **`isError: true`** so a client can tell it from a
 real (possibly short) answer. This holds on the stdio server with either SDK
 generation (1.x and 2.x) and on the HTTP transport. An empty result is never
@@ -282,7 +288,7 @@ used to mean "error".
 | `head` | string (optional) | Head branch or commit ref. Omitted: the **working tree** (committed and uncommitted changes) is compared against `base`, exactly like `repo2graph impact`. Given: the three-dot `base...head` comparison of two refs. |
 | `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
 | `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to 1-4). |
-| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
+| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, `"json"` or `"sarif"` (SARIF v2.1.0). Anything else is an `isError` result listing these. |
 
 `git diff` runs in the server's indexed repository — the `--repo` it was started
 for, else the source root recorded in the index's `manifest.json`, else the index
@@ -299,7 +305,7 @@ past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
 
 - `markdown` and `pr-comment` are cut on a line boundary and end with a
   `_[truncated to 12000 tokens…]_` note.
-- `json` is **not** cut — a line-boundary cut would stop being parseable. It is
+- `json` and `sarif` are **not** cut — a line-boundary cut would stop being parseable. It is
   replaced by a valid document carrying `"truncated": true`, a `reason`, and the
   scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
   per-symbol lists omitted.
@@ -364,6 +370,10 @@ Result:
 | `eta_s` | integer | Estimated seconds remaining. |
 | `error` | string \| null | Human-readable failure message if status is `"failed"`. |
 | `progress_is_estimated` | boolean | Always `true`, indicating progress is an estimate based on file count. |
+
+A missing or unknown `task_id`, or a server started without `--async-build`,
+returns the same JSON shape (`status: "unknown"` and an `error` sentence) with
+`isError: true` -- there is no build to report, which is not a status.
 
 **Example sequence:**
 
