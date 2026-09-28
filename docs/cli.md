@@ -236,12 +236,21 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
-`query`, so a program can see what got left out:
+`query`, so a program can see what got left out (a compressed neighbour is
+described under the examples below):
 
 ```bash
 repo2graph rag "how does export write the manifest" -o .r2g --format json \
   | jq '{used: .used_chars, budget: .budget_chars, cut: .truncated}'
 ```
+
+A neighbour that did not fit whole is **compressed** to its header and first
+line. Its cite then names the lines it shows, not the whole symbol or file —
+``### [cite: pkg/mod.py:12-12] `Foo.bar` [excerpt of 12-40] (CALLS out of run)``
+— and its `chunks` record carries `excerpt_of: [12, 40]` with `start_line` /
+`end_line` narrowed to match. Where the shown line cannot be mapped back to a
+source line (a file's residual, or a later part of a split chunk) the range is
+kept and marked `[header and first line only, of 1-648]` instead.
 
 ### Secrets at query time
 
