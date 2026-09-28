@@ -48,9 +48,9 @@ budget ([method, per-question results, reproduction](docs/retrieval-benchmark.md
 
 | Budget | repo2graph | grep, then read around the hits |
 |---:|---:|---:|
-| 2,000 tokens | 35% | 35% |
+| 2,000 tokens | 30% | **35%** |
 | 4,000 tokens | 39% | **61%** |
-| 8,000 tokens | 54% | **72%** |
+| 8,000 tokens | 52% | **72%** |
 
 Graph expansion adds nothing over BM25 alone at these budgets. The causes are ranking problems:
 whole-file and whole-class chunks win the seed ranking and use up the budget, and expansion

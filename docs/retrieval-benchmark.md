@@ -4,9 +4,9 @@ Does repo2graph put the code that answers a question into an agent's context, at
 budget, more often than grep does? This page measures that on four third-party repositories, and
 reports the result as it came out, including where repo2graph loses.
 
-**Short version:** on these 35 questions, it currently does not. At 2,000 tokens repo2graph and a
-grep-then-read baseline find the same share of the answer; at 4,000 and 8,000 tokens grep finds
-clearly more.
+**Short version:** on these 35 questions, it currently does not. At every budget measured, a
+grep-then-read baseline finds at least as much of the answer, and at 4,000 and 8,000 tokens it
+finds clearly more.
 Graph expansion adds no recall over repo2graph's own BM25 seeds on this set. The causes are
 diagnosed [below](#why-repo2graph-loses-here), and they are retrieval-ranking problems, not
 parsing ones.
@@ -40,14 +40,14 @@ From [`benchmarks/real/results.json`](../benchmarks/real/results.json), produced
 
 | Budget | Retriever | Evidence found | Questions fully answered | Questions with any evidence | Mean tokens used |
 |---:|---|---:|---:|---:|---:|
-| 2,000 | repo2graph | 35% | 12 / 35 | 15 / 35 | 1,976 |
-| 2,000 | repo2graph-bm25 | 35% | 12 / 35 | 15 / 35 | 1,828 |
-| 2,000 | ripgrep | 35% | 9 / 35 | 13 / 35 | 1,962 |
-| 4,000 | repo2graph | 39% | 14 / 35 | 17 / 35 | 3,978 |
-| 4,000 | repo2graph-bm25 | 39% | 14 / 35 | 17 / 35 | 3,700 |
+| 2,000 | repo2graph | 30% | 10 / 35 | 13 / 35 | 1,980 |
+| 2,000 | repo2graph-bm25 | 30% | 10 / 35 | 13 / 35 | 1,817 |
+| 2,000 | ripgrep | **35%** | 9 / 35 | 13 / 35 | 1,962 |
+| 4,000 | repo2graph | 39% | 14 / 35 | 17 / 35 | 3,975 |
+| 4,000 | repo2graph-bm25 | 39% | 14 / 35 | 17 / 35 | 3,678 |
 | 4,000 | ripgrep | **61%** | **18 / 35** | **23 / 35** | 3,873 |
-| 8,000 | repo2graph | 54% | 17 / 35 | 23 / 35 | 7,904 |
-| 8,000 | repo2graph-bm25 | 54% | 17 / 35 | 23 / 35 | 5,793 |
+| 8,000 | repo2graph | 52% | 15 / 35 | 22 / 35 | 7,833 |
+| 8,000 | repo2graph-bm25 | 52% | 15 / 35 | 22 / 35 | 5,617 |
 | 8,000 | ripgrep | **72%** | **22 / 35** | **26 / 35** | 7,652 |
 
 At 4,000 tokens, by question type (definitions found): *concept* questions (28) 17/35 for
@@ -56,17 +56,24 @@ repo2graph vs 24/35 for ripgrep; *trace* questions (5) 0/9 vs 3/9; *relationship
 `prepare_request`.
 
 At 8,000 tokens repo2graph finds more on 3 questions (`requests-01` redirects, `fastapi-07`
-`jsonable_encoder`, `hono-06` CORS), grep finds more on 10 (`fastapi-08`, `flask-04`,
-`flask-06`, `flask-09`, `hono-01`, `hono-03`, `hono-04`, `hono-05`, `requests-04`,
-`requests-07`), and 22 tie. Every row, with the definitions each retriever missed, is in
+`jsonable_encoder`, `hono-06` CORS), grep finds more on 11 (`fastapi-08`, `flask-01`,
+`flask-02`, `flask-04`, `flask-06`, `hono-01`, `hono-03`, `hono-04`, `hono-05`,
+`requests-04`, `requests-07`), and 21 tie. Every row, with the definitions each retriever missed, is in
 `results.json`.
 
 **Correction, 2026-09-28.** The first published version of this page overstated repo2graph by
-2–6 points (40% / 46% / 60%). Its scorer credited a returned chunk with the symbol's whole line
+5–7 points (40% / 46% / 60%, against a corrected 35% / 39% / 54%). Its scorer credited a returned chunk with the symbol's whole line
 range, so a later part of a split function, or a file chunk with its symbols cut out, counted as
 containing the definition's first lines when it did not. It also listed the queried function as
 an answer to its own "what calls X" question. Both are fixed; grep's numbers were unaffected by
 the first bug.
+
+**Rerun after indexing fixes, 2026-09-28.** The same day, repo2graph stopped silently dropping
+definitions that share a name within a file (Go methods on different types, overloads, nested
+closures such as Flask's two `View.as_view.view` functions) and began indexing Kotlin
+functions. The index is now more complete, and repo2graph's numbers moved from 35/39/54% to
+30/39/52%. The newly separate definitions compete for the same eight seed slots, which is the
+seed-ranking weakness described below. The table above is the rerun.
 
 ## Why repo2graph loses here
 
