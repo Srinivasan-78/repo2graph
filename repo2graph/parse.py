@@ -218,6 +218,9 @@ LANG_CFG: dict[str, LangConfig] = {
             "function_declaration": "function",
             "class_declaration": "class",
             "object_declaration": "object",
+            "secondary_constructor": "method",
+            "getter": "method",
+            "setter": "method",
         },
         "call_types": {"call_expression"},
         "import_types": {"import_header"},
@@ -718,15 +721,22 @@ def _name_of(src: bytes, node, lang: str) -> str | None:
     n = node.child_by_field_name("name")
     if n is not None:
         return _text(src, n).strip()
-    if lang == "kotlin" and node.type == "function_declaration":
-        # tree-sitter-kotlin exposes no `name` field and names a function with
-        # a `simple_identifier` child, which the generic fallback below does not
-        # recognise -- so no Kotlin `fun` was ever indexed and every member's
-        # calls were absorbed by its class.
-        for c in node.children:
-            if c.type == "simple_identifier":
-                return _text(src, c).strip()
-        return None
+    if lang == "kotlin":
+        if node.type == "secondary_constructor":
+            return "constructor"
+        if node.type == "getter":
+            return "get"
+        if node.type == "setter":
+            return "set"
+        if node.type == "function_declaration":
+            # tree-sitter-kotlin exposes no `name` field and names a function with
+            # a `simple_identifier` child, which the generic fallback below does not
+            # recognise -- so no Kotlin `fun` was ever indexed and every member's
+            # calls were absorbed by its class.
+            for c in node.children:
+                if c.type == "simple_identifier":
+                    return _text(src, c).strip()
+            return None
     if lang == "rust" and node.type == "impl_item":
         t = node.child_by_field_name("type")
         return _text(src, t) if t is not None else None

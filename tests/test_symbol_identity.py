@@ -430,3 +430,21 @@ def test_child_of_a_duplicate_definition_points_at_its_own_parent(tmp_path: Path
     defines = {(e["src"], e["dst"]) for e in g.edges if e["type"] == "DEFINES"}
     assert ("sym:m.py::C", "sym:m.py::C.m") in defines
     assert ("sym:m.py::C@L5", "sym:m.py::C.m@L6") in defines
+
+
+def test_kotlin_secondary_constructors_and_accessors(tmp_path: Path):
+    src = (
+        "class User {\n"
+        "    constructor(name: String) {}\n"
+        "    var age: Int\n"
+        "        get() = 42\n"
+        "        set(value) {}\n"
+        "}\n"
+    )
+    (tmp_path / "User.kt").write_text(src, encoding="utf8")
+    g = build(tmp_path)
+    symbols = {n["id"]: n["name"] for n in g.nodes.values()}
+    assert "sym:User.kt::User.constructor" in symbols
+    assert "sym:User.kt::User.get" in symbols
+    assert "sym:User.kt::User.set" in symbols
+

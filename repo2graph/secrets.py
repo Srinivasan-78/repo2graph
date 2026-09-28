@@ -312,9 +312,9 @@ DB_URL_RE = re.compile(
     re.I,
 )
 
-# High-entropy credential assignments: api_key = "...", token: "..."
+# Credential assignments: api_key = "...", DB_PASSWORD = "hunter2..."
 ASSIGNMENT_RE = re.compile(
-    r"""(?i)\b((?:pass(?:word|wd)?|secret|api[-_]?key|auth[-_]?key|access[-_]?token)\s*[:=]\s*["'])([A-Za-z0-9_\-\.\+\/=]{16,})(["'])"""
+    r"""(?i)(?:^|(?<=[^A-Za-z0-9_]))([A-Za-z0-9_.-]{0,40}?(?:pass(?:word|wd)|secret|token|api[-_]?key|auth[-_]?key|access[-_]?token)[A-Za-z0-9_.-]{0,40}?\s*[:=]\s*["'])([A-Za-z0-9_\-\.\+\/=]{6,})(["'])"""
 )
 
 # JSON-style credential pairs: `"password": "..."`, `"client_secret": "..."`.
@@ -554,17 +554,12 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     for m in DB_URL_RE.finditer(text):
         findings.append(("DATABASE_PASSWORD", m.start(2), m.end(2)))
 
-    # 3. High-entropy assignments
+    # 3. Credential assignments
     for m in ASSIGNMENT_RE.finditer(text):
         secret = m.group(2)
-        # Reject simple identifiers / words -- but only *purely alphabetic*
-        # ones (plus underscore). The guard used to be `[a-z0-9_]+`, which
-        # also matches lowercase hex/alphanumeric secrets (an md5 hash, a
-        # lowercase API key) and skipped them before the digits-and-letters
-        # check below ever ran (#338). A word like `default_option` still has
-        # no digit and is still excluded; `abcdef12345678901234567890123456`
-        # now reaches the check and is flagged.
-        if not re.fullmatch(r"[a-z_]+", secret):
+        if _json_secret_value_ok(secret):
+            findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
+        elif not re.fullmatch(r"[a-z_]+", secret):
             digits = sum(c.isdigit() for c in secret)
             letters = sum(c.isalpha() for c in secret)
             if digits and letters:

@@ -608,6 +608,16 @@ def test_sanitization_headers():
     assert sanitized["Accept"] == "*/*"
 
 
+def test_low_entropy_password_in_code_redaction():
+    """Low-entropy passwords assigned to sensitive variable names in code are redacted."""
+    src = 'DB_PASSWORD = "hunter2"\npassword = "secret123"\napi_key = "abc12345"\n'
+    redacted, count = redact_content(src, policy="redact-match")
+    assert "hunter2" not in redacted
+    assert "secret123" not in redacted
+    assert count == 3
+
+
+
 # ---------------------------------------------------------------------------
 # Action.yml integration tests
 # ---------------------------------------------------------------------------

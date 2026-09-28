@@ -1963,3 +1963,20 @@ def test_unmappable_compressed_neighbour_is_marked_not_overclaimed():
     assert "[header and first line only, of 1-86]" in head
     # a block shown whole carries no marker
     assert "[" not in _cite_block(chunk, "x").split("\n")[0].split("]", 1)[1]
+
+
+def test_verify_rag_function(tmp_path):
+    from repo2graph.cli import verify_rag
+    from repo2graph.query import Index
+
+    (tmp_path / "agent").mkdir()
+    (tmp_path / "agent" / "chunks.jsonl").write_text('{"id": "c1", "node_id": "n1", "text": "foo"}\n', encoding="utf-8")
+    (tmp_path / "agent" / "nodes.jsonl").write_text('{"id": "n1", "name": "foo"}\n', encoding="utf-8")
+    (tmp_path / "agent" / "edges.jsonl").write_text("", encoding="utf-8")
+    idx = Index(tmp_path)
+    report, error = verify_rag(idx, tmp_path)
+    assert isinstance(report, dict)
+    assert report["index"] == str(tmp_path)
+    assert report["vectors_present"] is False
+    assert error is not None and "no vectors" in error
+

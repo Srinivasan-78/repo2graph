@@ -1864,3 +1864,11 @@ def test_repo_impact_sarif_is_sarif_and_unknown_formats_are_errors(mini_index):
     for fmt in ("markdown", "json", "sarif", "pr-comment"):
         assert fmt in bad
     assert "sarif" in mcp.TOOL_SCHEMAS["repo_impact"]["properties"]["format"]["enum"]
+
+
+def test_tool_call_failed_exception():
+    mcp = mcp_module()
+    err = mcp.ToolCallFailed("something went wrong")
+    assert isinstance(err, Exception)
+    assert str(err) == "something went wrong"
+
