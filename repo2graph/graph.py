@@ -973,7 +973,21 @@ def _read_and_parse(item):
 # the qualname `<qualname>_<n>`. A format-6 entry restores Go methods with bare
 # qualnames and no Kotlin functions, so an incremental build would emit
 # different node ids than a full one.
-PARSE_CACHE_FORMAT = 7
+# 8: `base`/`parent` receivers classify as "self" only in C# / PHP (static
+# `parent::`), and PHP `scoped_call_expression` calls are recorded. A format-7
+# entry keeps a Python `parent.add()` as a super call (-> external) and drops
+# PHP `Foo::bar()` calls, so an incremental build would disagree with a full one.
+PARSE_CACHE_FORMAT = 8
+
+# Languages where a bare call inside a method is a call on the implicit
+# `this` (`g()` inside `A.g` is `this.g()`). Elsewhere (Python, JS, Go, Rust,
+# PHP) a bare call inside a method names a free function, never the method.
+IMPLICIT_THIS_LANGS = frozenset({"java", "csharp", "kotlin", "swift", "scala", "cpp", "ruby"})
+
+
+def _last_segment(name: str) -> str:
+    """`pkg.mod.Base` / `ns::Base` / `Base<T>` -> `Base`."""
+    return name.rsplit(".", 1)[-1].rsplit("::", 1)[-1].split("<", 1)[0].split("[", 1)[0].strip()
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -1583,9 +1597,24 @@ def build(
 
     for rel, pf in parsed.items():
         rel_dir = rel.rpartition("/")[0]
+        by_key = {symbol_key(s): s for s in pf.symbols}
+        implicit_this = pf.lang in IMPLICIT_THIS_LANGS
         for sym in pf.symbols:
             sid = f"sym:{rel}::{symbol_key(sym)}"
             scope_id = scope_of(rel, sym.parent)
+            parent_sym = by_key.get(symbol_parent_key(sym) or "")
+            # A method (its enclosing symbol is a type, or is not in this file:
+            # a Go method's receiver type) vs a top-level or nested function.
+            in_type = bool(sym.parent) and not (
+                parent_sym is not None and parent_sym.kind in ("function", "method")
+            )
+            # Last segments of the enclosing type's bases: `dict.__repr__(self)`
+            # inside `Config(dict).__repr__` names the base's implementation.
+            parent_bases = (
+                {_last_segment(b) for b in parent_sym.bases}
+                if in_type and parent_sym is not None
+                else set()
+            )
             call_kinds: dict[str, str] = {}
             # name -> the first line this symbol calls that name on. One edge
             # carries a `count` for every call of the same name, so a single
@@ -1602,16 +1631,27 @@ def build(
             # the caller itself is then never the target.
             super_calls: set[str] = set()
             self_calls: set[str] = set()
+            # Names with at least one call that can target the caller itself:
+            # a bare call in a function (or in a method, where the language
+            # has implicit `this`), or a non-super self/this receiver. A call
+            # with an explicit receiver (`current_app.url_for()` inside
+            # `url_for`, `cli.main()` inside `main`) never is.
+            may_recurse: set[str] = set()
             for cd in getattr(sym, "call_details", []):
                 call_kinds[cd["name"]] = cd.get("kind", "static")
                 details[cd["name"]].append(cd)
                 head = cd.get("receiver_head", "")
-                if cd.get("receiver") == "self" and (
-                    head in SUPER_RECEIVERS or head.startswith("super(")
-                ):
+                recv = cd.get("receiver")
+                if recv == "self" and (head in SUPER_RECEIVERS or head.startswith("super(")):
                     super_calls.add(cd["name"])
-                elif cd.get("receiver") != "other":
+                elif recv == "other" and parent_bases and _last_segment(head) in parent_bases:
+                    # `Base.method(self)`: an explicit base-class call is a
+                    # super call spelled out, and is resolved the same way.
+                    super_calls.add(cd["name"])
+                elif recv != "other":
                     self_calls.add(cd["name"])
+                    if recv == "self" or not in_type or implicit_this:
+                        may_recurse.add(cd["name"])
                 cd_line = cd.get("line")
                 if isinstance(cd_line, int) and cd_line > 0:
                     prev = call_lines.get(cd["name"])
@@ -1622,6 +1662,15 @@ def build(
                 call_kind = call_kinds.get(callee, "static")
                 call_evidence = make_evidence(rel, call_lines.get(callee))
                 all_cands = by_name.get(callee, [])
+                if callee not in details:
+                    # no receiver information (a call recorded without details):
+                    # the historical rule -- only a top-level function recurses.
+                    recurse_ok = not sym.parent
+                else:
+                    recurse_ok = callee in may_recurse
+                # The candidate pool for the name tiers: the caller is only a
+                # candidate when one of its calls can actually be a self-call.
+                pool = all_cands if recurse_ok else [c for c in all_cands if c != sid]
 
                 chosen_cands: list[str] = []
                 res_kind = ""
@@ -1639,47 +1688,43 @@ def build(
                         inherited := base_methods(f"sym:{rel}::{pkey}", callee)
                     ):
                         chosen_cands, res_kind, scope_dist = inherited, "base_class", 0
-                elif not sym.parent and sid in all_cands:
+                elif recurse_ok and sid in all_cands:
                     # Tier 0: direct recursion. `sid` is in `all_cands` only when
-                    # the callee is this symbol's own name, and for a top-level
-                    # function that is unambiguously a self-call. Without it the
+                    # the callee is this symbol's own name, and `recurse_ok` says
+                    # some call of it is bare or on self/this -- a receiver-ful
+                    # call (`current_app.url_for()`) never is. Without it the
                     # tiers below hand the call to a same-named method elsewhere
                     # in the file at confidence 1.0 and the recursion edge is lost.
-                    chosen_cands, res_kind, scope_dist = [sid], "self_recursive", 0
-                elif (
-                    scope_id
-                    and (tier1 := members.get(scope_id, {}).get(callee, []))
-                    and sid not in tier1
+                    # Inside a type an overload set comes back whole, at 1/n.
+                    tier1 = members.get(scope_id, {}).get(callee, []) if scope_id else []
+                    if sym.parent and len(tier1) > 1 and sid in tier1:
+                        chosen_cands, res_kind, scope_dist = tier1, "same_class", 0
+                    else:
+                        chosen_cands, res_kind, scope_dist = [sid], "self_recursive", 0
+                elif scope_id and (
+                    tier1 := [c for c in members.get(scope_id, {}).get(callee, []) if c != sid]
                 ):
                     # Tier 1: same class / enclosing scope, via `members`: every
                     # member of the caller's enclosing symbol (for Go: every
                     # method of the receiver type in the package) named `callee`.
                     # An overload set comes back whole and fans out at 1/n.
                     #
-                    # `sid not in tier1` is not the self-exclusion this rewrite
-                    # removed from the tiers below. `_callee_name` drops the
-                    # receiver, so inside `DoctorReport.to_dict` the calls
-                    # `self.to_dict()` and `c.to_dict()` are the same string
-                    # "to_dict" here -- self-recursion and a call to a sibling
-                    # class's identically-named method are indistinguishable.
-                    # Binding that to `sid` at confidence 1.0 gets doctor.py:61
-                    # (`[c.to_dict() for c in self.checks]`) confidently wrong,
-                    # so a self-target falls through to tier 2 instead, which
-                    # *includes* the caller: whichever reading is right, the
-                    # true target is in the candidate set and the ambiguity is
-                    # priced at 1/n rather than hidden.
+                    # The caller is excluded: a possible self-call was taken by
+                    # tier 0, so what reaches here has a non-self receiver
+                    # (`c.to_dict()` inside `DoctorReport.to_dict`) or names a
+                    # sibling overload.
                     chosen_cands = tier1
                     res_kind, scope_dist = "same_class", 0
-                elif tier2 := [c for c in all_cands if g.nodes[c].get("path") == rel]:
+                elif tier2 := [c for c in pool if g.nodes[c].get("path") == rel]:
                     chosen_cands, res_kind, scope_dist = tier2, "same_file", 1
-                elif (tier3 := tier3_imported(rel, callee, all_cands))[0]:
+                elif (tier3 := tier3_imported(rel, callee, pool))[0]:
                     chosen_cands, res_kind, scope_dist = tier3[0], tier3[1], 2
-                elif tier4 := [c for c in all_cands if sym_dir[c] == rel_dir]:
+                elif tier4 := [c for c in pool if sym_dir[c] == rel_dir]:
                     chosen_cands, res_kind, scope_dist = tier4, "same_module", 3
-                elif len(all_cands) == 1:
-                    chosen_cands, res_kind, scope_dist = all_cands, "unique_global_name", 4
-                elif len(all_cands) > 1:
-                    chosen_cands, res_kind, scope_dist = all_cands, "ambiguous_global_name", 5
+                elif len(pool) == 1:
+                    chosen_cands, res_kind, scope_dist = pool, "unique_global_name", 4
+                elif len(pool) > 1:
+                    chosen_cands, res_kind, scope_dist = pool, "ambiguous_global_name", 5
 
                 # `os.environ.get(k)` reduces to the name "get", and without
                 # this the tiers above bind it to any `get` method in the same

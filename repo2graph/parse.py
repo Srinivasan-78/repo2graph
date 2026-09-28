@@ -207,6 +207,7 @@ LANG_CFG: dict[str, LangConfig] = {
         "call_types": {
             "function_call_expression",
             "member_call_expression",
+            "scoped_call_expression",
             "object_creation_expression",
         },
         "import_types": {"namespace_use_declaration"},
@@ -795,12 +796,22 @@ def _callee_name(src: bytes, node) -> str | None:
 # resolved against the enclosing class; a call on anything else has a receiver
 # whose type the parser does not know.
 _SELF_RECEIVERS = frozenset(
-    {"self", "cls", "this", "super", "super()", "$this", "base", "Self", "static", "parent", "@"}
+    {"self", "cls", "this", "super", "super()", "$this", "Self", "static", "@"}
 )
 
+# `base` / `parent` are keywords in exactly one language each and ordinary
+# identifiers everywhere else: a Python/JS/Go local named `parent`
+# (`parent.add(self)`) is a value of unknown type, not the base class. So they
+# only classify as "self" in their own language -- C#'s `base.F()` and PHP's
+# static `parent::f()`.
+_LANG_SELF_RECEIVERS: dict[str, frozenset[str]] = {"csharp": frozenset({"base"})}
+_LANG_STATIC_SELF_RECEIVERS: dict[str, frozenset[str]] = {"php": frozenset({"parent"})}
 
-# The subset of `_SELF_RECEIVERS` that names the *base* implementation, not the
-# calling object: `super().__init__()` never means the calling method itself.
+
+# Receivers that name the *base* implementation, not the calling object:
+# `super().__init__()` never means the calling method itself. graph.build
+# consults this only for calls already classified "self", which `base` and
+# `parent` are only in C# and PHP respectively (see above).
 SUPER_RECEIVERS = frozenset({"super", "super()", "base", "parent"})
 
 
@@ -823,7 +834,12 @@ def _split_receiver_text(txt: str) -> tuple[str, bool]:
 
 def _receiver_of(src: bytes, node) -> tuple[str, bool]:
     """(receiver head text, static_scope) of a call node; ("", False) if bare."""
-    recv = node.child_by_field_name("object") or node.child_by_field_name("receiver")
+    recv = (
+        node.child_by_field_name("object")
+        or node.child_by_field_name("receiver")
+        # PHP `scoped_call_expression`: `parent::f()`, `Foo::bar()`
+        or node.child_by_field_name("scope")
+    )
     if recv is None and node.child_by_field_name("function") is None and node.named_child_count:
         # Kotlin/Swift: `call_expression` has no `function` field; a member
         # call's first child is a `navigation_expression` whose first child is
@@ -844,15 +860,26 @@ def _receiver_of(src: bytes, node) -> tuple[str, bool]:
     return _split_receiver_text(_text(src, fn).strip())
 
 
-def _classify_receiver(head: str, self_names: frozenset[str] = frozenset()) -> str:
+def _classify_receiver(
+    head: str,
+    self_names: frozenset[str] = frozenset(),
+    lang: str = "",
+    static: bool = False,
+) -> str:
     if not head:
         return "none"
     if head in _SELF_RECEIVERS or head in self_names or head.startswith("super("):
         return "self"
+    if head in _LANG_SELF_RECEIVERS.get(lang, ()):
+        return "self"
+    if static and head in _LANG_STATIC_SELF_RECEIVERS.get(lang, ()):
+        return "self"
     return "other"
 
 
-def _receiver_fields(head: str, static: bool, self_names: frozenset[str] = frozenset()) -> dict:
+def _receiver_fields(
+    head: str, static: bool, self_names: frozenset[str] = frozenset(), lang: str = ""
+) -> dict:
     """The receiver keys of one `call_details` entry.
 
     "receiver" is always present (none/self/other). "receiver_head" is the
@@ -860,7 +887,7 @@ def _receiver_fields(head: str, static: bool, self_names: frozenset[str] = froze
     imported module (`store.get()`) or a type (`Util.remove()`) from a value of
     unknown type (`d.get()`); "receiver_static" marks a `::`-scoped call.
     """
-    out: dict = {"receiver": _classify_receiver(head, self_names)}
+    out: dict = {"receiver": _classify_receiver(head, self_names, lang, static)}
     if head:
         out["receiver_head"] = head[:200]
     if static:
@@ -1560,7 +1587,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         "kind": call_kind,
                         "line": node.start_point[0] + 1,
                         **_receiver_fields(
-                            recv_head, recv_static, go_self.get(id(owner), frozenset())
+                            recv_head, recv_static, go_self.get(id(owner), frozenset()), lang
                         ),
                     }
                 )

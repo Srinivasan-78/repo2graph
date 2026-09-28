@@ -467,17 +467,14 @@ def test_unambiguous_method_recursion_keeps_its_self_edge(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:p.py::Z.only"
     }
-    assert got == {("sym:p.py::Z.only", "sym:p.py::Z.only", "same_file", 1.0)}
+    assert got == {("sym:p.py::Z.only", "sym:p.py::Z.only", "self_recursive", 1.0)}
 
 
 def test_a_methods_own_name_is_never_bound_confidently(tmp_path: Path):
-    """`self.to_dict()` and `c.to_dict()` are the same string once the receiver is gone.
+    """`c.to_dict()` inside `Report.to_dict` is never a self-call.
 
-    `_callee_name` keeps only the rightmost member-access segment, so inside
-    `Report.to_dict` a self-call and a call to a sibling class's identically
-    named method are indistinguishable. Neither reading may be asserted at
-    confidence 1.0: tier 1 declines a self-target and tier 2 -- which now
-    *includes* the caller -- prices both readings at 1/n.
+    The call has a receiver that is not self, so the caller is not a candidate
+    (audit round 2: receiver-aware tier 0) and the sibling is the only reading.
 
     This is the shape of repo2graph's own doctor.py:61,
     `[c.to_dict() for c in self.checks]`, which an earlier version of this fix
@@ -501,12 +498,7 @@ def test_a_methods_own_name_is_never_bound_confidently(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:r.py::Report.to_dict"
     }
-    # Both readings are on the table, neither is claimed outright, and the true
-    # target is in the set whichever reading holds.
-    assert got == {
-        ("sym:r.py::Item.to_dict", "same_file", 0.5),
-        ("sym:r.py::Report.to_dict", "same_file", 0.5),
-    }
+    assert got == {("sym:r.py::Item.to_dict", "same_file", 1.0)}
 
 
 def test_method_recursion_survives_a_same_named_sibling(tmp_path: Path):
@@ -533,8 +525,8 @@ def test_method_recursion_survives_a_same_named_sibling(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:n.py::Y.work"
     }
-    assert ("sym:n.py::Y.work", 0.5) in got, "the recursion edge must survive"
-    assert got == {("sym:n.py::Y.work", 0.5), ("sym:n.py::work", 0.5)}
+    # `self.work()` is a self-call: the module-level `work` is not a reading.
+    assert got == {("sym:n.py::Y.work", 1.0)}, "the recursion edge must survive"
 
 
 def test_decorator_call_counted_once(tmp_path: Path):
@@ -1406,3 +1398,117 @@ def test_super_call_binds_base_method_never_itself(tmp_path: Path):
     ]
     assert "external:get" in ext
     assert not [e for e in g.edges if e["type"] == "CALLS" and e["src"] == e["dst"]]
+
+
+# ---------------------------------------------------------------------------
+# Audit round 2: tier 0 needs a bare/self call; base/parent are per-language
+# ---------------------------------------------------------------------------
+
+
+def _calls_from(g, src: str) -> set[tuple[str, str]]:
+    return {
+        (e["dst"], e.get("resolution_kind", ""))
+        for e in g.edges
+        if e["type"] in ("CALLS", "CALLS_EXTERNAL") and e["src"] == src
+    }
+
+
+def test_a_call_with_an_explicit_receiver_is_never_self_recursion(tmp_path: Path):
+    """The Flask shapes: `current_app.url_for()` in `url_for`, `cli.main()` in
+    `main`, `dict.__repr__(self)` in `Config.__repr__`, `Base.__init__(self)`."""
+    (tmp_path / "h.py").write_text(
+        "def url_for(endpoint):\n"
+        "    return current_app.url_for(endpoint)\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    cli.main()\n"
+        "\n"
+        "\n"
+        "class Config(dict):\n"
+        "    def __repr__(self):\n"
+        "        return dict.__repr__(self)\n"
+        "\n"
+        "\n"
+        "class Base:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "\n"
+        "\n"
+        "class Env(Base):\n"
+        "    def __init__(self):\n"
+        "        Base.__init__(self)\n"
+        "\n"
+        "\n"
+        "def fact(n):\n"
+        "    return fact(n - 1)\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    self_loops = {e["src"] for e in g.edges if e["type"] == "CALLS" and e["src"] == e["dst"]}
+    assert self_loops == {"sym:h.py::fact"}
+    assert _calls_from(g, "sym:h.py::Env.__init__") == {("sym:h.py::Base.__init__", "base_class")}
+    assert _calls_from(g, "sym:h.py::Config.__repr__") == {
+        ("external:__repr__", "unresolved_external")
+    }
+
+
+def test_implicit_this_bare_call_recurses_in_java_but_not_python(tmp_path: Path):
+    (tmp_path / "A.java").write_text(
+        "class A {\n  int f(int n) { return f(n - 1); }\n}\n", encoding="utf8"
+    )
+    (tmp_path / "m.py").write_text(
+        "def g():\n    return 1\n\n\nclass K:\n    def g(self):\n        return g()\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    assert _calls_from(g, "sym:A.java::A.f") == {("sym:A.java::A.f", "self_recursive")}
+    # a bare `g()` inside a Python method is the module function, never the method
+    assert _calls_from(g, "sym:m.py::K.g") == {("sym:m.py::g", "same_file")}
+
+
+def test_a_local_named_parent_or_base_is_not_a_super_call(tmp_path: Path):
+    """Reviewer repro p1/tree.py: `parent.add(self)` in Python resolves in-repo."""
+    (tmp_path / "tree.py").write_text(
+        "class Node:\n"
+        "    def add(self, child):\n"
+        "        self.children.append(child)\n"
+        "\n"
+        "    def attach(self, parent, base):\n"
+        "        parent.add(self)\n"
+        "        base.add(self)\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    assert _calls_from(g, "sym:tree.py::Node.attach") == {("sym:tree.py::Node.add", "same_class")}
+
+
+@pytest.mark.parametrize(
+    ("lang", "head", "static", "want"),
+    [
+        ("python", "parent", False, "other"),
+        ("python", "base", False, "other"),
+        ("javascript", "parent", False, "other"),
+        ("go", "parent", False, "other"),
+        ("csharp", "base", False, "self"),
+        ("csharp", "parent", False, "other"),
+        ("php", "parent", True, "self"),
+        ("php", "parent", False, "other"),
+        ("python", "super()", False, "self"),
+        ("java", "super", False, "self"),
+    ],
+)
+def test_super_like_receivers_are_language_specific(lang, head, static, want):
+    from repo2graph.parse import _classify_receiver
+
+    assert _classify_receiver(head, frozenset(), lang, static) == want
+
+
+def test_php_parent_static_call_is_recorded_as_a_super_call():
+    from repo2graph.parse import parse_source
+
+    pf = parse_source(b"<?php\nclass A extends B { function f() { parent::f(); } }\n", "php")
+    (m,) = [s for s in pf.symbols if s.qualname == "A.f"]
+    assert [(d["name"], d["receiver"], d.get("receiver_head")) for d in m.call_details] == [
+        ("f", "self", "parent")
+    ]
