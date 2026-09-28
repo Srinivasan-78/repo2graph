@@ -400,11 +400,20 @@ class StarterQuestion:
     already concretised against the bundled fixture, which is what
     `repo2graph demo` actually runs; `shows` is the one line explaining what
     the answer demonstrates about the graph.
+
+    `callers_of`, when set, is the node id whose incoming CALLS edges the demo
+    lists after the search answer (`repo2graph explain node`). Question 4
+    needs it: `self.store.insert(...)` has an untyped receiver and the tests
+    define a `FakeStore.insert` too, so the edge from `place_order` is split
+    between the two at low confidence and the search pack's confidence gate
+    does not walk it. The edge is real; the honest place to show a blast
+    radius is the node's own caller list, confidence included.
     """
 
     template: str
     demo: str
     shows: str
+    callers_of: str = ""
 
 
 # The single source of truth for the starter prompts. docs/quickstart.md,
@@ -429,7 +438,8 @@ STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
     StarterQuestion(
         template="What would be affected by changing <api>?",
         demo="What would be affected by changing OrderStore.insert?",
-        shows="the blast radius: direct callers and what they are called from",
+        shows="the definition, then its direct callers from the CALLS edges into it (explain node)",
+        callers_of="sym:app/store.py::OrderStore.insert",
     ),
     StarterQuestion(
         template="Trace <a request> from route to persistence.",
@@ -506,6 +516,31 @@ def _brief(pack: dict[str, Any]) -> str:
     if len(body) > BRIEF_BODY_LINES:
         lines.append(
             f"      | ... ({len(body) - BRIEF_BODY_LINES} more lines -- rerun with --full)"
+        )
+    return "\n".join(lines)
+
+
+def _callers(index_dir: Path, node_id: str) -> list[dict[str, Any]]:
+    """Incoming CALLS edges of `node_id`, as `explain node` reports them."""
+    from .explain import explain_node
+
+    data = explain_node(index_dir, node_id)
+    return [e for e in data.get("in_edges") or [] if e.get("type") == "CALLS"]
+
+
+def _format_callers(callers: list[dict[str, Any]]) -> str:
+    if not callers:
+        return "      direct callers: none in the graph"
+    lines = [f"      direct callers ({len(callers)}, CALLS in):"]
+    for e in callers:
+        ev = e.get("evidence") or {}
+        where = f"{ev.get('path')}:{ev.get('line')}" if isinstance(ev, dict) and ev else ""
+        note = ""
+        if e.get("ambiguous"):
+            note = f"  (name shared by {e.get('candidate_count') or 'several'} symbols)"
+        src = str(e.get("src") or "").split("::", 1)[-1]
+        lines.append(
+            f"        {src:<30} {where:<22} confidence {float(e.get('confidence') or 0):.2f}{note}"
         )
     return "\n".join(lines)
 
@@ -598,6 +633,12 @@ def run_demo(
             emit(f'      $ repo2graph rag "{q.demo}" -o {index_dir}')
             emit("")
             emit(_brief(pack) if brief else pack["markdown"])
+            if q.callers_of:
+                callers = _callers(index_dir, q.callers_of)
+                report["questions"][-1]["callers"] = [c["src"] for c in callers]
+                emit("")
+                emit(f"      $ repo2graph explain node '{q.callers_of}' -o {index_dir}")
+                emit(_format_callers(callers))
 
         emit("")
         emit("-" * 72)

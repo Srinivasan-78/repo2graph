@@ -93,14 +93,16 @@ cd /path/to/your/project
 repo2graph build . -o .r2g
 ```
 
-Expected output — a JSON summary on stdout, and `.r2g/` next to your code:
+Expected output — a JSON summary on stdout (abridged here: `written` lists
+every artifact and `stats` every counter), and `.r2g/` next to your code.
+`out` is the **absolute** path of the index directory:
 
 ```json
 {
-  "out": ".r2g",
+  "out": "/path/to/your/project/.r2g",
   "written": ["agent/nodes.jsonl", "agent/edges.jsonl", "agent/chunks.jsonl",
-              "human/graph.html", "human/overview.md", "agent/manifest.json"],
-  "stats": {"files": 227, "parsed": 80, "nodes": 2552, "edges": 11118},
+              "human/graph.html", "human/overview.md", "agent/manifest.json", "..."],
+  "stats": {"files": 227, "parsed": 80, "nodes": 2552, "edges": 11118, "...": "..."},
   "chunks": 3341
 }
 ```
@@ -137,7 +139,7 @@ left column is the copy-paste form for your own repository; run
 | 1 | `Where is authentication enforced?` | the guard itself, plus the routes that call it |
 | 2 | `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | 3 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| 4 | `What would be affected by changing <api>?` | the blast radius: direct callers and what they are called from |
+| 4 | `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (explain node) |
 | 5 | `Trace <a request> from route to persistence.` | the handler and its callees one hop at a time, each block cited to file and line |
 
 Run any of them like this:
@@ -145,7 +147,14 @@ Run any of them like this:
 ```bash
 repo2graph rag "What calls parse_formats?" -o .r2g
 repo2graph rag "What would be affected by changing pack_context?" -o .r2g --budget 12000
+repo2graph explain node 'sym:repo2graph/query.py::Index.pack_context' -o .r2g   # its callers
 ```
+
+Question 4 pairs the search with the node's own caller list: a call through an
+untyped receiver whose method name is shared (the demo's `self.store.insert`,
+also defined by a test double) resolves at low confidence, and search does not
+walk low-confidence edges. `explain node` lists every CALLS edge in, with its
+confidence, so the direct caller is there either way.
 
 Question 4 is the one to reach for before a refactor; question 5 is the one
 to reach for on your first day in an unfamiliar codebase.

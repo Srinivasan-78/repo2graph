@@ -914,12 +914,13 @@ def write_manifest(
         "source_revision": source_revision,
         "checksums": checksums or {},
         "repo": g.name,
-        # The absolute source tree this index was built from. `index-status`
-        # and `doctor <index>` compare against it, so an `-o` outside the repo
-        # is not mistaken for "the index's parent is the source tree" (which
-        # read every fresh build as stale). Readers ignore it when it no longer
-        # exists -- a moved or shipped index -- and fall back to that parent.
-        "source_root": str(Path(g.root).resolve()) if getattr(g, "root", None) else None,
+        # No absolute `source_root` here: this file ships (committed `.r2g`,
+        # Action artifacts, orphan branches), and the build machine's path is
+        # not the reader's business. It lives in the machine-local LOCAL_FILE
+        # beside the index instead. A remote build (`repo2graph github`)
+        # records where it came from -- `github:owner/repo@sha` -- because its
+        # temp clone is gone and there is no local tree to compare against.
+        "source_remote": getattr(g, "source_remote", None),
         "written": written,
         "secret_filter_policy": secret_filter_policy,
         "sections": {
@@ -1239,12 +1240,47 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     shutil.rmtree(backup, ignore_errors=True)
 
 
+#: Machine-local build facts, at the index root (not under agent/ or human/).
+#: Never shipped: the GitHub Action strips it from uploads and pushes, and the
+#: index root's own `.gitignore` keeps it out of a committed `.r2g`.
+LOCAL_FILE = "local.json"
+_LOCAL_GITIGNORE = (
+    f"# written by repo2graph: machine-local build facts, never commit them\n{LOCAL_FILE}\n"
+)
+
+
+def write_local(g: Any, index_root: Path) -> None:
+    """Write LOCAL_FILE (the absolute source root) plus a `.gitignore` for it.
+
+    `index-status` and `doctor <index>` read the root so an `-o` outside the
+    repo is not mistaken for "the index's parent is the source tree". A remote
+    build has no surviving tree, so it records none.
+    """
+    root = getattr(g, "root", None)
+    local = {
+        "note": "machine-local; do not commit or ship (see docs/PRIVACY.md)",
+        "source_root": (
+            str(Path(root).resolve()) if root and not getattr(g, "source_remote", None) else None
+        ),
+    }
+    index_root = Path(index_root)
+    with atomic_write(index_root / LOCAL_FILE, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(local, indent=2) + "\n")
+    ignore = index_root / ".gitignore"
+    if not ignore.exists():
+        with atomic_write(ignore, "w", encoding="utf8", newline="\n") as fh:
+            fh.write(_LOCAL_GITIGNORE)
+
+
 # Files produced by commands OTHER than dump_all (embed, github) that must be
 # preserved when the staging dir is swapped in over the real outdir.
 _PRESERVE_ACROSS_BUILDS = (
     "agent/vectors.npy",
     "agent/vectors.meta.json",
     "agent/index.json",
+    # A user's own edits to the index root's .gitignore survive a rebuild;
+    # write_local only creates one where none exists.
+    ".gitignore",
 )
 
 
@@ -1332,6 +1368,7 @@ def dump_all(
             pass  # Checksum failure is non-fatal; manifest still gets written
 
         write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
+        write_local(g, staging_dir)
 
         # All writes succeeded: swap staging -> outdir atomically
         _atomic_dir_swap(staging_dir, outdir)

@@ -677,7 +677,9 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
         "parse.cache.json",
         "stats.json",
     ]
-    assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
+    # local.json (the machine-local source root) and the .gitignore that keeps
+    # it out of a committed index sit at the root, outside both sections.
+    assert sorted(p.name for p in out.iterdir()) == [".gitignore", "agent", "human", "local.json"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written
 

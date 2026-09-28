@@ -248,8 +248,11 @@ TOOL_SCHEMAS = {
             },
             "format": {
                 "type": "string",
-                "enum": ["markdown", "json", "pr-comment"],
-                "description": "Report format: 'markdown' (full report), 'pr-comment' (compact PR summary), or 'json'.",
+                "enum": ["markdown", "json", "sarif", "pr-comment"],
+                "description": (
+                    "Report format: 'markdown' (full report), 'pr-comment' (compact PR "
+                    "summary), 'json', or 'sarif' (SARIF v2.1.0). Anything else is an error."
+                ),
             },
         },
     },
@@ -281,6 +284,10 @@ BUDGET_DEFAULTED = (
     "_note: budget_tokens={given} is not a positive token count; used the default "
     "{default} (max {ceiling})._\n\n"
 )
+
+
+#: What `repo_impact`'s `format` accepts (`comment` is an alias of `pr-comment`).
+IMPACT_FORMATS = ("markdown", "json", "sarif", "pr-comment")
 
 
 class ToolError(str):
@@ -490,7 +497,7 @@ def tool_repo_map(index: Index) -> str:
 
 
 def tool_repo_search(
-    index: Index, query: str, k: int = 8, hops: int = 1, budget_tokens=None
+    index: Index, query: str, k: Any = 8, hops: Any = 1, budget_tokens=None
 ) -> str:
     """Cited markdown for `query`, never wider than MCP_MAX_BUDGET_TOKENS."""
     query = _str(query, MCP_MAX_QUERY_CHARS)
@@ -499,13 +506,15 @@ def tool_repo_search(
             "repo_search needs a non-empty `query`: a question, search terms or a "
             "symbol name (e.g. 'pack_context' or 'how does export work')."
         )
+    note = _defaulted_notes(
+        k=(k, 8), hops=(hops, 1), budget_tokens=(budget_tokens, MCP_BUDGET_TOKENS)
+    )
     budget = MCP_BUDGET_TOKENS if budget_tokens is None else _int(budget_tokens, MCP_BUDGET_TOKENS)
-    note = ""
     if budget <= 0:
         # Zero or negative is not a budget anyone means, and answering it with
         # "nothing fit in a 1-token budget" is true of the clamp but useless.
         # Use the default instead and say so; the note is charged to the budget.
-        note = BUDGET_DEFAULTED.format(
+        note += BUDGET_DEFAULTED.format(
             given=budget, default=MCP_BUDGET_TOKENS, ceiling=MCP_MAX_BUDGET_TOKENS
         )
         budget = MCP_BUDGET_TOKENS
@@ -536,7 +545,7 @@ def tool_repo_search(
 
 
 def tool_repo_neighbours(
-    index: Index, node_id: str, hops: int = 1, limit: int = MCP_NEIGHBOUR_LIMIT
+    index: Index, node_id: str, hops: Any = 1, limit: Any = MCP_NEIGHBOUR_LIMIT
 ) -> str:
     """One graph hop from `node_id` — the thing grep cannot do."""
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
@@ -551,6 +560,7 @@ def tool_repo_neighbours(
             f"node not found: {node_id!r}. Ids look like "
             f"file:<path>, sym:<path>::<qualname> or dir:<path>."
         )
+    note = _defaulted_notes(hops=(hops, 1), limit=(limit, MCP_NEIGHBOUR_LIMIT))
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
@@ -575,7 +585,7 @@ def tool_repo_neighbours(
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
-    return "\n".join(lines)
+    return note + "\n".join(lines)
 
 
 def tool_repo_impact(
@@ -583,7 +593,7 @@ def tool_repo_impact(
     base: str = "main",
     head: str | None = None,
     diff: str = "",
-    max_depth: int = 2,
+    max_depth: Any = 2,
     format: str = "markdown",
 ) -> str:
     """Analyze PR or git diff impact against a base branch using the code graph.
@@ -604,8 +614,29 @@ def tool_repo_impact(
         format_json,
         format_markdown,
         format_pr_comment,
+        format_sarif,
         get_git_diff,
+        parse_unified_diff,
     )
+
+    fmt = str(format).lower().strip()
+    if fmt == "comment":
+        fmt = "pr-comment"
+    if fmt not in IMPACT_FORMATS:
+        # Falling back to markdown answered a request for a machine-readable
+        # format with prose the caller then fails to parse.
+        return ToolError(
+            f"unknown repo_impact format {str(format)[:40]!r}: expected one of "
+            f"{', '.join(IMPACT_FORMATS)}."
+        )
+
+    if diff_text.strip() and not parse_unified_diff(diff_text):
+        # A caller-supplied diff with no file header is not "a PR that changed
+        # nothing": answering it LOW RISK is a confident wrong result.
+        return ToolError(
+            "`diff` is not a unified diff: found no `diff --git a/<path> b/<path>` file "
+            "header. Pass the output of `git diff` (or omit `diff` to let the server run it)."
+        )
 
     if not diff_text.strip():
         root_path = _impact_root(index)
@@ -636,13 +667,19 @@ def tool_repo_impact(
         exclude_secrets=True,
     )
 
-    fmt = str(format).lower().strip()
+    import json as _json
+
     if fmt == "json":
         rendered = format_json(report)
-    elif fmt in ("pr-comment", "comment"):
+    elif fmt == "sarif":
+        rendered = _json.dumps(format_sarif(report), indent=2)
+    elif fmt == "pr-comment":
         rendered = format_pr_comment(report)
     else:
         rendered = format_markdown(report)
+    if fmt in ("markdown", "pr-comment"):
+        # Machine-readable formats get no prose prefix: it would stop parsing.
+        rendered = _defaulted_notes(max_depth=(max_depth, 2)) + rendered
 
     # Bound the rendered result, the second half of the AGENTS.md MCP rule: a
     # clamped *input* does not bound the *output*. The report grows with the
@@ -654,16 +691,12 @@ def tool_repo_impact(
     if count_tokens(rendered) <= MCP_MAX_BUDGET_TOKENS:
         return rendered
 
-    if fmt == "json":
+    if fmt in ("json", "sarif"):
         # `_fit_lines` would cut mid-structure and hand back a string that is no
         # longer JSON, which for a machine-readable format is worse than the
         # overrun: the caller gets a parse error instead of a result. Return the
         # scalar summary -- which is what does not grow with the diff -- as a
         # valid document, and say plainly that the lists were dropped.
-        # Function-local import, matching this module's other json call sites:
-        # the docstring's promise is that importing `mcp` costs nothing.
-        import json as _json
-
         return _json.dumps(
             {
                 "truncated": True,
@@ -819,6 +852,27 @@ def _int(value, fallback: int) -> int:
         return fallback
 
 
+def _defaulted_notes(**args: tuple[Any, int]) -> str:
+    """One `_note:` line per argument that was given but is not a number.
+
+    Such a value takes the default rather than failing the call (docs/mcp.md,
+    "Argument bounds"), but it did so silently: `k: "abc"` looked honoured.
+    Charged to the output like BUDGET_DEFAULTED; empty when all were usable.
+    """
+    notes = ""
+    for name, (value, default) in args.items():
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            int(value)
+        except (TypeError, ValueError, OverflowError):
+            notes += (
+                f"_note: {name}={repr(value)[:40]} is not an integer; "
+                f"used the default {default}._\n\n"
+            )
+    return notes
+
+
 def _clamp(value, fallback: int, low: int, high: int) -> int:
     """_int, then held inside [low, high]: no argument may cost unbounded time."""
     return max(low, min(_int(value, fallback), high))
@@ -859,26 +913,45 @@ def tool_build_status(tasks, task_id: str) -> str:
     import json as _json
 
     task_id = _str(task_id, MCP_MAX_TASK_ID_CHARS)
+    # Every "no status to report" answer is a ToolError (isError: true), still
+    # carrying its JSON body: a client must be able to tell "there is no such
+    # build" from a status document without parsing prose (docs/mcp.md).
     if tasks is None:
-        return _json.dumps(
-            {
-                "error": "this server builds synchronously; there are no build "
-                "tasks to report. Start it with --async-build to use "
-                "repo_build_status.",
-            },
-            indent=2,
+        return ToolError(
+            _json.dumps(
+                {
+                    "error": "this server builds synchronously; there are no build "
+                    "tasks to report. Start it with --async-build to use "
+                    "repo_build_status.",
+                },
+                indent=2,
+            )
+        )
+    if not task_id.strip():
+        return ToolError(
+            _json.dumps(
+                {
+                    "task_id": "",
+                    "status": "unknown",
+                    "error": "repo_build_status needs a `task_id`: the id a tool call "
+                    "returned when it started a background build.",
+                },
+                indent=2,
+            )
         )
     task = tasks.get(task_id)
     if task is None:
-        return _json.dumps(
-            {
-                "task_id": task_id,
-                "status": "unknown",
-                "error": f"no build task with id {task_id!r}. Ids are issued by the "
-                f"tool call that starts a build and do not survive a "
-                f"server restart.",
-            },
-            indent=2,
+        return ToolError(
+            _json.dumps(
+                {
+                    "task_id": task_id,
+                    "status": "unknown",
+                    "error": f"no build task with id {task_id!r}. Ids are issued by the "
+                    f"tool call that starts a build and do not survive a "
+                    f"server restart.",
+                },
+                indent=2,
+            )
         )
     return _json.dumps(task.snapshot(), indent=2)
 
@@ -940,16 +1013,17 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
         result = tool_repo_search(
             index,
             str(args.get("query") or ""),
-            k=_int(args.get("k"), 8),
-            hops=_int(args.get("hops"), 1),
+            # Raw, not `_int`-ed: the handler coerces, and notes a non-number.
+            k=args.get("k", 8),
+            hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
         )
     elif name == "repo_neighbours":
         result = tool_repo_neighbours(
             index,
             str(args.get("node_id") or ""),
-            hops=_int(args.get("hops"), 1),
-            limit=_int(args.get("limit"), MCP_NEIGHBOUR_LIMIT),
+            hops=args.get("hops", 1),
+            limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
         )
     elif name == "repo_impact":
         result = tool_repo_impact(
@@ -957,7 +1031,7 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
             base=str(args.get("base") or "main"),
             head=str(args.get("head") or "") or None,
             diff=str(args.get("diff") or ""),
-            max_depth=_int(args.get("max_depth"), 2),
+            max_depth=args.get("max_depth", 2),
             format=str(args.get("format") or "markdown"),
         )
     else:  # unreachable: unknown names returned above

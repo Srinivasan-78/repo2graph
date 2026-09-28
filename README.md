@@ -79,7 +79,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
 | `Where is authentication enforced?` | the guard itself, plus the routes that call it |
 | `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| `What would be affected by changing <api>?` | the blast radius: direct callers and what they are called from |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (explain node) |
 | `Trace <a request> from route to persistence.` | the handler and its callees one hop at a time, each block cited to file and line |
 
 ## GitHub Action

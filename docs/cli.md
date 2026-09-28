@@ -76,6 +76,8 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
+| `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
+| `--max-nodes` | `0` (unbounded) | Fail the build with `GraphLimitExceeded` once the graph holds more than this many nodes — a guard for CI or shared machines against an unexpectedly huge tree. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
@@ -173,6 +175,8 @@ functions around each answer come along too.
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
+| `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -236,12 +240,21 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
-`query`, so a program can see what got left out:
+`query`, so a program can see what got left out (a compressed neighbour is
+described under the examples below):
 
 ```bash
 repo2graph rag "how does export write the manifest" -o .r2g --format json \
   | jq '{used: .used_chars, budget: .budget_chars, cut: .truncated}'
 ```
+
+A neighbour that did not fit whole is **compressed** to its header and first
+line. Its cite then names the lines it shows, not the whole symbol or file —
+``### [cite: pkg/mod.py:12-12] `Foo.bar` [excerpt of 12-40] (CALLS out of run)``
+— and its `chunks` record carries `excerpt_of: [12, 40]` with `start_line` /
+`end_line` narrowed to match. Where the shown line cannot be mapped back to a
+source line (a file's residual, or a later part of a split chunk) the range is
+kept and marked `[header and first line only, of 1-648]` instead.
 
 ### Secrets at query time
 
@@ -527,16 +540,21 @@ maps each symptom to the check that names it.
 ## `explain-path` — explain file inclusion or exclusion
 
 ```bash
-repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
-                         [--include-vendor] [--include-secrets] [--json]
+repo2graph explain-path <path> [-r REPO] [-o OUT] [--include GLOB] [--exclude GLOB]
+                         [--exclude-group NAME] [--include-vendor] [--include-secrets]
+                         [--json]
 ```
 
 Evaluates one path against the same rules `build`'s discovery uses, and reports
 the single rule that decided it — not a trace of every rule that was checked.
 `<path>` is relative to `-r`/`--repo` (default: the current directory) or
 absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
-There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
-no size flags, so it cannot explain a build that used them: the size check
+`-o`/`--out` (default `.r2g`, resolved exactly as `build`'s) names the output
+directory a build would write to: discovery never indexes it, nor any directory
+holding a repo2graph `agent/manifest.json` (an earlier build's index), and
+`explain-path` reports those as `output_dir` / `index_dir` at step 2 — so
+`explain-path .r2g/agent/nodes.jsonl` says EXCLUDED, as the build behaves. It
+never opens the index. It also takes no size flags, so it cannot explain a build that used them: the size check
 below is always evaluated against the 1.5 MB `--max-file-mb` default with
 `--chunk-large-files` off, whatever the build was actually run with.
 
@@ -602,7 +620,11 @@ repo2graph explain retrieval "how does authentication work" -o .r2g -k 8 --hops 
 All explain subcommands support `--json` for machine-readable output. `explain
 retrieval` defaults to `-k 8`, the same as `rag` and `query`, so it traces the
 retrieval they actually run; `--min-conf` is accepted as an alias of
-`--min-confidence`.
+`--min-confidence`. Like `rag` and `query`, `explain retrieval` leaves
+secret-looking paths (`.env`, keys, credentials) out of the trace -- they are
+neither listed as candidates, walked to, nor retrieved, and the text report
+counts how many were hidden. `--include-secrets` opts back in;
+`--secret-keyword KEYWORD` and `--secret-dir DIR` (repeatable) extend the rule.
 
 
 ## `impact` — PR & diff architectural impact analysis
@@ -626,6 +648,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
 | `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
 | `--no-auto-build` | off | Fail instead of building the index when it is missing. |
+| `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
 | `--write <path>` | none | Write output to target file path. |
 
 Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).

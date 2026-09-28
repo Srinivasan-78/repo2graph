@@ -800,9 +800,13 @@ class Index:
                 body += block
                 continue
             short = _compress(text)
-            block = _cite_block(c, short)
+            # The compressed view shows a header and one line, so its cite must
+            # not claim the whole chunk: `[cite: JsonReader.kt:1-648]` over a
+            # block showing `/*` sent readers to 648 lines nobody quoted.
+            excerpt = _excerpt_record(c, text, short)
+            block = _cite_block(excerpt, short)
             if fits(block):
-                picked.append((c, short))
+                picked.append((excerpt, short))
                 body += block
             truncated = True
 
@@ -926,13 +930,92 @@ def _compress(text: str) -> str:
     return "\n".join(kept)
 
 
+#: `# <key>: ` lines chunks.build_chunks writes after `# file:` (and, for a
+#: symbol, its `# <kind>: <qualname>  (lines a-b, lang)` line).
+_HEADER_PREFIXES = (
+    "# imports: ",
+    "# defines: ",
+    "# entry point:",
+    "# inherits: ",
+    "# called by: ",
+    "# calls: ",
+    "# calls (outside the repo): ",
+    "# doc: ",
+)
+_KIND_LINE_RE = re.compile(r"^# [\w-]+: .*\(lines \d+-\d+, [^)]*\)$")
+_PART_SUFFIX_RE = re.compile(r"#\d+$")
+
+
+def _header_len(lines: list[str]) -> int:
+    """How many leading lines of a chunk's text are its generated header."""
+    if not lines or not lines[0].startswith("# file: "):
+        return 0
+    i = 1
+    if i < len(lines) and _KIND_LINE_RE.match(lines[i]):
+        i += 1
+    while i < len(lines) and lines[i].startswith(_HEADER_PREFIXES):
+        i += 1
+    return i
+
+
+def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
+    """`chunk` re-cited to the source lines `_compress` actually kept.
+
+    `excerpt_of` keeps the whole chunk's span. The shown span replaces
+    `start_line`/`end_line` only where chunk text maps line-for-line onto the
+    source from `start_line` -- a whole file or a whole symbol, first part.
+    A file residual (symbol spans carved out, then stripped) or a later split
+    part does not, so those keep their span and rely on the marker alone.
+    """
+    start = chunk.get("start_line")
+    end = chunk.get("end_line")
+    rec = {**chunk, "excerpt_of": [start, end]}
+    if (
+        not isinstance(start, int)
+        or chunk.get("type") not in ("symbol", "file")
+        or _PART_SUFFIX_RE.search(str(chunk.get("id") or ""))
+    ):
+        return rec
+    lines = full.split("\n")  # never splitlines(): see AGENTS.md
+    hdr = _header_len(lines)
+    # Mirror _compress: every leading `#` line, then the first non-blank one.
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    shown = list(range(i))
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines):
+        shown.append(i)
+    body = [x - hdr for x in shown if x >= hdr]
+    if body and short.split("\n")[-1] == lines[shown[-1]]:
+        rec["start_line"] = start + min(body)
+        rec["end_line"] = start + max(body)
+        rec["excerpt_exact"] = True
+    return rec
+
+
 def _cite_block(chunk: Record, text: str) -> str:
-    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line."""
+    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line.
+
+    A compressed neighbour (`excerpt_of` set) cites the lines it shows and
+    says which span they are an excerpt of, between the symbol and the why.
+    """
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
     end = chunk.get("end_line") or start
+    of = chunk.get("excerpt_of")
+    mark = ""
+    if isinstance(of, (list, tuple)) and len(of) == 2:
+        span = f"{of[0] or 1}-{of[1] or of[0] or 1}"
+        mark = (
+            f" [excerpt of {span}]"
+            if chunk.get("excerpt_exact")
+            else f" [header and first line only, of {span}]"
+        )
     head = (
-        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}` ({chunk.get('why') or ''})"
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{mark} "
+        f"({chunk.get('why') or ''})"
     )
     disarmed = "\n".join(
         "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")

@@ -749,6 +749,39 @@ def cmd_stats(args):
             _emit(raw)
 
 
+def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
+    """The rule discover() applies *first*: never index a repo2graph output dir.
+
+    `explain_path` does not model it, so `explain-path .r2g/agent/nodes.jsonl`
+    answered INCLUDED for a file no build ever indexes. Two shapes, checked in
+    discover()'s order: the `-o` directory this build would write to, and any
+    directory holding a repo2graph `agent/manifest.json` (an earlier build).
+    """
+    from .parse import BuildConfig, _is_index_dir, _output_rel_prefix
+
+    root = repo.resolve()
+    parts = tuple(Path(rel).parts)
+    out_parts = _output_rel_prefix(root, BuildConfig(output_dir=out)) if out else None
+    if out_parts is not None and parts[: len(out_parts)] == out_parts:
+        return {
+            "included": False,
+            "rule": "output_dir",
+            "reason": f"Path is inside the output directory -o {out}; a build never "
+            "indexes its own artifacts",
+            "precedence_step": 2,
+        }
+    for i in range(1, len(parts)):
+        if _is_index_dir(root.joinpath(*parts[:i])):
+            return {
+                "included": False,
+                "rule": "index_dir",
+                "reason": f"Path is inside '{'/'.join(parts[:i])}', a repo2graph index "
+                "(it holds agent/manifest.json); builds never index an index",
+                "precedence_step": 2,
+            }
+    return None
+
+
 def cmd_explain_path(args):
     from .parse import BuildConfig, explain_path
 
@@ -771,6 +804,10 @@ def cmd_explain_path(args):
         include_globs=args.include or None,
         exclude_globs=_effective_exclude(args),
     )
+    if res["rule"] not in ("outside_root", "not_found"):
+        index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
+        if index_hit is not None:
+            res.update(index_hit)
     if getattr(args, "json", False):
         _emit(json.dumps(res, indent=2))
     else:
@@ -924,7 +961,18 @@ def cmd_explain(args) -> int:
         k = getattr(args, "k", 8)
         hops = getattr(args, "hops", 1)
         conf = getattr(args, "min_confidence", None)
-        res = explain_retrieval(outdir, args.query, k=k, hops=hops, min_confidence=conf)
+        res = explain_retrieval(
+            outdir,
+            args.query,
+            k=k,
+            hops=hops,
+            min_confidence=conf,
+            # The same query-time default as rag/query: a trace must not name
+            # a `.env` that the retrieval it explains would never return.
+            exclude_secrets=not getattr(args, "include_secrets", False),
+            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
+            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        )
         _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
         return 0
     else:
@@ -1001,6 +1049,15 @@ def cmd_impact(args):
             if not diff_file.exists():
                 raise SystemExit(f"error: diff file {diff_file} does not exist")
             diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
+        from .impact import parse_unified_diff
+
+        if diff_text.strip() and not parse_unified_diff(diff_text):
+            # Non-empty text with no file header is not "a PR that changed
+            # nothing"; answering LOW RISK for it is a confident wrong result.
+            raise SystemExit(
+                "error: --diff input is not a unified diff (no `diff --git a/<path> "
+                "b/<path>` file header found); pass the output of `git diff`"
+            )
     else:
         try:
             diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
@@ -1024,6 +1081,9 @@ def cmd_impact(args):
         head=getattr(args, "head", None) or "HEAD",
         max_depth=getattr(args, "max_depth", 2),
         min_confidence=getattr(args, "min_confidence", None),
+        # Excluded by default, as `rag`/`query` do and as `repo_impact` over
+        # MCP always does: a changed `.env` must not be listed by path.
+        exclude_secrets=not getattr(args, "include_secrets", False),
     )
 
     if fmt == "json":
@@ -1629,6 +1689,12 @@ def main(argv=None):
         metavar="NAME",
         help="exclude a named group, exactly as `build` would (repeatable)",
     )
+    ep.add_argument(
+        "-o",
+        "--out",
+        default=".r2g",
+        help="the build's output directory, never indexed (default: .r2g, as build)",
+    )
     ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)
     ep.add_argument("--json", action="store_true", help="output explanation as JSON")
@@ -1775,6 +1841,29 @@ def main(argv=None):
         default=argparse.SUPPRESS,
         help="alias of --min-confidence",
     )
+    exp_ret.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="trace secret-looking paths (.env, keys, credentials) too "
+        "(default: excluded, as rag/query do)",
+    )
+    exp_ret.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to treat as a secret path (repeatable)",
+    )
+    exp_ret.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to treat as a secret path (repeatable)",
+    )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
 
@@ -1843,6 +1932,13 @@ def main(argv=None):
         type=float,
         default=argparse.SUPPRESS,
         help="alias of --min-confidence",
+    )
+    imp.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="report changes to secret-looking paths (.env, keys, credentials) too "
+        "(default: excluded from the report, as rag/query and MCP repo_impact do)",
     )
     imp.add_argument(
         "--no-auto-build",

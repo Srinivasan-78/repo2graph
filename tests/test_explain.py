@@ -283,3 +283,62 @@ def test_selected_seeds_are_all_visible_in_the_text_report(trace_repo: Path):
             nid,
             text,
         )
+
+
+# ==========================================================================
+# Query-time secret exclusion: the trace must match what rag/query return
+# ==========================================================================
+
+
+@pytest.fixture
+def secret_repo(tmp_path: Path):
+    """An index built *with* --include-secrets, so `.env` is in chunks.jsonl."""
+    from repo2graph.parse import BuildConfig
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / ".env").write_text(
+        "OPENAI_API_KEY=sk-not-a-real-key-but-long-enough-0123456789\n", encoding="utf8"
+    )
+    (src_dir / "app.py").write_text(
+        "SETTINGS = {'provider': 'openai', 'region': 'eu', 'retries': 3, 'timeout': 30}\n\n\n"
+        "def load_key():\n    return 'OPENAI_API_KEY'\n",
+        encoding="utf8",
+    )
+    out = tmp_path / "out"
+    g = build(src_dir, config=BuildConfig(include_secrets=True, secret_policy="off"))
+    dump_all(g, list(iter_chunks(g)), out, {"jsonl", "overview"})
+    assert any(c.get("path") == ".env" for c in Index(out).chunks), "fixture must index .env"
+    return out
+
+
+def test_explain_retrieval_excludes_secret_paths_by_default(secret_repo: Path, capsys):
+    res = explain_retrieval(secret_repo, "OPENAI_API_KEY")
+    assert ".env" not in json.dumps(res)
+    assert res["secrets_hidden"] >= 1
+    assert {c["path"] for c in res["retrieved_chunks"]} == {"app.py"}
+
+    assert main(["explain", "retrieval", "OPENAI_API_KEY", "-o", str(secret_repo)]) == 0
+    text = capsys.readouterr().out
+    assert ".env" not in text
+    assert "--include-secrets" in text
+
+
+def test_explain_retrieval_include_secrets_opts_back_in(secret_repo: Path, capsys):
+    assert (
+        main(
+            [
+                "explain",
+                "retrieval",
+                "OPENAI_API_KEY",
+                "-o",
+                str(secret_repo),
+                "--include-secrets",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    res = json.loads(capsys.readouterr().out)
+    assert ".env" in {c["path"] for c in res["retrieved_chunks"]}
+    assert res["secrets_hidden"] == 0

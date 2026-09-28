@@ -36,6 +36,37 @@ makes keeping it current a release-blocking step rather than a good intention.
   `secretName`, `passwordField`, `api_key_header`, `tokenizer` are left alone; single-quoted dict
   pairs and YAML `db_password: "..."` are now redacted. `auth.json` under a
   `locales`/`i18n`/`lang`/`translations` directory is no longer a secret path.
+- **`explain retrieval` and `impact` exclude secret-looking paths by default**, as `rag`/`query`
+  do: the trace no longer lists, walks to or retrieves `.env` chunks, and `impact --json` no
+  longer names a changed `.env`. `--include-secrets` opts back in on both.
+- **No absolute build path in shipped artifacts.** `manifest.json`'s `source_root` moved to a
+  machine-local `local.json` at the index root, with a generated `.gitignore`; the GitHub Action
+  excludes it from `artifact-name` uploads and `commit-branch` pushes. Older indexes still read.
+- **`repo2graph github` indexes are no longer "[STALE] N added".** They record
+  `source_remote: github:owner/repo@<sha>`; `index-status`/`doctor` report freshness as not
+  checkable and suggest `repo2graph github owner/repo -o <dir>`, not `build <cwd>`.
+- **`impact`: "Signature Changed" means the definition line(s).** Blank/comment-only lines never
+  count, a changed line is charged to its innermost symbol (a method edit no longer marks its
+  class), and a body-only change's direct callers score 1, not 3, and do not trip the 8-caller
+  HIGH trigger (a comment in a busy function was HIGH 27; now MEDIUM).
+- **`impact --diff` / MCP `repo_impact` reject text that is not a unified diff** (isError /
+  non-zero exit) instead of reporting LOW RISK; MCP `format: "sarif"` works, and an unknown
+  format is an isError listing the allowed four.
+- **MCP `repo_build_status`** with no, or an unknown, `task_id` (or on a synchronous server) is
+  now `isError: true`; a non-numeric `k`/`hops`/`limit`/`budget_tokens`/`max_depth` still takes
+  the default but the reply starts with a one-line `_note:` naming it.
+- **`explain-path` mirrors discovery for index directories**: the build's `-o` (new `-o/--out`,
+  default `.r2g`) and any directory holding a repo2graph manifest are reported EXCLUDED.
+- **`demo` question 4 shows the direct caller.** `place_order -> OrderStore.insert` exists at
+  low confidence (untyped receiver, name shared with a test double) so search never walked it;
+  the demo now lists the node's CALLS-in edges via `explain node`, caption updated to match.
+- **A compressed `rag` neighbour cites the lines it shows** (`[cite: f.py:12-12] ... [excerpt
+  of 12-40]`, `excerpt_of` in JSON) instead of the whole span; unmappable cases are marked
+  `[header and first line only, of A-B]`.
+- **`scripts/bench_real_repos.py` labels results with the source tree's version** (pyproject,
+  not a possibly stale dist-info) and records `repo2graph_commit` / `repo2graph_dirty`.
+- **Docs:** `build --max-call-candidates` / `--max-nodes`, `query --vectors` / `--embed-model`
+  and the new flags are in `docs/cli.md`; quickstart shows `build`'s real absolute `out`.
 
 - **Kotlin functions are indexed.** `_name_of` did not recognise Kotlin's `simple_identifier`
   function name, so no `fun` ever became a symbol and every member's calls were attributed to

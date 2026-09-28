@@ -213,6 +213,11 @@ Four layers, applied in this order. `repo2graph explain-path <path> -r .`
 reports which single rule decided any given path, using the same rule set
 `build` would.
 
+Before any of them, discovery drops repo2graph's own output: the `-o`
+directory of the build in progress, and any directory holding a repo2graph
+`agent/manifest.json` left by an earlier build (`explain-path` reports these
+as `output_dir` and `index_dir`; pass it the build's `-o`).
+
 **1. Built-in skip directories** (`parse.DEFAULT_SKIP_DIRS`) — matched as a
 path *segment* at any depth: `.git`, `node_modules`, `venv`, `dist`, `build`,
 `target`, `vendor`, `__pycache__`, `.next`, tool caches. Add more with
@@ -275,11 +280,23 @@ monorepo keeps all of it. The groups use `**/vendor/**`.
 
 `status.compute_freshness` runs three independent signals, cheapest first,
 each degrading to a note rather than an error. They are measured against the
-source tree recorded as `source_root` (absolute) in `manifest.json` — so an index
-built with `-o` outside the repository is compared against the repository, not
-against its own parent directory. `index-status -r <repo>` overrides it; an index
-built before the field existed, or moved to where that path no longer exists,
+source tree recorded as `source_root` (absolute) in the index root's
+machine-local `local.json` — so an index built with `-o` outside the repository
+is compared against the repository, not against its own parent directory.
+`local.json` is never part of what ships: the build writes a `.gitignore` for it
+beside it, and the GitHub Action excludes it from uploads and branch pushes (it
+used to live in `manifest.json`, which leaked the build machine's path; an older
+index's `manifest.json` value is still read). `index-status -r <repo>` overrides
+it; an index with no recorded root, or moved to where that path no longer exists,
 falls back to the index directory's parent.
+
+An index built by `repo2graph github owner/repo -o <dir>` records
+`source_remote: "github:owner/repo@<sha>"` in `manifest.json` instead: its
+temporary clone is deleted, so there is no local tree to compare against.
+`index-status` and `doctor` report freshness as unknown for it and suggest
+`repo2graph github owner/repo -o <dir>` to refresh, rather than diffing the
+current directory (which read as hundreds of "added" files and suggested
+rebuilding the wrong tree).
 
 1. **Commit** — `manifest.json`'s recorded commit against the tree's current
    `HEAD`. One `git rev-parse`. Exact for committed state, silent on a

@@ -146,7 +146,7 @@ working on a fixture before trying it on your own code.
 | `Where is authentication enforced?` | the guard itself, plus the routes that call it |
 | `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| `What would be affected by changing <api>?` | direct callers and what they are called from |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (`repo_neighbours`) |
 | `Trace <a request> from route to persistence.` | a path across modules, each block cited to file and line |
 
 ```bash

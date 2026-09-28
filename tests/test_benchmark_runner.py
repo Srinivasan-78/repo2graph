@@ -105,3 +105,44 @@ def test_benchmark_runner_executes_suite(tmp_path):
     assert r2g["accuracy_rate_pct"] >= 80.0
     assert r2g["mean_citation_accuracy"] >= 80.0
     assert r2g["mean_latency_ms"] > 0
+
+
+def test_bench_real_repos_labels_results_with_the_source_version(tmp_path, monkeypatch):
+    """results.json said 2.1.0 for a 2.2.0 run: importlib.metadata read a stale
+    editable dist-info. The label must come from the checked-out source."""
+    import importlib.metadata
+    import re
+
+    from scripts import bench_real_repos as bench
+
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "0.0.1-stale")
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf8")
+    expected = re.search(r'(?m)^version\s*=\s*"([^"]+)"', pyproject).group(1)
+    assert bench.source_version() == expected
+
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.x]\nversion = "no"\n\n[project]\nname = "repo2graph"\nversion = "9.8.7"\n',
+        encoding="utf8",
+    )
+    assert bench.source_version(tmp_path) == "9.8.7"
+    only_init = tmp_path / "other"
+    (only_init / "repo2graph").mkdir(parents=True)
+    (only_init / "repo2graph" / "__init__.py").write_text(
+        'try:\n    x = 1\nexcept Exception:\n    __version__ = "1.2.3"\n', encoding="utf8"
+    )
+    assert bench.source_version(only_init) == "1.2.3"
+
+
+def test_bench_real_repos_records_the_repo2graph_commit():
+    import re
+    import shutil
+
+    import pytest
+
+    from scripts import bench_real_repos as bench
+
+    if shutil.which("git") is None or not (REPO_ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    prov = bench.source_commit()
+    assert prov["commit"] and re.fullmatch(r"[0-9a-f]{40}", prov["commit"])
+    assert isinstance(prov["dirty"], bool)
