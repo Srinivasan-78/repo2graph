@@ -1871,4 +1871,3 @@ def test_tool_call_failed_exception():
     err = mcp.ToolCallFailed("something went wrong")
     assert isinstance(err, Exception)
     assert str(err) == "something went wrong"
-

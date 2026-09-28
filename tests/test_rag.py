@@ -1970,8 +1970,12 @@ def test_verify_rag_function(tmp_path):
     from repo2graph.query import Index
 
     (tmp_path / "agent").mkdir()
-    (tmp_path / "agent" / "chunks.jsonl").write_text('{"id": "c1", "node_id": "n1", "text": "foo"}\n', encoding="utf-8")
-    (tmp_path / "agent" / "nodes.jsonl").write_text('{"id": "n1", "name": "foo"}\n', encoding="utf-8")
+    (tmp_path / "agent" / "chunks.jsonl").write_text(
+        '{"id": "c1", "node_id": "n1", "text": "foo"}\n', encoding="utf-8"
+    )
+    (tmp_path / "agent" / "nodes.jsonl").write_text(
+        '{"id": "n1", "name": "foo"}\n', encoding="utf-8"
+    )
     (tmp_path / "agent" / "edges.jsonl").write_text("", encoding="utf-8")
     idx = Index(tmp_path)
     report, error = verify_rag(idx, tmp_path)
@@ -1979,4 +1983,3 @@ def test_verify_rag_function(tmp_path):
     assert report["index"] == str(tmp_path)
     assert report["vectors_present"] is False
     assert error is not None and "no vectors" in error
-

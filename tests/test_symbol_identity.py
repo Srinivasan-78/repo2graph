@@ -447,4 +447,3 @@ def test_kotlin_secondary_constructors_and_accessors(tmp_path: Path):
     assert "sym:User.kt::User.constructor" in symbols
     assert "sym:User.kt::User.get" in symbols
     assert "sym:User.kt::User.set" in symbols
-
