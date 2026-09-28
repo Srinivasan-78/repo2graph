@@ -13,6 +13,7 @@ unenforced `aud` -- each of which leaves the happy path working perfectly.
 """
 
 import base64
+import functools
 import hashlib
 import http.client
 import json
@@ -71,14 +72,17 @@ def _prime(bits, rng):
             return cand
 
 
-def _make_key(seed=20260916, bits=512):
-    """A deterministic RSA keypair. 1024-bit modulus: a test key, not a real one."""
+@functools.lru_cache(maxsize=32)
+def _make_key(seed=20260916, bits=1024):
+    """A deterministic RSA keypair. 2048-bit modulus."""
     rng = random.Random(seed)
     while True:
         p, q = _prime(bits, rng), _prime(bits, rng)
         if p == q:
             continue
         n = p * q
+        if n.bit_length() < bits * 2:
+            continue
         phi = (p - 1) * (q - 1)
         e = 65537
         if phi % e == 0:
@@ -250,12 +254,92 @@ def _forged_digest_in_the_padding():
             lambda: (KEY["n"], 0, b"\x01" * ((KEY["n"].bit_length() + 7) // 8), b"msg"),
             id="zero-exponent",
         ),
+        pytest.param(
+            lambda: (
+                _make_key(seed=20260916, bits=512)["n"],
+                KEY["e"],
+                b"\x01" * 128,
+                b"msg",
+            ),
+            id="sub-2048-bit-modulus",
+        ),
+        pytest.param(
+            lambda: (
+                KEY["n"],
+                (1 << 65) + 1,
+                b"\x01" * ((KEY["n"].bit_length() + 7) // 8),
+                b"msg",
+            ),
+            id="exponent-too-large",
+        ),
         pytest.param(_forged_digest_in_the_padding, id="garbage-in-the-padding"),
     ],
 )
 def test_rsa_verify_rejects(build):
     n, e, sig, message = build()
     assert rsa_verify(n, e, sig, message, "sha256") is False
+
+
+def test_rsa_verify_accepts_standard_2048_bit_key_with_e_65537():
+    """Verify standard 2048-bit key with e=65537 still passes."""
+    assert KEY["n"].bit_length() == 2048
+    assert KEY["e"] == 65537
+    token = sign(claims())
+    head, payload, sig = token.split(".")
+    assert (
+        rsa_verify(
+            KEY["n"], KEY["e"], auth.b64url_decode(sig), f"{head}.{payload}".encode(), "sha256"
+        )
+        is True
+    )
+
+
+def test_rsa_verify_rejects_modulus_below_2048_bits():
+    """A key with modulus < 2048 bits (e.g. 1024-bit modulus) is rejected (rsa_verify returns False)."""
+    key_1024 = _make_key(seed=20260916, bits=512)
+    assert key_1024["n"].bit_length() == 1024
+    token = sign(claims(), key=key_1024)
+    head, payload, sig = token.split(".")
+    assert (
+        rsa_verify(
+            key_1024["n"],
+            key_1024["e"],
+            auth.b64url_decode(sig),
+            f"{head}.{payload}".encode(),
+            "sha256",
+        )
+        is False
+    )
+
+    # Boundary test: 2047-bit modulus is rejected
+    n_2047 = (1 << 2047) - 1
+    assert (
+        rsa_verify(
+            n_2047,
+            65537,
+            b"\x01" * 256,
+            b"msg",
+            "sha256",
+        )
+        is False
+    )
+
+
+def test_rsa_verify_rejects_exponent_above_64_bits_without_cpu_time():
+    """A key with exponent > 64 bits (e.g. e = 2**65 + 1) is rejected without measurable CPU time."""
+    e_large = (1 << 65) + 1  # 2**65 + 1 has bit length 66 > 64
+    k = (KEY["n"].bit_length() + 7) // 8
+    sig = b"\x01" * k
+    t0 = time.perf_counter()
+    assert rsa_verify(KEY["n"], e_large, sig, b"msg", "sha256") is False
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 0.05, f"rsa_verify took {elapsed}s; should reject immediately"
+
+    # Enormous exponent to guarantee no modular exponentiation occurs
+    e_huge = (1 << 100000) + 1
+    t0 = time.perf_counter()
+    assert rsa_verify(KEY["n"], e_huge, sig, b"msg", "sha256") is False
+    assert time.perf_counter() - t0 < 0.05
 
 
 # ----------------------------------------------------------------- jwt ----

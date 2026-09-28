@@ -38,6 +38,19 @@ makes keeping it current a release-blocking step rather than a good intention.
 - **No absolute build path in shipped artifacts.** The source root lives in a machine-local
   `local.json` beside the index (with a generated `.gitignore`); the GitHub Action excludes it
   from artifact uploads and `commit-branch` pushes.
+- **Minimum RSA modulus size (2048-bit) and public exponent bound (64-bit) in `rsa_verify`**:
+  Keys with modulus under 2048 bits and public exponents exceeding 64 bits fail closed immediately,
+  mitigating weak-key exploitation and DoS via large-exponent modular exponentiation (#367).
+- **Content-Security-Policy on generated `graph.html`**: `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">`
+  is now included in the page head, eliminating external resource exfiltration risks (#370).
+- **Host and Origin check on GET and HEAD requests**: Discovery endpoints (`/.well-known/...`)
+  and `/healthz` validate `Host` and `Origin` headers before responding, closing DNS rebinding
+  and cross-origin reading vectors for unauthenticated routes (#372).
+- **Cypher label and relationship type quoting**: Labels and relationship types in `write_cypher`
+  are validated against `^[A-Za-z_][A-Za-z0-9_]*$` and backtick-quoted to prevent Cypher syntax breakouts (#371).
+- **Escaped `U+2028` and `U+2029` in JSONL artifact writers**: `write_jsonl` escapes Unicode line and
+  paragraph separators as `\u2028` and `\u2029`, preventing downstream tools using `str.splitlines()`
+  from desynchronizing or tearing records (#376).
 
 ### Fixed — indexing and call resolution
 

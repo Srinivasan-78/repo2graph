@@ -871,8 +871,8 @@ def test_cypher_output_is_quoted(tmp_path, sample_repo):
     main(["build", str(sample_repo), "-o", str(out), "--formats", "cypher"])
     text = (artifact_path(out, "graph.cypher")).read_text()
     assert "CREATE CONSTRAINT" in text
-    assert 'MERGE (n:R2G:File {id: "file:pkg/main.py"})' in text
-    assert "MERGE (a)-[:CALLS" in text
+    assert 'MERGE (n:R2G:`File` {id: "file:pkg/main.py"})' in text
+    assert "MERGE (a)-[:`CALLS`" in text
 
 
 def test_graphml_is_loadable(tmp_path, sample_repo):
@@ -2312,10 +2312,44 @@ def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
 
     expected = (
         "CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;\n"
-        'MERGE (n:R2G:Symbol {id: "n1"}) SET n += '
+        'MERGE (n:R2G:`Symbol` {id: "n1"}) SET n += '
         '{`id`: "n1", `order`: 1, `name`: "foo", `back``tick`: "v"};\n'
     )
     assert content == expected
+
+
+def test_iss371_write_cypher_invalid_label_or_reltype_raises(tmp_path):
+    """Issue 371: invalid Cypher node label or relationship type raises ValueError."""
+    from repo2graph.export import write_cypher
+    from repo2graph.graph import Graph
+
+    # Invalid node type (space)
+    g_bad_node_space = Graph(tmp_path / "g1", "test")
+    g_bad_node_space.add_node("n1", type="bad label")
+    with pytest.raises(ValueError, match="not a valid Cypher label"):
+        write_cypher(g_bad_node_space, tmp_path / "g1.cypher")
+
+    # Invalid node type (backtick)
+    g_bad_node_bt = Graph(tmp_path / "g2", "test")
+    g_bad_node_bt.add_node("n1", type="bad`label")
+    with pytest.raises(ValueError, match="not a valid Cypher label"):
+        write_cypher(g_bad_node_bt, tmp_path / "g2.cypher")
+
+    # Invalid relationship type (space)
+    g_bad_rel_space = Graph(tmp_path / "g3", "test")
+    g_bad_rel_space.add_node("n1", type="file")
+    g_bad_rel_space.add_node("n2", type="file")
+    g_bad_rel_space.add_edge("n1", "n2", "BAD TYPE")
+    with pytest.raises(ValueError, match="not a valid Cypher label"):
+        write_cypher(g_bad_rel_space, tmp_path / "g3.cypher")
+
+    # Invalid relationship type (backtick)
+    g_bad_rel_bt = Graph(tmp_path / "g4", "test")
+    g_bad_rel_bt.add_node("n1", type="file")
+    g_bad_rel_bt.add_node("n2", type="file")
+    g_bad_rel_bt.add_edge("n1", "n2", "BAD`TYPE")
+    with pytest.raises(ValueError, match="not a valid Cypher label"):
+        write_cypher(g_bad_rel_bt, tmp_path / "g4.cypher")
 
 
 def test_iss24_write_html_handles_placeholder_in_title(tmp_path):

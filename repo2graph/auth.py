@@ -84,6 +84,8 @@ DIGEST_INFO_PREFIX = {
 # which is the other classic JWT confusion attack. The `kty == "RSA"`
 # check in decode_jwt is the other half of the same coupling.
 ALGORITHMS = {"RS256": "sha256", "RS384": "sha384", "RS512": "sha512"}
+MIN_RSA_BITS = 2048
+MAX_RSA_EXPONENT_BITS = 64
 
 
 class AuthError(Exception):
@@ -169,7 +171,11 @@ def rsa_verify(n: int, e: int, signature: bytes, message: bytes, hash_name: str)
     # n == 0, and a negative n makes `pow(...).to_bytes(...)` raise
     # OverflowError (the result carries n's sign). Both must fail closed as a
     # plain verification failure, never propagate as an unhandled exception.
+    MIN_RSA_BITS = 2048
+    MAX_RSA_EXPONENT_BITS = 64
     if n <= 0 or e <= 0:
+        return False
+    if n.bit_length() < MIN_RSA_BITS or e.bit_length() > MAX_RSA_EXPONENT_BITS:
         return False
     k = (n.bit_length() + 7) // 8
     if len(signature) != k:

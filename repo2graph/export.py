@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import threading
@@ -135,7 +136,12 @@ def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
     n = 0
     with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+            line = (
+                json.dumps(r, ensure_ascii=False, default=str)
+                .replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+            )
+            fh.write(line + "\n")
             n += 1
     return n
 
@@ -484,13 +490,22 @@ def _cy_key(k: str) -> str:
     return "`" + k.replace("`", "``") + "`"
 
 
+def _cy_label(value: str) -> str:
+    """Backtick-quote a label/reltype. Types are internal constants; anything
+    else reaching here is a bug, not a value to escape our way out of."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"not a valid Cypher label: {value!r}")
+    return "`" + value + "`"
+
+
 def write_cypher(g: "Graph", path: Path) -> None:
     lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
-        lab = n["type"].capitalize()
+        lab = _cy_label(n["type"].capitalize())
         props = ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in n.items() if k != "type")
         lines.append(f"MERGE (n:R2G:{lab} {{id: {_cy(nid)}}}) SET n += {{{props}}};")
     for e in g.edges:
+        rel_type = _cy_label(e["type"])
         edge_props = {k: v for k, v in e.items() if k not in ("src", "dst", "type")}
         pstr = (
             (" {" + ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in edge_props.items()) + "}")
@@ -499,7 +514,7 @@ def write_cypher(g: "Graph", path: Path) -> None:
         )
         lines.append(
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
-            f"MERGE (a)-[:{e['type']}{pstr}]->(b);"
+            f"MERGE (a)-[:{rel_type}{pstr}]->(b);"
         )
     # newline="\n" on every artifact writer (ISS-28): a Windows rebuild must
     # produce the same bytes as a Linux CI run, or the commit-branch push is all
