@@ -40,14 +40,14 @@ From [`benchmarks/real/results.json`](../benchmarks/real/results.json), produced
 
 | Budget | Retriever | Evidence found | Questions fully answered | Questions with any evidence | Mean tokens used |
 |---:|---|---:|---:|---:|---:|
-| 2,000 | repo2graph | 30% | 10 / 35 | 13 / 35 | 1,980 |
-| 2,000 | repo2graph-bm25 | 30% | 10 / 35 | 13 / 35 | 1,817 |
+| 2,000 | repo2graph | 30% | 10 / 35 | 13 / 35 | 1,977 |
+| 2,000 | repo2graph-bm25 | 30% | 10 / 35 | 13 / 35 | 1,824 |
 | 2,000 | ripgrep | **35%** | 9 / 35 | 13 / 35 | 1,962 |
-| 4,000 | repo2graph | 39% | 14 / 35 | 17 / 35 | 3,975 |
-| 4,000 | repo2graph-bm25 | 39% | 14 / 35 | 17 / 35 | 3,678 |
+| 4,000 | repo2graph | 39% | 14 / 35 | 17 / 35 | 3,973 |
+| 4,000 | repo2graph-bm25 | 39% | 14 / 35 | 17 / 35 | 3,670 |
 | 4,000 | ripgrep | **61%** | **18 / 35** | **23 / 35** | 3,873 |
-| 8,000 | repo2graph | 52% | 15 / 35 | 22 / 35 | 7,833 |
-| 8,000 | repo2graph-bm25 | 52% | 15 / 35 | 22 / 35 | 5,617 |
+| 8,000 | repo2graph | 52% | 15 / 35 | 22 / 35 | 7,836 |
+| 8,000 | repo2graph-bm25 | 52% | 15 / 35 | 22 / 35 | 5,588 |
 | 8,000 | ripgrep | **72%** | **22 / 35** | **26 / 35** | 7,652 |
 
 At 4,000 tokens, by question type (definitions found): *concept* questions (28) 17/35 for
