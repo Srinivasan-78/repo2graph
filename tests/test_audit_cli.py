@@ -1,6 +1,7 @@
 """Regression tests for the round-1 CLI/MCP audit findings."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -347,3 +348,50 @@ def test_retrieve_python_api_default_is_unchanged(secret_index):
     idx = Index(secret_index)
     assert any(c["path"] == ".env" for c in idx.retrieve("ledger token"))
     assert not any(c["path"] == ".env" for c in idx.retrieve("ledger token", exclude_secrets=True))
+
+
+# ---------------------------------------------------------------- item 6
+
+JP = "こんにちは"
+
+
+def test_piped_stdout_round_trips_non_ascii(tmp_path, capsys):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "hello.py").write_text(
+        f'def konnichiwa():\n    """Say {JP} to the world."""\n    return "{JP}"\n\n\n'
+        'TABLE = {"a": 1, "b": 2, "c": 3, "d": 4}\n',
+        encoding="utf8",
+    )
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out)])
+    capsys.readouterr()
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8")}
+    for cmd in ("rag", "query"):
+        proc = subprocess.run(
+            [sys.executable, "-m", "repo2graph.cli", cmd, "konnichiwa", "-o", str(out)],
+            capture_output=True,
+            env=env,
+            timeout=120,
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert JP in proc.stdout.decode("utf8"), proc.stdout[-400:]
+
+
+def test_explicit_pythonioencoding_is_respected(tmp_path, capsys):
+    """The Windows CP1252 CI job's contract: an explicit encoding wins, and still never crashes."""
+    repo = _make_repo(tmp_path, git=False)
+    (repo / "app.py").write_text(SRC + f"\n# {JP}\n", encoding="utf8")
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out)])
+    capsys.readouterr()
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    env.pop("PYTHONUTF8", None)
+    proc = subprocess.run(
+        [sys.executable, "-m", "repo2graph.cli", "query", "greet", "-o", str(out)],
+        capture_output=True,
+        env=env,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip()

@@ -4,6 +4,7 @@
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import cast
@@ -1110,7 +1111,34 @@ def _max_file_mb(value: str) -> float:
     return f
 
 
+def _utf8_stdio() -> None:
+    """Make a redirected or piped stdout/stderr UTF-8.
+
+    A Windows pipe or file gets the ANSI code page (cp1252), so `repo2graph
+    rag ... > pack.md` over a repository holding `こんにちは` wrote `?????` --
+    `_emit` kept it from crashing, but the text was gone. A console is left
+    alone (Python already writes it as UTF-16), and so is an explicit
+    PYTHONIOENCODING: that is the user choosing the encoding, and the
+    "Windows CP1252" CI job relies on it to exercise `_emit`'s fallback.
+    """
+    if os.environ.get("PYTHONIOENCODING"):
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is None or stream.isatty():
+                continue
+            enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+            if enc != "utf8" and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            continue
+
+
 def main(argv=None):
+    if argv is None:
+        # Only as the real entry point: in-process callers (tests, embedders)
+        # own their streams.
+        _utf8_stdio()
     p = argparse.ArgumentParser(
         prog="repo2graph",
         description=__doc__,
