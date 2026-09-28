@@ -56,6 +56,56 @@ STOPWORDS = frozenset(
 RG_TYPES = {"python": "py", "typescript": "ts"}
 
 
+def source_version(root: Path = ROOT) -> str:
+    """The version of the *checked-out* source, never of an installed dist-info.
+
+    `repo2graph.__version__` asks importlib.metadata first, and an editable
+    install's dist-info keeps whatever version it was installed at -- a 2.2.0
+    run was labelled 2.1.0. pyproject.toml's `[project] version` is what the
+    code on disk is; the `__init__` fallback constant is the second source.
+    (Regex, not tomllib: Python 3.10 is supported.)
+    """
+    try:
+        text = (root / "pyproject.toml").read_text(encoding="utf8")
+        section = re.search(r"(?ms)^\[project\]\s*$(.*?)(?=^\[|\Z)", text)
+        m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', section.group(1) if section else "")
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    try:
+        init = (root / "repo2graph" / "__init__.py").read_text(encoding="utf8")
+        m = re.search(r'(?m)^\s*__version__\s*=\s*"([^"]+)"', init)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "unknown"
+
+
+def source_commit(root: Path = ROOT) -> dict:
+    """The repo2graph commit the benchmark ran from, and whether it was dirty."""
+
+    def _git(*args: str) -> str | None:
+        try:
+            res = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if res.returncode != 0:
+            return None
+        # bytes + surrogateescape, never text=True (AGENTS.md)
+        return res.stdout.decode("utf8", "surrogateescape").strip()
+
+    sha = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return {"commit": sha, "dirty": None if status is None else bool(status)}
+
+
 def checkout(repo: dict, cache: Path) -> Path:
     dest = cache / repo["name"]
     if not dest.exists():
@@ -243,10 +293,18 @@ def main() -> int:
                     "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
                 }
             )
-    from repo2graph import __version__
-
+    provenance = source_commit()
     args.out.write_text(
-        json.dumps({"repo2graph_version": __version__, "summary": summary, "rows": rows}, indent=1)
+        json.dumps(
+            {
+                "repo2graph_version": source_version(),
+                "repo2graph_commit": provenance["commit"],
+                "repo2graph_dirty": provenance["dirty"],
+                "summary": summary,
+                "rows": rows,
+            },
+            indent=1,
+        )
         + "\n",
         encoding="utf8",
         newline="\n",
