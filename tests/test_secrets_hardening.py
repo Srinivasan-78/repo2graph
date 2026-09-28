@@ -1099,3 +1099,67 @@ def test_terraform_state_and_json_passwords_never_reach_any_output(tmp_path):
     # The redacted config chunk is still retrievable -- the fix is redaction, not loss.
     pack = idx.pack_context("database password admin", budget_chars=0, exclude_secrets=True)
     assert "[REDACTED:CREDENTIAL_JSON]" in pack["markdown"]
+
+
+# ---------------------------------------------------------------------------
+# Audit round 2: --include-secrets lifts the PATH refusal only
+# ---------------------------------------------------------------------------
+
+LIVE_KEY = "sk-live-" + "Zq8Wm3Nv7Lr2Tk9Pb4Xc6Yh1"
+
+
+def _secret_repo(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "settings.py").write_text(
+        f'OPENAI_API_KEY = "{LIVE_KEY}"\n\n\ndef load_settings():\n    return OPENAI_API_KEY\n',
+        encoding="utf8",
+    )
+    (src / "config.json").write_text(
+        json.dumps({"database": {"host": "db", "password": JSON_PASSWORD}}, indent=2),
+        encoding="utf8",
+    )
+    (src / ".env").write_text(f"OPENAI_API_KEY={LIVE_KEY}\n", encoding="utf8")
+    return src
+
+
+def test_include_secrets_keeps_content_redaction_on(tmp_path):
+    from repo2graph import mcp
+    from repo2graph.query import Index
+
+    src = _secret_repo(tmp_path)
+    out = tmp_path / "out"
+    assert main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--include-secrets"]) == 0
+    chunks_text = (out / "agent" / "chunks.jsonl").read_text(encoding="utf8")
+    assert ".env" in chunks_text  # the path refusal is lifted ...
+    assert LIVE_KEY not in chunks_text  # ... content scanning is not
+    assert JSON_PASSWORD not in chunks_text
+    idx = Index(out)
+    for query in ("OPENAI_API_KEY load_settings", "database password"):
+        pack = idx.pack_context(query, budget_chars=0)
+        assert LIVE_KEY not in pack["markdown"] and JSON_PASSWORD not in pack["markdown"]
+        tool_out = mcp.tool_repo_search(idx, query)
+        assert LIVE_KEY not in tool_out and JSON_PASSWORD not in tool_out
+
+
+def test_policy_off_index_is_redacted_at_serve_time_for_agents(tmp_path):
+    """--secret-policy off stores raw text; the agent path scans it on the way out."""
+    from repo2graph import mcp
+    from repo2graph.query import Index
+
+    src = _secret_repo(tmp_path)
+    out = tmp_path / "out"
+    assert (
+        main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "off"])
+        == 0
+    )
+    assert LIVE_KEY in (out / "agent" / "chunks.jsonl").read_text(encoding="utf8")
+    idx = Index(out)
+    human = idx.pack_context("OPENAI_API_KEY load_settings", budget_chars=0)
+    assert LIVE_KEY in human["markdown"]  # a human chose `off`
+    agent = idx.pack_context("OPENAI_API_KEY load_settings", budget_chars=0, exclude_secrets=True)
+    assert LIVE_KEY not in agent["markdown"]
+    assert "[REDACTED:" in agent["markdown"]
+    got = idx.retrieve("OPENAI_API_KEY load_settings", exclude_secrets=True)
+    assert got and all(LIVE_KEY not in (c.get("text") or "") for c in got)
+    assert LIVE_KEY not in mcp.tool_repo_search(idx, "OPENAI_API_KEY load_settings")

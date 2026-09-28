@@ -19,6 +19,7 @@ from .secrets import (
     SECRET_KEYWORDS,
     SECRET_WORD_RE,
     _is_secret_path,
+    redact_content,
 )
 
 __all__ = [
@@ -314,6 +315,24 @@ class Index:
 
     _is_secret_path = staticmethod(_is_secret_path)
 
+    def _served(self, c: Record) -> Record:
+        """`c` with its text content-redacted when the index may hold raw secrets.
+
+        Serve-time backstop for the agent path (`exclude_secrets=True`): an index
+        whose manifest does not say its chunks were redacted at build time
+        (`--secret-policy off`/`warn-only`, a pre-fix `--include-secrets` build,
+        or no manifest at all) is scanned here, per returned chunk. A redacted
+        index is passed through untouched, so the default path costs nothing.
+        """
+        policy = self.manifest.get("secret_filter_policy")
+        if policy in ("redact-match", "exclude-file"):
+            return c
+        text = c.get("text")
+        if not isinstance(text, str) or not text:
+            return c
+        red, n = redact_content(text)
+        return {**c, "text": red} if n else c
+
     def score(self, query: str) -> list[tuple[float, int]]:
         q = Counter(tokenize(query))
         acc: dict[int, float] = defaultdict(float)
@@ -597,6 +616,9 @@ class Index:
                 break
             seen_nodes_set.add(nid)
             seen_nodes_list.append(nid)
+            if exclude_secrets:
+                c = self._served(c)
+                chunk_len = len(c.get("text") or "")
             picked.append({**c, "score": round(s, 3), "why": "lexical"})
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
@@ -614,6 +636,8 @@ class Index:
             for c in self.by_node.get(nid, [])[:1]:
                 if _secret(c, nid):
                     break
+                if exclude_secrets:
+                    c = self._served(c)
                 chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break
@@ -707,6 +731,8 @@ class Index:
                 seen_nodes.add(nid)
                 continue
             seen_nodes.add(nid)
+            if exclude_secrets:
+                c = self._served(c)
             seeds.append({**c, "score": round(s, 3), "why": "seed"})
             if len(seeds) >= k:
                 break
@@ -728,6 +754,8 @@ class Index:
                     c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
                 ):
                     continue
+                if exclude_secrets:
+                    c = self._served(c)
                 src_name = self.nodes.get(src, {}).get("name") or src
                 neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
 

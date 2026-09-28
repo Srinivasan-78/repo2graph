@@ -151,9 +151,10 @@ def iter_chunks(g, include_files: bool = True):
         out_edges[e["src"]].append(e)
         in_edges[e["dst"]].append(e)
 
+    # Content redaction is governed by --secret-policy alone. --include-secrets
+    # only lifts the secret-PATH refusal (a .env is indexed); it must never turn
+    # off scanning of the text that ends up in chunks.jsonl and agent replies.
     policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
-    if getattr(getattr(g, "config", None), "include_secrets", False):
-        policy = "off"
 
     src_cache: dict[str, str] = {}
 
