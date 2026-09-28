@@ -15,6 +15,28 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **`--include-secrets` no longer disables content redaction.** It lifts the secret-*path* refusal
+  only; chunk text is still scanned per `--secret-policy` (default `redact-match`). Agent-path
+  reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only` redact
+  returned chunks at serve time.
+- **No false self-recursion edges.** Tier 0 now needs a bare call (or a self/this receiver, or a
+  bare call in an implicit-`this` language); `current_app.url_for()` inside `url_for` or
+  `cli.main()` inside `main` is no longer a 1.0 self-loop, and an explicit `Base.method(self)`
+  resolves like `super()`. Flask self-loops 32 -> 2, moshi 193 -> 50.
+- **`base` / `parent` are super receivers only in C# / PHP.** A Python/JS/Go local named
+  `parent` no longer routes `parent.add()` to the super path; PHP `parent::f()` / `Foo::bar()`
+  scoped calls are recorded. `PARSE_CACHE_FORMAT` is now 8.
+- **Overload fan-outs count as calls.** Entrypoints, changelog hotspots and "Most called" gate on
+  the edge kind (`edgemeta.counts_as_call`): untyped-receiver and repo-wide name guesses are
+  excluded, same-class/same-file/base/imported fan-outs (3 overloads at 0.333) count.
+- **Repo map labels overloads by node key** (`O.java::O.f@L3`), not twice as `O.f`.
+- **Chunked files keep a duplicate definition's children** on that definition, not the first
+  same-name one.
+- **Fewer JSON secret false positives**: values with `://` and keys like `tokenUrl`,
+  `secretName`, `passwordField`, `api_key_header`, `tokenizer` are left alone; single-quoted dict
+  pairs and YAML `db_password: "..."` are now redacted. `auth.json` under a
+  `locales`/`i18n`/`lang`/`translations` directory is no longer a secret path.
+
 - **Kotlin functions are indexed.** `_name_of` did not recognise Kotlin's `simple_identifier`
   function name, so no `fun` ever became a symbol and every member's calls were attributed to
   its class. Top-level, member, `object` and companion functions are now symbols (companion

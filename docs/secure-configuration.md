@@ -36,7 +36,7 @@ Verified by enumeration against `repo2graph/secrets.py` and `repo2graph/parse.py
 **Directories, anywhere in the tree** — `.aws`, `.gnupg`, `.kube`, `.ssh`, `credentials`, `secrets`
 
 **Exact filenames** — `.dockercfg`, `.git-credentials`, `.htpasswd`, `.netrc`, `.npmrc`, `.pgpass`,
-`.pypirc`, `.terraformrc`, `auth.json` (Composer), `credentials.yml.enc` (Rails), `htpasswd`,
+`.pypirc`, `.terraformrc`, `auth.json` (Composer; not under a `locales`/`i18n`/`lang`/`translations` directory), `credentials.yml.enc` (Rails), `htpasswd`,
 `id_dsa`, `id_ecdsa`, `id_ed25519`, `id_rsa`, `key.json` (GCP service-account key), `kubeconfig`,
 `wp-config.php`
 
@@ -57,8 +57,10 @@ excluded too
 **Content patterns scanned in chunk text** (8) — AWS access keys, GitHub tokens, Slack tokens,
 OpenAI keys, Google keys, PEM private keys, JWTs, and URLs carrying basic-auth credentials — plus
 high-entropy values assigned to a secret-looking name, and JSON pairs such as `"password": "..."`
-whose key names a password, secret, token, or API/access/private key and whose value is neither a
-placeholder (`${VAR}`, `{{ var }}`, `****`) nor plain prose.
+(also single-quoted dict keys and YAML `db_password: "..."`) whose key names a password, secret,
+token, or API/access/private key and whose value is neither a placeholder (`${VAR}`, `{{ var }}`,
+`****`), plain prose, nor a URL. Keys naming a property of the credential (`tokenUrl`,
+`secretName`, `passwordField`, `api_key_header`, `tokenizer`, ...) are not redacted.
 
 ### Adding your own
 
