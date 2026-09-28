@@ -592,6 +592,48 @@ class Symbol:
     bases: list[str] = field(default_factory=list)
     call_details: list[dict] = field(default_factory=list)
     base_details: list[dict] = field(default_factory=list)
+    # Unique-in-file id key when `qualname` alone is not unique (overloads,
+    # conditional redefinitions): "" means "same as qualname", which is every
+    # first definition, so the common-case node id never changes. A later
+    # duplicate gets `<qualname>@L<start_line>` -- see `symbol_key`.
+    key: str = ""
+    # The enclosing symbol's `key` when that differs from `parent` (a child of
+    # a duplicate definition); "" means "same as parent".
+    parent_key: str = ""
+
+
+def symbol_key(sym: Symbol) -> str:
+    """The part of a symbol's node id after `sym:<path>::`.
+
+    Equal to `qualname` for every first definition of a name in a file; a later
+    definition with the same qualname (Java/C#/Kotlin/Swift/C++ overloads, a
+    Python conditional redefinition) carries `@L<line>` so it gets a node and
+    a chunk of its own instead of silently collapsing into the first one.
+    """
+    return sym.key or sym.qualname
+
+
+def symbol_parent_key(sym: Symbol) -> str | None:
+    """The `symbol_key` of the enclosing symbol, or None for a file-level one."""
+    return sym.parent_key or sym.parent
+
+
+def disambiguate_key(qualname: str, line: int, used: set[str]) -> str:
+    """Empty string if `qualname` is still free in `used`, else a stable `@L<line>` key.
+
+    Deterministic: depends only on source order and line numbers. Two same-named
+    definitions on one line (minified code) fall back to `@L<line>~<n>`.
+    """
+    if qualname not in used:
+        used.add(qualname)
+        return ""
+    key = f"{qualname}@L{line}"
+    n = 2
+    while key in used:
+        key = f"{qualname}@L{line}~{n}"
+        n += 1
+    used.add(key)
+    return key
 
 
 @dataclass
@@ -620,6 +662,15 @@ def _name_of(src: bytes, node, lang: str) -> str | None:
     n = node.child_by_field_name("name")
     if n is not None:
         return _text(src, n).strip()
+    if lang == "kotlin" and node.type == "function_declaration":
+        # tree-sitter-kotlin exposes no `name` field and names a function with
+        # a `simple_identifier` child, which the generic fallback below does not
+        # recognise -- so no Kotlin `fun` was ever indexed and every member's
+        # calls were absorbed by its class.
+        for c in node.children:
+            if c.type == "simple_identifier":
+                return _text(src, c).strip()
+        return None
     if lang == "rust" and node.type == "impl_item":
         t = node.child_by_field_name("type")
         return _text(src, t) if t is not None else None
@@ -783,6 +834,33 @@ def _go_receiver_name(src: bytes, node) -> str | None:
         name = p.child_by_field_name("name")
         if name is not None:
             return _text(src, name).strip() or None
+    return None
+
+
+def _clean_type_name(txt: str) -> str | None:
+    """`*List[T]` / `Map<K, V>?` / `(T)` -> `List` / `Map` / `T`."""
+    txt = txt.strip().lstrip("*&(").rstrip(")?").strip()
+    txt = txt.split("[")[0].split("<")[0].strip().lstrip("*").strip()
+    return txt or None
+
+
+def _go_receiver_type(src: bytes, node) -> str | None:
+    """The receiver type of a Go `func (c *T[K]) M()`, pointer/generics stripped."""
+    params = node.child_by_field_name("receiver")
+    if params is None:
+        return None
+    for p in params.named_children:
+        t = p.child_by_field_name("type")
+        if t is not None:
+            return _clean_type_name(_text(src, t))
+    return None
+
+
+def _kotlin_receiver_type(src: bytes, node) -> str | None:
+    """The receiver type of a Kotlin extension `fun Foo<T>.bar()`, or None."""
+    for c in node.children:
+        if c.type == "receiver_type":
+            return _clean_type_name(_text(src, c))
     return None
 
 
@@ -1379,6 +1457,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     # id(Go method symbol) -> its receiver identifier: `c.find()` inside
     # `func (c *Cache) Lookup()` is a call on the calling object.
     go_self: dict[int, frozenset[str]] = {}
+    # symbol keys already taken in this file -- see `disambiguate_key`.
+    used_keys: set[str] = set()
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -1443,18 +1523,42 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     kind = None
                 else:
                     kind = "function"
+            if kind and lang == "kotlin" and ntype == "class_declaration":
+                if any(c.type == "interface" for c in node.children):
+                    kind = "interface"
             if kind and name:
                 bases_list, base_details = _bases_with_details(source, node, lang)
                 # Every base in one class header cites that header's line.
                 for _bd in base_details:
                     _bd["line"] = node.start_point[0] + 1
+                # Receiver-qualified top-level methods: a Go method and a Kotlin
+                # extension function are declared outside their type, so the
+                # lexical scope alone would give `func (a *A) Run()` and
+                # `func (b B) Run()` the same qualname `Run` -- one node id, one
+                # chunk, and the other body gone. Qualify them as
+                # `<ReceiverType>.<name>`, like every other language's methods,
+                # so the same_class tier can resolve `a.step()` to `A.step`.
+                sym_scope = scope
+                recv_type = None
+                if lang == "go" and ntype == "method_declaration":
+                    recv_type = _go_receiver_type(source, node)
+                elif lang == "kotlin" and ntype == "function_declaration" and not scope:
+                    recv_type = _kotlin_receiver_type(source, node)
+                if recv_type:
+                    sym_scope = scope + (recv_type,)
+                qualname = ".".join(sym_scope + (name,))
+                start_line = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,
-                    qualname=".".join(scope + (name,)),
+                    qualname=qualname,
                     kind=kind,
-                    start_line=node.start_point[0] + 1,
+                    start_line=start_line,
                     end_line=node.end_point[0] + 1,
-                    parent=".".join(scope) or None,
+                    parent=".".join(sym_scope) or None,
+                    key=disambiguate_key(qualname, start_line, used_keys),
+                    parent_key=(
+                        owner.key if owner is not None and owner.key and not recv_type else ""
+                    ),
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),
                     bases=bases_list,
@@ -1504,7 +1608,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     if go_recv:
                         go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
-                child_scope, child_owner = scope + (name,), sym
+                child_scope, child_owner = sym_scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
         # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order

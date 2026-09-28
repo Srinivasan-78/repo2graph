@@ -89,6 +89,21 @@ flowchart LR
 Names on the map are built the same way every time, so you can write one yourself:
 `file:pkg/mod.py`, `sym:pkg/mod.py::Class.method`, `module:requests`, `dir:pkg`.
 
+A symbol's qualname is its enclosing names joined with `.`. Methods declared
+outside their type are qualified by the receiver type, pointer and generic
+parameters stripped: Go `func (a *A) Run()` is `A.Run`, `func (l *List[T]) Len()`
+is `List.Len`, and a Kotlin extension `fun String.ext()` is `String.ext`. Kotlin
+`companion object` members belong to the class (`A.make`, as Kotlin calls them).
+
+When one file defines the same qualname more than once (Java/C#/Kotlin/Swift/C++
+overloads, a Python function redefined under an `if`, `struct A` next to
+`impl A` in Rust), the first definition keeps `sym:<path>::<qualname>` and each
+later one gets `@L<start line>` appended — `sym:A.java::A.run@L3` — so every
+body keeps its own node and chunk. The qualname itself is unchanged, so a call
+by name reaches all of them and splits `1/n` like any other ambiguous name.
+TypeScript overload *signatures* (no body) are not indexed; the implementation
+is the one symbol.
+
 ## What one piece of code looks like
 
 One piece per function or class, cut at about 4000 characters with 8 lines of
@@ -112,7 +127,8 @@ Each piece carries these fields: `id`, `node_id`, `type`, `kind`, `path`, `lang`
 `name`, `qualname`, `start_line`, `end_line`, `entrypoint`, `callers`, `callees`,
 `callees_external`, `text`.
 
-`callees` lists functions inside the project, written as `path::qualname`.
+`callees` lists functions inside the project, written as `path::qualname` (the
+node id without `sym:`, so a later duplicate reads `path::qualname@L<line>`).
 `callees_external` lists plain names from outside it. If a call could not be
 pinned to one place, the header says so, like `helper (confidence 0.5)`, so nobody
 treats a guess as a fact.

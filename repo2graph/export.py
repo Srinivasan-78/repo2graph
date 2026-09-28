@@ -746,10 +746,15 @@ ID_GRAMMAR = {
     "repo": "repo:<name>",
     "dir": "dir:<path>",
     "file": "file:<path>",
-    "symbol": "sym:<path>::<qualname>",
+    "symbol": "sym:<path>::<qualname>[@L<line>]",
     "module": "module:<import target>",
     "external": "external:<name>",
-    "note": "Ids are stable and constructible by hand; paths are relative to the repo root.",
+    "note": (
+        "Ids are stable and constructible by hand; paths are relative to the repo root. "
+        "A symbol id is sym:<path>::<qualname> for the first definition of a qualname in a "
+        "file; a later definition with the same qualname (an overload, a conditional "
+        "redefinition) appends @L<start_line> so every definition keeps its own node and chunk."
+    ),
 }
 
 FILE_NOTES = {

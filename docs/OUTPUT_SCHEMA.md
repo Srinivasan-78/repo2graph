@@ -40,7 +40,7 @@ fields in this order:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `src`, `dst` | string | Node ids. See `id_grammar` in `manifest.json`. |
+| `src`, `dst` | string | Node ids. See `id_grammar` in `manifest.json`. A symbol id is `sym:<path>::<qualname>`; a later definition of the same qualname in the same file (an overload, a redefinition) appends `@L<start_line>` — e.g. `sym:A.java::A.run@L3` — so each keeps its own node and chunk. |
 | `type` | string | `CONTAINS`, `DEFINES`, `IMPORTS`, `CALLS`, `CALLS_EXTERNAL`, `INHERITS`, `CO_CHANGE` |
 | `method` | string | How it was extracted — see below |
 | `confidence` | float 0..1 | P(`dst` is the right target) — see below |

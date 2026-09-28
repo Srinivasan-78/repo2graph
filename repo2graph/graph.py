@@ -29,6 +29,9 @@ from .parse import (
     ParseError,
     ParsedFile,
     Symbol,
+    disambiguate_key,
+    symbol_key,
+    symbol_parent_key,
     discover,
     parse_source,
     sniff_header_lang,
@@ -801,19 +804,24 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
 
     seen = set()
     deduped_symbols = []
-    qualname_counts: Counter[str] = Counter()
+    # Each slice was keyed on its own; re-key across the whole file with the
+    # same `@L<line>` scheme `parse_source` uses, so a chunked file and a
+    # normally parsed one name a duplicate definition the same way (this used
+    # to rewrite the *qualname* to `<qualname>_<n>` instead).
+    used_keys: set[str] = set()
+    rekeyed: dict[str, str] = {}
 
     for sym in all_symbols:
-        key = (sym.name, sym.start_line)
-        if key in seen:
+        seen_key = (sym.name, sym.start_line)
+        if seen_key in seen:
             continue
-        seen.add(key)
+        seen.add(seen_key)
 
-        original_qualname = sym.qualname
-        count = qualname_counts[original_qualname]
-        if count > 0:
-            sym.qualname = f"{original_qualname}_{count}"
-        qualname_counts[original_qualname] += 1
+        old_key = symbol_key(sym)
+        sym.key = disambiguate_key(sym.qualname, sym.start_line, used_keys)
+        rekeyed[old_key] = symbol_key(sym)
+        if sym.parent_key:
+            sym.parent_key = rekeyed.get(sym.parent_key, sym.parent_key)
 
         deduped_symbols.append(sym)
 
@@ -958,7 +966,14 @@ def _read_and_parse(item):
 # gained "receiver", and Kotlin/Swift/Go receivers are classified. A format-5
 # entry has no head, so `store.get()` on an imported module would stay demoted
 # on an incremental build while a full build binds it at 1.0.
-PARSE_CACHE_FORMAT = 6
+# 7: `Symbol` gained "key"/"parent_key" (a later same-qualname definition in
+# one file gets id `<qualname>@L<line>` instead of colliding with the first),
+# Go methods are qualified `<ReceiverType>.<name>`, Kotlin `fun`s are indexed
+# at all, and chunked files key duplicates as `@L<line>` rather than renaming
+# the qualname `<qualname>_<n>`. A format-6 entry restores Go methods with bare
+# qualnames and no Kotlin functions, so an incremental build would emit
+# different node ids than a full one.
+PARSE_CACHE_FORMAT = 7
 
 
 def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
@@ -1357,8 +1372,9 @@ def build(
             g.stats["chunk_slices_undecodable"] += undecodable
             g.stats["files_with_undecodable_chunks"] += 1
 
+        file_keys = {symbol_key(s_) for s_ in pf.symbols}
         for sym in pf.symbols:
-            sid = f"sym:{rel}::{sym.qualname}"
+            sid = f"sym:{rel}::{symbol_key(sym)}"
             g.add_node(
                 sid,
                 type="symbol",
@@ -1373,7 +1389,10 @@ def build(
                 docstring=sym.docstring,
             )
             g.stats[f"symbol:{sym.kind}"] += 1
-            owner = f"sym:{rel}::{sym.parent}" if sym.parent else fid
+            # A Go method / Kotlin extension names a receiver type that may be
+            # declared in another file: DEFINES then comes from the file.
+            pkey = symbol_parent_key(sym)
+            owner = f"sym:{rel}::{pkey}" if pkey and pkey in file_keys else fid
             g.add_edge(
                 owner,
                 sid,
@@ -1456,7 +1475,28 @@ def build(
     for rel, pf in parsed.items():
         for s_ in pf.symbols:
             if s_.bases:
-                class_bases[f"sym:{rel}::{s_.qualname}"] = (rel, list(s_.bases))
+                class_bases[f"sym:{rel}::{symbol_key(s_)}"] = (rel, list(s_.bases))
+    # member scope -> member name -> every member id with that name. The scope
+    # is the enclosing *qualname* in the file (not its `@L` key), so a Rust
+    # type's methods spread over several `impl A` blocks -- or a class defined
+    # twice under an `if` -- share one scope, exactly as they did when those
+    # blocks collapsed into one node. For Go it is the receiver type within
+    # the package directory, because Go methods of one type may live in any
+    # file of the package. Holds *every* same-named member, so an overload set
+    # is found whole (fan-out at 1/n) rather than just its first definition.
+    members: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
+
+    def scope_of(rel: str, qualname: str | None) -> str | None:
+        if not qualname:
+            return None
+        if parsed[rel].lang == "go":
+            return f"go:{rel.rpartition('/')[0]}::{qualname}"
+        return f"sym:{rel}::{qualname}"
+
+    for rel, pf in parsed.items():
+        for s_ in pf.symbols:
+            if (scope_id := scope_of(rel, s_.parent)) is not None:
+                members[scope_id][s_.name].append(f"sym:{rel}::{symbol_key(s_)}")
     # node id -> its file's directory. Tier 4 below used to rebuild
     # `Path(...).parent` once per candidate per callee inside the build's hot
     # loop; precomputing it here turns that into a dict lookup.
@@ -1500,7 +1540,13 @@ def build(
                         if bid not in seen:
                             seen.add(bid)
                             nxt.append(bid)
-            found = [f"{b}.{callee}" for b in nxt if f"{b}.{callee}" in g.nodes]
+            found = [
+                m
+                for b in nxt
+                for m in members.get(
+                    scope_of(g.nodes[b]["path"], g.nodes[b]["qualname"]) or "", {}
+                ).get(callee, [])
+            ]
             if found or not nxt:
                 return found
             level = nxt
@@ -1538,7 +1584,8 @@ def build(
     for rel, pf in parsed.items():
         rel_dir = rel.rpartition("/")[0]
         for sym in pf.symbols:
-            sid = f"sym:{rel}::{sym.qualname}"
+            sid = f"sym:{rel}::{symbol_key(sym)}"
+            scope_id = scope_of(rel, sym.parent)
             call_kinds: dict[str, str] = {}
             # name -> the first line this symbol calls that name on. One edge
             # carries a `count` for every call of the same name, so a single
@@ -1588,8 +1635,8 @@ def build(
                     # stdlib/third-party base's method to an unrelated class
                     # -- even a subclass -- at 1.0. No in-repo ancestor defines
                     # it -> CALLS_EXTERNAL, which is exactly what is known.
-                    if sym.parent and (
-                        inherited := base_methods(f"sym:{rel}::{sym.parent}", callee)
+                    if (pkey := symbol_parent_key(sym)) and (
+                        inherited := base_methods(f"sym:{rel}::{pkey}", callee)
                     ):
                         chosen_cands, res_kind, scope_dist = inherited, "base_class", 0
                 elif not sym.parent and sid in all_cands:
@@ -1600,18 +1647,16 @@ def build(
                     # in the file at confidence 1.0 and the recursion edge is lost.
                     chosen_cands, res_kind, scope_dist = [sid], "self_recursive", 0
                 elif (
-                    sym.parent
-                    and (tier1 := f"sym:{rel}::{sym.parent}.{callee}") in g.nodes
-                    and tier1 != sid
+                    scope_id
+                    and (tier1 := members.get(scope_id, {}).get(callee, []))
+                    and sid not in tier1
                 ):
-                    # Tier 1: same class / enclosing scope. A symbol's id is
-                    # f"sym:{path}::{parent}.{name}" by construction -- parse.py
-                    # builds qualname as parent + "." + name -- so this exact
-                    # lookup already finds every same-file same-parent candidate;
-                    # the scan it replaces could only rediscover this same id, and
-                    # tested a `parent` attribute symbol nodes never carry.
+                    # Tier 1: same class / enclosing scope, via `members`: every
+                    # member of the caller's enclosing symbol (for Go: every
+                    # method of the receiver type in the package) named `callee`.
+                    # An overload set comes back whole and fans out at 1/n.
                     #
-                    # `tier1 != sid` is not the self-exclusion this rewrite
+                    # `sid not in tier1` is not the self-exclusion this rewrite
                     # removed from the tiers below. `_callee_name` drops the
                     # receiver, so inside `DoctorReport.to_dict` the calls
                     # `self.to_dict()` and `c.to_dict()` are the same string
@@ -1623,7 +1668,7 @@ def build(
                     # *includes* the caller: whichever reading is right, the
                     # true target is in the candidate set and the ambiguity is
                     # priced at 1/n rather than hidden.
-                    chosen_cands = [tier1]
+                    chosen_cands = tier1
                     res_kind, scope_dist = "same_class", 0
                 elif tier2 := [c for c in all_cands if g.nodes[c].get("path") == rel]:
                     chosen_cands, res_kind, scope_dist = tier2, "same_file", 1
