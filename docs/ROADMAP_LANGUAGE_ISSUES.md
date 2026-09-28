@@ -6,19 +6,19 @@ This document turns the findings of the Language Quality Scorecard and Strategic
 
 ## Issue Matrix & Priority Summary
 
-| Issue ID | Priority | Area / Ecosystem | Scope | Target Version | Related RFC |
+| Issue ID | Priority | Area / Ecosystem | Scope | Status | Related RFC |
 |---|---|---|---|---|---|
-| **LANG-01** | **P1 (Highest)** | TypeScript / JavaScript | `tsconfig.json` path alias & monorepo workspace module resolution | 2.1.0 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-02** | **P1 (Highest)** | TypeScript / JavaScript | Express, NestJS, & Next.js HTTP route & controller extraction (`ROUTES_TO`) | 2.1.0 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-03** | **P1 (Highest)** | TypeScript / JavaScript | Jest & Vitest test-to-implementation graph linking (`TESTS`) | 2.1.0 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-04** | **P1 (Highest)** | Python | FastAPI, Flask, & Django route-to-handler resolution (`ROUTES_TO`) | 2.1.0 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-05** | **P1 (Highest)** | Python | Pytest test-to-implementation linking & fixture injection (`TESTS`) | 2.1.0 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-06** | **P1 (Highest)** | Python | SQLAlchemy & Django model relational schema extraction (`MODELS`) | 2.1.0 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-07** | **P2 (High)** | Java / Kotlin (JVM) | Spring Boot & Jakarta Dependency Injection resolution (`INJECTS`) | 2.2.0 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-08** | **P2 (High)** | Java / Kotlin (JVM) | Spring MVC / JAX-RS routes (`ROUTES_TO`) & JUnit test links (`TESTS`) | 2.2.0 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-09** | **P2 (High)** | Go (Golang) | Anonymous struct embedding & implicit interface satisfaction (`INHERITS`) | 2.2.0 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-10** | **P2 (High)** | Go (Golang) | Gin / Chi / Echo web routing & `*_test.go` table-driven test linking | 2.2.0 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-11** | **P2 (High)** | Core Test Suite | Eliminate zero-test coverage for TypeScript, TSX, Java, Scala, Rust, Swift | 2.1.0 | Scorecard Generator |
+| **LANG-01** | **P1 (Highest)** | TypeScript / JavaScript | `tsconfig.json` path alias & monorepo workspace module resolution | not started | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-02** | **P1 (Highest)** | TypeScript / JavaScript | Express, NestJS, & Next.js HTTP route & controller extraction (`ROUTES_TO`) | not started | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-03** | **P1 (Highest)** | TypeScript / JavaScript | Jest & Vitest test-to-implementation graph linking (`TESTS`) | not started | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
+| **LANG-04** | **P1 (Highest)** | Python | FastAPI, Flask, & Django route-to-handler resolution (`ROUTES_TO`) | not started | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-05** | **P1 (Highest)** | Python | Pytest test-to-implementation linking & fixture injection (`TESTS`) | not started | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-06** | **P1 (Highest)** | Python | SQLAlchemy & Django model relational schema extraction (`MODELS`) | not started | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
+| **LANG-07** | **P2 (High)** | Java / Kotlin (JVM) | Spring Boot & Jakarta Dependency Injection resolution (`INJECTS`) | not started | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-08** | **P2 (High)** | Java / Kotlin (JVM) | Spring MVC / JAX-RS routes (`ROUTES_TO`) & JUnit test links (`TESTS`) | not started | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-09** | **P2 (High)** | Go (Golang) | Anonymous struct embedding & implicit interface satisfaction (`INHERITS`) | not started | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-10** | **P2 (High)** | Go (Golang) | Gin / Chi / Echo web routing & `*_test.go` table-driven test linking | not started | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
+| **LANG-11** | **P2 (High)** | Core Test Suite | Eliminate zero-test coverage for TypeScript, TSX, Java, Scala, Rust, Swift | partly done: `tests/test_symbol_identity.py` covers every grammar | Scorecard Generator |
 
 ---
 

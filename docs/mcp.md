@@ -388,8 +388,9 @@ Result:
 ## Three promises the server keeps that the CLI leaves to you
 
 - **Secrets are excluded, always.** A tool an agent calls unattended never returns
-  a chunk from a path that looks like a credential store. On the CLI that is
-  opt-in (`--answer`).
+  a chunk from a path that looks like a credential store. On the CLI, `query` and
+  `rag` exclude them by default too, but `--include-secrets` turns that off; the
+  MCP server has no such switch.
 - **Output is hard-bounded.** `repo_search` clamps whatever budget it is given to
   at most 12 000 tokens and re-measures the rendered result before returning it,
   and `repo_neighbours` lists at most 50 rows however large a `limit` it is

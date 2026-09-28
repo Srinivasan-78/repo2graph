@@ -2,9 +2,9 @@
 
 Keyword search and graph traversal answer different questions. Neither replaces the other.
 
-The at-a-glance version is the
-[Why repo2graph instead of grep or vector search?](../README.md#is-it-better-than-grep) table in the README. This
-page is the argument behind it.
+The measured comparison is in the README's
+[Is it better than grep?](../README.md#is-it-better-than-grep) section. This page is the design
+argument behind the graph.
 
 ```
 Search:  keyword -> files -> manual traversal

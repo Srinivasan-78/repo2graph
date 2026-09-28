@@ -1,7 +1,7 @@
 # Security audit — 2026-09-17
 
-A whole-repository security and production-readiness audit, run against `remove-authormark-watermark`
-(parent `f8a38a0`, 838 tests passing before this audit's own changes). This is **not** the first
+A whole-repository security and production-readiness audit, run at commit `f8a38a0` (838 tests
+passing at the time). This is **not** the first
 security pass this codebase has had — `docs/BACKLOG.md` and `CHANGELOG.md` record two prior hardening
 runs (encoding/traversal fixes in 2026-09, then incremental build + MCP/HTTP/auth in 2026-09) that
 already closed a long list of findings. This audit's job was to verify those claims against the

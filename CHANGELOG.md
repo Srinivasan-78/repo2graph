@@ -42,7 +42,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   `other`); when every call of a builtin-collection method name (`get`, `pop`, `append`, `items`,
   `join`, `then`, …) is on an untyped receiver, the edge is kept but marked `untyped_receiver`,
   `ambiguous`, and capped at confidence 0.2. The repo map's "Most called symbols" counts only
-  `CALLS` edges at confidence ≥ 0.5. New stat `calls_untyped_receiver`. Parse cache format 5.
+  `CALLS` edges at confidence ≥ 0.5. New stat `calls_untyped_receiver`.
 
 ### Changed
 
@@ -55,8 +55,8 @@ makes keeping it current a release-blocking step rather than a good intention.
   comparison is withdrawn.
 - **README cut from 649 to ~150 lines**, with a comparison against Serena, Aider's repo map,
   CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code in `docs/comparison.md`.
-- **Repository root tidied.** `POSITIONING.md`, `PR_IMPACT.md`, `TECHNICAL.md` and
-  `LANGUAGE_SUPPORT.md` moved to `docs/`; `CLAUDE.md` moved to `.claude/CLAUDE.md`; the root
+- **Repository root tidied.** `PR_IMPACT.md`, `TECHNICAL.md` and `LANGUAGE_SUPPORT.md` moved to
+  `docs/` (`POSITIONING.md` was later removed); `CLAUDE.md` moved to `.claude/CLAUDE.md`; the root
   `SECURITY.md` stub removed (`.github/SECURITY.md` is canonical).
 
 ### Removed
