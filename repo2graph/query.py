@@ -19,6 +19,7 @@ from .secrets import (
     SECRET_KEYWORDS,
     SECRET_WORD_RE,
     _is_secret_path,
+    redact_content,
 )
 
 __all__ = [
@@ -151,6 +152,9 @@ class Index:
     # fused query has run on this Index yet. A class-level default so every
     # Index has the attribute without __init__ having to care.
     fusion_coverage: tuple[int, int] | None = None
+    # The source tree this index describes, when the caller knows it (the MCP
+    # server sets it from its --repo). None means "not known here".
+    repo_root: Path | None = None
 
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
@@ -310,6 +314,24 @@ class Index:
         self._manifest = value
 
     _is_secret_path = staticmethod(_is_secret_path)
+
+    def _served(self, c: Record) -> Record:
+        """`c` with its text content-redacted when the index may hold raw secrets.
+
+        Serve-time backstop for the agent path (`exclude_secrets=True`): an index
+        whose manifest does not say its chunks were redacted at build time
+        (`--secret-policy off`/`warn-only`, a pre-fix `--include-secrets` build,
+        or no manifest at all) is scanned here, per returned chunk. A redacted
+        index is passed through untouched, so the default path costs nothing.
+        """
+        policy = self.manifest.get("secret_filter_policy")
+        if policy in ("redact-match", "exclude-file"):
+            return c
+        text = c.get("text")
+        if not isinstance(text, str) or not text:
+            return c
+        red, n = redact_content(text)
+        return {**c, "text": red} if n else c
 
     def score(self, query: str) -> list[tuple[float, int]]:
         q = Counter(tokenize(query))
@@ -547,6 +569,9 @@ class Index:
         min_confidence: float | None = None,
         vectors: Mapping[Any, Vector] | None = None,
         embedder: "Embedder | None" = None,
+        exclude_secrets: bool = False,
+        extra_secret_keywords: list[str] | None = None,
+        extra_secret_dirs: list[str] | None = None,
     ) -> list[Record]:
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
@@ -557,8 +582,19 @@ class Index:
         this method's historical behaviour. With `vectors` and `embedder` both
         None -- the default -- seeds come from `score()` exactly as they always
         have; supply either and they come from the fused ranking instead.
+        `exclude_secrets` drops secret-looking paths (same rule as
+        pack_context); False, the default, is the historical behaviour.
         """
         conf = 0.0 if min_confidence is None else min_confidence
+
+        def _secret(c: Record, nid: str) -> bool:
+            if not exclude_secrets:
+                return False
+            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            return _is_secret_path(
+                c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            )
+
         ranked = (
             self.score(query)
             if vectors is None and embedder is None
@@ -572,7 +608,7 @@ class Index:
         for s, i in scored:
             c = self.chunks[i]
             nid = c["node_id"]
-            if nid in seen_nodes_set:
+            if nid in seen_nodes_set or _secret(c, nid):
                 continue
             chunk_len = len(c.get("text") or "")
             # ISS-37: test budget before appending so we do not overshoot by a whole chunk
@@ -580,6 +616,9 @@ class Index:
                 break
             seen_nodes_set.add(nid)
             seen_nodes_list.append(nid)
+            if exclude_secrets:
+                c = self._served(c)
+                chunk_len = len(c.get("text") or "")
             picked.append({**c, "score": round(s, 3), "why": "lexical"})
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
@@ -595,6 +634,10 @@ class Index:
             if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
+                if _secret(c, nid):
+                    break
+                if exclude_secrets:
+                    c = self._served(c)
                 chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break
@@ -688,6 +731,8 @@ class Index:
                 seen_nodes.add(nid)
                 continue
             seen_nodes.add(nid)
+            if exclude_secrets:
+                c = self._served(c)
             seeds.append({**c, "score": round(s, 3), "why": "seed"})
             if len(seeds) >= k:
                 break
@@ -709,6 +754,8 @@ class Index:
                     c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
                 ):
                     continue
+                if exclude_secrets:
+                    c = self._served(c)
                 src_name = self.nodes.get(src, {}).get("name") or src
                 neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
 
@@ -753,9 +800,13 @@ class Index:
                 body += block
                 continue
             short = _compress(text)
-            block = _cite_block(c, short)
+            # The compressed view shows a header and one line, so its cite must
+            # not claim the whole chunk: `[cite: JsonReader.kt:1-648]` over a
+            # block showing `/*` sent readers to 648 lines nobody quoted.
+            excerpt = _excerpt_record(c, text, short)
+            block = _cite_block(excerpt, short)
             if fits(block):
-                picked.append((c, short))
+                picked.append((excerpt, short))
                 body += block
             truncated = True
 
@@ -879,13 +930,92 @@ def _compress(text: str) -> str:
     return "\n".join(kept)
 
 
+#: `# <key>: ` lines chunks.build_chunks writes after `# file:` (and, for a
+#: symbol, its `# <kind>: <qualname>  (lines a-b, lang)` line).
+_HEADER_PREFIXES = (
+    "# imports: ",
+    "# defines: ",
+    "# entry point:",
+    "# inherits: ",
+    "# called by: ",
+    "# calls: ",
+    "# calls (outside the repo): ",
+    "# doc: ",
+)
+_KIND_LINE_RE = re.compile(r"^# [\w-]+: .*\(lines \d+-\d+, [^)]*\)$")
+_PART_SUFFIX_RE = re.compile(r"#\d+$")
+
+
+def _header_len(lines: list[str]) -> int:
+    """How many leading lines of a chunk's text are its generated header."""
+    if not lines or not lines[0].startswith("# file: "):
+        return 0
+    i = 1
+    if i < len(lines) and _KIND_LINE_RE.match(lines[i]):
+        i += 1
+    while i < len(lines) and lines[i].startswith(_HEADER_PREFIXES):
+        i += 1
+    return i
+
+
+def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
+    """`chunk` re-cited to the source lines `_compress` actually kept.
+
+    `excerpt_of` keeps the whole chunk's span. The shown span replaces
+    `start_line`/`end_line` only where chunk text maps line-for-line onto the
+    source from `start_line` -- a whole file or a whole symbol, first part.
+    A file residual (symbol spans carved out, then stripped) or a later split
+    part does not, so those keep their span and rely on the marker alone.
+    """
+    start = chunk.get("start_line")
+    end = chunk.get("end_line")
+    rec = {**chunk, "excerpt_of": [start, end]}
+    if (
+        not isinstance(start, int)
+        or chunk.get("type") not in ("symbol", "file")
+        or _PART_SUFFIX_RE.search(str(chunk.get("id") or ""))
+    ):
+        return rec
+    lines = full.split("\n")  # never splitlines(): see AGENTS.md
+    hdr = _header_len(lines)
+    # Mirror _compress: every leading `#` line, then the first non-blank one.
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    shown = list(range(i))
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines):
+        shown.append(i)
+    body = [x - hdr for x in shown if x >= hdr]
+    if body and short.split("\n")[-1] == lines[shown[-1]]:
+        rec["start_line"] = start + min(body)
+        rec["end_line"] = start + max(body)
+        rec["excerpt_exact"] = True
+    return rec
+
+
 def _cite_block(chunk: Record, text: str) -> str:
-    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line."""
+    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line.
+
+    A compressed neighbour (`excerpt_of` set) cites the lines it shows and
+    says which span they are an excerpt of, between the symbol and the why.
+    """
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
     end = chunk.get("end_line") or start
+    of = chunk.get("excerpt_of")
+    mark = ""
+    if isinstance(of, (list, tuple)) and len(of) == 2:
+        span = f"{of[0] or 1}-{of[1] or of[0] or 1}"
+        mark = (
+            f" [excerpt of {span}]"
+            if chunk.get("excerpt_exact")
+            else f" [header and first line only, of {span}]"
+        )
     head = (
-        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}` ({chunk.get('why') or ''})"
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{mark} "
+        f"({chunk.get('why') or ''})"
     )
     disarmed = "\n".join(
         "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")

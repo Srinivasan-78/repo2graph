@@ -63,9 +63,10 @@ repo2graph impact -i .repo2graph-index --diff path/to/patch.diff
 | `--json` | Convenience alias for `--format json`. | False |
 | `--sarif` | Convenience alias for `--format sarif`. | False |
 | `--max-depth <n>` | Traversal depth for reverse callers (`CALLS in`). | `2` |
-| `--min-confidence <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
+| `--min-confidence <f>`, `--min-conf <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
 | `--write <file>` | Write output to file instead of stdout. | None |
 | `--no-auto-build` | Fail instead of building an index when `--index` holds none. | False (builds) |
+| `--include-secrets` | Also report changes to secret-looking paths (`.env`, keys, credentials). Without it they are dropped from the report, as `rag`/`query` do and as MCP `repo_impact` always does. | False (excluded) |
 
 ### Examples
 
@@ -193,6 +194,24 @@ repo2graph impact -i .index --base main --format pr-comment --write pr-comment.m
 `guardrails.stale_index_notice` is present only when `files_absent_from_index` is
 non-empty — see *Index coverage is part of the report* below.
 
+### What "Signature Changed" means, and how risk is scored
+
+A changed line is charged to the **innermost** symbol containing it: a one-line
+edit in a method body changes the method, not also its enclosing class.
+
+**Signature Changed** is `Yes` only when a substantive added line lands on the
+symbol's definition line(s) -- `start_line` through the end of its recorded
+`signature` (the text from the definition to the start of its body). Blank and
+comment-only lines never count, so a `# changed` comment anywhere in or above a
+function is a body-only change. An added symbol counts as a changed contract.
+
+The blast radius score weights each **direct caller** by what changed under it:
+3 points when its target's signature changed (the call may no longer bind), 1
+point when only the body changed (same contract). The `HIGH` trigger on direct
+callers (8 or more) likewise counts only callers of a changed signature. So a
+body-only edit to a widely-called function reports `MEDIUM`, not `HIGH`, unless
+other signals (public APIs touched, untested APIs, rule findings) add up.
+
 ### Static Impact Rules
 
 | Rule ID | Name | Severity | Description |
@@ -268,7 +287,7 @@ Coding agents interacting with repository knowledge can invoke the `repo_impact`
       "head": {"type": "string", "description": "Head ref or branch to compare (default 'HEAD')."},
       "diff": {"type": "string", "description": "Optional raw unified diff text. If provided, overrides git diff."},
       "max_depth": {"type": "integer", "description": "Caller traversal hops around changed symbols (default 2, max 5)."},
-      "format": {"type": "string", "enum": ["markdown", "json", "pr-comment"], "description": "Report format."}
+      "format": {"type": "string", "enum": ["markdown", "json", "sarif", "pr-comment"], "description": "Report format. Any other value is an isError result naming the four."}
     }
   }
 }
@@ -277,6 +296,7 @@ Coding agents interacting with repository knowledge can invoke the `repo_impact`
 ### Security & Bounding Invariants
 - **Unconditional Secret Filtering:** All MCP requests enforce `exclude_secrets=True`. Files such as `.env`, `.pem`, and credential paths are stripped before impact processing.
 - **Clamped Numeric Arguments:** `max_depth` is strictly clamped within `[1, MCP_MAX_HOPS]`. Arbitrary client values cannot induce unbounded recursion.
+- **A `diff` that is not a diff is an error.** Non-empty `diff` text with no `diff --git a/<path> b/<path>` header returns `isError: true` (the CLI's `--diff` exits non-zero) instead of a `LOW RISK` report about zero files. An empty diff is still a valid "nothing changed" report.
 
 ---
 

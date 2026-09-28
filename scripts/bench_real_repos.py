@@ -56,6 +56,56 @@ STOPWORDS = frozenset(
 RG_TYPES = {"python": "py", "typescript": "ts"}
 
 
+def source_version(root: Path = ROOT) -> str:
+    """The version of the *checked-out* source, never of an installed dist-info.
+
+    `repo2graph.__version__` asks importlib.metadata first, and an editable
+    install's dist-info keeps whatever version it was installed at -- a 2.2.0
+    run was labelled 2.1.0. pyproject.toml's `[project] version` is what the
+    code on disk is; the `__init__` fallback constant is the second source.
+    (Regex, not tomllib: Python 3.10 is supported.)
+    """
+    try:
+        text = (root / "pyproject.toml").read_text(encoding="utf8")
+        section = re.search(r"(?ms)^\[project\]\s*$(.*?)(?=^\[|\Z)", text)
+        m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', section.group(1) if section else "")
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    try:
+        init = (root / "repo2graph" / "__init__.py").read_text(encoding="utf8")
+        m = re.search(r'(?m)^\s*__version__\s*=\s*"([^"]+)"', init)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "unknown"
+
+
+def source_commit(root: Path = ROOT) -> dict:
+    """The repo2graph commit the benchmark ran from, and whether it was dirty."""
+
+    def _git(*args: str) -> str | None:
+        try:
+            res = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True,
+                stdin=subprocess.DEVNULL,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if res.returncode != 0:
+            return None
+        # bytes + surrogateescape, never text=True (AGENTS.md)
+        return res.stdout.decode("utf8", "surrogateescape").strip()
+
+    sha = _git("rev-parse", "HEAD")
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return {"commit": sha, "dirty": None if status is None else bool(status)}
+
+
 def checkout(repo: dict, cache: Path) -> Path:
     dest = cache / repo["name"]
     if not dest.exists():
@@ -77,16 +127,34 @@ def checkout(repo: dict, cache: Path) -> Path:
     return dest / repo["root"]
 
 
-def covered_lines_r2g(pack: dict) -> dict[str, set[int]]:
-    """Lines whose text is actually in the pack, per path."""
+def covered_lines_r2g(pack: dict, root: Path) -> dict[str, set[int]]:
+    """Source lines whose text is actually in the pack, per path.
+
+    A chunk's `start_line`/`end_line` describe the whole symbol, not the text
+    returned: a split symbol's later parts, a file residual with its symbols cut
+    out, and a neighbour compressed to its signature all return less than that
+    range. So each returned line is aligned, in order, to the next source line
+    in the symbol's range with the same text. Synthetic header lines
+    (`# file:`, `# calls:`, ...) match nothing and earn nothing.
+    """
     out: dict[str, set[int]] = defaultdict(set)
+    sources: dict[str, list[str]] = {}
     for c in pack["chunks"]:
-        start = c.get("start_line") or 0
-        n = (c.get("text") or "").count("\n") + 1
-        end = c.get("end_line") or start
-        # A neighbour compressed to its signature carries fewer lines than its
-        # cite range claims; only the lines really present count.
-        out[c["path"]].update(range(start, min(end, start + n - 1) + 1))
+        path = c["path"]
+        src = sources.get(path)
+        if src is None:
+            raw = (root / path).read_text(encoding="utf8", errors="replace")
+            src = sources[path] = [ln.rstrip("\r") for ln in raw.split("\n")]
+        start = max(1, c.get("start_line") or 1)
+        end = min(len(src), c.get("end_line") or len(src))
+        cursor = start
+        for line in (c.get("text") or "").split("\n"):
+            line = line.rstrip("\r")
+            for n in range(cursor, end + 1):
+                if src[n - 1] == line:
+                    out[path].add(n)
+                    cursor = n + 1
+                    break
     return out
 
 
@@ -189,8 +257,8 @@ def main() -> int:
             )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
-                ("repo2graph", covered_lines_r2g(full), full["tokens_used"]),
-                ("repo2graph-bm25", covered_lines_r2g(bm25), bm25["tokens_used"]),
+                ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)
@@ -225,10 +293,18 @@ def main() -> int:
                     "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
                 }
             )
-    from repo2graph import __version__
-
+    provenance = source_commit()
     args.out.write_text(
-        json.dumps({"repo2graph_version": __version__, "summary": summary, "rows": rows}, indent=1)
+        json.dumps(
+            {
+                "repo2graph_version": source_version(),
+                "repo2graph_commit": provenance["commit"],
+                "repo2graph_dirty": provenance["dirty"],
+                "summary": summary,
+                "rows": rows,
+            },
+            indent=1,
+        )
         + "\n",
         encoding="utf8",
         newline="\n",

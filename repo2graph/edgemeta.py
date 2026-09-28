@@ -65,6 +65,39 @@ from typing import Any
 # `evidence` will be absent rather than null.
 EDGE_SCHEMA_VERSION = "2"
 
+# A CALLS edge below this confidence is a guess (a 3+-way name split, or a
+# builtin method name on an untyped receiver). Every ranking that answers "what
+# is called most / at all" -- the repo map, changelog hotspots, entrypoint
+# detection -- skips it, so one number keeps them in agreement.
+OVERVIEW_MIN_CALL_CONFIDENCE = 0.5
+
+# Resolution kinds whose candidates are structurally scoped to the caller: a
+# fan-out among them is an overload set or a same-scope name split, not a guess
+# across the repository, so `Log.info` with three overloads (0.333 each) is
+# still *called*. Only name-wide guesses are held to the numeric threshold.
+SCOPED_CALL_KINDS = frozenset(
+    {"self_recursive", "same_class", "base_class", "same_file", "import_alias", "imported_symbol"}
+)
+
+
+def counts_as_call(e: dict[str, Any]) -> bool:
+    """Whether a CALLS edge makes its target "called" for rankings/entrypoints.
+
+    Gated on what the edge is, not only its number: an untyped-receiver
+    builtin (`d.get()` -> `_AppCtxGlobals.get`) never counts; a scoped
+    fan-out (overloads, same class/file, through an import) always does; a
+    global-name or same-module guess counts only at or above
+    OVERVIEW_MIN_CALL_CONFIDENCE. An edge without `resolution_kind` (an older
+    index) falls back to the threshold alone.
+    """
+    if e.get("untyped_receiver"):
+        return False
+    if e.get("resolution_kind") in SCOPED_CALL_KINDS:
+        return True
+    conf = e.get("confidence", 1.0)
+    return not isinstance(conf, (int, float)) or conf >= OVERVIEW_MIN_CALL_CONFIDENCE
+
+
 METHOD_TREE_SITTER = "tree-sitter"
 METHOD_NAME_RESOLVER = "name-resolver"
 METHOD_FILESYSTEM = "filesystem"

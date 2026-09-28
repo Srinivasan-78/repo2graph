@@ -35,6 +35,15 @@ SECRET_EXTS = frozenset(
         ".secrets",
         ".keytab",
         ".ppk",
+        # Terraform state is a JSON dump of every managed resource's attributes,
+        # database passwords and generated keys included, in plaintext; `.tfvars`
+        # (and `.auto.tfvars`, which this suffix also covers) is where the inputs
+        # to those resources -- `db_password = "..."` -- are written. Neither
+        # extension is ever source code. `.tfstate.backup` is handled by the
+        # `.backup` entry in BACKUP_SUFFIXES, which strips back to `.tfstate`.
+        ".tfstate",
+        ".tfvars",
+        ".tfvars.json",
     }
 )
 
@@ -67,6 +76,9 @@ SECRET_KEYWORDS = (
     "id_ed25519",
     "id_ecdsa",
     "id_dsa",
+    # Firebase names a downloaded Admin SDK key `<project>-firebase-adminsdk-<id>.json`;
+    # the SECRET_CONFIG_EXTS gate below keeps `adminsdk.py`-style code indexable.
+    "adminsdk",
 )
 
 # Exact filenames that are always treated as sensitive.
@@ -88,6 +100,22 @@ SECRET_EXACT_NAMES = frozenset(
         # the `.kube` entry in SECRET_DIR_NAMES already covers). It holds cluster
         # credentials -- client certs, bearer tokens, or an exec plugin config.
         "kubeconfig",
+        # The dotless spelling Apache and nginx docs use for the same file as
+        # `.htpasswd`: user names and password hashes.
+        "htpasswd",
+        # Composer's per-project credential store (`http-basic`, `github-oauth`,
+        # `gitlab-token` ...). Composer only ever reads this name for that purpose.
+        "auth.json",
+        # WordPress keeps DB_PASSWORD and the auth salts here; it is configuration,
+        # not code anyone needs retrieved.
+        "wp-config.php",
+        # Rails encrypted credentials. Ciphertext, but useless to index and the
+        # neighbour of `master.key` (caught by `.key`), which decrypts it.
+        "credentials.yml.enc",
+        # The name GCP docs and CI recipes give a downloaded service-account key
+        # (`gcloud iam service-accounts keys create key.json`). Only this exact
+        # name: `keys.json`, `keymap.json` and friends stay indexable.
+        "key.json",
     }
 )
 
@@ -96,7 +124,8 @@ SECRET_EXACT_NAMES = frozenset(
 #: `server.key` hold, so a backup is tested by stripping the suffix and asking
 #: the same question again. Only one layer is stripped, and the `~` form is
 #: handled separately because it carries no dot.
-BACKUP_SUFFIXES = (".bak", ".old", ".orig", ".save", ".swp", ".tmp", "~")
+#: `.backup` is Terraform's spelling (`terraform.tfstate.backup`).
+BACKUP_SUFFIXES = (".bak", ".backup", ".old", ".orig", ".save", ".swp", ".tmp", "~")
 
 #: Environment names in the *dotless* dotenv spelling. `.env.production` is
 #: already caught by the `.env` family test, but `env.production` -- the spelling
@@ -283,10 +312,80 @@ DB_URL_RE = re.compile(
     re.I,
 )
 
-# High-entropy credential assignments: api_key = "...", token: "..."
+# Credential assignments: api_key = "...", DB_PASSWORD = "hunter2..."
 ASSIGNMENT_RE = re.compile(
-    r"""(?i)\b((?:pass(?:word|wd)?|secret|api[-_]?key|auth[-_]?key|access[-_]?token)\s*[:=]\s*["'])([A-Za-z0-9_\-\.\+\/=]{16,})(["'])"""
+    r"""(?i)(?:^|(?<=[^A-Za-z0-9_]))([A-Za-z0-9_.-]{0,40}?(?:pass(?:word|wd)|secret|token|api[-_]?key|auth[-_]?key|access[-_]?token)[A-Za-z0-9_.-]{0,40}?\s*[:=]\s*["'])([A-Za-z0-9_\-\.\+\/=]{6,})(["'])"""
 )
+
+# JSON-style credential pairs: `"password": "..."`, `"client_secret": "..."`.
+# ASSIGNMENT_RE cannot see these: it wants the quote straight after `[:=]`, but
+# in JSON the *key* is quoted too, so `"password": "..."` has a `"` between the
+# name and the colon -- and `\b` never fires inside `db_password` either. This
+# is the shape of Terraform state, Composer/npm auth files, Firebase keys and
+# most app `config.json`s, so it gets its own rule.
+#
+# The key must be a whole JSON string (`"...name..."`) whose text contains a
+# secret-ish word; both the affixes around that word and the value are
+# length-bounded, so the scan stays linear on hostile input. The value admits
+# JSON escapes (`\"`, `\n` as two characters) but no raw whitespace: a value with
+# a space is prose (`"password": "Enter your password"` in every i18n bundle),
+# and one without a raw newline keeps the redaction trivially line-preserving. `_json_secret_value_ok` then decides
+# whether the value is non-trivial.
+#
+# The same rule covers a single-quoted key (a Python dict literal,
+# `'password': 'Sup3r...'`) and an unquoted key at the start of a line (YAML
+# `db_password: "..."`); the value must still be quoted.
+JSON_SECRET_RE = re.compile(
+    r"(?im)(?:(?P<kq>[\"'])|^[ \t]*(?:-[ \t]+)?)"
+    r"[A-Za-z0-9_.-]{0,40}?"
+    r"(?:pass(?:word|wd)|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)"
+    r"(?P<suffix>[A-Za-z0-9_.-]{0,40})(?(kq)(?P=kq))\s*:\s*(?P<vq>[\"'])"
+    r"(?P<value>(?:(?!(?P=vq))[^\\\s]|\\[^\r\n]){8,1024})(?P=vq)"
+)
+
+#: A secret word followed by one of these names a *property of* the credential
+#: -- where to send it, what to call it, how long it is -- never the credential:
+#: `tokenUrl`, `token_endpoint`, `tokenizer`, `secretName`, `passwordField`,
+#: `api_key_header`, `token_type`, `password_policy`.
+_NON_SECRET_SUFFIX_RE = re.compile(
+    r"(?i)^[_.-]?(?:url|uri|endpoint|name|field|header|izer|type|id|length|policy)"
+)
+
+#: Values that are placeholders rather than credentials: `${DB_PASSWORD}`,
+#: `{{ secret }}`, `<your-token>`, `%(pw)s`, `********`, `xxxxxxxx`.
+_JSON_PLACEHOLDER_RE = re.compile(r"^(?:\$\{.*|\{\{.*|<.*>|%\(.*|(.)\1*)$")
+
+
+def _json_secret_value_ok(value: str) -> bool:
+    """True if a JSON value under a secret-ish key looks like a real credential.
+
+    Requires a letter *and* a digit, or three of the four character classes
+    (lower, upper, digit, symbol). That keeps `"password": "Passwort"` (an i18n
+    label) and `"tokenType": "access-token"` indexable while every generated
+    password or key -- and every human one with a digit in it -- is caught.
+    """
+    if _JSON_PLACEHOLDER_RE.match(value):
+        return False
+    lower = any(c.islower() for c in value)
+    upper = any(c.isupper() for c in value)
+    digit = any(c.isdigit() for c in value)
+    symbol = any(not c.isalnum() for c in value)
+    if digit and (lower or upper):
+        return True
+    return lower + upper + digit + symbol >= 3
+
+
+def _json_secret_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of the *values* of JSON credential pairs in `text`."""
+    return [
+        (m.start("value"), m.end("value"))
+        for m in JSON_SECRET_RE.finditer(text)
+        if not _NON_SECRET_SUFFIX_RE.match(m.group("suffix"))
+        # a URL is an endpoint; one carrying credentials is DB_URL_RE's job
+        and "://" not in m.group("value")
+        and _json_secret_value_ok(m.group("value"))
+    ]
+
 
 # Sanitization bounds
 REDACTION_HASH_CHARS = 8
@@ -305,6 +404,15 @@ def _fingerprint(value: str) -> str:
 def redact(value: str, why: str) -> str:
     """Replace a secret with a structured tag useful for correlation."""
     return f"[redacted:{why} len={len(value)} fp={_fingerprint(value)}]"
+
+
+#: Exact secret names that are also ordinary translation-bundle names: Composer's
+#: `auth.json` holds credentials, but `locales/en/auth.json` holds the login
+#: page's strings. Under a translation directory these are not secret paths.
+I18N_AMBIGUOUS_NAMES = frozenset({"auth.json"})
+I18N_DIR_NAMES = frozenset(
+    {"locale", "locales", "i18n", "l10n", "lang", "langs", "translations", "messages"}
+)
 
 
 def _is_secret_path(
@@ -351,7 +459,9 @@ def _is_secret_path(
     name = parts[-1]
     if not name:
         return False
-    if name in SECRET_EXACT_NAMES:
+    if name in SECRET_EXACT_NAMES and not (
+        name in I18N_AMBIGUOUS_NAMES and any(part in I18N_DIR_NAMES for part in parts[:-1])
+    ):
         return True
     if name.startswith(".env") or name.endswith(".env") or ".env." in name:
         return True
@@ -444,21 +554,19 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     for m in DB_URL_RE.finditer(text):
         findings.append(("DATABASE_PASSWORD", m.start(2), m.end(2)))
 
-    # 3. High-entropy assignments
+    # 3. Credential assignments
     for m in ASSIGNMENT_RE.finditer(text):
         secret = m.group(2)
-        # Reject simple identifiers / words -- but only *purely alphabetic*
-        # ones (plus underscore). The guard used to be `[a-z0-9_]+`, which
-        # also matches lowercase hex/alphanumeric secrets (an md5 hash, a
-        # lowercase API key) and skipped them before the digits-and-letters
-        # check below ever ran (#338). A word like `default_option` still has
-        # no digit and is still excluded; `abcdef12345678901234567890123456`
-        # now reaches the check and is flagged.
-        if not re.fullmatch(r"[a-z_]+", secret):
+        if _json_secret_value_ok(secret):
+            findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
+        elif not re.fullmatch(r"[a-z_]+", secret):
             digits = sum(c.isdigit() for c in secret)
             letters = sum(c.isalpha() for c in secret)
             if digits and letters:
                 findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
+
+    # 4. JSON-style credential pairs (`"password": "..."`)
+    findings.extend(("CREDENTIAL_JSON", start, end) for start, end in _json_secret_spans(text))
 
     # Sort by start index
     findings.sort(key=lambda x: x[1])
@@ -515,6 +623,8 @@ def _looks_like_a_secret(value: str) -> str | None:
         return "database_url"
     if ASSIGNMENT_RE.search(value):
         return "assignment"
+    if _json_secret_spans(value):
+        return "json_assignment"
 
     if len(value) >= ENTROPY_MIN_LEN and re.fullmatch(r"[A-Za-z0-9+/=_-]+", value):
         if re.fullmatch(r"[a-z0-9_]+", value):

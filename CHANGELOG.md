@@ -13,37 +13,115 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
-### Fixed
+### Security
 
-- **Builtin method calls on untyped receivers no longer bind to in-repo methods at full
-  confidence.** `os.environ.get(k)` reduced to the name `get` and was bound to any `get` method
-  nearby at confidence 1.0; on Flask that ranked `_AppCtxGlobals.get` the second most-called
-  symbol from dict lookups alone. The parser now records each call's receiver (`none` / `self` /
-  `other`); when every call of a builtin-collection method name (`get`, `pop`, `append`, `items`,
-  `join`, `then`, …) is on an untyped receiver, the edge is kept but marked `untyped_receiver`,
-  `ambiguous`, and capped at confidence 0.2. The repo map's "Most called symbols" counts only
-  `CALLS` edges at confidence ≥ 0.5. New stat `calls_untyped_receiver`. Parse cache format 5.
+- **Terraform state and vendor credential files are secret paths.** `*.tfstate`,
+  `*.tfstate.backup`, `*.tfvars` (and `.auto.tfvars`, `.tfvars.json`), `htpasswd`, `wp-config.php`,
+  `credentials.yml.enc`, `key.json`, Firebase `*adminsdk*` keys and `auth.json` (except under a
+  `locales`/`i18n`/`lang`/`translations`/`messages` directory) are no longer indexed. JSON,
+  single-quoted dict and YAML `"password": "..."`-style pairs are redacted in chunk text; values
+  containing `://` and keys such as `tokenUrl`, `secretName`, `passwordField` are left alone.
+- **`--include-secrets` no longer disables content redaction.** It lifts the secret-*path*
+  refusal only; chunk text is still scanned per `--secret-policy` (default `redact-match`).
+  Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
+  are redacted at serve time.
+- **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
+  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
+- **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
+  escaped `RecursionError` and a dropped connection.
+- **`events.emit` fails closed**: if the sanitiser itself raises, field values are dropped
+  rather than written raw to stderr.
+- **The prod-igy PR-comment sanitiser escapes every `&` and `<`** and defangs every `//`, `]:`
+  reference definition and `www.`, so protocol-relative and entity-encoded links cannot survive
+  in model-written comments. Code spans now show `&lt;`/`&amp;` literally.
+- **No absolute build path in shipped artifacts.** The source root lives in a machine-local
+  `local.json` beside the index (with a generated `.gitignore`); the GitHub Action excludes it
+  from artifact uploads and `commit-branch` pushes.
+
+### Fixed — indexing and call resolution
+
+- **No definition is silently dropped.** Same-name definitions in one file (overloads,
+  conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
+  one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
+  get `sym:<path>::<qualname>@L<line>` (`id_grammar`: `sym:<path>::<qualname>[@L<line>]`).
+- **Kotlin functions are indexed** (top-level, member, `object`, companion as `A.make`, extension
+  functions as `String.ext`); previously no `fun` became a symbol.
+- **Go methods are qualified by receiver type** (`A.Run`, `B.Run`), and `a.step()` inside a
+  method resolves through `same_class` to `A.step`. Committed `examples/` graphs are pinned
+  artifacts and were not regenerated, so their Go method ids keep the old bare form.
+- **Builtin method calls on untyped receivers are priced as guesses.** `os.environ.get(k)` was
+  bound to any in-repo `get` at confidence 1.0 (on Flask, `_AppCtxGlobals.get` ranked second most
+  called from dict lookups alone). When every call of a builtin-collection method name is on a
+  receiver of unknown type, the edge is kept but marked `untyped_receiver`/`ambiguous` at 0.2.
+  Calls whose receiver names where the candidate lives are exempt: an imported module
+  (`store.get()`), a type (`Util.remove()`), a `::` scope, a Go method's own receiver. Kotlin,
+  Swift and C# (PascalCase) receivers are covered; decorators count as calls on their receiver.
+  New stat `calls_untyped_receiver`.
+- **No false self-recursion.** `current_app.url_for()` inside `url_for` or `cli.main()` inside
+  `main` was a 1.0 self-loop; tier 0 now needs a bare or self call. `super()` and explicit
+  `Base.method(self)` resolve to the nearest in-repo base class (`resolution_kind: base_class`)
+  instead of looping to the caller. `base`/`parent` are super receivers only in C#/PHP. Flask
+  self-loops 57 → 2 (both genuine recursion).
+- **What counts as a call** for "Most called symbols", changelog hotspots and entrypoints is
+  decided by edge kind (`edgemeta.counts_as_call`): untyped-receiver guesses never count;
+  same-class/same-file/base/imported edges, including an overload set's `1/n` fan-out, always
+  count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
+- **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
+  said 50); the request is kept as `cochange_requested_commits`.
+- `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
+
+### Fixed — CLI, MCP and impact
+
+- **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
+  manifest; `explain-path` gained `-o/--out` and reports the same rule.
+- **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
+  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
+- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
+  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
+- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
+  definition line(s); a changed line is charged to its innermost symbol; a comment- or
+  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
+  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
+  not a unified diff is an error, not LOW RISK.
+- **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
+  source root) and for `repo2graph github` builds (reported as not checkable, with the right
+  refresh command).
+- **Piped output is UTF-8 on Windows**, so non-ASCII source survives `rag | …` (an explicit
+  `PYTHONIOENCODING` is respected).
+- **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
+  in JSON).
+- **`demo` question 4 shows the direct caller** via `explain node`.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
+  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
+  `rag_extra_installed` as a boolean.
 
 ### Changed
 
-- **Benchmark claims replaced with a real-repository retrieval benchmark.**
-  `docs/retrieval-benchmark.md`, `benchmarks/real/` and `scripts/bench_real_repos.py` score
-  repo2graph against a grep-then-read baseline at equal token budgets on 35 questions about
-  Flask, requests, FastAPI and Hono. repo2graph currently loses at 4k and 8k tokens; the
-  write-up says so and diagnoses why. The synthetic `benchmarks/corpus/` suite is now described
-  as the regression gate it is (`docs/regression-suite.md`), and its "100% vs ripgrep 80%"
-  comparison is withdrawn.
-- **README cut from 649 to ~150 lines**, with a comparison against Serena, Aider's repo map,
-  CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code in `docs/comparison.md`.
-- **Repository root tidied.** `POSITIONING.md`, `PR_IMPACT.md`, `TECHNICAL.md` and
-  `LANGUAGE_SUPPORT.md` moved to `docs/`; `CLAUDE.md` moved to `.claude/CLAUDE.md`; the root
-  `SECURITY.md` stub removed (`.github/SECURITY.md` is canonical).
+- **Benchmark claims replaced with a real-repository retrieval benchmark**
+  (`docs/retrieval-benchmark.md`, `benchmarks/real/`, `scripts/bench_real_repos.py`): 35 questions
+  about Flask, requests, FastAPI and Hono, repo2graph vs grep-then-read at equal token budgets.
+  repo2graph currently loses (30/39/52% vs 35/61/72% at 2k/4k/8k tokens) and graph expansion adds
+  no recall; the page says so, diagnoses why, and records a scorer correction. The synthetic
+  `benchmarks/corpus/` suite is documented as the regression gate it is
+  (`docs/regression-suite.md`) and its "100% vs ripgrep 80%" comparison is withdrawn.
+- **Docs made to match behaviour**: README cut from 649 to ~150 lines; `docs/comparison.md`
+  covers Serena, Aider, CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code;
+  claims that graph expansion beats search were removed; `docs/cli.md` documents every flag
+  (checked by a test).
+- **Repository layout**: `PR_IMPACT.md`, `TECHNICAL.md`, `LANGUAGE_SUPPORT.md` moved into `docs/`;
+  `CLAUDE.md` into `.claude/`; `rfc-incremental-indexing.md` into `docs/rfcs/`.
 
 ### Removed
 
-- Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`); they are
-  now gitignored. Still available in git history.
-- The five translated READMEs and `tests/test_i18n_consistency.py`.
+- Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`), now
+  gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
+  `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root
+  `SECURITY.md` stub; the five translated READMEs and their drift test. All remain in git history.
+
+## [2.2.0] — 2026-09-26
 
 ### Added
 
@@ -1026,7 +1104,7 @@ makes keeping it current a release-blocking step rather than a good intention.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
   [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
-  [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md),
+  `docs/PRODUCTION_READINESS.md` (since removed),
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
   [docs/PRIVACY.md](docs/PRIVACY.md) and
   [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).

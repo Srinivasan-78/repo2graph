@@ -509,7 +509,13 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     try:
         header = json.loads(b64url_decode(head_b64))
         claims = json.loads(b64url_decode(payload_b64))
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError, not just ValueError -- the same trap as the body parser
+        # in `http_server` (its `json.loads` handler): a header segment of
+        # `[` * 3000 + `]` * 3000 is ~8 KB of base64, fits in one Authorization
+        # header, and makes `json.loads` blow the stack instead of raising
+        # JSONDecodeError. Escaping here skipped the refusal path entirely: no
+        # `auth_rejected` audit record and a dropped connection instead of a 401.
         raise AuthError("token header or payload is not JSON") from None
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise AuthError("token header or payload is not an object")
@@ -717,10 +723,23 @@ class Authenticator:
                 raise AuthError("invalid bearer token")
 
         if self._jwks is not None and self.config.oidc_issuer:
-            claims = decode_jwt(
-                credential, self._jwks, self.config.oidc_issuer, self.config.audience
-            )
-            subject = str(claims.get("sub") or "unknown")
+            try:
+                claims = decode_jwt(
+                    credential, self._jwks, self.config.oidc_issuer, self.config.audience
+                )
+                subject = str(claims.get("sub") or "unknown")
+            except AuthError:
+                raise
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+                # Backstop. Every field of the token is attacker-chosen JSON, and
+                # decode_jwt converts each failure it knows about to AuthError --
+                # but one it does not know about (a deeply nested claim reaching
+                # `str()`/`repr()`, a new claim check) must still be a refusal,
+                # not an exception that escapes the transport's AuthError-only
+                # refusal path with no 401 and no `auth_rejected` record. Only
+                # input-shaped exception types are caught: a genuine bug such as
+                # AttributeError still surfaces.
+                raise AuthError("token could not be validated") from None
             return Identity(subject=subject, mode="oidc", claims=claims)
         raise AuthError("invalid bearer token")
 

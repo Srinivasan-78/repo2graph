@@ -10,7 +10,7 @@ cff-version: 1.2.0
 message: "If you use repo2graph in your research, please cite it as below."
 title: repo2graph
 abstract: >-
-  AST-driven code graphs and zero-dependency GraphRAG for AI coding agents,
+  AST-driven code graphs and cited, token-bounded retrieval for AI coding agents,
   serving cited source over the Model Context Protocol within a hard token budget.
 type: software
 authors:
@@ -19,7 +19,7 @@ authors:
 repository-code: "https://github.com/Srinivasan-78/repo2graph"
 url: "https://github.com/Srinivasan-78/repo2graph"
 license: MIT
-version: 2.1.0
+version: 2.2.0
 keywords:
   - code-graph
   - graphrag

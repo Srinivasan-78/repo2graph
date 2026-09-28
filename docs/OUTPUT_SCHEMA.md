@@ -40,14 +40,14 @@ fields in this order:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `src`, `dst` | string | Node ids. See `id_grammar` in `manifest.json`. |
+| `src`, `dst` | string | Node ids. See `id_grammar` in `manifest.json`. A symbol id is `sym:<path>::<qualname>`; a later definition of the same qualname in the same file (an overload, a redefinition) appends `@L<start_line>` — e.g. `sym:A.java::A.run@L3` — so each keeps its own node and chunk. |
 | `type` | string | `CONTAINS`, `DEFINES`, `IMPORTS`, `CALLS`, `CALLS_EXTERNAL`, `INHERITS`, `CO_CHANGE` |
 | `method` | string | How it was extracted — see below |
 | `confidence` | float 0..1 | P(`dst` is the right target) — see below |
 | `evidence` | `{path, line}` or `null` | Where the relationship is *written*, 1-based |
 | `candidate_count` | int | How many definitions the name could have meant |
-| `ambiguous` | bool | Present and true when more than one matched |
-| `untyped_receiver` | bool | Present and true when a builtin-collection method name (`get`, `pop`, `append`, …) was called on a receiver whose type is unknown (`d.get()`, not `self.get()`). Confidence is capped at `0.2`, split across candidates. |
+| `ambiguous` | bool | Present and true when more than one matched, **or** when the edge is an `untyped_receiver` guess — a demoted single-candidate edge carries `ambiguous: true` with `candidate_count: 1` |
+| `untyped_receiver` | bool | Present and true when a builtin-collection method name (`get`, `pop`, `append`, …) was called on a receiver whose type is unknown (`d.get()`, not `self.get()`, and not a receiver that names the candidate's module or type — `store.get()` with `store` imported, `Util.remove()`, `Config::get()`). Confidence is capped at `0.2`, split across candidates. |
 | `count` | int | How many times the relationship occurs; `evidence` cites the first |
 
 Type-specific fields (`resolution_kind`, `scope_distance`, `call_kind`,

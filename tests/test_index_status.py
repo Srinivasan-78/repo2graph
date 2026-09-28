@@ -564,3 +564,108 @@ def test_format_age():
     assert format_age(600) == "10m ago"
     assert format_age(7200) == "2h ago"
     assert format_age(400_000) == "4d ago"
+
+
+# --------------------------------------------------------------------------
+# Machine-local source root, and remote (`repo2graph github`) builds
+# --------------------------------------------------------------------------
+
+
+def test_shipped_manifest_carries_no_absolute_source_root(tmp_path):
+    """manifest.json ships (committed .r2g, Action artifacts): no build path in it.
+
+    The absolute root lives in the index root's local.json, which a generated
+    .gitignore keeps out of git, and index-status still finds it through there
+    for an index built outside the tree it describes.
+    """
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "a.py").write_text("X = 'module residue for a chunk here'\n", encoding="utf-8")
+    out = tmp_path / "elsewhere" / "idx"
+    assert main(["build", str(src), "-o", str(out)]) == 0
+
+    manifest_text = (out / "agent" / "manifest.json").read_text(encoding="utf-8")
+    assert "source_root" not in json.loads(manifest_text)
+    assert str(src.resolve()) not in manifest_text
+    assert json.dumps(str(src.resolve()))[1:-1] not in manifest_text
+
+    local = json.loads((out / "local.json").read_text(encoding="utf-8"))
+    assert local["source_root"] == str(src.resolve())
+    assert "local.json" in (out / ".gitignore").read_text(encoding="utf-8").split("\n")
+
+    report = index_status(out)
+    assert report["source"]["path"] == str(src.resolve())
+    assert report["freshness"]["status"] == "current"
+
+
+def test_old_manifest_source_root_is_still_honoured(tmp_path):
+    """An index from before local.json existed keeps working."""
+    src = tmp_path / "proj"
+    src.mkdir()
+    (src / "a.py").write_text("X = 'module residue for a chunk here'\n", encoding="utf-8")
+    out = tmp_path / "elsewhere" / "idx"
+    assert main(["build", str(src), "-o", str(out)]) == 0
+    (out / "local.json").unlink()
+    mf = out / "agent" / "manifest.json"
+    data = json.loads(mf.read_text(encoding="utf-8"))
+    data["source_root"] = str(src.resolve())
+    mf.write_text(json.dumps(data), encoding="utf-8")
+    assert index_status(out)["source"]["path"] == str(src.resolve())
+
+
+def test_github_build_is_reported_as_remote_not_stale(tmp_path, monkeypatch, capsys):
+    """`repo2graph github owner/repo -o dir`: the temp clone is gone afterwards.
+
+    Comparing against cwd read as `[STALE] N added` and suggested `build <cwd>`,
+    which indexes the wrong tree. It must say freshness cannot be checked and
+    suggest the github command instead.
+    """
+    import shutil
+
+    from repo2graph import fetch
+    from repo2graph.doctor import run_doctor
+
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "a.py").write_text("X = 'module residue for a chunk here'\n", encoding="utf-8")
+
+    def fake_clone(spec, workdir, ref=None, depth=0, token=None):
+        dst = workdir / "repo"
+        shutil.copytree(fixture, dst)
+        return dst
+
+    monkeypatch.setattr(fetch, "clone", fake_clone)
+    monkeypatch.setattr(fetch, "head_sha", lambda path: "abc123def456")
+    out = tmp_path / "idx"
+    fetch.index_github("owner/repo", out, formats="jsonl")
+    monkeypatch.chdir(fixture)  # a tree that is *not* the indexed one
+
+    manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_remote"] == "github:owner/repo@abc123def456"
+    assert json.loads((out / "local.json").read_text(encoding="utf-8"))["source_root"] is None
+
+    report = index_status(out)
+    fresh = report["freshness"]
+    assert fresh["status"] == "unknown"
+    assert fresh["remote"] == "github:owner/repo@abc123def456"
+    assert fresh["counts"]["added"] == 0
+    assert any(f"repo2graph github owner/repo -o {out}" in n for n in fresh["notes"])
+
+    assert main(["index-status", "-o", str(out)]) == 0
+    text = capsys.readouterr().out
+    assert "[STALE]" not in text and "repo2graph build" not in text
+    assert "repo2graph github owner/repo" in text
+
+    check = next(c for c in run_doctor(out).checks if c.name == "Index Freshness")
+    assert check.status == "ok"
+    assert "remote" in check.summary
+    assert any("repo2graph github owner/repo" in d for d in check.details)
+
+
+def test_action_never_ships_local_json():
+    """The Action's upload and branch push both drop the machine-local file."""
+    from pathlib import Path
+
+    action = (Path(__file__).resolve().parents[1] / "action.yml").read_text(encoding="utf-8")
+    assert "!${{ inputs.out }}/local.json" in action
+    assert 'rm -f "$tmp/local.json"' in action

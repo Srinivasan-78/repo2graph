@@ -9,7 +9,7 @@ for, so picking one up starts from a decision rather than a blank page.
 
 Full detail, evidence and severity reasoning: `docs/SECURITY-AUDIT.md`. Two genuine gaps found by
 that audit were fixed directly (audit-log `error`-field redaction, MCP string-argument length
-caps, a fork-PR secret-exposure guard on `claude-code-review.yml`); these are the rest, deliberately
+caps, a fork-PR secret-exposure guard on a review workflow since removed); these are the rest, deliberately
 not fixed in that pass because each needs its own scoped, reviewed change rather than a drive-by
 edit alongside a security audit.
 

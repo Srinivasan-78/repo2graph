@@ -143,10 +143,10 @@ working on a fixture before trying it on your own code.
 
 | Ask | What the graph adds over a text search |
 |---|---|
-| `Where is authentication enforced?` | the guard itself, plus every route that calls it |
-| `What calls <function>?` | CALLS edges in, so callers come back even when the name is shadowed |
+| `Where is authentication enforced?` | the guard itself, plus the routes that call it |
+| `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| `What would be affected by changing <api>?` | direct callers and what they are called from |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (`repo_neighbours`) |
 | `Trace <a request> from route to persistence.` | a path across modules, each block cited to file and line |
 
 ```bash
@@ -162,9 +162,9 @@ an agent that uses the graph and one that keeps grepping:
 ```markdown
 ## Code navigation
 
-Use the repo2graph MCP tools before grepping:
+Use grep to locate code; use the repo2graph MCP tools for relationships:
 
-- `repo_search` for "where is X handled" — it returns cited source, not paths.
+- `repo_search` for a cited, budget-bounded pack when a question spans several files.
 - `repo_neighbours` for "what calls this" / "what would this break" — pass the
   `[sym:...]` node id from a previous result.
 - Cite the `path:line` from the tool output in your answer. If a tool marks an
@@ -205,7 +205,7 @@ you pass `--include-paths`.
 - **The graph as a substitute for running the code.** An edge says a name
   resolves; it does not say the line executes.
 
-Full list: [POSITIONING.md §5](../positioning.md).
+Full list: [limitations.md](../limitations.md).
 
 ## See also
 

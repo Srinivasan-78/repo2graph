@@ -291,7 +291,7 @@ property of the module, not a setting you could accidentally weaken.
 
 A `.r2g` index is your repository's source, chunked and denormalized for search — treat it with (at
 minimum) the same access control you'd give the repository itself. The full table of what's cached,
-where, and for how long lives in [`docs/PRIVACY.md`](PRIVACY.md#what-gets-cached-and-where); the
+where, and for how long lives in [`docs/PRIVACY.md`](PRIVACY.md#where-things-are-written); the
 points that matter for a deployment decision specifically:
 
 - **Every artifact writes only inside the output directory you named.** `export.py` resolves every

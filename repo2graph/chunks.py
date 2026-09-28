@@ -151,9 +151,10 @@ def iter_chunks(g, include_files: bool = True):
         out_edges[e["src"]].append(e)
         in_edges[e["dst"]].append(e)
 
+    # Content redaction is governed by --secret-policy alone. --include-secrets
+    # only lifts the secret-PATH refusal (a .env is indexed); it must never turn
+    # off scanning of the text that ends up in chunks.jsonl and agent replies.
     policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
-    if getattr(getattr(g, "config", None), "include_secrets", False):
-        policy = "off"
 
     src_cache: dict[str, str] = {}
 
@@ -170,7 +171,10 @@ def iter_chunks(g, include_files: bool = True):
         if not n:
             return nid
         if n["type"] == "symbol":
-            return f"{n['path']}::{n['qualname']}"
+            # The id minus its `sym:` prefix -- `path::qualname` for every
+            # first definition, `path::qualname@L<line>` for a later duplicate,
+            # so a label always round-trips to exactly one node.
+            return nid.removeprefix("sym:")
         return n.get("path") or n.get("name") or nid
 
     covered: dict[str, list[tuple[int, int]]] = defaultdict(list)

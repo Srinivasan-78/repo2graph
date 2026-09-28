@@ -1,8 +1,8 @@
 # How repo2graph compares
 
 Building a graph out of a codebase is not a new idea, and repo2graph is not the only tool doing it
-for AI agents. This page is the honest version of the comparison: what each tool is actually for,
-where repo2graph is the wrong choice, and the one axis that separates them.
+for AI agents. This page covers what each tool is for, where repo2graph is the wrong choice, and
+the one axis that separates them.
 
 Everything said here about another project is taken from its own documentation, linked inline.
 Where a claim about repo2graph is checkable in this repository, the file is named.
@@ -31,7 +31,7 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
 - **Every block carries a citation**, so a wrong answer shows you where it went wrong.
 - **It runs headless in CI.** The GitHub Action and `repo2graph impact` report a PR's blast radius
   (callers, importers, subclasses, and the files git history says usually change with it) with
-  no model and no account. None of the tools above do that out of the box.
+  no model and no account.
 - **`CO_CHANGE`**: files that keep changing together, mined from git. No parser can see this.
 - **Zero-infrastructure.** No graph database, no language server, no embedding service, no
   network call on the default path.
@@ -61,7 +61,7 @@ That is a narrower goal than "map everything you own", and the trade-offs below 
 
 ## repo2graph vs Graphify
 
-[Graphify](https://github.com/Graphify-Labs/graphify) (Apache-2.0, Y Combinator S26) parses code
+[Graphify](https://github.com/Graphify-Labs/graphify) (Apache-2.0) parses code
 locally with tree-sitter across roughly 40 languages, detects communities, tags every edge
 `EXTRACTED` or `INFERRED`, and exposes `query`, `path` and `explain` over the resulting
 `graph.json`. Docs, PDFs, images and video go into the same graph through a semantic pass that
@@ -73,7 +73,7 @@ how this system hangs together, including the design docs", it is the better too
 | | repo2graph | Graphify |
 |---|---|---|
 | Returns | packed source, cited per block, inside a token budget | subgraph / path / concept explanation over `graph.json` |
-| Ranking | BM25 seeds + k-hop expansion, optional dense fusion | graph traversal; explicitly not a vector index |
+| Ranking | BM25 seeds + graph expansion (1 hop by default), optional dense fusion | graph traversal; explicitly not a vector index |
 | Non-code corpus | indexed as text, never sent anywhere | docs, PDFs, images, video via a model-backed semantic pass |
 | Languages parsed for symbols | 17 | ~40 |
 | Edges from version control | `CO_CHANGE`, files that keep changing together | — |
@@ -82,8 +82,7 @@ how this system hangs together, including the design docs", it is the better too
 | Hosted platform | none | app.graphify.com |
 
 **Where Graphify wins:** breadth. More grammars, more file types, community detection, and
-path-between-two-concepts queries repo2graph has no equivalent for. Also mindshare, by four orders
-of magnitude.
+path-between-two-concepts queries repo2graph has no equivalent for.
 
 **Where repo2graph wins:** it is a retrieval layer, not a map. The budget is enforced on the whole
 rendered pack rather than advisory (`MCP_MAX_BUDGET_TOKENS = 12000` in `repo2graph/mcp.py`, clamped
@@ -100,15 +99,14 @@ comment-links (`@see`, `@adr`, `@tested-by`) as typed edges. It parses TypeScrip
 and Python with tree-sitter, and extracts imports only, by regex, for eight more languages. It
 requires Obsidian 1.7.2+ on desktop.
 
-This is barely the same category. It is a reading tool for a human inside a note-taking app;
+This is a different category. It is a reading tool for a human inside a note-taking app;
 repo2graph is a retrieval tool for an agent, with `graph.html` as a side artifact rather than the
 point. If your knowledge lives in an Obsidian vault and you want the code visible next to it,
 install the plugin — the two do not compete for the same slot.
 
 ## repo2graph vs plain grep or an embeddings index
 
-This is the comparison that actually comes up in practice, because it is what most agents do today.
-What follows is the design reasoning. Whether it pays off in practice is measured, not argued, in
+This is what most agents do today. What follows is the design reasoning. Whether it pays off in practice is measured, not argued, in
 [retrieval-benchmark.md](retrieval-benchmark.md), and right now grep wins more often than it loses.
 
 - **grep** is exact and structureless. It finds the token, not the relationship: it cannot tell you
@@ -123,11 +121,10 @@ repo2graph uses BM25 for the seeds — exact, cheap, no model — and then spend
 on *graph neighbours of the seeds* rather than on more text that merely resembles the query. Dense
 vectors are available (`repo2graph embed`) and fuse with the lexical score, but they are optional:
 the query path is stdlib-only by design, so a machine that only queries a shipped index does not
-need numpy (`repo2graph/embed.py`).
+need numpy (`repo2graph/embed.py`). In the current benchmark this expansion does not improve
+recall over BM25 alone.
 
 ## When repo2graph is the wrong choice
-
-Stated plainly, because a comparison page that concludes "we win everything" is worth nothing:
 
 - **You need type-accurate call resolution.** Call resolution here is name-based, not type-based —
   a deliberate trade for being language-agnostic and setup-free. Ambiguous names fan out to up to

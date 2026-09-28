@@ -104,7 +104,7 @@ Two consequences worth knowing before your first release:
 - [ ] `uv lock --check` passes. A stale lockfile aborts the release *after* the tag is cut, which
       is the worst point to find out.
 - [ ] `server.json`'s `description` and `pyproject.toml`'s `description` still say what the project
-      currently claims — see [POSITIONING.md](positioning.md) §6 for the surface audit.
+      currently claims, and nothing in either contradicts [retrieval-benchmark.md](retrieval-benchmark.md).
 
 ## Cutting a release
 

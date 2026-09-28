@@ -2,7 +2,7 @@
 
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
-pasting a pack into a chat window. This page is its full contract: the five tools,
+pasting a pack into a chat window. This page is its full contract: the six tools,
 their argument bounds, the server's own flags, and a config block per client.
 
 It is an *additional* surface, not a replacement: every tool is a thin call into
@@ -237,25 +237,44 @@ the one answer guaranteed to be out of date.
 ### Argument bounds
 
 Every numeric argument is coerced and clamped **in the handler**, so `dispatch()`,
-a direct Python caller and the stdio server all inherit the same ceiling. Nothing
-here raises on a bad value; it is clamped and answered.
+a direct Python caller and the stdio server all inherit the same bounds. Nothing
+here raises on a bad value; a value below the minimum is raised to it, one above
+the maximum is lowered to it, and a non-number (`"abc"`, `null` excepted,
+non-finite) takes the default **and the reply starts with a one-line
+`_note: k='abc' is not an integer; used the default 8._`** so the substitution is
+visible (for `repo_impact`, only in the `markdown` and `pr-comment` formats -- a
+prefix would stop `json`/`sarif` parsing). `budget_tokens` also treats zero or
+negative as "not a budget anyone means": it takes the **default** with a note.
 
-| Argument | Tool | Default | Maximum |
-| --- | --- | ---: | ---: |
-| `k` | `repo_search` | 8 | 50 |
-| `hops` | `repo_search`, `repo_neighbours` | 1 | 4 |
-| `budget_tokens` | `repo_search` | 6 000 | 12 000 |
-| `limit` | `repo_neighbours` | 20 | 50 |
-| `max_depth` | `repo_impact` | 2 | 5 |
-| `diff` (length) | `repo_impact` | — | 1 000 000 chars |
-| output (tokens) | `repo_impact` | — | 12 000 |
-| `query` (length) | `repo_search` | — | 4 000 chars |
-| `node_id` (length) | `repo_neighbours` | — | 2 000 chars |
-| `task_id` (length) | `repo_build_status` | — | 200 chars |
+| Argument | Tool | Default | Minimum | Maximum |
+| --- | --- | ---: | ---: | ---: |
+| `k` | `repo_search` | 8 | 1 | 50 |
+| `hops` | `repo_search`, `repo_neighbours` | 1 | 0 | 4 |
+| `budget_tokens` | `repo_search` | 6 000 | 1 (≤ 0 → default) | 12 000 |
+| `limit` | `repo_neighbours` | 20 | 1 | 50 |
+| `max_depth` | `repo_impact` | 2 | 1 | 4 |
+| `diff` (length) | `repo_impact` | — | — | 1 000 000 chars |
+| output (tokens) | `repo_impact` | — | — | 12 000 |
+| `query` (length) | `repo_search` | — | — | 4 000 chars |
+| `node_id` (length) | `repo_neighbours` | — | — | 2 000 chars |
+| `task_id` (length) | `repo_build_status` | — | — | 200 chars |
 
 `repo_neighbours` takes ids in the same shape the rest of the project uses:
 `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand it something else and
 it says so instead of returning nothing.
+
+### Errors are flagged, not just worded
+
+A call the server cannot answer — a missing `query` or `node_id`, a `node_id`
+that is not in the graph, an unknown tool name, a `repo_impact` whose `git diff`
+failed, whose `diff` text is not a unified diff or whose `format` is not one of
+`markdown`/`json`/`sarif`/`pr-comment`, a `repo_build_status` with no or an
+unknown `task_id` (or on a server without `--async-build`, whose error body is
+still the JSON object below) — still comes back with a sentence saying what went wrong and how to fix
+it, but the result carries **`isError: true`** so a client can tell it from a
+real (possibly short) answer. This holds on the stdio server with either SDK
+generation (1.x and 2.x) and on the HTTP transport. An empty result is never
+used to mean "error".
 
 ### `repo_impact`
 
@@ -266,10 +285,17 @@ it says so instead of returning nothing.
 | Parameter | Type | Meaning |
 |---|---|---|
 | `base` | string (optional) | Base branch or commit ref to compare against (default `"main"`). |
-| `head` | string (optional) | Head branch or commit ref (default `"HEAD"`). |
+| `head` | string (optional) | Head branch or commit ref. Omitted: the **working tree** (committed and uncommitted changes) is compared against `base`, exactly like `repo2graph impact`. Given: the three-dot `base...head` comparison of two refs. |
 | `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
-| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to maximum 5). |
-| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, or `"json"`. |
+| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to 1-4). |
+| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, `"json"` or `"sarif"` (SARIF v2.1.0). Anything else is an `isError` result listing these. |
+
+`git diff` runs in the server's indexed repository — the `--repo` it was started
+for, else the source root recorded in the index's `manifest.json`, else the index
+directory's parent — never in the server process's working directory. When git
+fails, git's own message is relayed (with every absolute path replaced by
+`<repo>`/`<path>`) as an `isError` result; a repository whose default branch is
+not `main` needs `base`.
 
 Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](pr-impact.md).
 
@@ -279,7 +305,7 @@ past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
 
 - `markdown` and `pr-comment` are cut on a line boundary and end with a
   `_[truncated to 12000 tokens…]_` note.
-- `json` is **not** cut — a line-boundary cut would stop being parseable. It is
+- `json` and `sarif` are **not** cut — a line-boundary cut would stop being parseable. It is
   replaced by a valid document carrying `"truncated": true`, a `reason`, and the
   scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
   per-symbol lists omitted.
@@ -345,6 +371,10 @@ Result:
 | `error` | string \| null | Human-readable failure message if status is `"failed"`. |
 | `progress_is_estimated` | boolean | Always `true`, indicating progress is an estimate based on file count. |
 
+A missing or unknown `task_id`, or a server started without `--async-build`,
+returns the same JSON shape (`status: "unknown"` and an `error` sentence) with
+`isError: true` -- there is no build to report, which is not a status.
+
 **Example sequence:**
 
 1. Call `repo_map()` while the server is running with `--async-build` and no index exists.
@@ -368,8 +398,9 @@ Result:
 ## Three promises the server keeps that the CLI leaves to you
 
 - **Secrets are excluded, always.** A tool an agent calls unattended never returns
-  a chunk from a path that looks like a credential store. On the CLI that is
-  opt-in (`--answer`).
+  a chunk from a path that looks like a credential store. On the CLI, `query` and
+  `rag` exclude them by default too, but `--include-secrets` turns that off; the
+  MCP server has no such switch.
 - **Output is hard-bounded.** `repo_search` clamps whatever budget it is given to
   at most 12 000 tokens and re-measures the rendered result before returning it,
   and `repo_neighbours` lists at most 50 rows however large a `limit` it is

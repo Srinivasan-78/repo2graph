@@ -37,7 +37,7 @@ Two properties of the middle of that chain matter more than they look:
 - **Resolution is global, not per-file.** The name index, CALLS confidences,
   INHERITS and reach are computed over the *whole* symbol set every build,
   including an incremental one. This is why `--incremental` is exact rather
-  than approximate — see [the RFC](rfc-incremental-indexing.md).
+  than approximate — see [the RFC](rfcs/rfc-incremental-indexing.md).
 
 `dump_all` stages every artifact in a sibling directory and renames it into
 place on success, so an interrupted build leaves the previous index intact
@@ -213,6 +213,11 @@ Four layers, applied in this order. `repo2graph explain-path <path> -r .`
 reports which single rule decided any given path, using the same rule set
 `build` would.
 
+Before any of them, discovery drops repo2graph's own output: the `-o`
+directory of the build in progress, and any directory holding a repo2graph
+`agent/manifest.json` left by an earlier build (`explain-path` reports these
+as `output_dir` and `index_dir`; pass it the build's `-o`).
+
 **1. Built-in skip directories** (`parse.DEFAULT_SKIP_DIRS`) — matched as a
 path *segment* at any depth: `.git`, `node_modules`, `venv`, `dist`, `build`,
 `target`, `vendor`, `__pycache__`, `.next`, tool caches. Add more with
@@ -274,7 +279,24 @@ monorepo keeps all of it. The groups use `**/vendor/**`.
 ## Staleness
 
 `status.compute_freshness` runs three independent signals, cheapest first,
-each degrading to a note rather than an error:
+each degrading to a note rather than an error. They are measured against the
+source tree recorded as `source_root` (absolute) in the index root's
+machine-local `local.json` — so an index built with `-o` outside the repository
+is compared against the repository, not against its own parent directory.
+`local.json` is never part of what ships: the build writes a `.gitignore` for it
+beside it, and the GitHub Action excludes it from uploads and branch pushes (it
+used to live in `manifest.json`, which leaked the build machine's path; an older
+index's `manifest.json` value is still read). `index-status -r <repo>` overrides
+it; an index with no recorded root, or moved to where that path no longer exists,
+falls back to the index directory's parent.
+
+An index built by `repo2graph github owner/repo -o <dir>` records
+`source_remote: "github:owner/repo@<sha>"` in `manifest.json` instead: its
+temporary clone is deleted, so there is no local tree to compare against.
+`index-status` and `doctor` report freshness as unknown for it and suggest
+`repo2graph github owner/repo -o <dir>` to refresh, rather than diffing the
+current directory (which read as hundreds of "added" files and suggested
+rebuilding the wrong tree).
 
 1. **Commit** — `manifest.json`'s recorded commit against the tree's current
    `HEAD`. One `git rev-parse`. Exact for committed state, silent on a
@@ -322,7 +344,7 @@ this process's to trust.
 
 Measured on this repository. The figures and the method live in one place
 so they cannot drift apart:
-**[rfc-incremental-indexing.md](rfc-incremental-indexing.md)**.
+**[rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md)**.
 
 What dominates, in order:
 
@@ -354,7 +376,7 @@ entirely at the default `0`.
 
 ## See also
 
-- [rfc-incremental-indexing.md](rfc-incremental-indexing.md) — benchmarks and
+- [rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md) — benchmarks and
   the proposal for what incremental indexing should become
 - [LANGUAGE_SUPPORT.md](language-support.md) — language scorecard generator, parse quality, symbol and edge extraction rates across 17 grammars
 - [retrieval-benchmark.md](retrieval-benchmark.md) — retrieval quality on four real repositories, repo2graph vs grep at equal token budgets

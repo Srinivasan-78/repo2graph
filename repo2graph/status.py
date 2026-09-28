@@ -53,6 +53,7 @@ class Freshness:
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     modified: list[str] = field(default_factory=list)
+    remote: str | None = None
 
     @property
     def is_current(self) -> bool:
@@ -61,6 +62,7 @@ class Freshness:
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "remote": self.remote,
             "reasons": self.reasons,
             "notes": self.notes,
             "indexed_commit": self.indexed_commit,
@@ -95,6 +97,73 @@ def _git_head(repo: Path) -> str | None:
     # Never text=True on git output: a cp1252 console decodes a non-ASCII
     # path with UnicodeDecodeError, sometimes inside the handler. See AGENTS.md.
     return proc.stdout.decode("utf8", "surrogateescape").strip() or None
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf8", errors="replace"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _index_root_of(agent_dir: Path) -> Path:
+    agent_dir = Path(agent_dir)
+    return agent_dir.parent if agent_dir.name == "agent" else agent_dir
+
+
+def stored_source_root(agent_dir: Path) -> Path | None:
+    """The source root the build recorded, if it still exists.
+
+    Read from the machine-local `local.json` at the index root (never shipped;
+    see docs/PRIVACY.md), else from `manifest.json`'s `source_root` for an
+    index built before that file existed. None for an index with neither, an
+    unreadable file, or a recorded root that is gone (the index was moved or
+    shipped to another machine) -- callers then fall back to the
+    `<repo>/.r2g` heuristic.
+    """
+    from .export import LOCAL_FILE
+
+    for data in (
+        _read_json(_index_root_of(agent_dir) / LOCAL_FILE),
+        _read_json(Path(agent_dir) / "manifest.json"),
+    ):
+        raw = data.get("source_root")
+        if raw and isinstance(raw, str):
+            root = Path(raw)
+            return root if root.is_dir() else None
+    return None
+
+
+def stored_remote_source(agent_dir: Path) -> str | None:
+    """`github:owner/repo@sha` for an index `repo2graph github` built, else None."""
+    raw = _read_json(Path(agent_dir) / "manifest.json").get("source_remote")
+    return raw if isinstance(raw, str) and raw else None
+
+
+def remote_refresh_command(remote: str, out: Path | str) -> str:
+    """The command that rebuilds a remote index: `github owner/repo`, never `build <cwd>`."""
+    spec = remote.split(":", 1)[-1].rsplit("@", 1)[0]
+    return f"repo2graph github {spec} -o {out}"
+
+
+def remote_freshness(remote: str, agent_dir: Path, out: Path | str) -> Freshness:
+    """Freshness for a remote build: not checkable, and says how to refresh.
+
+    The clone it was built from was deleted, so comparing against any local
+    tree -- the working directory, the index's parent -- reports every file as
+    added and suggests rebuilding the wrong directory.
+    """
+    fresh = Freshness(status="unknown")
+    revision = _read_json(Path(agent_dir) / "manifest.json").get("source_revision") or {}
+    if isinstance(revision, dict):
+        fresh.indexed_commit = str(revision.get("commit") or "") or None
+    fresh.remote = remote
+    fresh.notes.append(
+        f"built from a remote clone ({remote}); freshness cannot be checked against a local "
+        f"tree. Refresh with: {remote_refresh_command(remote, out)}"
+    )
+    return fresh
 
 
 def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
@@ -331,11 +400,20 @@ def index_status(out: Path | str, repo: Path | str | None = None) -> dict[str, A
     # tree is the index root's parent in the conventional `<repo>/.r2g` layout,
     # which is one level up from `out` in the first case and two in the second.
     index_root = out.parent if (agent == out and out.name == "agent") else out
-    repo_path = Path(repo) if repo is not None else index_root.parent
+    remote = None
+    if repo is not None:
+        repo_path = Path(repo)
+    else:
+        local_root = stored_source_root(agent)
+        remote = None if local_root else stored_remote_source(agent)
+        repo_path = local_root or index_root.parent
 
     revision = manifest.get("source_revision") or {}
     size_bytes, artifact_count = _dir_size(index_root)
-    fresh = compute_freshness(repo_path, index_root, agent)
+    if remote:
+        fresh = remote_freshness(remote, agent, out)
+    else:
+        fresh = compute_freshness(repo_path, index_root, agent)
 
     skipped = {key: int(stats.get(key) or 0) for key, _label in _SKIP_LABELS if stats.get(key)}
 
@@ -365,6 +443,7 @@ def index_status(out: Path | str, repo: Path | str | None = None) -> dict[str, A
             "dirty": bool(revision.get("dirty")),
             "dirty_files": revision.get("dirty_files"),
             "remote_url": revision.get("remote_url"),
+            "remote": remote,
         },
         "contents": {
             "files_discovered": int(stats.get("files") or 0),
@@ -456,7 +535,10 @@ def format_status(report: dict[str, Any]) -> str:
         lines.append(f"  dirty at build {dirty}")
     else:
         lines.append("  commit         (not a git repository)")
-    lines.append(f"  path           {src['path']}")
+    if src.get("remote"):
+        lines.append(f"  remote         {src['remote']}")
+    else:
+        lines.append(f"  path           {src['path']}")
 
     lines += [
         "",

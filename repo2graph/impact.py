@@ -42,6 +42,10 @@ class FileDiff:
     old_path: str | None = None
     status: str = "modified"  # "added", "modified", "deleted", "renamed"
     added_lines: set[int] = field(default_factory=set)
+    #: The text of each added line (head-side number -> content without the
+    #: `+`). Lets signature detection ignore blank and comment-only lines. A
+    #: FileDiff built by hand without it treats every line as substantive.
+    added_text: dict[int, str] = field(default_factory=dict)
     deleted_lines_count: int = 0
     hunks: list[Hunk] = field(default_factory=list)
 
@@ -275,6 +279,7 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
             # line was silently never reported.
             if line.startswith("+"):
                 current_file.added_lines.add(curr_new_line)
+                current_file.added_text[curr_new_line] = line[1:]
                 current_hunk.added_lines.append(curr_new_line)
                 curr_new_line += 1
             elif line.startswith("-"):
@@ -496,6 +501,50 @@ def is_public_symbol(node: dict[str, Any]) -> bool:
     return True
 
 
+#: Leaders of a line that says nothing about behaviour: a comment in any of
+#: the indexed languages. A blank line is trivial too.
+_COMMENT_LEADERS = ("#", "//", "/*", "*/", "* ", "--", "<!--", ";;")
+
+
+def _is_trivial_line(text: str | None) -> bool:
+    """Blank or comment-only. None (text unknown) is *not* trivial."""
+    if text is None:
+        return False
+    t = text.strip()
+    return not t or t == "*" or t.startswith(_COMMENT_LEADERS)
+
+
+def _touches_signature(node: dict[str, Any], lines: list[int], text: dict[int, str]) -> bool:
+    """Did a substantive added line land on the symbol's definition line(s)?
+
+    The definition spans `start_line` plus as many lines as the recorded
+    `signature` (which runs from the definition to the start of its body).
+    Blank and comment-only lines never count -- `signature` can end in a
+    comment that sits between the `def` and its body.
+    """
+    start = int(node.get("start_line") or 0)
+    sig = node.get("signature") or ""
+    last = start + (sig.count("\n") if isinstance(sig, str) else 0)
+    return any(start <= l <= last and not _is_trivial_line(text.get(l)) for l in lines)
+
+
+def _is_cosmetic(fd: FileDiff, start: int, end: int, lines: list[int]) -> bool:
+    """True when every added line in `lines` is blank or comment-only and no
+    hunk overlapping `start..end` (head side) deleted anything. Deleted text is
+    not retained, so any deletion in an overlapping hunk counts as substantive.
+    A FileDiff built without `added_text` is never cosmetic."""
+    if not fd.added_text or not all(_is_trivial_line(fd.added_text.get(l)) for l in lines):
+        return False
+    for h in fd.hunks:
+        h_end = h.new_start + max(h.new_count, 1) - 1
+        if h.new_start > end or h_end < start:
+            continue
+        context = h.new_count - len(h.added_lines)
+        if h.old_count - context > 0:
+            return False
+    return True
+
+
 def analyze_diff_impact(
     index: Index,
     diff: str | dict[str, FileDiff],
@@ -530,6 +579,24 @@ def analyze_diff_impact(
     # no relationship to the rest of the diff" apart from "the graph has nothing
     # to say about this file at all" -- see _relatable() below.
     symbol_paths: set[str] = set()
+
+    # Innermost owner of each changed line: (path, line) -> symbol id with the
+    # narrowest span containing it. Ties (identical spans) keep the first.
+    innermost: dict[tuple[str, int], str] = {}
+    widths: dict[tuple[str, int], int] = {}
+    for node_id, node in index.nodes.items():
+        if node.get("type") != "symbol":
+            continue
+        fd_ = file_diffs.get(node.get("path", ""))
+        if fd_ is None or fd_.status == "added":
+            continue
+        lo, hi = node.get("start_line", 0), node.get("end_line", 0)
+        for l in fd_.added_lines:
+            if lo <= l <= hi:
+                key = (fd_.path, l)
+                if key not in widths or hi - lo < widths[key]:
+                    widths[key] = hi - lo
+                    innermost[key] = node_id
 
     # 1. Match diff line ranges against symbol nodes in the index
     for node_id, node in index.nodes.items():
@@ -568,11 +635,24 @@ def analyze_diff_impact(
                 public_apis_affected.append(sc)
             continue
 
-        # Check intersection with added/modified lines
-        intersecting = [l for l in fd.added_lines if start_line <= l <= end_line]
+        # Lines this symbol *owns*: inside its span and not inside a nested
+        # symbol's. A one-line edit in a method body used to mark the method
+        # and its enclosing class changed, doubling the symbol count and
+        # listing the class as an affected public API.
+        intersecting = [
+            l
+            for l in fd.added_lines
+            if start_line <= l <= end_line and innermost.get((path, l), node_id) == node_id
+        ]
+        if intersecting and _is_cosmetic(fd, start_line, end_line, intersecting):
+            # Only comments/blank lines were added and nothing was deleted in
+            # the hunks overlapping this symbol: behaviour cannot have changed,
+            # so it exposes no caller. A `# note` in a busy function scored
+            # HIGH 40 before this.
+            intersecting = []
         if intersecting:
             is_pub = is_public_symbol(node)
-            sig_changed = start_line in intersecting
+            sig_changed = _touches_signature(node, intersecting, fd.added_text)
             qualname = str(node.get("qualname") or node.get("name") or "")
             sc = SymbolChange(
                 id=node_id,
@@ -683,6 +763,16 @@ def analyze_diff_impact(
     # 3. Impacted dependent modules via IMPORTS
     impacted_modules_set: set[str] = set()
     for changed_path in changed_file_paths:
+        fd_mod = file_diffs.get(changed_path)
+        if (
+            fd_mod is not None
+            and fd_mod.status == "modified"
+            and fd_mod.added_lines
+            and _is_cosmetic(fd_mod, 1, 10**9, sorted(fd_mod.added_lines))
+        ):
+            # Comment/blank-only edit to the whole file: its importers see the
+            # same module, so they are not impacted.
+            continue
         fid = f"file:{changed_path}"
         for neighbor_id, etype, direction, edge in index.adj.get(fid, []):
             if etype == "IMPORTS" and direction == "in":
@@ -940,9 +1030,21 @@ def analyze_diff_impact(
     # 6. Blast Radius Score and Risk Level
     direct_callers_count = sum(1 for c in impacted_callers if c.depth == 1)
     transitive_callers_count = sum(1 for c in impacted_callers if c.depth > 1)
+    # A direct caller of a symbol whose *signature* changed (or which is new)
+    # may no longer compile or bind; a caller of a body-only change calls the
+    # same contract. Only the former carries the heavy weight and the HIGH
+    # trigger -- otherwise a comment inside a well-used function scored HIGH.
+    contract_changed = {
+        sc.id for sc in symbols_changed if sc.signature_changed or sc.change_type == "added"
+    }
+    exposed_direct = sum(
+        1 for c in impacted_callers if c.depth == 1 and c.target_symbol_id in contract_changed
+    )
+    body_only_direct = direct_callers_count - exposed_direct
     blast_radius = (
         (len(symbols_changed) * 2)
-        + (direct_callers_count * 3)
+        + (exposed_direct * 3)
+        + (body_only_direct * 1)
         + (transitive_callers_count * 1)
         + (len(impacted_modules_set) * 2)
         + (len(untested_public) * 5)
@@ -955,7 +1057,7 @@ def analyze_diff_impact(
         or (len(untested_public) >= 2 and direct_callers_count >= 5)
     ):
         risk_level = "CRITICAL"
-    elif blast_radius >= 25 or len(public_apis_affected) >= 3 or direct_callers_count >= 8:
+    elif blast_radius >= 25 or len(public_apis_affected) >= 3 or exposed_direct >= 8:
         risk_level = "HIGH"
     elif blast_radius >= 10 or len(symbols_changed) >= 2 or direct_callers_count >= 1:
         risk_level = "MEDIUM"

@@ -41,6 +41,7 @@ The full enumeration, including how each path was found:
 
 ```
 .r2g/                                       # the directory you named with -o; default <repo>/.r2g
+├── local.json  .gitignore                   # machine-local; never shipped (below)
 ├── human/   overview.md  graph.html  graph.graphml  CHANGELOG.md
 └── agent/   overview.md  manifest.json  chunks.jsonl  nodes.jsonl  edges.jsonl
             graph.cypher  stats.json  index.state.json  parse.cache.json
@@ -56,6 +57,8 @@ control you give the repository.
 | `agent/chunks.jsonl` | **Source text**, one record per chunk, with its graph neighbourhood in the header | Until the next `build` |
 | `agent/parse.cache.json` | Per-file sha256 + parsed symbol/import summaries | Until the next `build` |
 | `agent/index.state.json` | Per-file sha256 | Until the next `build` |
+| `agent/manifest.json` | Build provenance (tool version, commit, counts). **No absolute path**: it ships with a committed or uploaded index. A `repo2graph github` build records `source_remote` (`github:owner/repo@<sha>`) | Until the next `build` |
+| `local.json` (index root) | `source_root`: the **absolute path** of the indexed tree on the build machine, so `index-status`/`doctor` can find it. Machine-local: the `.gitignore` written beside it keeps it out of a committed `.r2g`, and the GitHub Action strips it from `artifact-name` uploads and `commit-branch` pushes. Do not ship it | Until the next `build` |
 | `agent/vectors.npy` + `.meta.json` | Embedding vectors of chunk text — not the text — plus the model id | Until the next `embed` |
 | In-memory `ResultCache` | Rendered MCP tool results, keyed on canonical JSON of the arguments | Process memory only; cleared on index rebuild or exit; **never written to disk** |
 
@@ -141,8 +144,8 @@ Four mechanisms; the first two are on by default and compose with the others.
 
 | Layer | Default | What it does |
 |---|---|---|
-| **Path exclusion** | **On** | `.env*`, private keys, certificates, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more are never read. `--include-secrets` opts out. |
-| **Content scanning** | **On** (`--secret-policy redact-match`) | Chunk text is scanned for vendor key formats, JWTs, DB URLs with inline credentials, PEM private keys and high-entropy assignments; matches are redacted line-preservingly. |
+| **Path exclusion** | **On** | `.env*`, private keys, certificates, Terraform state and `.tfvars`, `.ssh`, `.aws`, `.gnupg`, `.kube`, `credentials/`, `secrets/` and more are never read. `--include-secrets` opts out. |
+| **Content scanning** | **On** (`--secret-policy redact-match`) | Chunk text is scanned for vendor key formats, JWTs, DB URLs with inline credentials, PEM private keys, high-entropy assignments and JSON `"password": "..."`-style pairs; matches are redacted line-preservingly. `--include-secrets` does not turn this off. MCP and `rag --answer` reads of an index whose manifest does not record a redacting policy (`off`/`warn-only`) are scanned again at serve time. |
 | **`.gitignore`** | **On in a git checkout** | Discovery runs through `git ls-files`, so ignored files are never candidates. Unavailable in a plain-folder build — there, `DEFAULT_SKIP_DIRS` and your own `--exclude` are the controls. |
 | **`--include` / `--exclude`** | Off | Explicit globs, for whatever the defaults do not know about. |
 

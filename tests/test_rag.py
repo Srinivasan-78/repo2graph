@@ -1890,3 +1890,96 @@ def test_sanitize_header_value_strips_crlf():
     assert _sanitize_header_value("\r\n\0") == ""
     # No mutation on safe values
     assert _sanitize_header_value("Authorization, Content-Type") == "Authorization, Content-Type"
+
+
+# ==========================================================================
+# Review round 2: a compressed block's cite names the lines it shows
+# ==========================================================================
+
+
+def test_compressed_file_neighbour_cites_only_the_lines_it_shows():
+    """`[cite: JsonReader.kt:1-648]` sat over a header plus `/*`."""
+    from repo2graph.query import _cite_block, _compress, _excerpt_record
+
+    body = "\n".join(["/*", " * Licensed ...", " */", "package x", ""] + ["val a = 1"] * 643)
+    full = "# file: x/JsonScope.kt (kotlin, 648 lines)\n# imports: okio\n" + body
+    chunk = {
+        "id": "file:x/JsonScope.kt",
+        "type": "file",
+        "path": "x/JsonScope.kt",
+        "qualname": "x/JsonScope.kt",
+        "start_line": 1,
+        "end_line": 648,
+        "why": "IMPORTS out of JsonReader.kt",
+    }
+    short = _compress(full)
+    assert short.split("\n")[-1] == "/*"
+    rec = _excerpt_record(chunk, full, short)
+    head = _cite_block(rec, short).split("\n")[0]
+    assert head.startswith("### [cite: x/JsonScope.kt:1-1] ")
+    assert "[excerpt of 1-648]" in head
+    assert head.endswith("(IMPORTS out of JsonReader.kt)")
+    assert rec["excerpt_of"] == [1, 648]
+
+
+def test_compressed_symbol_neighbour_skips_blank_lines_and_header():
+    from repo2graph.query import _cite_block, _compress, _excerpt_record
+
+    full = (
+        "# file: pkg/m.py\n# function: Foo.bar  (lines 12-40, python)\n"
+        "# calls: pkg/m.py::baz\n"
+        "    def bar(self):\n        return baz()\n"
+    )
+    chunk = {
+        "id": "sym:pkg/m.py::Foo.bar",
+        "type": "symbol",
+        "path": "pkg/m.py",
+        "qualname": "Foo.bar",
+        "start_line": 12,
+        "end_line": 40,
+        "why": "CALLS out of run",
+    }
+    rec = _excerpt_record(chunk, full, _compress(full))
+    assert (rec["start_line"], rec["end_line"]) == (12, 12)
+    assert "[cite: pkg/m.py:12-12] `Foo.bar` [excerpt of 12-40]" in _cite_block(rec, "x")
+
+
+def test_unmappable_compressed_neighbour_is_marked_not_overclaimed():
+    """A file residual's first shown line cannot be mapped back to a line."""
+    from repo2graph.query import _cite_block, _compress, _excerpt_record
+
+    full = "# file: a.kt (kotlin, 86 lines)\n# defines: JsonScope\n/*\n * x\n */\n"
+    chunk = {
+        "id": "file:a.kt",
+        "type": "file_residual",
+        "path": "a.kt",
+        "qualname": "a.kt",
+        "start_line": 1,
+        "end_line": 86,
+        "why": "IMPORTS out of b.kt",
+    }
+    rec = _excerpt_record(chunk, full, _compress(full))
+    head = _cite_block(rec, "x").split("\n")[0]
+    assert "[header and first line only, of 1-86]" in head
+    # a block shown whole carries no marker
+    assert "[" not in _cite_block(chunk, "x").split("\n")[0].split("]", 1)[1]
+
+
+def test_verify_rag_function(tmp_path):
+    from repo2graph.cli import verify_rag
+    from repo2graph.query import Index
+
+    (tmp_path / "agent").mkdir()
+    (tmp_path / "agent" / "chunks.jsonl").write_text(
+        '{"id": "c1", "node_id": "n1", "text": "foo"}\n', encoding="utf-8"
+    )
+    (tmp_path / "agent" / "nodes.jsonl").write_text(
+        '{"id": "n1", "name": "foo"}\n', encoding="utf-8"
+    )
+    (tmp_path / "agent" / "edges.jsonl").write_text("", encoding="utf-8")
+    idx = Index(tmp_path)
+    report, error = verify_rag(idx, tmp_path)
+    assert isinstance(report, dict)
+    assert report["index"] == str(tmp_path)
+    assert report["vectors_present"] is False
+    assert error is not None and "no vectors" in error

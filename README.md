@@ -2,7 +2,7 @@
 
 # repo2graph
 
-**Give coding agents trustworthy, cited answers about unfamiliar codebases.**
+**Cited, token-bounded answers about a codebase, for coding agents and CI.**
 
 [![PyPI](https://img.shields.io/pypi/v/repo2graph.svg?color=blue&label=PyPI)](https://pypi.org/project/repo2graph/)
 [![CI](https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml/badge.svg)](https://github.com/Srinivasan-78/repo2graph/actions/workflows/ci.yml)
@@ -19,14 +19,15 @@ Ask a repository a question and get back the source that answers it. Every block
 One tree-sitter pass records who calls whom, who imports what, and which files keep changing
 together in git. Retrieval starts from BM25 matches and follows those links.
 
-It needs no model, no API key, no language server and no database, and it makes no network
-calls. Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
+It needs no model, no API key, no language server and no database. Building, querying and the
+MCP server make no network calls; the only exceptions are `rag --answer` (opt-in, sends the pack
+to an LLM) and `repo2graph github` (clones a repository). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
 
 ## Try it
 
 ```bash
 uvx repo2graph demo                                   # bundled example repo, five questions answered
-uvx repo2graph build . -o .r2g                        # index your own code (seconds, not minutes)
+uvx repo2graph build . -o .r2g                        # index your own code
 uvx repo2graph rag "how does routing work" -o .r2g    # a cited, budget-bounded context pack
 ```
 
@@ -41,19 +42,20 @@ output: [docs/quickstart.md](docs/quickstart.md).
 
 ## Is it better than grep?
 
-**Not at finding code, yet.** We measured it on 35 questions about Flask, requests, FastAPI and
+**No, not at finding code.** We measured it on 35 questions about Flask, requests, FastAPI and
 Hono, scored against the definitions that answer them, with both tools held to the same token
 budget ([method, per-question results, reproduction](docs/retrieval-benchmark.md)):
 
 | Budget | repo2graph | grep, then read around the hits |
 |---:|---:|---:|
-| 2,000 tokens | 40% | 38% |
-| 4,000 tokens | 46% | **62%** |
-| 8,000 tokens | 60% | **73%** |
+| 2,000 tokens | 30% | **35%** |
+| 4,000 tokens | 39% | **61%** |
+| 8,000 tokens | 52% | **72%** |
 
-The causes are ranking problems. Whole-file and whole-class chunks win the seed ranking and use
-up the budget, and graph expansion doesn't yet follow the edge direction the question asks for.
-They're diagnosed in the benchmark write-up and are the next thing to fix.
+Graph expansion adds nothing over BM25 alone at these budgets. The causes are ranking problems:
+whole-file and whole-class chunks win the seed ranking and use up the budget, and expansion
+doesn't follow the edge direction the question asks for. They're diagnosed in the benchmark
+write-up and are the next thing to fix.
 
 What it does do that grep doesn't:
 
@@ -72,13 +74,13 @@ Cursor's index and Claude Code's own search, including when to use those instead
 
 ## Five questions to start with
 
-| Ask your repo | What comes back that grep cannot give you |
+| Ask your repo | What the graph adds |
 |---|---|
-| `Where is authentication enforced?` | the guard itself, plus every route that calls it |
-| `What calls <function>?` | CALLS edges in, so callers come back even when the name is shadowed |
+| `Where is authentication enforced?` | the guard itself, plus the routes that call it |
+| `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| `What would be affected by changing <api>?` | the blast radius: direct callers and what they are called from |
-| `Trace <a request> from route to persistence.` | a whole path across modules, each block cited to file and line |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (explain node) |
+| `Trace <a request> from route to persistence.` | the handler and its callees one hop at a time, each block cited to file and line |
 
 ## GitHub Action
 
@@ -92,7 +94,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
     commit-branch: graph     # optional: publish graph.html to a browsable branch
 ```
 
-`@v2` follows every 2.x release; pin an exact tag (`@v2.1.0`) to upgrade by hand. The Action never
+`@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
 calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/github-action.md](docs/github-action.md),
 [docs/pr-impact.md](docs/pr-impact.md).
 
@@ -102,7 +104,7 @@ calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/github-action.md
 |---|---|
 | `repo2graph build <path> -o .r2g` | Parse a repo into a graph and chunks (`--incremental`, `--git-history N`) |
 | `repo2graph query "<q>" -o .r2g` | BM25 search plus one graph hop |
-| `repo2graph rag "<q>" -o .r2g` | Budget-bounded, cited context pack (`--answer` sends it to an LLM: opt-in, the only network path) |
+| `repo2graph rag "<q>" -o .r2g` | Budget-bounded, cited context pack (`--answer` sends it to an LLM: opt-in, the only path that sends code anywhere) |
 | `repo2graph impact -i .r2g --base main` | Blast radius of a diff |
 | `repo2graph explain <edge\|node\|retrieval>` | Why an edge exists, or why a block was retrieved |
 | `repo2graph github <owner/repo> -o <dir>` | Fetch, build and clean up without a local clone |
@@ -120,17 +122,17 @@ Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/py
   fact. For exact references, use a language-server tool.
 - **See dynamic dispatch, reflection or computed imports.** A missing edge doesn't prove that no
   call exists.
-- **Cross language boundaries** (Python calling C++ through bindings), or notice that your files
-  changed since the last build.
+- **Cross language boundaries** (Python calling C++ through bindings).
+- **Rebuild itself when files change.** `index-status` reports staleness; rebuild with
+  `build --incremental`.
 
-Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
+<a id="languages"></a>Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
 C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. Measured
 rates for each limitation: [docs/limitations.md](docs/limitations.md).
 
 ## Status
 
-2.x is stable. The CLI, the MCP tools and the output schema follow semver, and breaking changes
-wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
+The 2.x CLI, MCP tools and output schema follow semver: breaking changes wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
 unconditionally ([privacy](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md),
 [security policy](.github/SECURITY.md)). A Docker image for read-only, non-root deployments is
 described in [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md).

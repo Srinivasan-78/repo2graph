@@ -57,9 +57,9 @@ If you never pass `--answer`, this code path is not reachable.
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**. Of its five tools, the three that
-can return repository content — `repo_map`, `repo_search`, `repo_neighbours` — exclude secrets
-always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
+The **MCP server goes further and makes this unconditional**. Of its six tools, the four that
+can return repository content — `repo_map`, `repo_search`, `repo_neighbours`, `repo_impact` —
+exclude secrets always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
 `repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
 directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
 get that choice, so the server doesn't offer it. See
@@ -145,8 +145,6 @@ or a released package, independent of anything the tool does at runtime:
   behind that page: every outbound path and every write location, enumerated from the code.
 - [docs/ENTERPRISE_DEPLOYMENT.md](../docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
   scoping, and package-pinning guidance for a shared or regulated deployment.
-- [docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating
-  with evidence and remaining risk for each.
 
 ---
 

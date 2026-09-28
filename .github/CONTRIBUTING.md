@@ -125,9 +125,8 @@ because every one of them has one. They range from a one-regex fix to a small re
 break an import cycle.
 
 For anything larger, **[docs/BACKLOG.md](../docs/BACKLOG.md)** records deliberately deferred work
-with the reason for each deferral — which usually changes how you would approach it. The current
-state of the open issues, including which are duplicates and which are already partly shipped, is
-in **[docs/issue-triage-2026-09-25.md](../docs/issue-triage-2026-09-25.md)**.
+with the reason for each deferral — which usually changes how you would approach it.
+How issues are classified and labelled is in **[docs/TRIAGE.md](../docs/TRIAGE.md)**.
 
 ## Real-world examples and benchmarks
 

@@ -29,6 +29,7 @@ other call worth serving first. It happens once per process, and once on disk.
 
 import argparse
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -193,7 +194,7 @@ TOOL_SCHEMAS = {
                 "type": "integer",
                 "description": (
                     f"Maximum token ceiling for returned markdown pack (default {MCP_BUDGET_TOKENS}, "
-                    f"max {MCP_MAX_BUDGET_TOKENS})."
+                    f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
             },
         },
@@ -217,7 +218,7 @@ TOOL_SCHEMAS = {
                 "type": "integer",
                 "description": (
                     f"Maximum neighbor rows to return (default {MCP_NEIGHBOUR_LIMIT}, "
-                    f"max {MCP_MAX_NEIGHBOURS})."
+                    f"min 1, max {MCP_MAX_NEIGHBOURS})."
                 ),
             },
         },
@@ -232,7 +233,10 @@ TOOL_SCHEMAS = {
             },
             "head": {
                 "type": "string",
-                "description": "Head ref or branch to compare (default 'HEAD' or current working tree).",
+                "description": (
+                    "Head ref or branch to compare. Omit to compare the working tree "
+                    "(including uncommitted changes) against base."
+                ),
             },
             "diff": {
                 "type": "string",
@@ -244,8 +248,11 @@ TOOL_SCHEMAS = {
             },
             "format": {
                 "type": "string",
-                "enum": ["markdown", "json", "pr-comment"],
-                "description": "Report format: 'markdown' (full report), 'pr-comment' (compact PR summary), or 'json'.",
+                "enum": ["markdown", "json", "sarif", "pr-comment"],
+                "description": (
+                    "Report format: 'markdown' (full report), 'pr-comment' (compact PR "
+                    "summary), 'json', or 'sarif' (SARIF v2.1.0). Anything else is an error."
+                ),
             },
         },
     },
@@ -271,6 +278,29 @@ EMPTY_RESULT = (
     "or the budget was too small to render a single line. Retry "
     "with a broader query or budget_tokens up to {ceiling}."
 )
+
+# What repo_search prepends when a non-positive budget_tokens fell back to the default.
+BUDGET_DEFAULTED = (
+    "_note: budget_tokens={given} is not a positive token count; used the default "
+    "{default} (max {ceiling})._\n\n"
+)
+
+
+#: What `repo_impact`'s `format` accepts (`comment` is an alias of `pr-comment`).
+IMPACT_FORMATS = ("markdown", "json", "sarif", "pr-comment")
+
+
+class ToolError(str):
+    """A tool result that reports a failure rather than an answer.
+
+    Still a plain string to every caller that only reads text (dispatch() has
+    always returned one), but the stdio and HTTP transports check for it and
+    set the MCP result's `isError: true`, so a client can tell "bad input /
+    unknown node / git failed" from a real, possibly empty, answer.
+    """
+
+    __slots__ = ()
+
 
 _INDEXES: dict[str, Index] = {}
 _INDEX_MTIMES: dict[str, float] = {}
@@ -340,8 +370,11 @@ def _build_index(repo: Path, out: Path) -> None:
     from .chunks import iter_chunks
     from .export import dump_all
     from .graph import build
+    from .parse import BuildConfig
 
-    graph = build(repo)
+    # output_dir: the default auto-build target (<repo>/.repo2graph) lives
+    # inside the repo, so it must be kept out of discovery explicitly.
+    graph = build(repo, config=BuildConfig(output_dir=str(out)))
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 
 
@@ -385,6 +418,8 @@ def open_index(out, repo=None, cache=None) -> Index:
                 cache.clear()
             index = _INDEXES[key] = Index(out_path)
             _INDEX_MTIMES[key] = current_mtime
+            if repo is not None:
+                index.repo_root = Path(repo).resolve()
             return index
 
         if index is not None:
@@ -405,6 +440,9 @@ def open_index(out, repo=None, cache=None) -> Index:
             current_mtime = _index_mtime(out_path)
         index = _INDEXES[key] = Index(out_path)
         _INDEX_MTIMES[key] = current_mtime
+        if repo is not None:
+            # The server's indexed root: repo_impact runs git here, not in cwd.
+            index.repo_root = Path(repo).resolve()
         return index
 
 
@@ -459,45 +497,70 @@ def tool_repo_map(index: Index) -> str:
 
 
 def tool_repo_search(
-    index: Index, query: str, k: int = 8, hops: int = 1, budget_tokens=None
+    index: Index, query: str, k: Any = 8, hops: Any = 1, budget_tokens=None
 ) -> str:
     """Cited markdown for `query`, never wider than MCP_MAX_BUDGET_TOKENS."""
     query = _str(query, MCP_MAX_QUERY_CHARS)
+    if not query.strip():
+        return ToolError(
+            "repo_search needs a non-empty `query`: a question, search terms or a "
+            "symbol name (e.g. 'pack_context' or 'how does export work')."
+        )
+    note = _defaulted_notes(
+        k=(k, 8), hops=(hops, 1), budget_tokens=(budget_tokens, MCP_BUDGET_TOKENS)
+    )
     budget = MCP_BUDGET_TOKENS if budget_tokens is None else _int(budget_tokens, MCP_BUDGET_TOKENS)
+    if budget <= 0:
+        # Zero or negative is not a budget anyone means, and answering it with
+        # "nothing fit in a 1-token budget" is true of the clamp but useless.
+        # Use the default instead and say so; the note is charged to the budget.
+        note += BUDGET_DEFAULTED.format(
+            given=budget, default=MCP_BUDGET_TOKENS, ceiling=MCP_MAX_BUDGET_TOKENS
+        )
+        budget = MCP_BUDGET_TOKENS
     budget = max(1, min(budget, MCP_MAX_BUDGET_TOKENS))
+    # count_tokens is len // 4 and so not additive: reserve the note's rounded-up
+    # cost, the same arithmetic tool_repo_impact uses for its truncation notice.
+    room = max(1, budget - (len(note) + 3) // 4)
     pack = index.pack_context(
         query,
         k=_clamp(k, 8, 1, MCP_MAX_K),
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
-        budget_tokens=budget,
+        budget_tokens=room,
         exclude_secrets=True,
     )
     text = pack["markdown"]
-    if count_tokens(text) > budget:
+    if count_tokens(text) > room:
         # pack_context measures the text it assembles, but the ceiling is the
         # promise made to the caller: re-check it here rather than trust it.
-        text = _fit_lines(text, budget, count_tokens)
+        text = _fit_lines(text, room, count_tokens)
     if not text.strip():
         # A budget clamped to the floor renders nothing, and an empty tool
         # result is the one answer an agent cannot act on: it reads the same
         # as "no such code". The note deliberately overruns a floor-sized
         # budget -- the promise this handler makes is the MCP_MAX ceiling, and
         # a sentence is cheaper than a retry loop against a blank string.
-        return EMPTY_RESULT.format(budget=budget, ceiling=MCP_MAX_BUDGET_TOKENS)
-    return text
+        return note + EMPTY_RESULT.format(budget=budget, ceiling=MCP_MAX_BUDGET_TOKENS)
+    return note + text
 
 
 def tool_repo_neighbours(
-    index: Index, node_id: str, hops: int = 1, limit: int = MCP_NEIGHBOUR_LIMIT
+    index: Index, node_id: str, hops: Any = 1, limit: Any = MCP_NEIGHBOUR_LIMIT
 ) -> str:
     """One graph hop from `node_id` — the thing grep cannot do."""
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
+    if not node_id.strip():
+        return ToolError(
+            "repo_neighbours needs a `node_id`. Ids look like file:<path>, "
+            "sym:<path>::<qualname> or dir:<path>; repo_search results cite them."
+        )
     node = index.nodes.get(node_id)
     if node is None:
-        return (
+        return ToolError(
             f"node not found: {node_id!r}. Ids look like "
             f"file:<path>, sym:<path>::<qualname> or dir:<path>."
         )
+    note = _defaulted_notes(hops=(hops, 1), limit=(limit, MCP_NEIGHBOUR_LIMIT))
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
@@ -522,23 +585,27 @@ def tool_repo_neighbours(
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
-    return "\n".join(lines)
+    return note + "\n".join(lines)
 
 
 def tool_repo_impact(
     index: Index,
     base: str = "main",
-    head: str = "HEAD",
+    head: str | None = None,
     diff: str = "",
-    max_depth: int = 2,
+    max_depth: Any = 2,
     format: str = "markdown",
 ) -> str:
     """Analyze PR or git diff impact against a base branch using the code graph.
 
+    With no `head`, the working tree (committed *and* uncommitted changes) is
+    compared against `base` -- what `repo2graph impact` does. A `head` gives the
+    three-dot `base...head` comparison of two refs instead.
+
     Enforces exclude_secrets=True unconditionally and clamps numeric arguments.
     """
     base_ref = _str(base, 256).strip() or "main"
-    head_ref = _str(head, 256).strip() or "HEAD"
+    head_ref = _str(head, 256).strip() or None
     diff_text = _str(diff, 1_000_000)
     depth = _clamp(max_depth, 2, 1, MCP_MAX_HOPS)
 
@@ -547,57 +614,72 @@ def tool_repo_impact(
         format_json,
         format_markdown,
         format_pr_comment,
+        format_sarif,
         get_git_diff,
+        parse_unified_diff,
     )
 
+    fmt = str(format).lower().strip()
+    if fmt == "comment":
+        fmt = "pr-comment"
+    if fmt not in IMPACT_FORMATS:
+        # Falling back to markdown answered a request for a machine-readable
+        # format with prose the caller then fails to parse.
+        return ToolError(
+            f"unknown repo_impact format {str(format)[:40]!r}: expected one of "
+            f"{', '.join(IMPACT_FORMATS)}."
+        )
+
+    if diff_text.strip() and not parse_unified_diff(diff_text):
+        # A caller-supplied diff with no file header is not "a PR that changed
+        # nothing": answering it LOW RISK is a confident wrong result.
+        return ToolError(
+            "`diff` is not a unified diff: found no `diff --git a/<path> b/<path>` file "
+            "header. Pass the output of `git diff` (or omit `diff` to let the server run it)."
+        )
+
     if not diff_text.strip():
-        root_path: Path = Path.cwd()
-        raw_root = getattr(index, "repo_root", None)
-        if not raw_root:
-            m = getattr(index, "manifest", {}) or {}
-            raw_root = m.get("root")
-        if not raw_root:
-            raw_root = getattr(index, "dir", None)
-        if raw_root:
-            try:
-                candidate = Path(str(raw_root))
-                if (candidate / ".git").exists():
-                    root_path = candidate
-            except Exception:
-                pass
+        root_path = _impact_root(index)
         try:
             diff_text = get_git_diff(root_path, base=base_ref, head=head_ref)
         except Exception as exc:
-            # The exception text is *not* relayed. `get_git_diff` embeds git's
-            # stderr, and `git -C <root>` names <root> in its own failure
-            # message, so passing `exc` through hands the caller the server's
-            # absolute index path -- exactly what `http_server`'s
-            # INDEX_UNAVAILABLE and `_public_repo_label` keep server-side for
-            # every other route. The refs are the caller's own input, so echoing
-            # those discloses nothing. Only the type is kept, which is enough to
-            # tell "bad ref" from "not a repository" without naming the host.
-            return (
-                f"Error obtaining git diff ({base_ref}...{head_ref}): "
-                f"{type(exc).__name__}. Check that both refs exist in the "
-                f"indexed repository, or pass the diff directly via `diff`."
+            # git's own message is what tells a caller *why* ("unknown
+            # revision", "not a git repository"), so it is relayed -- but with
+            # every absolute path scrubbed first: `git -C <root>` names <root>
+            # in its failures, and the server's filesystem layout is exactly
+            # what `http_server`'s INDEX_UNAVAILABLE and `_public_repo_label`
+            # keep server-side for every other route. The refs are the
+            # caller's own input, so echoing those discloses nothing.
+            spec = f"{base_ref}...{head_ref}" if head_ref else f"{base_ref} vs the working tree"
+            detail = _scrub_paths(str(exc), root_path)
+            return ToolError(
+                f"Error obtaining git diff ({spec}): {type(exc).__name__}: {detail}\n"
+                f"Check that the refs exist in the indexed repository (pass `base` "
+                f"if its default branch is not 'main'), or pass the diff directly via `diff`."
             )
 
     report = analyze_diff_impact(
         index=index,
         diff=diff_text,
         base=base_ref,
-        head=head_ref,
+        head=head_ref or "HEAD",
         max_depth=depth,
         exclude_secrets=True,
     )
 
-    fmt = str(format).lower().strip()
+    import json as _json
+
     if fmt == "json":
         rendered = format_json(report)
-    elif fmt in ("pr-comment", "comment"):
+    elif fmt == "sarif":
+        rendered = _json.dumps(format_sarif(report), indent=2)
+    elif fmt == "pr-comment":
         rendered = format_pr_comment(report)
     else:
         rendered = format_markdown(report)
+    if fmt in ("markdown", "pr-comment"):
+        # Machine-readable formats get no prose prefix: it would stop parsing.
+        rendered = _defaulted_notes(max_depth=(max_depth, 2)) + rendered
 
     # Bound the rendered result, the second half of the AGENTS.md MCP rule: a
     # clamped *input* does not bound the *output*. The report grows with the
@@ -609,16 +691,12 @@ def tool_repo_impact(
     if count_tokens(rendered) <= MCP_MAX_BUDGET_TOKENS:
         return rendered
 
-    if fmt == "json":
+    if fmt in ("json", "sarif"):
         # `_fit_lines` would cut mid-structure and hand back a string that is no
         # longer JSON, which for a machine-readable format is worse than the
         # overrun: the caller gets a parse error instead of a result. Return the
         # scalar summary -- which is what does not grow with the diff -- as a
         # valid document, and say plainly that the lists were dropped.
-        # Function-local import, matching this module's other json call sites:
-        # the docstring's promise is that importing `mcp` costs nothing.
-        import json as _json
-
         return _json.dumps(
             {
                 "truncated": True,
@@ -685,6 +763,40 @@ def tool_repo_impact(
     return _fit_lines(head, room, count_tokens) + notice
 
 
+def _impact_root(index: Index) -> Path:
+    """The source tree repo_impact runs git in: the server's indexed root.
+
+    Never `Path.cwd()` -- an MCP client launches the server from wherever it
+    likes. In order: the repo the server was started for (`open_index` sets
+    `repo_root`), the absolute root the build recorded in manifest.json,
+    and finally the index directory's parent (the `<repo>/.r2g` layout).
+    """
+    raw = getattr(index, "repo_root", None)
+    if raw:
+        return Path(str(raw))
+    index_dir = Path(getattr(index, "dir", ".") or ".")
+    from .status import stored_source_root
+
+    stored = stored_source_root(artifact_path(index_dir, "manifest.json").parent)
+    if stored is not None:
+        return stored
+    return index_dir.resolve().parent
+
+
+# An absolute path inside an error message: `C:\...`, `C:/...`, `\\server\...`
+# or a POSIX `/...` (not the `/` inside a ref like `origin/main`). It runs to
+# the next quote, newline or ": " -- the separators git's messages use.
+_ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|(?<![\w.~>-])/)[^'\"\n]*?(?=['\"\n]|: |$)")
+
+
+def _scrub_paths(text: str, root: Path) -> str:
+    """Remove absolute filesystem paths from an error message."""
+    for known in {str(root), str(root.resolve()), root.as_posix(), root.resolve().as_posix()}:
+        if known and known not in (".", "/"):
+            text = text.replace(known, "<repo>")
+    return _ABS_PATH_RE.sub("<path>", text).strip()
+
+
 def _edge_note(index: "Index", src: str, dst: str, etype: str) -> str:
     """Where the relationship is written, and how sure repo2graph is of it.
 
@@ -726,11 +838,39 @@ def _label(index: Index, node_id: str) -> str:
 
 
 def _int(value, fallback: int) -> int:
-    """An MCP client's arguments are JSON a model wrote: coerce, never raise."""
+    """An MCP client's arguments are JSON a model wrote: coerce, never raise.
+
+    `OverflowError` too: Python's `json` parses `1e999` as `float("inf")` (and
+    `NaN`/`Infinity` literally), and `int(inf)` raises OverflowError rather than
+    ValueError. NaN already lands in ValueError. Both are malformed input and
+    take the fallback, like a string or a null -- a caller asking for an
+    infinite budget gets the default, not the ceiling.
+    """
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return fallback
+
+
+def _defaulted_notes(**args: tuple[Any, int]) -> str:
+    """One `_note:` line per argument that was given but is not a number.
+
+    Such a value takes the default rather than failing the call (docs/mcp.md,
+    "Argument bounds"), but it did so silently: `k: "abc"` looked honoured.
+    Charged to the output like BUDGET_DEFAULTED; empty when all were usable.
+    """
+    notes = ""
+    for name, (value, default) in args.items():
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            int(value)
+        except (TypeError, ValueError, OverflowError):
+            notes += (
+                f"_note: {name}={repr(value)[:40]} is not an integer; "
+                f"used the default {default}._\n\n"
+            )
+    return notes
 
 
 def _clamp(value, fallback: int, low: int, high: int) -> int:
@@ -773,26 +913,45 @@ def tool_build_status(tasks, task_id: str) -> str:
     import json as _json
 
     task_id = _str(task_id, MCP_MAX_TASK_ID_CHARS)
+    # Every "no status to report" answer is a ToolError (isError: true), still
+    # carrying its JSON body: a client must be able to tell "there is no such
+    # build" from a status document without parsing prose (docs/mcp.md).
     if tasks is None:
-        return _json.dumps(
-            {
-                "error": "this server builds synchronously; there are no build "
-                "tasks to report. Start it with --async-build to use "
-                "repo_build_status.",
-            },
-            indent=2,
+        return ToolError(
+            _json.dumps(
+                {
+                    "error": "this server builds synchronously; there are no build "
+                    "tasks to report. Start it with --async-build to use "
+                    "repo_build_status.",
+                },
+                indent=2,
+            )
+        )
+    if not task_id.strip():
+        return ToolError(
+            _json.dumps(
+                {
+                    "task_id": "",
+                    "status": "unknown",
+                    "error": "repo_build_status needs a `task_id`: the id a tool call "
+                    "returned when it started a background build.",
+                },
+                indent=2,
+            )
         )
     task = tasks.get(task_id)
     if task is None:
-        return _json.dumps(
-            {
-                "task_id": task_id,
-                "status": "unknown",
-                "error": f"no build task with id {task_id!r}. Ids are issued by the "
-                f"tool call that starts a build and do not survive a "
-                f"server restart.",
-            },
-            indent=2,
+        return ToolError(
+            _json.dumps(
+                {
+                    "task_id": task_id,
+                    "status": "unknown",
+                    "error": f"no build task with id {task_id!r}. Ids are issued by the "
+                    f"tool call that starts a build and do not survive a "
+                    f"server restart.",
+                },
+                indent=2,
+            )
         )
     return _json.dumps(task.snapshot(), indent=2)
 
@@ -812,7 +971,10 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
 
     Returns:
         The tool's text result, or a sentence naming the problem. Never raises
-        on bad arguments: every numeric one is coerced and clamped.
+        on bad arguments: every numeric one is coerced and clamped. A problem
+        (missing required argument, unknown node or tool, git failure) comes
+        back as a `ToolError` -- still a `str` -- so the transports can mark
+        the MCP result `isError: true`.
     """
     args = arguments or {}
     if name == "repo_build_status":
@@ -823,6 +985,10 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
         # Never cached: a cached cache-stats call reports the counters as they
         # were when it was stored, which is the one answer that is always wrong.
         return tool_cache_stats(cache)
+    if name not in TOOL_DESCRIPTIONS:
+        # Not cached: an unknown-tool message is cheap, and caching it would
+        # fill the cache with whatever names a confused caller invents.
+        return ToolError(f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}.")
 
     from .cache import CACHEABLE_TOOLS, make_key
 
@@ -837,7 +1003,7 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
         # Only repo_build_status and repo_cache_stats are answerable without an
         # index, and both returned above. Reaching here with none is a caller
         # bug rather than a user error, but it must still be a sentence.
-        return (
+        return ToolError(
             "no index is open, so this tool cannot answer. Use "
             "repo_build_status to check whether one is still being built."
         )
@@ -847,32 +1013,31 @@ def dispatch(index: "Index | None", name: str, arguments: dict, cache=None, task
         result = tool_repo_search(
             index,
             str(args.get("query") or ""),
-            k=_int(args.get("k"), 8),
-            hops=_int(args.get("hops"), 1),
+            # Raw, not `_int`-ed: the handler coerces, and notes a non-number.
+            k=args.get("k", 8),
+            hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
         )
     elif name == "repo_neighbours":
         result = tool_repo_neighbours(
             index,
             str(args.get("node_id") or ""),
-            hops=_int(args.get("hops"), 1),
-            limit=_int(args.get("limit"), MCP_NEIGHBOUR_LIMIT),
+            hops=args.get("hops", 1),
+            limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
         )
     elif name == "repo_impact":
         result = tool_repo_impact(
             index,
             base=str(args.get("base") or "main"),
-            head=str(args.get("head") or "HEAD"),
+            head=str(args.get("head") or "") or None,
             diff=str(args.get("diff") or ""),
-            max_depth=_int(args.get("max_depth"), 2),
+            max_depth=args.get("max_depth", 2),
             format=str(args.get("format") or "markdown"),
         )
-    else:
-        # Not cached: an unknown-tool message is cheap, and caching it would
-        # fill the cache with whatever names a confused caller invents.
-        return f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}."
+    else:  # unreachable: unknown names returned above
+        return ToolError(f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}.")
 
-    if key is not None:
+    if key is not None and not isinstance(result, ToolError):
         cache.put(key, result)
     return result
 
@@ -992,6 +1157,30 @@ server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_s
 server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])
 
 
+class ToolCallFailed(Exception):
+    """Carries a ToolError's text out of a 1.x SDK handler as isError."""
+
+
+def run_tool(index_dir, repo, name, arguments, cache=None, tasks=None) -> str:
+    """One stdio tool call: open (or start building) the index, then dispatch.
+
+    Returns a `ToolError` for anything the caller got wrong, which the
+    transport turns into `isError: true`.
+    """
+    name = name or ""
+    if name == "repo_build_status":
+        # Answerable without an index, and the only tool that is: asking
+        # for build progress must not itself wait on the build.
+        return dispatch(None, name, arguments or {}, cache=cache, tasks=tasks)
+    if name not in TOOL_DESCRIPTIONS:
+        # Checked before open_index: an unknown name must not trigger a build.
+        return dispatch(None, name, arguments or {}, cache=cache, tasks=tasks)
+    index, pending = open_index_or_task(index_dir, repo, cache, tasks)
+    if pending is not None:
+        return pending
+    return dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
+
+
 def serve(out, repo=None, cache=None, tasks=None) -> None:
     """Run the stdio MCP server against the index at `out`.
 
@@ -1025,35 +1214,36 @@ def serve(out, repo=None, cache=None, tasks=None) -> None:
             name = args[0]
             arguments = args[1] if len(args) > 1 else kwargs.get("arguments")
 
-        if (name or "") == "repo_build_status":
-            # Answerable without an index, and the only tool that is: asking
-            # for build progress must not itself wait on the build.
-            return [
-                TextContent(
-                    type="text",
-                    text=dispatch(None, name, arguments or {}, cache=cache, tasks=tasks),
-                )
-            ]
-        index, pending = open_index_or_task(index_dir, repo, cache, tasks)
-        if pending is not None:
-            return [TextContent(type="text", text=pending)]
-        text = dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
-        return [TextContent(type="text", text=text)]
+        text = run_tool(index_dir, repo, name, arguments, cache=cache, tasks=tasks)
+        if supports_decorators and isinstance(text, ToolError):
+            # The 1.x decorator API has no way to return isError from a handler
+            # across every 1.x release, but every one of them turns an
+            # exception into `CallToolResult(isError=True, text=str(exc))`.
+            raise ToolCallFailed(str(text))
+        return text
 
     server_cls: Any = Server
     mcp_server: Any = None
     if supports_decorators:
         mcp_server = server_cls(server.name, version=server.version)
         mcp_server.list_tools()(list_tools_handler)
-        mcp_server.call_tool()(call_tool_handler)
+
+        async def call_tool_1x(*args, **kwargs):
+            text = await call_tool_handler(*args, **kwargs)
+            return [TextContent(type="text", text=text)]
+
+        mcp_server.call_tool()(call_tool_1x)
     else:
 
         async def list_tools_2x(ctx, params):
             return mcp.types.ListToolsResult(tools=await list_tools_handler())
 
         async def call_tool_2x(ctx, params):
-            content = await call_tool_handler(ctx, params)
-            return mcp.types.CallToolResult(content=content)
+            text = await call_tool_handler(ctx, params)
+            return mcp.types.CallToolResult(
+                content=[TextContent(type="text", text=text)],
+                isError=isinstance(text, ToolError),
+            )
 
         try:
             mcp_server = server_cls(

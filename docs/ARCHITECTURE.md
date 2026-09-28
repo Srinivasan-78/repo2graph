@@ -145,7 +145,7 @@ nothing from the package, which is why they are the easiest modules here to chan
 
 | You want to… | Start at | Also touch |
 |---|---|---|
-| Add a language | `parse.py` — `LANG_CFG`, `EXT_LANG` | A fixture, and the language row in all six READMEs (a test enforces this) — see [parser-development.md](parser-development.md) |
+| Add a language | `parse.py` — `LANG_CFG`, `EXT_LANG` | A fixture, and the language list in the README (a test enforces this) — see [parser-development.md](parser-development.md) |
 | Change how a call resolves | `graph.py` — the scoped-resolution tiers | `tests/test_scoped_resolution.py`, `tests/test_resolution_heuristics.py` |
 | Add an edge kind | `graph.py`, then `export.py`'s `EDGE_TYPES`, then `viz.py`'s copy | `docs/reference.md`, and `query.py`'s `DEFAULT_EDGE_DIRS` if it should be traversable |
 | Change retrieval | `query.py` — **`pack_context()`, not `retrieve()`** | AGENTS.md "Two budget models coexist"; `retrieve()` is a pinned back-compat surface |

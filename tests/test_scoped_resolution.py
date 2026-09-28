@@ -467,17 +467,14 @@ def test_unambiguous_method_recursion_keeps_its_self_edge(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:p.py::Z.only"
     }
-    assert got == {("sym:p.py::Z.only", "sym:p.py::Z.only", "same_file", 1.0)}
+    assert got == {("sym:p.py::Z.only", "sym:p.py::Z.only", "self_recursive", 1.0)}
 
 
 def test_a_methods_own_name_is_never_bound_confidently(tmp_path: Path):
-    """`self.to_dict()` and `c.to_dict()` are the same string once the receiver is gone.
+    """`c.to_dict()` inside `Report.to_dict` is never a self-call.
 
-    `_callee_name` keeps only the rightmost member-access segment, so inside
-    `Report.to_dict` a self-call and a call to a sibling class's identically
-    named method are indistinguishable. Neither reading may be asserted at
-    confidence 1.0: tier 1 declines a self-target and tier 2 -- which now
-    *includes* the caller -- prices both readings at 1/n.
+    The call has a receiver that is not self, so the caller is not a candidate
+    (audit round 2: receiver-aware tier 0) and the sibling is the only reading.
 
     This is the shape of repo2graph's own doctor.py:61,
     `[c.to_dict() for c in self.checks]`, which an earlier version of this fix
@@ -501,12 +498,7 @@ def test_a_methods_own_name_is_never_bound_confidently(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:r.py::Report.to_dict"
     }
-    # Both readings are on the table, neither is claimed outright, and the true
-    # target is in the set whichever reading holds.
-    assert got == {
-        ("sym:r.py::Item.to_dict", "same_file", 0.5),
-        ("sym:r.py::Report.to_dict", "same_file", 0.5),
-    }
+    assert got == {("sym:r.py::Item.to_dict", "same_file", 1.0)}
 
 
 def test_method_recursion_survives_a_same_named_sibling(tmp_path: Path):
@@ -533,8 +525,8 @@ def test_method_recursion_survives_a_same_named_sibling(tmp_path: Path):
         for e in g.edges
         if e["type"] == "CALLS" and e["src"] == "sym:n.py::Y.work"
     }
-    assert ("sym:n.py::Y.work", 0.5) in got, "the recursion edge must survive"
-    assert got == {("sym:n.py::Y.work", 0.5), ("sym:n.py::work", 0.5)}
+    # `self.work()` is a self-call: the module-level `work` is not a reading.
+    assert got == {("sym:n.py::Y.work", 1.0)}, "the recursion edge must survive"
 
 
 def test_decorator_call_counted_once(tmp_path: Path):
@@ -1150,3 +1142,430 @@ def test_repo_map_ignores_low_confidence_callers(tmp_path: Path):
     assert main(["build", str(tmp_path), "-o", str(out)]) == 0
     overview = (out / "agent" / "overview.md").read_text(encoding="utf8")
     assert "Globals.get" not in overview
+
+
+# ==============================================================================
+# Audit round: qualified receivers, decorators, Kotlin/Swift/C#, gates, super()
+# ==============================================================================
+
+
+def _write(root: Path, files: dict[str, str]) -> Path:
+    for rel, text in files.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf8")
+    return root
+
+
+def _call_edges(g, src: str) -> dict[str, dict]:
+    return {e["dst"]: e for e in g.edges if e["type"] == "CALLS" and e["src"] == src}
+
+
+@pytest.mark.parametrize(
+    ("files", "caller", "callee"),
+    [
+        # module-qualified: `store` is an imported module, not a dict
+        (
+            {
+                "store.py": "TABLE = {'a': 1}\ndef get(k):\n    return TABLE[k]\n",
+                "app.py": "import store\n\ndef handler():\n    return store.get('a')\n",
+            },
+            "sym:app.py::handler",
+            "sym:store.py::get",
+        ),
+        # type-qualified (static method on an imported class)
+        (
+            {
+                "util.py": "class Util:\n    @staticmethod\n    def remove(x):\n        return x\n",
+                "app.py": "from util import Util\n\ndef run():\n    return Util.remove(1)\n",
+            },
+            "sym:app.py::run",
+            "sym:util.py::Util.remove",
+        ),
+        # Java static call
+        (
+            {
+                "Util.java": "class Util { static int remove(int x){return x;} }\n",
+                "App.java": "class App { int run(){ return Util.remove(1); } }\n",
+            },
+            "sym:App.java::App.run",
+            "sym:Util.java::Util.remove",
+        ),
+        # `::` static scope
+        (
+            {
+                "lib.rs": "struct Config;\nimpl Config { fn get(k: &str) -> i32 { 0 } }\n"
+                'fn run() -> i32 { Config::get("x") }\n'
+            },
+            "sym:lib.rs::run",
+            "sym:lib.rs::Config.get",
+        ),
+        # Go method receiver is the calling object
+        (
+            {
+                "c.go": "package c\ntype Cache struct{}\n"
+                "func (c *Cache) find(k string) int { return 0 }\n"
+                "func (c *Cache) Lookup(k string) int { return c.find(k) }\n"
+            },
+            "sym:c.go::Cache.Lookup",
+            "sym:c.go::Cache.find",
+        ),
+    ],
+)
+def test_qualified_receiver_is_not_demoted(tmp_path: Path, files, caller, callee):
+    g = build(_write(tmp_path, files))
+    edge = _call_edges(g, caller)[callee]
+    assert edge["confidence"] == 1.0
+    assert "untyped_receiver" not in edge
+    assert "ambiguous" not in edge
+
+
+def test_from_imported_value_receiver_is_still_demoted(tmp_path: Path):
+    """Flask's `_cv_request.get(None)`: the head is from-imported, but it is a
+    value, not the module `ctx` the only `get` lives in."""
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "ctx.py": "class Globals:\n    def get(self, k):\n        return k\n\ncurrent = {}\n",
+                "use.py": "from ctx import current\n\ndef read():\n    return current.get('x')\n",
+            },
+        )
+    )
+    edge = _call_edges(g, "sym:use.py::read")["sym:ctx.py::Globals.get"]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+    assert edge["ambiguous"] is True
+    assert edge["candidate_count"] == 1
+
+
+def test_go_receiver_classified_as_self():
+    pf = parse_source(
+        b"package c\nfunc (c *Cache) Lookup(k string) int { return c.find(k) + m.find(k) }\n",
+        "go",
+    )
+    (sym,) = [s for s in pf.symbols if s.qualname == "Cache.Lookup"]
+    assert [(d["receiver"], d.get("receiver_head")) for d in sym.call_details] == [
+        ("self", "c"),
+        ("other", "m"),
+    ]
+
+
+def test_receiver_head_and_static_scope_recorded():
+    pf = parse_source(b"fn run() { Config::get(1); v.push(2); get(3); }\n", "rust")
+    (sym,) = pf.symbols
+    got = [
+        (d["name"], d["receiver"], d.get("receiver_head"), d.get("receiver_static"))
+        for d in sym.call_details
+    ]
+    assert got == [
+        ("get", "other", "Config", True),
+        ("push", "other", "v", None),
+        ("get", "none", None, None),
+    ]
+
+
+def test_decorator_does_not_rescue_untyped_call(tmp_path: Path):
+    """`@router.get(...)` is a call on `router`: it used to count as a typed
+    call of `get` and kept `d.get()` bound at 1.0."""
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "store.py": "class Store:\n    def get(self, k):\n        return k\n",
+                "api.py": "from fastapi import APIRouter\nrouter = APIRouter()\n\n"
+                "@router.get('/items')\ndef list_items(d):\n    return d.get('x')\n",
+            },
+        )
+    )
+    edge = _call_edges(g, "sym:api.py::list_items")["sym:store.py::Store.get"]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+    pf = parse_source(b"@router.get('/x')\ndef h():\n    pass\n", "python")
+    (dec,) = pf.symbols[0].call_details
+    assert (dec["kind"], dec["receiver"], dec["receiver_head"]) == ("decorator", "other", "router")
+
+
+@pytest.mark.parametrize(
+    ("lang", "src", "caller", "self_head", "tail", "head"),
+    [
+        ("kotlin", b"class A { fun f(){ this.get(); super.get(); obj?.get(); get(); list.add(1) } }\n", "A.f", "this", "add", "list"),
+        ("swift", b"class A { func f(){ self.get(); super.get(); obj?.get(); get(); arr.append(1) } }\n", "A.f", "self", "append", "arr"),
+    ],
+)  # fmt: skip
+def test_kotlin_swift_receivers(lang, src, caller, self_head, tail, head):
+    pf = parse_source(src, lang)
+    sym = next(s for s in pf.symbols if s.qualname == caller)
+    got = [(d["name"], d["receiver"], d.get("receiver_head")) for d in sym.call_details]
+    assert got == [
+        ("get", "self", self_head),
+        ("get", "self", "super"),
+        ("get", "other", "obj"),
+        ("get", "none", None),
+        (tail, "other", head),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("files", "caller", "callee"),
+    [
+        (
+            {
+                "A.cs": "class Bag { public void Add(int x){} }\n"
+                "class A { void F(System.Collections.Generic.List<int> l){ l.Add(1); } }\n"
+            },
+            "sym:A.cs::A.F",
+            "sym:A.cs::Bag.Add",
+        ),
+        (
+            {
+                "A.swift": "class Bag { func append(_ x: Int) {} }\n"
+                "class A { func f() { var arr = [1]; arr.append(1) } }\n"
+            },
+            "sym:A.swift::A.f",
+            "sym:A.swift::Bag.append",
+        ),
+    ],
+)
+def test_csharp_and_swift_builtins_on_untyped_receiver_are_demoted(
+    tmp_path: Path, files, caller, callee
+):
+    g = build(_write(tmp_path, files))
+    edge = _call_edges(g, caller)[callee]
+    assert edge["confidence"] == graph_mod.UNTYPED_RECEIVER_CONFIDENCE
+    assert edge["untyped_receiver"] is True
+
+
+def test_low_confidence_calls_do_not_count_for_hotspots_or_entrypoints(tmp_path: Path):
+    from repo2graph.changelog import _indegree
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "views.py": "def get(request):\n    return 1\n",
+                "util.py": "".join(f"def f{i}(d):\n    return d.get({i})\n\n" for i in range(4)),
+            },
+        )
+    )
+    assert set(_call_edges(g, "sym:util.py::f0")) == {"sym:views.py::get"}  # guess kept
+    assert "sym:views.py::get" not in _indegree(g.edges)
+    assert g.nodes["sym:views.py::get"].get("entrypoint") is True
+
+
+def test_untyped_receiver_count_in_stats_text_and_manifest(tmp_path: Path):
+    from repo2graph.cli import format_stats_summary
+
+    assert "Untyped Receiver:      7" in format_stats_summary({"calls_untyped_receiver": 7})
+    _write(
+        tmp_path / "repo",
+        {
+            "ctx.py": "class Globals:\n    def get(self, k):\n        return k\n",
+            "use.py": "def f(d):\n    return d.get(1)\n",
+        },
+    )
+    out = tmp_path / "out"
+    assert main(["build", str(tmp_path / "repo"), "-o", str(out)]) == 0
+    manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf8"))
+    assert manifest["quality_metrics"]["calls_untyped_receiver"] == 1
+
+
+def test_super_call_binds_base_method_never_itself(tmp_path: Path):
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "base.py": "class Base:\n    def __init__(self):\n        self.x = 1\n",
+                "child.py": "from base import Base\n\n"
+                "class Child(Base):\n    def __init__(self):\n        super().__init__()\n",
+                "other.py": "class Other:\n    def get(self, k):\n        return k\n",
+                "store.py": "class Store(dict):\n"
+                "    def get(self, k, default=None):\n"
+                "        return super().get(k, default)\n",
+            },
+        )
+    )
+    child = _call_edges(g, "sym:child.py::Child.__init__")
+    assert set(child) == {"sym:base.py::Base.__init__"}
+    assert child["sym:base.py::Base.__init__"]["resolution_kind"] == "base_class"
+    assert child["sym:base.py::Base.__init__"]["confidence"] == 1.0
+    # `dict.get` is not in the repo: no self-loop, no bind to Other.get.
+    assert _call_edges(g, "sym:store.py::Store.get") == {}
+    ext = [
+        e["dst"]
+        for e in g.edges
+        if e["type"] == "CALLS_EXTERNAL" and e["src"] == "sym:store.py::Store.get"
+    ]
+    assert "external:get" in ext
+    assert not [e for e in g.edges if e["type"] == "CALLS" and e["src"] == e["dst"]]
+
+
+# ---------------------------------------------------------------------------
+# Audit round 2: tier 0 needs a bare/self call; base/parent are per-language
+# ---------------------------------------------------------------------------
+
+
+def _calls_from(g, src: str) -> set[tuple[str, str]]:
+    return {
+        (e["dst"], e.get("resolution_kind", ""))
+        for e in g.edges
+        if e["type"] in ("CALLS", "CALLS_EXTERNAL") and e["src"] == src
+    }
+
+
+def test_a_call_with_an_explicit_receiver_is_never_self_recursion(tmp_path: Path):
+    """The Flask shapes: `current_app.url_for()` in `url_for`, `cli.main()` in
+    `main`, `dict.__repr__(self)` in `Config.__repr__`, `Base.__init__(self)`."""
+    (tmp_path / "h.py").write_text(
+        "def url_for(endpoint):\n"
+        "    return current_app.url_for(endpoint)\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    cli.main()\n"
+        "\n"
+        "\n"
+        "class Config(dict):\n"
+        "    def __repr__(self):\n"
+        "        return dict.__repr__(self)\n"
+        "\n"
+        "\n"
+        "class Base:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "\n"
+        "\n"
+        "class Env(Base):\n"
+        "    def __init__(self):\n"
+        "        Base.__init__(self)\n"
+        "\n"
+        "\n"
+        "def fact(n):\n"
+        "    return fact(n - 1)\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    self_loops = {e["src"] for e in g.edges if e["type"] == "CALLS" and e["src"] == e["dst"]}
+    assert self_loops == {"sym:h.py::fact"}
+    assert _calls_from(g, "sym:h.py::Env.__init__") == {("sym:h.py::Base.__init__", "base_class")}
+    assert _calls_from(g, "sym:h.py::Config.__repr__") == {
+        ("external:__repr__", "unresolved_external")
+    }
+
+
+def test_implicit_this_bare_call_recurses_in_java_but_not_python(tmp_path: Path):
+    (tmp_path / "A.java").write_text(
+        "class A {\n  int f(int n) { return f(n - 1); }\n}\n", encoding="utf8"
+    )
+    (tmp_path / "m.py").write_text(
+        "def g():\n    return 1\n\n\nclass K:\n    def g(self):\n        return g()\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    assert _calls_from(g, "sym:A.java::A.f") == {("sym:A.java::A.f", "self_recursive")}
+    # a bare `g()` inside a Python method is the module function, never the method
+    assert _calls_from(g, "sym:m.py::K.g") == {("sym:m.py::g", "same_file")}
+
+
+def test_a_local_named_parent_or_base_is_not_a_super_call(tmp_path: Path):
+    """Reviewer repro p1/tree.py: `parent.add(self)` in Python resolves in-repo."""
+    (tmp_path / "tree.py").write_text(
+        "class Node:\n"
+        "    def add(self, child):\n"
+        "        self.children.append(child)\n"
+        "\n"
+        "    def attach(self, parent, base):\n"
+        "        parent.add(self)\n"
+        "        base.add(self)\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    assert _calls_from(g, "sym:tree.py::Node.attach") == {("sym:tree.py::Node.add", "same_class")}
+
+
+@pytest.mark.parametrize(
+    ("lang", "head", "static", "want"),
+    [
+        ("python", "parent", False, "other"),
+        ("python", "base", False, "other"),
+        ("javascript", "parent", False, "other"),
+        ("go", "parent", False, "other"),
+        ("csharp", "base", False, "self"),
+        ("csharp", "parent", False, "other"),
+        ("php", "parent", True, "self"),
+        ("php", "parent", False, "other"),
+        ("python", "super()", False, "self"),
+        ("java", "super", False, "self"),
+    ],
+)
+def test_super_like_receivers_are_language_specific(lang, head, static, want):
+    from repo2graph.parse import _classify_receiver
+
+    assert _classify_receiver(head, frozenset(), lang, static) == want
+
+
+def test_php_parent_static_call_is_recorded_as_a_super_call():
+    from repo2graph.parse import parse_source
+
+    pf = parse_source(b"<?php\nclass A extends B { function f() { parent::f(); } }\n", "php")
+    (m,) = [s for s in pf.symbols if s.qualname == "A.f"]
+    assert [(d["name"], d["receiver"], d.get("receiver_head")) for d in m.call_details] == [
+        ("f", "self", "parent")
+    ]
+
+
+def test_overload_fan_out_still_counts_as_called(tmp_path: Path):
+    """Reviewer repro p6/L.java: three overloads split 1/3 each, but they are
+    the caller's own class -- none is an entrypoint or absent from hotspots.
+    A repo-wide guess (`d.get()` on an untyped receiver) still does not count."""
+    from repo2graph.changelog import _indegree
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "L.java": "public class L {\n"
+                "    private void log(String a) { }\n"
+                "    private void log(String a, Object b) { }\n"
+                "    private void log(String a, Object b, Object c) { }\n"
+                '    public void run() { log("x"); }\n'
+                "}\n",
+                "views.py": "def get(request):\n    return 1\n",
+                "util.py": "def f(d):\n    return d.get(1)\n",
+            },
+        )
+    )
+    logs = {"sym:L.java::L.log", "sym:L.java::L.log@L3", "sym:L.java::L.log@L4"}
+    assert set(_call_edges(g, "sym:L.java::L.run")) == logs
+    deg = _indegree(g.edges)
+    for nid in logs:
+        assert not g.nodes[nid].get("entrypoint"), nid
+        assert deg.get(nid) == 1, nid
+    assert g.nodes["sym:L.java::L.run"].get("entrypoint") is True
+    assert "sym:views.py::get" not in deg
+    assert g.nodes["sym:views.py::get"].get("entrypoint") is True
+
+
+def test_repo_map_labels_overloads_by_node_key(tmp_path: Path):
+    """Reviewer repro p5/O.java: `O.f` twice in Most called -- use `O.f@L3`."""
+    from repo2graph.export import write_overview
+
+    g = build(
+        _write(
+            tmp_path,
+            {
+                "O.java": "class O {\n"
+                "    int f(int x) { return x; }\n"
+                "    int f(String s) { return g(s.length()); }\n"
+                "    int g(int y) { return f(y); }\n"
+                "}\n",
+            },
+        )
+    )
+    out = tmp_path / "overview.md"
+    write_overview(g, out)
+    lines = out.read_text(encoding="utf8").split("\n")
+    called = lines[lines.index("## Most called symbols") + 1 :]
+    assert "- O.java::O.f (method, in=1)" in called
+    assert "- O.java::O.f@L3 (method, in=1)" in called
+    assert len(called) == len(set(called))

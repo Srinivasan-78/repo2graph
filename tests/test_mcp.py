@@ -1767,3 +1767,107 @@ def test_http_auto_build_disabled_by_default(mini_repo, monkeypatch):
     # Explicit --allow-auto-build: repo is passed
     assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--allow-auto-build"]) == 0
     assert seen_repos[-1] == mini_repo
+
+
+# ==========================================================================
+# Non-finite numbers: JSON `1e999` is float("inf"), and int(inf) overflows
+# ==========================================================================
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_int_coerces_non_finite_floats_to_the_fallback(bad):
+    mcp = mcp_module()
+    assert mcp._int(bad, 7) == 7
+    assert mcp._clamp(bad, 7, 1, 10) == 7
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"k": 1e999},
+        {"budget_tokens": 1e999},
+        {"hops": -1e999},
+        {"k": float("nan"), "budget_tokens": float("nan")},
+    ],
+)
+def test_a_non_finite_numeric_argument_is_bad_input_not_a_tool_error(mini_index, arguments):
+    """`json.loads('{"k": 1e999}')` yields inf; the handler used to raise
+    OverflowError out of `_int` and the call became a tool error."""
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    parsed = json.loads(json.dumps({"query": MINI_QUERY, **arguments}))
+    out = mcp.dispatch(idx, "repo_search", parsed)
+    # Still the default answer, not an error -- but no longer silently: each
+    # unusable argument is named in a leading one-line note (docs/mcp.md).
+    assert not isinstance(out, mcp.ToolError)
+    for name in arguments:
+        assert f"_note: {name}=" in out
+    body = out.split("._\n\n")[-1]
+    assert body == mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY})
+
+
+def test_a_non_finite_limit_or_depth_is_also_bad_input(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    mcp.dispatch(idx, "repo_neighbours", {"node_id": SYM_ROUTE, "limit": 1e999, "hops": 1e999})
+    assert mcp._int(json.loads("1e999"), 2) == 2
+
+
+# ==========================================================================
+# Review round 2: bad arguments are named, not silently absorbed
+# ==========================================================================
+
+
+def test_a_non_numeric_k_is_defaulted_with_a_note(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    out = mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY, "k": "abc"})
+    assert not isinstance(out, mcp.ToolError)
+    assert out.startswith("_note: k='abc' is not an integer; used the default 8._")
+    plain = mcp.dispatch(idx, "repo_neighbours", {"node_id": SYM_ROUTE, "limit": "lots"})
+    assert plain.startswith("_note: limit='lots' is not an integer")
+    ok = mcp.dispatch(idx, "repo_search", {"query": MINI_QUERY, "k": "3"})
+    assert "_note:" not in ok
+
+
+def test_repo_build_status_problems_are_tool_errors(mini_index):
+    from repo2graph.tasks import TaskManager
+
+    mcp = mcp_module()
+    for args, tasks in (
+        ({}, None),
+        ({"task_id": "nope"}, None),
+        ({}, TaskManager()),
+        ({"task_id": "nope"}, TaskManager()),
+    ):
+        out = mcp.dispatch(None, "repo_build_status", args, tasks=tasks)
+        assert isinstance(out, mcp.ToolError), (args, tasks)
+        assert json.loads(out)["error"]
+
+
+def test_repo_impact_rejects_text_that_is_not_a_diff(mini_index):
+    mcp = mcp_module()
+    out = mcp.dispatch(Index(mini_index), "repo_impact", {"diff": "not a diff at all"})
+    assert isinstance(out, mcp.ToolError)
+    assert "not a unified diff" in out
+    assert "LOW" not in out
+
+
+def test_repo_impact_sarif_is_sarif_and_unknown_formats_are_errors(mini_index):
+    mcp = mcp_module()
+    idx = Index(mini_index)
+    diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,0 +1,1 @@\n+y = 1\n"
+    sarif = json.loads(mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "sarif"}))
+    assert sarif["version"] == "2.1.0" and "runs" in sarif
+    bad = mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "html"})
+    assert isinstance(bad, mcp.ToolError)
+    for fmt in ("markdown", "json", "sarif", "pr-comment"):
+        assert fmt in bad
+    assert "sarif" in mcp.TOOL_SCHEMAS["repo_impact"]["properties"]["format"]["enum"]
+
+
+def test_tool_call_failed_exception():
+    mcp = mcp_module()
+    err = mcp.ToolCallFailed("something went wrong")
+    assert isinstance(err, Exception)
+    assert str(err) == "something went wrong"

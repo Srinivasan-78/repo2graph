@@ -469,6 +469,10 @@ def _iter_file_nodes(idx_dir: Path) -> Iterator[dict[str, Any]]:
                 yield rec
 
 
+# How many parse-error files `Parser Coverage` names before summarising the rest.
+MAX_PARSE_OFFENDERS = 10
+
+
 def _repo_root_for(path: Path, idx_dir: Path | None) -> Path:
     """The source tree an index describes, given whatever path was passed in.
 
@@ -478,7 +482,12 @@ def _repo_root_for(path: Path, idx_dir: Path | None) -> Path:
     if idx_dir is None:
         return path
     if idx_dir == path:
-        return path.parent
+        # Pointed at the index itself: prefer the source root the build
+        # recorded -- an index built with `-o` outside the repo has no useful
+        # parent -- and fall back to the conventional `<repo>/.r2g` layout.
+        from .status import stored_source_root
+
+        return stored_source_root(_agent_dir(idx_dir)) or path.parent
     return path
 
 
@@ -1068,9 +1077,30 @@ def check_index_freshness(path: Path) -> CheckResult:
             details=[f"Build one with: repo2graph build {path} -o {path}/.r2g"],
         )
 
-    from .status import compute_freshness
+    from .status import (
+        compute_freshness,
+        remote_freshness,
+        stored_remote_source,
+        stored_source_root,
+    )
 
     agent = _agent_dir(idx_dir)
+    remote = (
+        stored_remote_source(agent)
+        if idx_dir == path and stored_source_root(agent) is None
+        else None
+    )
+    if remote:
+        # Built by `repo2graph github`: the clone is gone, so any local tree
+        # this could compare against is the wrong one (every file "added").
+        fresh = remote_freshness(remote, agent, idx_dir)
+        return CheckResult(
+            name="Index Freshness",
+            status="ok",
+            summary="freshness cannot be checked for a remote build (see notes)",
+            details=[f"Index: {idx_dir}", f"Source: {remote}"]
+            + [note[0].upper() + note[1:] for note in fresh.notes],
+        )
     repo = _repo_root_for(path, idx_dir)
     fresh = compute_freshness(repo, idx_dir, agent)
 
@@ -1160,7 +1190,16 @@ def check_parsers(path: Path) -> CheckResult:
     # indexed as text on purpose. Group them so the reader can tell "a README"
     # from "every .kt file in the repo silently fell through".
     unparsed: dict[str, int] = {}
+    # Files with syntax errors, straight off nodes.jsonl: advice that says
+    # "some files failed" without naming them sends the reader hunting.
+    offenders: list[tuple[int, str]] = []
     for node in _iter_file_nodes(idx_dir):
+        try:
+            n_err = int(node.get("parse_errors") or 0)
+        except (TypeError, ValueError):
+            n_err = 0
+        if n_err > 0:
+            offenders.append((n_err, str(node.get("path") or "")))
         if node.get("file_type") == "code":
             continue
         ext = Path(str(node.get("path") or "")).suffix.lower() or "(no extension)"
@@ -1181,6 +1220,11 @@ def check_parsers(path: Path) -> CheckResult:
 
     if failed_files:
         details.append(f"{errors} syntax error(s) across {failed_files} file(s)")
+        offenders.sort(key=lambda t: (-t[0], t[1]))
+        for n_err, rel in offenders[:MAX_PARSE_OFFENDERS]:
+            details.append(f"  {rel}: {n_err} syntax error(s)")
+        if len(offenders) > MAX_PARSE_OFFENDERS:
+            details.append(f"  ... and {len(offenders) - MAX_PARSE_OFFENDERS} more")
         ratio = failed_files / parsed if parsed else 1.0
         return CheckResult(
             name="Parser Coverage",
@@ -1188,7 +1232,8 @@ def check_parsers(path: Path) -> CheckResult:
             summary=f"{failed_files} file(s) produced parse errors",
             details=details,
             remediation=(
-                "List them with `repo2graph stats -o <out>`; a file that fails to parse still "
+                "The worst files are listed above; `repo2graph build <repo> -o <out> "
+                "--parse-policy warn` names every one on stderr. A file that fails to parse still "
                 "gets a node and text chunks but no CALLS edges. If a whole language is "
                 "affected, upgrade the grammars: pip install --upgrade tree-sitter-language-pack"
             ),

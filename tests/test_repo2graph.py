@@ -677,7 +677,9 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
         "parse.cache.json",
         "stats.json",
     ]
-    assert sorted(p.name for p in out.iterdir()) == ["agent", "human"]
+    # local.json (the machine-local source root) and the .gitignore that keeps
+    # it out of a committed index sit at the root, outside both sections.
+    assert sorted(p.name for p in out.iterdir()) == [".gitignore", "agent", "human", "local.json"]
     written = json.loads(capsys.readouterr().out)["written"]
     assert "agent/nodes.jsonl" in written and "human/overview.md" in written
 
@@ -703,7 +705,7 @@ def test_manifest_describes_the_agent_output(tmp_path, sample_repo):
     assert "agent/chunks.jsonl" in m["written"]
     assert set(m["files"]) >= {"nodes.jsonl", "edges.jsonl", "chunks.jsonl", "manifest.json"}
     assert "CALLS" in m["edge_types"] and "symbol" in m["node_types"]
-    assert m["id_grammar"]["symbol"] == "sym:<path>::<qualname>"
+    assert m["id_grammar"]["symbol"] == "sym:<path>::<qualname>[@L<line>]"
     assert any(e["qualname"] == "entry" for e in m["entrypoints"])
     assert m["how_to_read"] and m["approximations"]
 

@@ -213,3 +213,25 @@ def test_iss236_a_timeout_is_still_a_silent_return(tmp_path, monkeypatch):
     assert g.edges == []
     assert "cochange_output_capped" not in g.stats
     assert started[0].returncode is not None, "the hung child outlived the call"
+
+
+def test_chunked_duplicate_definition_keeps_its_own_children(tmp_path):
+    """Reviewer repro p3gen.py: the second `class A` lands in its own slice,
+    where it is keyed plain `A`; its `m` must hang off `A@L5`, not the first A."""
+    blk = "class A:\n    def m(self):\n        return 1\n"
+    blk = blk + "#" * (100 - len(blk) - 1) + "\n"
+    repo = tmp_path / "p3"
+    repo.mkdir()
+    (repo / "big.py").write_bytes((blk * 2).encode("utf8"))
+
+    def defines(g):
+        return {
+            (e["src"], e["dst"])
+            for e in g.edges
+            if e["type"] == "DEFINES" and e["dst"].startswith("sym:")
+        }
+
+    sliced = build(repo, config=BuildConfig(max_file_bytes=100, chunk_large_files=True))
+    whole = build(repo, config=BuildConfig(max_file_bytes=10_000, chunk_large_files=True))
+    assert ("sym:big.py::A@L5", "sym:big.py::A.m@L6") in defines(sliced)
+    assert defines(sliced) == defines(whole)
