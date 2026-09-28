@@ -717,7 +717,8 @@ def _incomplete_utf8_tail(buf: bytes) -> int:
 
 def _chunk_and_parse(rel, abspath, lang, config, size):
     chunk_size = config.max_file_bytes
-    all_symbols = []
+    # One list per parsed slice: keys are only unique within a slice.
+    slice_symbols: list[list[Symbol]] = []
     all_imports = []
     total_parse_errors = 0
     used_cpp = False
@@ -793,7 +794,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             for sym in pf.symbols:
                 sym.start_line += line_offset
                 sym.end_line += line_offset
-                all_symbols.append(sym)
+            slice_symbols.append(pf.symbols)
 
             all_imports.extend(pf.imports)
             total_parse_errors += pf.parse_errors
@@ -809,21 +810,28 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     # normally parsed one name a duplicate definition the same way (this used
     # to rewrite the *qualname* to `<qualname>_<n>` instead).
     used_keys: set[str] = set()
-    rekeyed: dict[str, str] = {}
 
-    for sym in all_symbols:
-        seen_key = (sym.name, sym.start_line)
-        if seen_key in seen:
-            continue
-        seen.add(seen_key)
+    for symbols in slice_symbols:
+        # slice-local key -> global key. Per slice, because a slice's second
+        # `class A` is keyed plain `A` inside that slice, and a child whose
+        # empty `parent_key` means "same as parent" must follow *its* `A`, not
+        # the first file-wide one.
+        rekeyed: dict[str, str] = {}
+        for sym in symbols:
+            old_key = symbol_key(sym)
+            old_parent = symbol_parent_key(sym)
+            seen_key = (sym.name, sym.start_line)
+            if seen_key in seen:
+                continue
+            seen.add(seen_key)
 
-        old_key = symbol_key(sym)
-        sym.key = disambiguate_key(sym.qualname, sym.start_line, used_keys)
-        rekeyed[old_key] = symbol_key(sym)
-        if sym.parent_key:
-            sym.parent_key = rekeyed.get(sym.parent_key, sym.parent_key)
+            sym.key = disambiguate_key(sym.qualname, sym.start_line, used_keys)
+            rekeyed[old_key] = symbol_key(sym)
+            if old_parent is not None:
+                new_parent = rekeyed.get(old_parent, old_parent)
+                sym.parent_key = "" if new_parent == sym.parent else new_parent
 
-        deduped_symbols.append(sym)
+            deduped_symbols.append(sym)
 
     pf = ChunkedParsedFile(
         lang=lang,
@@ -977,6 +985,8 @@ def _read_and_parse(item):
 # `parent::`), and PHP `scoped_call_expression` calls are recorded. A format-7
 # entry keeps a Python `parent.add()` as a super call (-> external) and drops
 # PHP `Foo::bar()` calls, so an incremental build would disagree with a full one.
+# Chunked files also re-key children per slice (a duplicate's children used to
+# attach to the first same-name definition), which changes cached parent_key.
 PARSE_CACHE_FORMAT = 8
 
 # Languages where a bare call inside a method is a call on the implicit
