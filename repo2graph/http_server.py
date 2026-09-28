@@ -638,6 +638,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     def _call_tool(self, rpc_id: Any, params: Any, identity: Any) -> None:
         """Run one tool, timing it and recording the outcome."""
+        from .mcp import ToolError
         from .query import count_tokens
 
         name = str((params or {}).get("name") or "")
@@ -709,7 +710,9 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
                 rpc_id,
                 {
                     "content": [{"type": "text", "text": text}],
-                    "isError": False,
+                    # A ToolError (bad input, unknown node/tool, git failure)
+                    # is still answered with its sentence, but flagged.
+                    "isError": isinstance(text, ToolError),
                 },
             ),
         )

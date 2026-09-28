@@ -63,7 +63,7 @@ repo2graph impact -i .repo2graph-index --diff path/to/patch.diff
 | `--json` | Convenience alias for `--format json`. | False |
 | `--sarif` | Convenience alias for `--format sarif`. | False |
 | `--max-depth <n>` | Traversal depth for reverse callers (`CALLS in`). | `2` |
-| `--min-confidence <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
+| `--min-confidence <f>`, `--min-conf <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
 | `--write <file>` | Write output to file instead of stdout. | None |
 | `--no-auto-build` | Fail instead of building an index when `--index` holds none. | False (builds) |
 

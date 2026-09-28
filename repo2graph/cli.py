@@ -4,6 +4,7 @@
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 from typing import cast
@@ -158,6 +159,7 @@ def cmd_build(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        output_dir=str(outdir),
     )
     cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
 
@@ -446,6 +448,15 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     }
 
 
+def _warn_exclude_secrets_deprecated(args) -> None:
+    """`--exclude-secrets` is accepted for compatibility; it is the default now."""
+    if getattr(args, "exclude_secrets", False):
+        sys.stderr.write(
+            "warning: --exclude-secrets is deprecated and has no effect; secret-looking "
+            "files are excluded by default (pass --include-secrets to include them)\n"
+        )
+
+
 def cmd_query(args):
     from .query import Index, format_pack
 
@@ -461,6 +472,7 @@ def cmd_query(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args)
+    _warn_exclude_secrets_deprecated(args)
     res = idx.retrieve(
         args.query,
         k=args.k,
@@ -469,6 +481,10 @@ def cmd_query(args):
         min_confidence=getattr(args, "min_conf", None),
         vectors=vectors,
         embedder=embedder,
+        # Secret-looking paths (.env, keys, credentials) are excluded unless the
+        # caller opts in *now*: an index built with --include-secrets must not
+        # hand them to every later plain query.
+        exclude_secrets=not getattr(args, "include_secrets", False),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -500,6 +516,7 @@ def _rag_index_dir(args) -> Path:
             secret_policy=getattr(args, "secret_policy", "redact-match"),
             extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
             extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+            output_dir=str(out),
         )
         g = build(tpath, config=cfg)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
@@ -543,7 +560,9 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
         "embedder_model_id": None,
         "embedder_dim": None,
-        "rag_extra_installed": None,
+        # Known without loading a model: false/true, never null, so a script
+        # can branch on it even when the index has no vectors yet.
+        "rag_extra_installed": _rag_extra_installed(),
     }
     if not idx.vectors:
         return report, (
@@ -585,6 +604,15 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
     return report, None
 
 
+def _rag_extra_installed() -> bool:
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("sentence_transformers") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def cmd_verify_rag(args):
     """`--verify-rag`: report on the index's dense path, non-zero if broken."""
     from .query import Index
@@ -620,20 +648,11 @@ def cmd_rag(args):
     except ValueError as exc:
         raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
     vectors, embedder = _resolve_vectors(idx, args, out)
-    if getattr(args, "exclude_secrets", False):
-        if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --exclude-secrets is deprecated; secret exclusion is now enabled by default\n"
-            )
-
-    include_secrets = getattr(args, "include_secrets", False)
-    exclude_secrets = (
-        args.answer
-        or getattr(args, "exclude_secrets", False)
-        or bool(
-            getattr(args, "extra_secret_keywords", None) or getattr(args, "extra_secret_dirs", None)
-        )
-    ) and not include_secrets
+    _warn_exclude_secrets_deprecated(args)
+    # Excluded by default, --answer or not: an index built with
+    # --include-secrets must not hand `.env` to every later plain `rag`.
+    # --include-secrets at *query* time is the only opt-in.
+    exclude_secrets = not getattr(args, "include_secrets", False)
 
     pack = idx.pack_context(
         args.query,
@@ -902,7 +921,7 @@ def cmd_explain(args) -> int:
         _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
         return 0 if res.get("found") else 1
     elif subcmd == "retrieval":
-        k = getattr(args, "k", 5)
+        k = getattr(args, "k", 8)
         hops = getattr(args, "hops", 1)
         conf = getattr(args, "min_confidence", None)
         res = explain_retrieval(outdir, args.query, k=k, hops=hops, min_confidence=conf)
@@ -911,6 +930,22 @@ def cmd_explain(args) -> int:
     else:
         print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
         return 1
+
+
+def _git_ref_exists(repo: Path, ref: str) -> bool:
+    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see AGENTS.md)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return True  # cannot tell: do not claim it is missing
+    return proc.returncode == 0
 
 
 def cmd_impact(args):
@@ -970,7 +1005,13 @@ def cmd_impact(args):
         try:
             diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
         except Exception as exc:
-            raise SystemExit(f"error: failed to retrieve git diff: {exc}") from None
+            hint = ""
+            if args.base == "main" and not _git_ref_exists(repo_path, "main"):
+                hint = (
+                    "\nhint: this repository has no 'main' ref; pass the branch to "
+                    "compare against, e.g. --base master or --base origin/develop"
+                )
+            raise SystemExit(f"error: failed to retrieve git diff: {exc}{hint}") from None
 
     fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
     if getattr(args, "sarif", False):
@@ -1104,7 +1145,34 @@ def _max_file_mb(value: str) -> float:
     return f
 
 
+def _utf8_stdio() -> None:
+    """Make a redirected or piped stdout/stderr UTF-8.
+
+    A Windows pipe or file gets the ANSI code page (cp1252), so `repo2graph
+    rag ... > pack.md` over a repository holding `こんにちは` wrote `?????` --
+    `_emit` kept it from crashing, but the text was gone. A console is left
+    alone (Python already writes it as UTF-16), and so is an explicit
+    PYTHONIOENCODING: that is the user choosing the encoding, and the
+    "Windows CP1252" CI job relies on it to exercise `_emit`'s fallback.
+    """
+    if os.environ.get("PYTHONIOENCODING"):
+        return
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is None or stream.isatty():
+                continue
+            enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+            if enc != "utf8" and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            continue
+
+
 def main(argv=None):
+    if argv is None:
+        # Only as the real entry point: in-process callers (tests, embedders)
+        # own their streams.
+        _utf8_stdio()
     p = argparse.ArgumentParser(
         prog="repo2graph",
         description=__doc__,
@@ -1379,13 +1447,27 @@ def main(argv=None):
         default=None,
         help="drop CALLS edges below this confidence (0.0-1.0)",
     )
+    q.add_argument(
+        "--min-confidence",
+        dest="min_conf",
+        type=_unit_float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-conf",
+    )
     q.add_argument("--format", choices=("text", "json"), default="text")
     q.add_argument("--json", action="store_true")
     q.add_argument(
         "--include-secrets",
         action="store_true",
         default=False,
-        help="include secret files in query results",
+        help="include secret-looking files (.env, keys, credentials) in results "
+        "(default: excluded, even if the index was built with --include-secrets)",
+    )
+    q.add_argument(
+        "--exclude-secrets",
+        action="store_true",
+        default=False,
+        help="deprecated no-op: secret-looking files are excluded by default",
     )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
@@ -1419,6 +1501,13 @@ def main(argv=None):
         default=1.0,
         help="drop CALLS edges below this confidence (0.0-1.0)",
     )
+    r.add_argument(
+        "--min-confidence",
+        dest="min_conf",
+        type=_unit_float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-conf",
+    )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
     r.add_argument(
@@ -1437,7 +1526,9 @@ def main(argv=None):
         "--include-secrets",
         action="store_true",
         default=False,
-        help="include sensitive secret/credential files (default: off)",
+        help="include secret-looking files (.env, keys, credentials) in the pack "
+        "(default: excluded, even if the index was built with --include-secrets); "
+        "with a source-directory target, also index them",
     )
     r.add_argument(
         "--secret-policy",
@@ -1449,7 +1540,7 @@ def main(argv=None):
         "--exclude-secrets",
         action="store_true",
         default=False,
-        help="exclude secret files from pack even when --answer is not set",
+        help="deprecated no-op: secret-looking files are excluded by default",
     )
     r.add_argument(
         "--secret-keyword",
@@ -1575,7 +1666,8 @@ def main(argv=None):
         "-r",
         "--repo",
         default=None,
-        help="source tree the index describes (default: the index directory's parent)",
+        help="source tree the index describes (default: the root the build recorded, "
+        "else the index directory's parent)",
     )
     ist.add_argument("--json", action="store_true", help="output the report as JSON")
     ist.add_argument(
@@ -1664,7 +1756,9 @@ def main(argv=None):
     exp_ret.add_argument(
         "-o", "--out", default=".r2g", help="path to index directory (default: .r2g)"
     )
-    exp_ret.add_argument("-k", type=_nonneg, default=5, help="number of seed chunks (default: 5)")
+    exp_ret.add_argument(
+        "-k", type=_nonneg, default=8, help="number of seed chunks (default: 8, as rag/query)"
+    )
     exp_ret.add_argument(
         "--hops", type=_nonneg, default=1, help="graph traversal hops (default: 1)"
     )
@@ -1673,6 +1767,13 @@ def main(argv=None):
         type=float,
         default=None,
         help="confidence threshold for CALLS edges",
+    )
+    exp_ret.add_argument(
+        "--min-conf",
+        dest="min_confidence",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-confidence",
     )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
@@ -1735,6 +1836,13 @@ def main(argv=None):
         type=float,
         default=None,
         help="minimum confidence threshold for CALLS edges",
+    )
+    imp.add_argument(
+        "--min-conf",
+        dest="min_confidence",
+        type=float,
+        default=argparse.SUPPRESS,
+        help="alias of --min-confidence",
     )
     imp.add_argument(
         "--no-auto-build",

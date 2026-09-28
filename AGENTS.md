@@ -122,8 +122,8 @@ can be seeded by a query and shipped verbatim. Treat this as the sensitive path:
   put a credential in a URL (the Gemini key moved to the `x-goog-api-key` header for exactly this
   reason) and never echo `HTTPError.url` in an error message.
 - Closed: a `--provider` flag forces a specific provider, and dotfile/secret-ish paths are
-  automatically excluded from the pack via `pack_context(exclude_secrets=args.answer)` when
-  `--answer` is on.
+  excluded from every `rag`/`query` result -- `--answer` or not -- unless `--include-secrets` is
+  passed *at query time* (a build-time `--include-secrets` no longer leaks into later reads).
 
 ## Vectors are keyed by chunk id on disk and by list index in memory
 

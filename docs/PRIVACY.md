@@ -56,6 +56,7 @@ control you give the repository.
 | `agent/chunks.jsonl` | **Source text**, one record per chunk, with its graph neighbourhood in the header | Until the next `build` |
 | `agent/parse.cache.json` | Per-file sha256 + parsed symbol/import summaries | Until the next `build` |
 | `agent/index.state.json` | Per-file sha256 | Until the next `build` |
+| `agent/manifest.json` | Build provenance, including `source_root`: the **absolute path** of the indexed tree on the build machine | Until the next `build` |
 | `agent/vectors.npy` + `.meta.json` | Embedding vectors of chunk text — not the text — plus the model id | Until the next `embed` |
 | In-memory `ResultCache` | Rendered MCP tool results, keyed on canonical JSON of the arguments | Process memory only; cleared on index rebuild or exit; **never written to disk** |
 

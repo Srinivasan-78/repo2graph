@@ -274,7 +274,12 @@ monorepo keeps all of it. The groups use `**/vendor/**`.
 ## Staleness
 
 `status.compute_freshness` runs three independent signals, cheapest first,
-each degrading to a note rather than an error:
+each degrading to a note rather than an error. They are measured against the
+source tree recorded as `source_root` (absolute) in `manifest.json` — so an index
+built with `-o` outside the repository is compared against the repository, not
+against its own parent directory. `index-status -r <repo>` overrides it; an index
+built before the field existed, or moved to where that path no longer exists,
+falls back to the index directory's parent.
 
 1. **Commit** — `manifest.json`'s recorded commit against the tree's current
    `HEAD`. One `git rev-parse`. Exact for committed state, silent on a

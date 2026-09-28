@@ -97,6 +97,26 @@ def _git_head(repo: Path) -> str | None:
     return proc.stdout.decode("utf8", "surrogateescape").strip() or None
 
 
+def stored_source_root(agent_dir: Path) -> Path | None:
+    """The source root `manifest.json` recorded, if it still exists.
+
+    None for an index built before the field existed, an unreadable manifest,
+    or a recorded root that is gone (the index was moved or shipped to
+    another machine) -- callers then fall back to the `<repo>/.r2g` heuristic.
+    """
+    try:
+        state = json.loads(
+            (Path(agent_dir) / "manifest.json").read_text(encoding="utf8", errors="replace")
+        )
+    except Exception:
+        return None
+    raw = state.get("source_root") if isinstance(state, dict) else None
+    if not raw or not isinstance(raw, str):
+        return None
+    root = Path(raw)
+    return root if root.is_dir() else None
+
+
 def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
     """Three independent signals that the index no longer matches the tree.
 
@@ -331,7 +351,10 @@ def index_status(out: Path | str, repo: Path | str | None = None) -> dict[str, A
     # tree is the index root's parent in the conventional `<repo>/.r2g` layout,
     # which is one level up from `out` in the first case and two in the second.
     index_root = out.parent if (agent == out and out.name == "agent") else out
-    repo_path = Path(repo) if repo is not None else index_root.parent
+    if repo is not None:
+        repo_path = Path(repo)
+    else:
+        repo_path = stored_source_root(agent) or index_root.parent
 
     revision = manifest.get("source_revision") or {}
     size_bytes, artifact_count = _dir_size(index_root)
