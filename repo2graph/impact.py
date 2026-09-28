@@ -528,6 +528,23 @@ def _touches_signature(node: dict[str, Any], lines: list[int], text: dict[int, s
     return any(start <= l <= last and not _is_trivial_line(text.get(l)) for l in lines)
 
 
+def _is_cosmetic(fd: FileDiff, start: int, end: int, lines: list[int]) -> bool:
+    """True when every added line in `lines` is blank or comment-only and no
+    hunk overlapping `start..end` (head side) deleted anything. Deleted text is
+    not retained, so any deletion in an overlapping hunk counts as substantive.
+    A FileDiff built without `added_text` is never cosmetic."""
+    if not fd.added_text or not all(_is_trivial_line(fd.added_text.get(l)) for l in lines):
+        return False
+    for h in fd.hunks:
+        h_end = h.new_start + max(h.new_count, 1) - 1
+        if h.new_start > end or h_end < start:
+            continue
+        context = h.new_count - len(h.added_lines)
+        if h.old_count - context > 0:
+            return False
+    return True
+
+
 def analyze_diff_impact(
     index: Index,
     diff: str | dict[str, FileDiff],
@@ -627,6 +644,12 @@ def analyze_diff_impact(
             for l in fd.added_lines
             if start_line <= l <= end_line and innermost.get((path, l), node_id) == node_id
         ]
+        if intersecting and _is_cosmetic(fd, start_line, end_line, intersecting):
+            # Only comments/blank lines were added and nothing was deleted in
+            # the hunks overlapping this symbol: behaviour cannot have changed,
+            # so it exposes no caller. A `# note` in a busy function scored
+            # HIGH 40 before this.
+            intersecting = []
         if intersecting:
             is_pub = is_public_symbol(node)
             sig_changed = _touches_signature(node, intersecting, fd.added_text)
@@ -740,6 +763,16 @@ def analyze_diff_impact(
     # 3. Impacted dependent modules via IMPORTS
     impacted_modules_set: set[str] = set()
     for changed_path in changed_file_paths:
+        fd_mod = file_diffs.get(changed_path)
+        if (
+            fd_mod is not None
+            and fd_mod.status == "modified"
+            and fd_mod.added_lines
+            and _is_cosmetic(fd_mod, 1, 10**9, sorted(fd_mod.added_lines))
+        ):
+            # Comment/blank-only edit to the whole file: its importers see the
+            # same module, so they are not impacted.
+            continue
         fid = f"file:{changed_path}"
         for neighbor_id, etype, direction, edge in index.adj.get(fid, []):
             if etype == "IMPORTS" and direction == "in":

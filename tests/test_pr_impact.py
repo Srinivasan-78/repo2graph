@@ -1984,12 +1984,20 @@ def _one_line_diff(line: int, text: str) -> str:
 
 
 def test_body_comment_is_not_a_signature_change_nor_high_risk(method_index):
+    """A comment-only hunk cannot change behaviour, so it changes no symbol and
+    exposes no caller (code-review round 3: a `# note` in a busy function
+    still scored HIGH 40 through transitive callers and modules)."""
     report = analyze_diff_impact(method_index, _one_line_diff(15, "        # changed"))
-    # the method owns the line; its enclosing class is not "changed" by it
+    assert report.symbols_changed == []
+    assert report.impacted_callers == []
+    assert report.risk_level == "LOW"
+
+
+def test_body_code_change_still_changes_the_symbol(method_index):
+    report = analyze_diff_impact(method_index, _one_line_diff(15, "        x = old or new"))
     assert [s.id for s in report.symbols_changed] == ["sym:pkg/s.py::Mixin.strip"]
     assert report.symbols_changed[0].signature_changed is False
     assert len([c for c in report.impacted_callers if c.depth == 1]) == 8
-    assert report.risk_level not in ("HIGH", "CRITICAL")
 
 
 def test_comment_on_a_definition_line_number_is_not_a_signature_change(method_index):
@@ -1998,8 +2006,8 @@ def test_comment_on_a_definition_line_number_is_not_a_signature_change(method_in
     recorded signature span (def .. body) is still only a comment."""
     for line in (10, 11):
         report = analyze_diff_impact(method_index, _one_line_diff(line, "        # changed"))
-        strip = next(s for s in report.symbols_changed if s.name == "strip")
-        assert strip.signature_changed is False, line
+        assert not any(s.signature_changed for s in report.symbols_changed), line
+        assert "strip" not in {s.name for s in report.symbols_changed}, line
 
 
 def test_definition_line_change_is_a_signature_change_and_scores_higher(method_index):
@@ -2030,3 +2038,25 @@ def test_cli_impact_rejects_text_that_is_not_a_diff(tmp_path):
     empty = tmp_path / "empty.diff"
     empty.write_text("", encoding="utf8")
     assert main(["impact", str(repo), "-o", str(out), "--diff", str(empty), "--json"]) == 0
+
+
+def test_commenting_out_code_is_not_cosmetic(method_index):
+    """Replacing a code line with a comment deletes behaviour: the deletion in the
+    overlapping hunk keeps the symbol changed even though the added line is a comment."""
+    diff = (
+        "diff --git a/pkg/s.py b/pkg/s.py\n--- a/pkg/s.py\n+++ b/pkg/s.py\n"
+        "@@ -15,1 +15,1 @@\n-        return old\n+        # return old\n"
+    )
+    report = analyze_diff_impact(method_index, diff)
+    assert [s.id for s in report.symbols_changed] == ["sym:pkg/s.py::Mixin.strip"]
+
+
+def test_comment_only_file_edit_impacts_no_importers(blast_radius_index):
+    diff = (
+        "diff --git a/pkg/hub.py b/pkg/hub.py\n--- a/pkg/hub.py\n+++ b/pkg/hub.py\n"
+        "@@ -12,0 +13,1 @@\n+    # note\n"
+    )
+    report = analyze_diff_impact(blast_radius_index, diff=diff)
+    assert report.symbols_changed == []
+    assert report.impacted_modules == []
+    assert report.risk_level == "LOW"

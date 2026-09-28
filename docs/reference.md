@@ -217,9 +217,12 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   (`Config::get()`), a Go method's own receiver (`c.find()` in
   `func (c *Cache) Lookup()`), or a top-level function reached through the file's
   imports. Decorators count as calls on their receiver (`@router.get` is a call on
-  `router`). The repo map's "Most called symbols" counts
-  only `CALLS` edges at confidence `0.5` or above; changelog hotspots and
-  entrypoint detection use the same threshold.
+  `router`). The repo map's "Most called symbols", changelog
+  hotspots and entrypoint detection count a `CALLS` edge as a real call by what it
+  is (`edgemeta.counts_as_call`): `untyped_receiver` guesses never count;
+  `self_recursive`, `same_class`, `base_class`, `same_file` and imported edges
+  always count, including an overload set's `1/n` fan-out; every other edge counts
+  at confidence `0.5` or above.
 
   Every `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`,
   `ambiguous` (true once more than one candidate splits confidence, or on an

@@ -13,110 +13,113 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
-### Fixed
+### Security
 
-- **`--include-secrets` no longer disables content redaction.** It lifts the secret-*path* refusal
-  only; chunk text is still scanned per `--secret-policy` (default `redact-match`). Agent-path
-  reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only` redact
-  returned chunks at serve time.
-- **No false self-recursion edges.** Tier 0 now needs a bare call (or a self/this receiver, or a
-  bare call in an implicit-`this` language); `current_app.url_for()` inside `url_for` or
-  `cli.main()` inside `main` is no longer a 1.0 self-loop, and an explicit `Base.method(self)`
-  resolves like `super()`. Flask self-loops 32 -> 2, moshi 193 -> 50.
-- **`base` / `parent` are super receivers only in C# / PHP.** A Python/JS/Go local named
-  `parent` no longer routes `parent.add()` to the super path; PHP `parent::f()` / `Foo::bar()`
-  scoped calls are recorded. `PARSE_CACHE_FORMAT` is now 8.
-- **Overload fan-outs count as calls.** Entrypoints, changelog hotspots and "Most called" gate on
-  the edge kind (`edgemeta.counts_as_call`): untyped-receiver and repo-wide name guesses are
-  excluded, same-class/same-file/base/imported fan-outs (3 overloads at 0.333) count.
-- **Repo map labels overloads by node key** (`O.java::O.f@L3`), not twice as `O.f`.
-- **Chunked files keep a duplicate definition's children** on that definition, not the first
-  same-name one.
-- **Fewer JSON secret false positives**: values with `://` and keys like `tokenUrl`,
-  `secretName`, `passwordField`, `api_key_header`, `tokenizer` are left alone; single-quoted dict
-  pairs and YAML `db_password: "..."` are now redacted. `auth.json` under a
-  `locales`/`i18n`/`lang`/`translations` directory is no longer a secret path.
-- **`explain retrieval` and `impact` exclude secret-looking paths by default**, as `rag`/`query`
-  do: the trace no longer lists, walks to or retrieves `.env` chunks, and `impact --json` no
-  longer names a changed `.env`. `--include-secrets` opts back in on both.
-- **No absolute build path in shipped artifacts.** `manifest.json`'s `source_root` moved to a
-  machine-local `local.json` at the index root, with a generated `.gitignore`; the GitHub Action
-  excludes it from `artifact-name` uploads and `commit-branch` pushes. Older indexes still read.
-- **`repo2graph github` indexes are no longer "[STALE] N added".** They record
-  `source_remote: github:owner/repo@<sha>`; `index-status`/`doctor` report freshness as not
-  checkable and suggest `repo2graph github owner/repo -o <dir>`, not `build <cwd>`.
-- **`impact`: "Signature Changed" means the definition line(s).** Blank/comment-only lines never
-  count, a changed line is charged to its innermost symbol (a method edit no longer marks its
-  class), and a body-only change's direct callers score 1, not 3, and do not trip the 8-caller
-  HIGH trigger (a comment in a busy function was HIGH 27; now MEDIUM).
-- **`impact --diff` / MCP `repo_impact` reject text that is not a unified diff** (isError /
-  non-zero exit) instead of reporting LOW RISK; MCP `format: "sarif"` works, and an unknown
-  format is an isError listing the allowed four.
-- **MCP `repo_build_status`** with no, or an unknown, `task_id` (or on a synchronous server) is
-  now `isError: true`; a non-numeric `k`/`hops`/`limit`/`budget_tokens`/`max_depth` still takes
-  the default but the reply starts with a one-line `_note:` naming it.
-- **`explain-path` mirrors discovery for index directories**: the build's `-o` (new `-o/--out`,
-  default `.r2g`) and any directory holding a repo2graph manifest are reported EXCLUDED.
-- **`demo` question 4 shows the direct caller.** `place_order -> OrderStore.insert` exists at
-  low confidence (untyped receiver, name shared with a test double) so search never walked it;
-  the demo now lists the node's CALLS-in edges via `explain node`, caption updated to match.
-- **A compressed `rag` neighbour cites the lines it shows** (`[cite: f.py:12-12] ... [excerpt
-  of 12-40]`, `excerpt_of` in JSON) instead of the whole span; unmappable cases are marked
-  `[header and first line only, of A-B]`.
-- **`scripts/bench_real_repos.py` labels results with the source tree's version** (pyproject,
-  not a possibly stale dist-info) and records `repo2graph_commit` / `repo2graph_dirty`.
-- **Docs:** `build --max-call-candidates` / `--max-nodes`, `query --vectors` / `--embed-model`
-  and the new flags are in `docs/cli.md`; quickstart shows `build`'s real absolute `out`.
+- **Terraform state and vendor credential files are secret paths.** `*.tfstate`,
+  `*.tfstate.backup`, `*.tfvars` (and `.auto.tfvars`, `.tfvars.json`), `htpasswd`, `wp-config.php`,
+  `credentials.yml.enc`, `key.json`, Firebase `*adminsdk*` keys and `auth.json` (except under a
+  `locales`/`i18n`/`lang`/`translations`/`messages` directory) are no longer indexed. JSON,
+  single-quoted dict and YAML `"password": "..."`-style pairs are redacted in chunk text; values
+  containing `://` and keys such as `tokenUrl`, `secretName`, `passwordField` are left alone.
+- **`--include-secrets` no longer disables content redaction.** It lifts the secret-*path*
+  refusal only; chunk text is still scanned per `--secret-policy` (default `redact-match`).
+  Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
+  are redacted at serve time.
+- **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
+  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
+- **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
+  escaped `RecursionError` and a dropped connection.
+- **`events.emit` fails closed**: if the sanitiser itself raises, field values are dropped
+  rather than written raw to stderr.
+- **The prod-igy PR-comment sanitiser escapes every `&` and `<`** and defangs every `//`, `]:`
+  reference definition and `www.`, so protocol-relative and entity-encoded links cannot survive
+  in model-written comments. Code spans now show `&lt;`/`&amp;` literally.
+- **No absolute build path in shipped artifacts.** The source root lives in a machine-local
+  `local.json` beside the index (with a generated `.gitignore`); the GitHub Action excludes it
+  from artifact uploads and `commit-branch` pushes.
 
-- **Kotlin functions are indexed.** `_name_of` did not recognise Kotlin's `simple_identifier`
-  function name, so no `fun` ever became a symbol and every member's calls were attributed to
-  its class. Top-level, member, `object` and companion functions are now symbols (companion
-  members qualify on the class, `A.make`); extension functions qualify on their receiver type
-  (`String.ext`); `interface` declarations get kind `interface`.
-- **Go methods are qualified by receiver type.** `func (a *A) Run()` and `func (b B) Run()` in one
-  file were both `Run`, so they shared a node id and one body vanished from `chunks.jsonl`. Methods
-  are now `A.Run` / `B.Run` (pointer and generic parameters stripped), and a call on the receiver
-  (`a.step()`) resolves through the `same_class` tier to `A.step` — across files of the package.
-- **Same-qualname definitions no longer collapse into one node.** Overloads (Java/C#/Kotlin/Swift/
-  Scala/C++), conditional redefinitions (Python/JS/Bash), and Rust `struct A` + `impl A` produced
-  one node and one chunk for several bodies. The first definition keeps its id; each later one
-  gets `sym:<path>::<qualname>@L<line>` (manifest `id_grammar` now reads
-  `sym:<path>::<qualname>[@L<line>]`). The same-class tier returns the whole overload set, so a
-  call fans out at `1/n`. Oversized (chunked) files use the same `@L` scheme instead of renaming
-  the qualname `<qualname>_<n>`. TypeScript overload signatures stay unindexed; the
-  implementation is the symbol. `PARSE_CACHE_FORMAT` is now 7. Committed `examples/` graphs
-  (e.g. `examples/kubernetes`) are pinned artifacts and were not regenerated, so their Go method
-  ids still show the old bare form.
+### Fixed — indexing and call resolution
 
-- **Builtin method calls on untyped receivers no longer bind to in-repo methods at full
-  confidence.** `os.environ.get(k)` reduced to the name `get` and was bound to any `get` method
-  nearby at confidence 1.0; on Flask that ranked `_AppCtxGlobals.get` the second most-called
-  symbol from dict lookups alone. The parser now records each call's receiver (`none` / `self` /
-  `other`); when every call of a builtin-collection method name (`get`, `pop`, `append`, `items`,
-  `join`, `then`, …) is on an untyped receiver, the edge is kept but marked `untyped_receiver`,
-  `ambiguous`, and capped at confidence 0.2. The repo map's "Most called symbols" counts only
-  `CALLS` edges at confidence ≥ 0.5. New stat `calls_untyped_receiver`.
+- **No definition is silently dropped.** Same-name definitions in one file (overloads,
+  conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
+  one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
+  get `sym:<path>::<qualname>@L<line>` (`id_grammar`: `sym:<path>::<qualname>[@L<line>]`).
+- **Kotlin functions are indexed** (top-level, member, `object`, companion as `A.make`, extension
+  functions as `String.ext`); previously no `fun` became a symbol.
+- **Go methods are qualified by receiver type** (`A.Run`, `B.Run`), and `a.step()` inside a
+  method resolves through `same_class` to `A.step`. Committed `examples/` graphs are pinned
+  artifacts and were not regenerated, so their Go method ids keep the old bare form.
+- **Builtin method calls on untyped receivers are priced as guesses.** `os.environ.get(k)` was
+  bound to any in-repo `get` at confidence 1.0 (on Flask, `_AppCtxGlobals.get` ranked second most
+  called from dict lookups alone). When every call of a builtin-collection method name is on a
+  receiver of unknown type, the edge is kept but marked `untyped_receiver`/`ambiguous` at 0.2.
+  Calls whose receiver names where the candidate lives are exempt: an imported module
+  (`store.get()`), a type (`Util.remove()`), a `::` scope, a Go method's own receiver. Kotlin,
+  Swift and C# (PascalCase) receivers are covered; decorators count as calls on their receiver.
+  New stat `calls_untyped_receiver`.
+- **No false self-recursion.** `current_app.url_for()` inside `url_for` or `cli.main()` inside
+  `main` was a 1.0 self-loop; tier 0 now needs a bare or self call. `super()` and explicit
+  `Base.method(self)` resolve to the nearest in-repo base class (`resolution_kind: base_class`)
+  instead of looping to the caller. `base`/`parent` are super receivers only in C#/PHP. Flask
+  self-loops 57 → 2 (both genuine recursion).
+- **What counts as a call** for "Most called symbols", changelog hotspots and entrypoints is
+  decided by edge kind (`edgemeta.counts_as_call`): untyped-receiver guesses never count;
+  same-class/same-file/base/imported edges, including an overload set's `1/n` fan-out, always
+  count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
+- **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
+  said 50); the request is kept as `cochange_requested_commits`.
+- `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
+
+### Fixed — CLI, MCP and impact
+
+- **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
+  manifest; `explain-path` gained `-o/--out` and reports the same rule.
+- **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
+  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
+- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
+  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
+- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
+  definition line(s); a changed line is charged to its innermost symbol; a comment- or
+  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
+  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
+  not a unified diff is an error, not LOW RISK.
+- **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
+  source root) and for `repo2graph github` builds (reported as not checkable, with the right
+  refresh command).
+- **Piped output is UTF-8 on Windows**, so non-ASCII source survives `rag | …` (an explicit
+  `PYTHONIOENCODING` is respected).
+- **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
+  in JSON).
+- **`demo` question 4 shows the direct caller** via `explain node`.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
+  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
+  `rag_extra_installed` as a boolean.
 
 ### Changed
 
-- **Benchmark claims replaced with a real-repository retrieval benchmark.**
-  `docs/retrieval-benchmark.md`, `benchmarks/real/` and `scripts/bench_real_repos.py` score
-  repo2graph against a grep-then-read baseline at equal token budgets on 35 questions about
-  Flask, requests, FastAPI and Hono. repo2graph currently loses at 4k and 8k tokens; the
-  write-up says so and diagnoses why. The synthetic `benchmarks/corpus/` suite is now described
-  as the regression gate it is (`docs/regression-suite.md`), and its "100% vs ripgrep 80%"
-  comparison is withdrawn.
-- **README cut from 649 to ~150 lines**, with a comparison against Serena, Aider's repo map,
-  CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code in `docs/comparison.md`.
-- **Repository root tidied.** `PR_IMPACT.md`, `TECHNICAL.md` and `LANGUAGE_SUPPORT.md` moved to
-  `docs/` (`POSITIONING.md` was later removed); `CLAUDE.md` moved to `.claude/CLAUDE.md`; the root
-  `SECURITY.md` stub removed (`.github/SECURITY.md` is canonical).
+- **Benchmark claims replaced with a real-repository retrieval benchmark**
+  (`docs/retrieval-benchmark.md`, `benchmarks/real/`, `scripts/bench_real_repos.py`): 35 questions
+  about Flask, requests, FastAPI and Hono, repo2graph vs grep-then-read at equal token budgets.
+  repo2graph currently loses (30/39/52% vs 35/61/72% at 2k/4k/8k tokens) and graph expansion adds
+  no recall; the page says so, diagnoses why, and records a scorer correction. The synthetic
+  `benchmarks/corpus/` suite is documented as the regression gate it is
+  (`docs/regression-suite.md`) and its "100% vs ripgrep 80%" comparison is withdrawn.
+- **Docs made to match behaviour**: README cut from 649 to ~150 lines; `docs/comparison.md`
+  covers Serena, Aider, CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code;
+  claims that graph expansion beats search were removed; `docs/cli.md` documents every flag
+  (checked by a test).
+- **Repository layout**: `PR_IMPACT.md`, `TECHNICAL.md`, `LANGUAGE_SUPPORT.md` moved into `docs/`;
+  `CLAUDE.md` into `.claude/`; `rfc-incremental-indexing.md` into `docs/rfcs/`.
 
 ### Removed
 
-- Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`); they are
-  now gitignored. Still available in git history.
-- The five translated READMEs and `tests/test_i18n_consistency.py`.
+- Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`), now
+  gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
+  `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root
+  `SECURITY.md` stub; the five translated READMEs and their drift test. All remain in git history.
 
 ## [2.2.0] — 2026-09-26
 
