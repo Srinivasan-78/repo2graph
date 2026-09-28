@@ -1892,3 +1892,29 @@ def test_get_git_diff_falls_back_to_two_dot_when_there_is_no_merge_base(tmp_path
     assert text.strip(), "fallback returned an empty diff for unrelated histories"
     files = parse_unified_diff(text)
     assert set(files) == {"one.py", "two.py"}, sorted(files)
+
+
+def test_cli_impact_excludes_secret_paths_by_default(tmp_path, capsys):
+    """CLI `impact` used to default exclude_secrets=False and list `.env` in JSON."""
+    from repo2graph.cli import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def run():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "idx"
+    assert main(["build", str(repo), "-o", str(out)]) == 0
+    diff = tmp_path / "pr.diff"
+    diff.write_text(
+        "diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1,0 +1,1 @@\n+TOKEN=x\n"
+        "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -2,0 +2,1 @@\n+    x = 2\n",
+        encoding="utf8",
+    )
+    capsys.readouterr()
+    assert main(["impact", str(repo), "-o", str(out), "--diff", str(diff), "--json"]) == 0
+    default = capsys.readouterr().out
+    assert ".env" not in default
+    assert "app.py" in default
+
+    argv = ["impact", str(repo), "-o", str(out), "--diff", str(diff), "--json"]
+    assert main([*argv, "--include-secrets"]) == 0
+    assert ".env" in capsys.readouterr().out

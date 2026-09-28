@@ -924,7 +924,18 @@ def cmd_explain(args) -> int:
         k = getattr(args, "k", 8)
         hops = getattr(args, "hops", 1)
         conf = getattr(args, "min_confidence", None)
-        res = explain_retrieval(outdir, args.query, k=k, hops=hops, min_confidence=conf)
+        res = explain_retrieval(
+            outdir,
+            args.query,
+            k=k,
+            hops=hops,
+            min_confidence=conf,
+            # The same query-time default as rag/query: a trace must not name
+            # a `.env` that the retrieval it explains would never return.
+            exclude_secrets=not getattr(args, "include_secrets", False),
+            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
+            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        )
         _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
         return 0
     else:
@@ -1024,6 +1035,9 @@ def cmd_impact(args):
         head=getattr(args, "head", None) or "HEAD",
         max_depth=getattr(args, "max_depth", 2),
         min_confidence=getattr(args, "min_confidence", None),
+        # Excluded by default, as `rag`/`query` do and as `repo_impact` over
+        # MCP always does: a changed `.env` must not be listed by path.
+        exclude_secrets=not getattr(args, "include_secrets", False),
     )
 
     if fmt == "json":
@@ -1775,6 +1789,29 @@ def main(argv=None):
         default=argparse.SUPPRESS,
         help="alias of --min-confidence",
     )
+    exp_ret.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="trace secret-looking paths (.env, keys, credentials) too "
+        "(default: excluded, as rag/query do)",
+    )
+    exp_ret.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        metavar="KEYWORD",
+        help="additional keyword to treat as a secret path (repeatable)",
+    )
+    exp_ret.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        metavar="DIR",
+        help="additional directory name to treat as a secret path (repeatable)",
+    )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
 
@@ -1843,6 +1880,13 @@ def main(argv=None):
         type=float,
         default=argparse.SUPPRESS,
         help="alias of --min-confidence",
+    )
+    imp.add_argument(
+        "--include-secrets",
+        action="store_true",
+        default=False,
+        help="report changes to secret-looking paths (.env, keys, credentials) too "
+        "(default: excluded from the report, as rag/query and MCP repo_impact do)",
     )
     imp.add_argument(
         "--no-auto-build",

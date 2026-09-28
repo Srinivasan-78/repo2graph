@@ -66,6 +66,7 @@ repo2graph impact -i .repo2graph-index --diff path/to/patch.diff
 | `--min-confidence <f>`, `--min-conf <f>` | Minimum edge confidence filter (`0.0` - `1.0`). | `None` |
 | `--write <file>` | Write output to file instead of stdout. | None |
 | `--no-auto-build` | Fail instead of building an index when `--index` holds none. | False (builds) |
+| `--include-secrets` | Also report changes to secret-looking paths (`.env`, keys, credentials). Without it they are dropped from the report, as `rag`/`query` do and as MCP `repo_impact` always does. | False (excluded) |
 
 ### Examples
 
