@@ -339,6 +339,9 @@ def index_github(
             cochange_min=cochange_min,
         )
         g.name = f"{owner}/{repo}"
+        # The clone is deleted below, so there is no local tree for
+        # index-status/doctor to compare against: record the remote instead.
+        setattr(g, "source_remote", f"github:{owner}/{repo}@{sha}")  # not a Graph field
         chunks = None if no_chunks else iter_chunks(g)  # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
         # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,

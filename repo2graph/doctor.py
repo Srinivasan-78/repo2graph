@@ -1077,9 +1077,30 @@ def check_index_freshness(path: Path) -> CheckResult:
             details=[f"Build one with: repo2graph build {path} -o {path}/.r2g"],
         )
 
-    from .status import compute_freshness
+    from .status import (
+        compute_freshness,
+        remote_freshness,
+        stored_remote_source,
+        stored_source_root,
+    )
 
     agent = _agent_dir(idx_dir)
+    remote = (
+        stored_remote_source(agent)
+        if idx_dir == path and stored_source_root(agent) is None
+        else None
+    )
+    if remote:
+        # Built by `repo2graph github`: the clone is gone, so any local tree
+        # this could compare against is the wrong one (every file "added").
+        fresh = remote_freshness(remote, agent, idx_dir)
+        return CheckResult(
+            name="Index Freshness",
+            status="ok",
+            summary="freshness cannot be checked for a remote build (see notes)",
+            details=[f"Index: {idx_dir}", f"Source: {remote}"]
+            + [note[0].upper() + note[1:] for note in fresh.notes],
+        )
     repo = _repo_root_for(path, idx_dir)
     fresh = compute_freshness(repo, idx_dir, agent)
 
