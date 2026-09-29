@@ -1,8 +1,7 @@
 # Issue triage and labels
 
 How an issue gets classified here, what each label means, and what has to be true before an issue
-is workable. The most recent full pass is
-[docs/issue-triage-2026-09-25.md](issue-triage-2026-09-25.md).
+is workable.
 
 ---
 
@@ -94,8 +93,7 @@ Current starter tasks with full acceptance criteria and code pointers:
 
 ## 4. Proposed label taxonomy
 
-The repository has **61 labels** with four duplicated axes. Nothing below has been applied; the
-commands are in [issue-triage-2026-09-25.md §8](issue-triage-2026-09-25.md#8-applying-this).
+The repository has **61 labels** with four duplicated axes. Nothing below has been applied yet.
 
 ### 4.1 To create
 

@@ -207,6 +207,7 @@ LANG_CFG: dict[str, LangConfig] = {
         "call_types": {
             "function_call_expression",
             "member_call_expression",
+            "scoped_call_expression",
             "object_creation_expression",
         },
         "import_types": {"namespace_use_declaration"},
@@ -217,6 +218,9 @@ LANG_CFG: dict[str, LangConfig] = {
             "function_declaration": "function",
             "class_declaration": "class",
             "object_declaration": "object",
+            "secondary_constructor": "method",
+            "getter": "method",
+            "setter": "method",
         },
         "call_types": {"call_expression"},
         "import_types": {"import_header"},
@@ -328,6 +332,42 @@ class BuildConfig:
     extra_secret_keywords: list[str] = field(default_factory=list)
     extra_secret_dirs: list[str] = field(default_factory=list)
     parse_policy: str = "best-effort"
+    # The directory this build writes its artifacts to. When it lies inside
+    # the indexed root, discovery must never index it: `git ls-files -co`
+    # lists untracked files and os.walk sees everything, so without this a
+    # second `build . -o .r2g` cites its own chunks.jsonl / manifest.json.
+    output_dir: str | None = None
+
+
+# `<out>/agent/manifest.json` whose "format" starts with this marks a repo2graph index.
+INDEX_MARKER_FORMAT = "repo2graph/"
+
+
+def _is_index_dir(d: Path) -> bool:
+    """True when `d` is a repo2graph output directory (any build, any -o)."""
+    manifest = d / "agent" / "manifest.json"
+    try:
+        if not manifest.is_file() or manifest.stat().st_size > 5_000_000:
+            return False
+        import json
+
+        with open(manifest, encoding="utf8", errors="replace") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and str(data.get("format", "")).startswith(INDEX_MARKER_FORMAT)
+
+
+def _output_rel_prefix(root: Path, config: "BuildConfig") -> tuple[str, ...] | None:
+    """The configured output dir's path parts relative to `root`, if inside it."""
+    if not config.output_dir:
+        return None
+    try:
+        out = Path(config.output_dir).resolve()
+        rel = out.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return rel.parts or None
 
 
 def _git_files(root: Path):
@@ -496,10 +536,29 @@ def discover(
     # the same cross-machine divergence one level down.
     files = sorted(files, key=lambda p: p.as_posix())
 
+    out_parts = _output_rel_prefix(root, config)
+    index_dir_cache: dict[tuple[str, ...], bool] = {}
+
+    def _inside_index(parts: tuple[str, ...]) -> bool:
+        # Never index a repo2graph output directory: the one this build writes
+        # to (explicit), or any directory an earlier build left behind (marker).
+        if out_parts is not None and parts[: len(out_parts)] == out_parts:
+            return True
+        for i in range(1, len(parts)):
+            prefix = parts[:i]
+            hit = index_dir_cache.get(prefix)
+            if hit is None:
+                hit = index_dir_cache[prefix] = _is_index_dir(root.joinpath(*prefix))
+            if hit:
+                return True
+        return False
+
     for abspath in files:
         try:
             rel = abspath.relative_to(root)
         except ValueError:
+            continue
+        if _inside_index(rel.parts):
             continue
         # A skip_dirs hit is either a hidden/dot directory (.git, .idea, ...)
         # or a vendor/build directory (node_modules, dist, target, ...); tell
@@ -592,6 +651,48 @@ class Symbol:
     bases: list[str] = field(default_factory=list)
     call_details: list[dict] = field(default_factory=list)
     base_details: list[dict] = field(default_factory=list)
+    # Unique-in-file id key when `qualname` alone is not unique (overloads,
+    # conditional redefinitions): "" means "same as qualname", which is every
+    # first definition, so the common-case node id never changes. A later
+    # duplicate gets `<qualname>@L<start_line>` -- see `symbol_key`.
+    key: str = ""
+    # The enclosing symbol's `key` when that differs from `parent` (a child of
+    # a duplicate definition); "" means "same as parent".
+    parent_key: str = ""
+
+
+def symbol_key(sym: Symbol) -> str:
+    """The part of a symbol's node id after `sym:<path>::`.
+
+    Equal to `qualname` for every first definition of a name in a file; a later
+    definition with the same qualname (Java/C#/Kotlin/Swift/C++ overloads, a
+    Python conditional redefinition) carries `@L<line>` so it gets a node and
+    a chunk of its own instead of silently collapsing into the first one.
+    """
+    return sym.key or sym.qualname
+
+
+def symbol_parent_key(sym: Symbol) -> str | None:
+    """The `symbol_key` of the enclosing symbol, or None for a file-level one."""
+    return sym.parent_key or sym.parent
+
+
+def disambiguate_key(qualname: str, line: int, used: set[str]) -> str:
+    """Empty string if `qualname` is still free in `used`, else a stable `@L<line>` key.
+
+    Deterministic: depends only on source order and line numbers. Two same-named
+    definitions on one line (minified code) fall back to `@L<line>~<n>`.
+    """
+    if qualname not in used:
+        used.add(qualname)
+        return ""
+    key = f"{qualname}@L{line}"
+    n = 2
+    while key in used:
+        key = f"{qualname}@L{line}~{n}"
+        n += 1
+    used.add(key)
+    return key
 
 
 @dataclass
@@ -620,6 +721,22 @@ def _name_of(src: bytes, node, lang: str) -> str | None:
     n = node.child_by_field_name("name")
     if n is not None:
         return _text(src, n).strip()
+    if lang == "kotlin":
+        if node.type == "secondary_constructor":
+            return "constructor"
+        if node.type == "getter":
+            return "get"
+        if node.type == "setter":
+            return "set"
+        if node.type == "function_declaration":
+            # tree-sitter-kotlin exposes no `name` field and names a function with
+            # a `simple_identifier` child, which the generic fallback below does not
+            # recognise -- so no Kotlin `fun` was ever indexed and every member's
+            # calls were absorbed by its class.
+            for c in node.children:
+                if c.type == "simple_identifier":
+                    return _text(src, c).strip()
+            return None
     if lang == "rust" and node.type == "impl_item":
         t = node.child_by_field_name("type")
         return _text(src, t) if t is not None else None
@@ -683,6 +800,171 @@ def _callee_name(src: bytes, node) -> str | None:
     # ISS-05: Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
+
+
+# Receivers that name the calling object itself. A call on one of these can be
+# resolved against the enclosing class; a call on anything else has a receiver
+# whose type the parser does not know.
+_SELF_RECEIVERS = frozenset(
+    {"self", "cls", "this", "super", "super()", "$this", "Self", "static", "@"}
+)
+
+# `base` / `parent` are keywords in exactly one language each and ordinary
+# identifiers everywhere else: a Python/JS/Go local named `parent`
+# (`parent.add(self)`) is a value of unknown type, not the base class. So they
+# only classify as "self" in their own language -- C#'s `base.F()` and PHP's
+# static `parent::f()`.
+_LANG_SELF_RECEIVERS: dict[str, frozenset[str]] = {"csharp": frozenset({"base"})}
+_LANG_STATIC_SELF_RECEIVERS: dict[str, frozenset[str]] = {"php": frozenset({"parent"})}
+
+
+# Receivers that name the *base* implementation, not the calling object:
+# `super().__init__()` never means the calling method itself. graph.build
+# consults this only for calls already classified "self", which `base` and
+# `parent` are only in C# and PHP respectively (see above).
+SUPER_RECEIVERS = frozenset({"super", "super()", "base", "parent"})
+
+
+def _split_receiver_text(txt: str) -> tuple[str, bool]:
+    """Split callee text like `a.b.get` into (`a.b`, static_scope).
+
+    `static_scope` is True when the last separator is `::` (`Config::get`,
+    `std::find`, Ruby `Foo::bar`): the head names a type or namespace, never a
+    value of unknown type. Returns ("", False) for a bare name.
+    """
+    cut, sep = -1, ""
+    for s in (".", "->", "::"):
+        i = txt.rfind(s)
+        if i > cut:
+            cut, sep = i, s
+    if cut <= 0:
+        return "", False
+    return txt[:cut].strip().rstrip("?").strip(), sep == "::"
+
+
+def _receiver_of(src: bytes, node) -> tuple[str, bool]:
+    """(receiver head text, static_scope) of a call node; ("", False) if bare."""
+    recv = (
+        node.child_by_field_name("object")
+        or node.child_by_field_name("receiver")
+        # PHP `scoped_call_expression`: `parent::f()`, `Foo::bar()`
+        or node.child_by_field_name("scope")
+    )
+    if recv is None and node.child_by_field_name("function") is None and node.named_child_count:
+        # Kotlin/Swift: `call_expression` has no `function` field; a member
+        # call's first child is a `navigation_expression` whose first child is
+        # the target (`list` in `list.add(1)`).
+        first = node.named_children[0]
+        if first.type == "navigation_expression" and first.named_child_count:
+            recv = first.child_by_field_name("target") or first.named_children[0]
+    if recv is not None:
+        head = _text(src, recv).strip().rstrip("?").strip()
+        # Ruby's `call` keeps `::` / `.` as a bare token between the receiver
+        # and the method field.
+        meth = node.child_by_field_name("method") or node.child_by_field_name("name")
+        gap = src[recv.end_byte : meth.start_byte] if meth is not None else b""
+        return head, b"::" in gap
+    fn = node.child_by_field_name("function")
+    if fn is None:
+        return "", False
+    return _split_receiver_text(_text(src, fn).strip())
+
+
+def _classify_receiver(
+    head: str,
+    self_names: frozenset[str] = frozenset(),
+    lang: str = "",
+    static: bool = False,
+) -> str:
+    if not head:
+        return "none"
+    if head in _SELF_RECEIVERS or head in self_names or head.startswith("super("):
+        return "self"
+    if head in _LANG_SELF_RECEIVERS.get(lang, ()):
+        return "self"
+    if static and head in _LANG_STATIC_SELF_RECEIVERS.get(lang, ()):
+        return "self"
+    return "other"
+
+
+def _receiver_fields(
+    head: str, static: bool, self_names: frozenset[str] = frozenset(), lang: str = ""
+) -> dict:
+    """The receiver keys of one `call_details` entry.
+
+    "receiver" is always present (none/self/other). "receiver_head" is the
+    receiver's source text when there is one, so `graph.build` can tell an
+    imported module (`store.get()`) or a type (`Util.remove()`) from a value of
+    unknown type (`d.get()`); "receiver_static" marks a `::`-scoped call.
+    """
+    out: dict = {"receiver": _classify_receiver(head, self_names, lang, static)}
+    if head:
+        out["receiver_head"] = head[:200]
+    if static:
+        out["receiver_static"] = True
+    return out
+
+
+def _receiver_kind(src: bytes, node) -> str:
+    """Classify what a call is made on: "none", "self" or "other".
+
+    "none" is a bare call (`helper()`), "self" is a call on the calling object
+    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
+    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
+    drops the receiver, so without this `graph.build` cannot tell
+    `self.get()` from `some_dict.get()`.
+    """
+    return _classify_receiver(_receiver_of(src, node)[0])
+
+
+def _go_receiver_name(src: bytes, node) -> str | None:
+    """The receiver identifier of a Go `func (c *T) M()` -- Go's `self`."""
+    params = node.child_by_field_name("receiver")
+    if params is None:
+        return None
+    for p in params.named_children:
+        name = p.child_by_field_name("name")
+        if name is not None:
+            return _text(src, name).strip() or None
+    return None
+
+
+def _clean_type_name(txt: str) -> str | None:
+    """`*List[T]` / `Map<K, V>?` / `(T)` -> `List` / `Map` / `T`."""
+    txt = txt.strip().lstrip("*&(").rstrip(")?").strip()
+    txt = txt.split("[")[0].split("<")[0].strip().lstrip("*").strip()
+    return txt or None
+
+
+def _go_receiver_type(src: bytes, node) -> str | None:
+    """The receiver type of a Go `func (c *T[K]) M()`, pointer/generics stripped."""
+    params = node.child_by_field_name("receiver")
+    if params is None:
+        return None
+    for p in params.named_children:
+        t = p.child_by_field_name("type")
+        if t is not None:
+            return _clean_type_name(_text(src, t))
+    return None
+
+
+def _kotlin_receiver_type(src: bytes, node) -> str | None:
+    """The receiver type of a Kotlin extension `fun Foo<T>.bar()`, or None."""
+    for c in node.children:
+        if c.type == "receiver_type":
+            return _clean_type_name(_text(src, c))
+    return None
+
+
+def _decorator_receiver(src: bytes, node) -> dict:
+    """Receiver keys for a decorator/annotation entry.
+
+    `@router.get("/x")` is a call of `get` on `router`. Without these keys the
+    entry looked receiver-less -- a typed call -- and kept every untyped
+    `d.get()` in the decorated function bound at 1.0.
+    """
+    txt = _text(src, node).strip().lstrip("@").split("(")[0].strip()
+    return _receiver_fields(*_split_receiver_text(txt))
 
 
 _ATTR_OR_COMMENT_TYPES = (
@@ -1264,6 +1546,11 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     # Explicit stack rather than recursion: tree-sitter trees nest deeply enough
     # (long chained expressions, big literals) to blow the interpreter's limit.
     stack: list[tuple[Node, tuple[str, ...], Symbol | None]] = [(tree.root_node, (), None)]
+    # id(Go method symbol) -> its receiver identifier: `c.find()` inside
+    # `func (c *Cache) Lookup()` is a call on the calling object.
+    go_self: dict[int, frozenset[str]] = {}
+    # symbol keys already taken in this file -- see `disambiguate_key`.
+    used_keys: set[str] = set()
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -1303,8 +1590,16 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 elif callee in DYNAMIC_CALLEES.get(lang, frozenset()):
                     call_kind = "dynamic"
                 owner.calls.append(callee)
+                recv_head, recv_static = _receiver_of(source, node)
                 owner.call_details.append(
-                    {"name": callee, "kind": call_kind, "line": node.start_point[0] + 1}
+                    {
+                        "name": callee,
+                        "kind": call_kind,
+                        "line": node.start_point[0] + 1,
+                        **_receiver_fields(
+                            recv_head, recv_static, go_self.get(id(owner), frozenset()), lang
+                        ),
+                    }
                 )
         kind = kind_map.get(ntype)
         child_scope, child_owner = scope, owner
@@ -1320,18 +1615,42 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     kind = None
                 else:
                     kind = "function"
+            if kind and lang == "kotlin" and ntype == "class_declaration":
+                if any(c.type == "interface" for c in node.children):
+                    kind = "interface"
             if kind and name:
                 bases_list, base_details = _bases_with_details(source, node, lang)
                 # Every base in one class header cites that header's line.
                 for _bd in base_details:
                     _bd["line"] = node.start_point[0] + 1
+                # Receiver-qualified top-level methods: a Go method and a Kotlin
+                # extension function are declared outside their type, so the
+                # lexical scope alone would give `func (a *A) Run()` and
+                # `func (b B) Run()` the same qualname `Run` -- one node id, one
+                # chunk, and the other body gone. Qualify them as
+                # `<ReceiverType>.<name>`, like every other language's methods,
+                # so the same_class tier can resolve `a.step()` to `A.step`.
+                sym_scope = scope
+                recv_type = None
+                if lang == "go" and ntype == "method_declaration":
+                    recv_type = _go_receiver_type(source, node)
+                elif lang == "kotlin" and ntype == "function_declaration" and not scope:
+                    recv_type = _kotlin_receiver_type(source, node)
+                if recv_type:
+                    sym_scope = scope + (recv_type,)
+                qualname = ".".join(sym_scope + (name,))
+                start_line = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,
-                    qualname=".".join(scope + (name,)),
+                    qualname=qualname,
                     kind=kind,
-                    start_line=node.start_point[0] + 1,
+                    start_line=start_line,
                     end_line=node.end_point[0] + 1,
-                    parent=".".join(scope) or None,
+                    parent=".".join(sym_scope) or None,
+                    key=disambiguate_key(qualname, start_line, used_keys),
+                    parent_key=(
+                        owner.key if owner is not None and owner.key and not recv_type else ""
+                    ),
                     signature=_signature(source, node),
                     docstring=_docstring(source, node, lang),
                     bases=bases_list,
@@ -1357,6 +1676,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                                         "name": dec_text,
                                         "kind": "decorator",
                                         "line": child.start_point[0] + 1,
+                                        **_decorator_receiver(source, child),
                                     }
                                 )
                 else:
@@ -1371,11 +1691,16 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                                     "name": ann_text,
                                     "kind": "decorator",
                                     "line": prev.start_point[0] + 1,
+                                    **_decorator_receiver(source, prev),
                                 }
                             )
 
+                if lang == "go" and ntype == "method_declaration":
+                    go_recv = _go_receiver_name(source, node)
+                    if go_recv:
+                        go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
-                child_scope, child_owner = scope + (name,), sym
+                child_scope, child_owner = sym_scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
         # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order

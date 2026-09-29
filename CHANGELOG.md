@@ -13,6 +13,252 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Added
+
+- **Four new MCP tools**, taking the surface from six to ten
+  ([#384](https://github.com/Srinivasan-78/repo2graph/issues/384),
+  [#385](https://github.com/Srinivasan-78/repo2graph/issues/385),
+  [#386](https://github.com/Srinivasan-78/repo2graph/issues/386),
+  [#387](https://github.com/Srinivasan-78/repo2graph/issues/387)):
+  - `repo_find_symbol` — name to `node_id`, so an agent that already knows a function name (from a
+    traceback, a review comment, the user's question) no longer has to spend a budgeted
+    `repo_search` round trip purely to learn an id format. Matches exactly, then
+    case-insensitively, then on the last `qualname` segment.
+  - `repo_read` — widen a `[cite: path:start-end]` window. Reads from `chunks.jsonl`, **never from
+    disk**: chunks have already passed secret-path exclusion and content redaction, and over HTTP
+    the client cannot open the path a citation names anyway. `file_residual` chunks concatenate
+    non-contiguous spans, so a read covered only by one answers "not indexed" rather than
+    returning the wrong lines.
+  - `repo_path_between` — bounded bidirectional BFS over the existing adjacency, reporting each
+    path's minimum edge confidence. `CO_CHANGE` is opt-in, never traversed by default.
+  - `repo_blast_radius` — reverse reachability: the reverse `CALLS` closure by hop distance,
+    reverse `INHERITS`, reverse `IMPORTS` on the containing file, and `CO_CHANGE` files by count.
+    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because `repo_impact`
+    already exists and analyses a PR diff — a different question.
+- **MCP server flags for the HTTP transport's new limits**: `--http-insecure-ok`, `--trust-proxy`,
+  `--trusted-proxies`, and `--rate-limit-requests` / `--rate-limit-window` /
+  `--max-concurrent-requests` / `--max-queue-size` / `--max-concurrent-builds` /
+  `--max-response-bytes`. A `RateLimitConfig` is built only when at least one is passed, so
+  untouched fields keep their single set of defaults rather than a second, driftable copy.
+
+### Security
+
+- **Rate limiting and concurrency quotas for HTTP MCP**
+  ([#264](https://github.com/Srinivasan-78/repo2graph/issues/264)): a per-client sliding window,
+  a server-wide concurrency semaphore with a bounded queue and bounded wait, an independent
+  build-concurrency gate, and a response-size cap. Client identity comes from the verified auth
+  subject where there is one, so a shared bearer token does not pool every caller into one bucket.
+  Overload answers in the JSON-RPC implementation-defined error range, not as a malformed-request
+  error. The limiter's own identity map is bounded by `max_tracked_clients` — its own knob, since
+  eviction from it is not a throttle: it clears a client's history and grants a fresh allowance.
+- **Content type is validated on `POST`**
+  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `application/json` with
+  optional parameters, case-insensitively. A *missing* Content-Type is refused rather than assumed
+  — `urllib` silently sends `x-www-form-urlencoded` when a caller sets no header, which is exactly
+  the misconfigured client this check exists to catch.
+- **Strict JSON-RPC envelope validation**
+  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `jsonrpc` version, method type
+  and length, id type and numeric range, params schema, body length, nesting depth, duplicate
+  top-level keys, non-finite JSON constants, and strict UTF-8 decoding. Errors are bounded and
+  structured; no stack trace reaches a caller.
+- **TLS and trusted-proxy rules for remote binds**
+  ([#267](https://github.com/Srinivasan-78/repo2graph/issues/267)): binding non-loopback with
+  authentication configured prints a high-visibility banner and emits an
+  `http_transport_no_tls_termination` event unless explicitly acknowledged — this server does not
+  terminate TLS, so a bearer credential travels in clear without a proxy in front of it.
+  `X-Forwarded-For` is ignored by default and consulted only when `--trust-proxy` is set *and* the
+  immediate peer is in the allowlist, and never for authentication.
+- **`Host` and `Origin` are checked on `GET` and `HEAD`**, not only `POST`
+  ([#372](https://github.com/Srinivasan-78/repo2graph/issues/372)), so a page in the user's browser
+  cannot read the discovery documents or `/healthz` cross-origin. Those stay unauthenticated by
+  necessity — a client must learn how to authenticate before it holds a credential.
+- **RSA keys below 2048 bits, and unbounded public exponents, fail verification**
+  ([#367](https://github.com/Srinivasan-78/repo2graph/issues/367)). Both fail closed exactly as a
+  bad signature does, so a caller cannot tell a weak key from a forged one.
+- **JSONL index reads are bounded on the untrusted-index path**
+  ([#408](https://github.com/Srinivasan-78/repo2graph/issues/408)). An index is untrusted input —
+  shipped on a `graph` branch, as Action artifacts and in `examples/`. Lines are framed over fixed
+  blocks rather than by `for line in fh`, which reads until a newline and so allocates a
+  newline-less file whole *before* any per-line ceiling could measure it; peak memory is now the
+  ceiling plus one block. A total-bytes ceiling applies to the verification path
+  (`integrity`, `doctor`) only — `chunks.jsonl` is the repository's own text and is legitimately
+  large on a monorepo, so a wrong constant there would break real indexes on the `query` path.
+
+- **Terraform state and vendor credential files are secret paths.** `*.tfstate`,
+  `*.tfstate.backup`, `*.tfvars` (and `.auto.tfvars`, `.tfvars.json`), `htpasswd`, `wp-config.php`,
+  `credentials.yml.enc`, `key.json`, Firebase `*adminsdk*` keys and `auth.json` (except under a
+  `locales`/`i18n`/`lang`/`translations`/`messages` directory) are no longer indexed. JSON,
+  single-quoted dict and YAML `"password": "..."`-style pairs are redacted in chunk text; values
+  containing `://` and keys such as `tokenUrl`, `secretName`, `passwordField` are left alone.
+- **`--include-secrets` no longer disables content redaction.** It lifts the secret-*path*
+  refusal only; chunk text is still scanned per `--secret-policy` (default `redact-match`).
+  Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
+  are redacted at serve time.
+- **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
+  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
+- **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
+  escaped `RecursionError` and a dropped connection.
+- **`events.emit` fails closed**: if the sanitiser itself raises, field values are dropped
+  rather than written raw to stderr.
+- **The prod-igy PR-comment sanitiser escapes every `&` and `<`** and defangs every `//`, `]:`
+  reference definition and `www.`, so protocol-relative and entity-encoded links cannot survive
+  in model-written comments. Code spans now show `&lt;`/`&amp;` literally.
+- **No absolute build path in shipped artifacts.** The source root lives in a machine-local
+  `local.json` beside the index (with a generated `.gitignore`); the GitHub Action excludes it
+  from artifact uploads and `commit-branch` pushes.
+- **Minimum RSA modulus size (2048-bit) and public exponent bound (64-bit) in `rsa_verify`**:
+  Keys with modulus under 2048 bits and public exponents exceeding 64 bits fail closed immediately,
+  mitigating weak-key exploitation and DoS via large-exponent modular exponentiation (#367).
+- **Content-Security-Policy on generated `graph.html`**: `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">`
+  is now included in the page head, eliminating external resource exfiltration risks (#370).
+- **Host and Origin check on GET and HEAD requests**: Discovery endpoints (`/.well-known/...`)
+  and `/healthz` validate `Host` and `Origin` headers before responding, closing DNS rebinding
+  and cross-origin reading vectors for unauthenticated routes (#372).
+- **Cypher label and relationship type quoting**: Labels and relationship types in `write_cypher`
+  are validated against `^[A-Za-z_][A-Za-z0-9_]*$` and backtick-quoted to prevent Cypher syntax breakouts (#371).
+- **Escaped `U+2028` and `U+2029` in JSONL artifact writers**: `write_jsonl` escapes Unicode line and
+  paragraph separators as `\u2028` and `\u2029`, preventing downstream tools using `str.splitlines()`
+  from desynchronizing or tearing records (#376).
+
+### Fixed — indexing and call resolution
+
+- **No definition is silently dropped.** Same-name definitions in one file (overloads,
+  conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
+  one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
+  get `sym:<path>::<qualname>@L<line>` (`id_grammar`: `sym:<path>::<qualname>[@L<line>]`).
+- **Kotlin functions are indexed** (top-level, member, `object`, companion as `A.make`, extension
+  functions as `String.ext`); previously no `fun` became a symbol.
+- **Go methods are qualified by receiver type** (`A.Run`, `B.Run`), and `a.step()` inside a
+  method resolves through `same_class` to `A.step`. Committed `examples/` graphs are pinned
+  artifacts and were not regenerated, so their Go method ids keep the old bare form.
+- **Builtin method calls on untyped receivers are priced as guesses.** `os.environ.get(k)` was
+  bound to any in-repo `get` at confidence 1.0 (on Flask, `_AppCtxGlobals.get` ranked second most
+  called from dict lookups alone). When every call of a builtin-collection method name is on a
+  receiver of unknown type, the edge is kept but marked `untyped_receiver`/`ambiguous` at 0.2.
+  Calls whose receiver names where the candidate lives are exempt: an imported module
+  (`store.get()`), a type (`Util.remove()`), a `::` scope, a Go method's own receiver. Kotlin,
+  Swift and C# (PascalCase) receivers are covered; decorators count as calls on their receiver.
+  New stat `calls_untyped_receiver`.
+- **No false self-recursion.** `current_app.url_for()` inside `url_for` or `cli.main()` inside
+  `main` was a 1.0 self-loop; tier 0 now needs a bare or self call. `super()` and explicit
+  `Base.method(self)` resolve to the nearest in-repo base class (`resolution_kind: base_class`)
+  instead of looping to the caller. `base`/`parent` are super receivers only in C#/PHP. Flask
+  self-loops 57 → 2 (both genuine recursion).
+- **What counts as a call** for "Most called symbols", changelog hotspots and entrypoints is
+  decided by edge kind (`edgemeta.counts_as_call`): untyped-receiver guesses never count;
+  same-class/same-file/base/imported edges, including an overload set's `1/n` fan-out, always
+  count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
+- **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
+  said 50); the request is kept as `cochange_requested_commits`.
+- `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
+
+### Fixed — CLI, MCP and impact
+
+- **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
+  manifest; `explain-path` gained `-o/--out` and reports the same rule.
+- **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
+  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
+- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
+  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
+- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
+  definition line(s); a changed line is charged to its innermost symbol; a comment- or
+  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
+  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
+  not a unified diff is an error, not LOW RISK.
+- **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
+  source root) and for `repo2graph github` builds (reported as not checkable, with the right
+  refresh command).
+- **Piped output is UTF-8 on Windows**, so non-ASCII source survives `rag | …` (an explicit
+  `PYTHONIOENCODING` is respected).
+- **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
+  in JSON).
+- **`demo` question 4 shows the direct caller** via `explain node`.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
+  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
+  `rag_extra_installed` as a boolean.
+
+### Fixed — MCP SDK, staleness and annotations
+
+- **MCP SDK 1.x is no longer accepted**
+  ([#407](https://github.com/Srinivasan-78/repo2graph/issues/407),
+  [#291](https://github.com/Srinivasan-78/repo2graph/issues/291)). Under mcp 1.30.0 the server
+  never answered its first tool call on the parallel path — deterministic, ~240s to time out —
+  while 2.x answered in under two seconds. The range was advertised as supported, half of it was
+  broken, and nothing ran against it, because CI resolved fresh from PyPI and always got 2.x while
+  `uv.lock` pinned 1.30.0. `SDK_SPEC`, the `pyproject.toml` extra, the `_unusable_sdk()` message
+  and `docs/mcp.md` now all say `mcp>=2.0,<3.0`; a 1.x install is refused by name at startup with
+  the installed version and the required range; and every start emits an `mcp_sdk_version`
+  diagnostic. `serve()`'s 1.x decorator branch is gone.
+- **Three stdio round-trip tests were silently skipping on every supported install.**
+  `HAS_REAL_MCP` gated on `hasattr(Server, "list_tools")`, which is only ever true for the *now
+  unsupported* 1.x — so the live-subprocess coverage never ran against the SDK anyone actually
+  has. Fixing the gate surfaced a second latent bug: the installed SDK exposes `input_schema` /
+  `read_only_hint`, not the older `inputSchema` / `readOnlyHint`.
+- **The index can go stale against the working tree, and now says so**
+  ([#383](https://github.com/Srinivasan-78/repo2graph/issues/383)). Reload detection compared the
+  index against *itself* at an earlier moment; nothing compared it against the source. Every answer
+  carries a `[cite: path:start-end]` anchor, so a stale index produces line numbers that are
+  confidently wrong — they name real lines holding different code. `repo_map` now warns, reusing
+  `status.compute_freshness()` (which already reads `index.state.json`'s per-file hashes and gates
+  hashing on mtime) and the existing result-cache TTL rather than adding a second mechanism.
+- **Tool annotations are honest about auto-build**
+  ([#292](https://github.com/Srinivasan-78/repo2graph/issues/292)). A server that can build
+  advertised `readOnlyHint: true` while its first tool call could parse the whole repository, run
+  git and write `.r2g/**`. `tools/list` is answered once per server lifetime, so the annotation now
+  reflects that server's build capability. Both transports route through one
+  `tool_annotations(name, auto_build)` helper — the HTTP handler previously assembled the block
+  itself and would otherwise have kept lying whenever an operator opted into auto-build.
+- **`repo2graph.__version__` no longer reports a stale installed dist-info**
+  ([#340](https://github.com/Srinivasan-78/repo2graph/issues/340)) when run from a source checkout:
+  the checkout's own `pyproject.toml` wins, and `importlib.metadata` answers only for a genuinely
+  installed package.
+- **Single-character identifiers are searchable**
+  ([#378](https://github.com/Srinivasan-78/repo2graph/issues/378)). `TOKEN_RE` requires two or more
+  characters, so a symbol literally named `T` or `A` returned a silent zero result. Only a
+  *declared name* that is one identifier character is admitted; free-text tokenization is
+  unchanged, so the index does not fill with postings for every stray `a` and `i` in body text.
+- **`_fit_lines` is no longer quadratic**
+  ([#345](https://github.com/Srinivasan-78/repo2graph/issues/345)) when `measure is len`, with
+  byte-identical output and unchanged semantics for an arbitrary `measure`.
+
+### Changed
+
+- **The HTTP transport advertises the protocol revision it actually implements**
+  ([#390](https://github.com/Srinivasan-78/repo2graph/issues/390)): `2024-11-05`, not `2025-06-18`.
+  That later revision's HTTP transport *is* Streamable HTTP — one endpoint, `Mcp-Session-Id`,
+  `Last-Event-ID`, `text/event-stream` — and what is served is plain JSON-RPC over `POST` with
+  `Content-Length` framing and a deliberate per-request connection close. Implementing Streamable
+  HTTP would mean giving up that close-per-request desync defence and holding a thread per open
+  stream, so it is tracked separately; advertising accurately is the part that was free.
+- **Node and edge type descriptions have one definition**
+  ([#349](https://github.com/Srinivasan-78/repo2graph/issues/349)), in `viz.py`, imported by
+  `export.py`. The two copies had already drifted. `manifest.json` keeps the richer `export.py`
+  wording, so its bytes are unchanged; the `graph.html` legend picks it up. Issue #349 assumed this
+  needed a third leaf module, but only the `viz.py → export.py` direction is a cycle.
+- **Benchmark claims replaced with a real-repository retrieval benchmark**
+  (`docs/retrieval-benchmark.md`, `benchmarks/real/`, `scripts/bench_real_repos.py`): 35 questions
+  about Flask, requests, FastAPI and Hono, repo2graph vs grep-then-read at equal token budgets.
+  repo2graph currently loses (30/39/52% vs 35/61/72% at 2k/4k/8k tokens) and graph expansion adds
+  no recall; the page says so, diagnoses why, and records a scorer correction. The synthetic
+  `benchmarks/corpus/` suite is documented as the regression gate it is
+  (`docs/regression-suite.md`) and its "100% vs ripgrep 80%" comparison is withdrawn.
+- **Docs made to match behaviour**: README cut from 649 to ~150 lines; `docs/comparison.md`
+  covers Serena, Aider, CodeGraphContext, code-graph-rag, Sourcegraph, Cursor and Claude Code;
+  claims that graph expansion beats search were removed; `docs/cli.md` documents every flag
+  (checked by a test).
+- **Repository layout**: `PR_IMPACT.md`, `TECHNICAL.md`, `LANGUAGE_SUPPORT.md` moved into `docs/`;
+  `CLAUDE.md` into `.claude/`; `rfc-incremental-indexing.md` into `docs/rfcs/`.
+
+### Removed
+
+- Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`), now
+  gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
+  `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root
+  `SECURITY.md` stub; the five translated READMEs and their drift test. All remain in git history.
+
 ## [2.2.0] — 2026-09-26
 
 ### Added
@@ -996,7 +1242,7 @@ makes keeping it current a release-blocking step rather than a good intention.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
   [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
-  [docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md),
+  `docs/PRODUCTION_READINESS.md` (since removed),
   [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
   [docs/PRIVACY.md](docs/PRIVACY.md) and
   [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).

@@ -3,7 +3,7 @@
 How `repo2graph` performs at scale and in query evaluation:
 
 1. **Large-Scale Public Repository Corpus (this page):** Build performance, indexing throughput, node/edge density, and parser error rates against five real, large, public repositories ([examples/](../examples/)).
-2. **Reproducible Archetype Benchmark & Evaluation Suite ([BENCHMARK.md](../BENCHMARK.md)):** End-to-end repository-understanding evaluation across 25 tasks and 5 application archetypes (`benchmarks/corpus/`), measuring query correctness (100%), source-citation precision (97.9%), query latency (1.82ms), and context footprint against `ripgrep` and agent baseline search.
+2. **Retrieval quality on real repositories ([retrieval-benchmark.md](retrieval-benchmark.md)):** 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, repo2graph vs a grep-then-read baseline at equal token budgets. Includes where repo2graph loses. The smaller synthetic suite in `benchmarks/corpus/` is a regression gate only ([regression-suite.md](regression-suite.md)).
 3. **Synthetic Throughput & Self-Hosting ([docs/PERFORMANCE.md](PERFORMANCE.md)):** Hardware-controlled parser throughput isolated from repository structure.
 
 ## Methodology

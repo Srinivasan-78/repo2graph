@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import threading
@@ -19,8 +20,16 @@ from typing import IO, TYPE_CHECKING, Any
 # edgemeta is stdlib-only (typing), so importing it here does not pull the
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
-from .edgemeta import EDGE_SCHEMA_VERSION
-from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
+from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
+from .viz import (
+    EDGE_TYPES,
+    MAX_NODES,
+    NODE_COLORS,
+    NODE_TYPES,
+    OTHER_COLOR,
+    node_label,
+    write_html,
+)
 
 if TYPE_CHECKING:
     # Type-only: `graph` imports the tree-sitter stack, and this module is the
@@ -135,7 +144,12 @@ def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
     n = 0
     with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for r in rows:
-            fh.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+            line = (
+                json.dumps(r, ensure_ascii=False, default=str)
+                .replace("\u2028", "\\u2028")
+                .replace("\u2029", "\\u2029")
+            )
+            fh.write(line + "\n")
             n += 1
     return n
 
@@ -484,13 +498,22 @@ def _cy_key(k: str) -> str:
     return "`" + k.replace("`", "``") + "`"
 
 
+def _cy_label(value: str) -> str:
+    """Backtick-quote a label/reltype. Types are internal constants; anything
+    else reaching here is a bug, not a value to escape our way out of."""
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError(f"not a valid Cypher label: {value!r}")
+    return "`" + value + "`"
+
+
 def write_cypher(g: "Graph", path: Path) -> None:
     lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
-        lab = n["type"].capitalize()
+        lab = _cy_label(n["type"].capitalize())
         props = ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in n.items() if k != "type")
         lines.append(f"MERGE (n:R2G:{lab} {{id: {_cy(nid)}}}) SET n += {{{props}}};")
     for e in g.edges:
+        rel_type = _cy_label(e["type"])
         edge_props = {k: v for k, v in e.items() if k not in ("src", "dst", "type")}
         pstr = (
             (" {" + ", ".join(f"{_cy_key(k)}: {_cy(v)}" for k, v in edge_props.items()) + "}")
@@ -499,7 +522,7 @@ def write_cypher(g: "Graph", path: Path) -> None:
         )
         lines.append(
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
-            f"MERGE (a)-[:{e['type']}{pstr}]->(b);"
+            f"MERGE (a)-[:{rel_type}{pstr}]->(b);"
         )
     # newline="\n" on every artifact writer (ISS-28): a Windows rebuild must
     # produce the same bytes as a Linux CI run, or the commit-branch push is all
@@ -514,6 +537,12 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     outdeg: Counter[str] = Counter()
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
+            # A guess (a builtin method name on an untyped receiver, or a
+            # repo-wide name split) is not a call. Counting guesses is what
+            # ranked Flask's `_AppCtxGlobals.get` second by `dict.get`s.
+            # Overload fan-outs still count: see edgemeta.counts_as_call.
+            if e["type"] == "CALLS" and not counts_as_call(e):
+                continue
             indeg[e["dst"]] += 1
             outdeg[e["src"]] += 1
     files = [n for n in g.nodes.values() if n["type"] == "file"]
@@ -535,7 +564,10 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
     out += [f"- {n['path']} (in={indeg[n['id']]})" for n in hubs if indeg[n["id"]]]
     out += ["", "## Most called symbols"]
     out += [
-        f"- {n['path']}::{n['qualname']} ({n['kind']}, in={indeg[n['id']]})"
+        # The node id minus `sym:` -- `path::qualname` for a first definition,
+        # `path::qualname@L<line>` for a later one (an overload), so two
+        # overloads never print the same label (chunks.label does the same).
+        f"- {n['id'].removeprefix('sym:')} ({n['kind']}, in={indeg[n['id']]})"
         for n in key_syms
         if indeg[n["id"]]
     ]
@@ -688,24 +720,10 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
         fh.write("\n".join(out) + "\n")
 
 
-NODE_TYPES = {
-    "repo": "the repository itself; one per index",
-    "dir": "a directory",
-    "file": "a source, doc or config file",
-    "symbol": "a function, method, class, struct, trait, interface, type or module",
-    "module": "an import target that is not a file in this repo",
-    "external": "a call target that could not be resolved in this repo (stdlib or third-party)",
-}
-
-EDGE_TYPES = {
-    "CONTAINS": "repo -> dir -> file",
-    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
-    "IMPORTS": "file -> file (internal: true) or file -> module",
-    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
-    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
-    "INHERITS": "symbol -> base class or interface",
-    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
-}
+# NODE_TYPES / EDGE_TYPES (issue #349): one definition, in viz.py -- see the
+# comment there for why that's the direction that avoids a circular import --
+# imported above so both this module's manifest.json and viz.py's own legend
+# panel describe the same six node types and seven edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
 # and docs/OUTPUT_SCHEMA.md. Written into manifest.json so a consumer reading
@@ -730,6 +748,10 @@ EDGE_FIELDS = {
     ),
     "candidate_count": "how many definitions the name could have meant (CALLS, INHERITS)",
     "ambiguous": "present and true when the name matched more than one definition",
+    "untyped_receiver": (
+        "present and true when a builtin-collection method name (get, pop, append, ...) was "
+        "called on a receiver of unknown type; confidence is capped at 0.2"
+    ),
     "count": "how many times this relationship occurs; `evidence` cites the first",
 }
 
@@ -737,10 +759,15 @@ ID_GRAMMAR = {
     "repo": "repo:<name>",
     "dir": "dir:<path>",
     "file": "file:<path>",
-    "symbol": "sym:<path>::<qualname>",
+    "symbol": "sym:<path>::<qualname>[@L<line>]",
     "module": "module:<import target>",
     "external": "external:<name>",
-    "note": "Ids are stable and constructible by hand; paths are relative to the repo root.",
+    "note": (
+        "Ids are stable and constructible by hand; paths are relative to the repo root. "
+        "A symbol id is sym:<path>::<qualname> for the first definition of a qualname in a "
+        "file; a later definition with the same qualname (an overload, a conditional "
+        "redefinition) appends @L<start_line> so every definition keeps its own node and chunk."
+    ),
 }
 
 FILE_NOTES = {
@@ -896,6 +923,13 @@ def write_manifest(
         "source_revision": source_revision,
         "checksums": checksums or {},
         "repo": g.name,
+        # No absolute `source_root` here: this file ships (committed `.r2g`,
+        # Action artifacts, orphan branches), and the build machine's path is
+        # not the reader's business. It lives in the machine-local LOCAL_FILE
+        # beside the index instead. A remote build (`repo2graph github`)
+        # records where it came from -- `github:owner/repo@sha` -- because its
+        # temp clone is gone and there is no local tree to compare against.
+        "source_remote": getattr(g, "source_remote", None),
         "written": written,
         "secret_filter_policy": secret_filter_policy,
         "sections": {
@@ -943,6 +977,7 @@ def write_manifest(
             "calls_unique_global": g.stats.get("calls_unique_global", 0),
             "calls_ambiguous": g.stats.get("calls_ambiguous", 0),
             "calls_external": g.stats.get("calls_external", 0),
+            "calls_untyped_receiver": g.stats.get("calls_untyped_receiver", 0),
         },
         "entrypoints": [
             {
@@ -1214,12 +1249,47 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     shutil.rmtree(backup, ignore_errors=True)
 
 
+#: Machine-local build facts, at the index root (not under agent/ or human/).
+#: Never shipped: the GitHub Action strips it from uploads and pushes, and the
+#: index root's own `.gitignore` keeps it out of a committed `.r2g`.
+LOCAL_FILE = "local.json"
+_LOCAL_GITIGNORE = (
+    f"# written by repo2graph: machine-local build facts, never commit them\n{LOCAL_FILE}\n"
+)
+
+
+def write_local(g: Any, index_root: Path) -> None:
+    """Write LOCAL_FILE (the absolute source root) plus a `.gitignore` for it.
+
+    `index-status` and `doctor <index>` read the root so an `-o` outside the
+    repo is not mistaken for "the index's parent is the source tree". A remote
+    build has no surviving tree, so it records none.
+    """
+    root = getattr(g, "root", None)
+    local = {
+        "note": "machine-local; do not commit or ship (see docs/PRIVACY.md)",
+        "source_root": (
+            str(Path(root).resolve()) if root and not getattr(g, "source_remote", None) else None
+        ),
+    }
+    index_root = Path(index_root)
+    with atomic_write(index_root / LOCAL_FILE, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(local, indent=2) + "\n")
+    ignore = index_root / ".gitignore"
+    if not ignore.exists():
+        with atomic_write(ignore, "w", encoding="utf8", newline="\n") as fh:
+            fh.write(_LOCAL_GITIGNORE)
+
+
 # Files produced by commands OTHER than dump_all (embed, github) that must be
 # preserved when the staging dir is swapped in over the real outdir.
 _PRESERVE_ACROSS_BUILDS = (
     "agent/vectors.npy",
     "agent/vectors.meta.json",
     "agent/index.json",
+    # A user's own edits to the index root's .gitignore survive a rebuild;
+    # write_local only creates one where none exists.
+    ".gitignore",
 )
 
 
@@ -1307,6 +1377,7 @@ def dump_all(
             pass  # Checksum failure is non-fatal; manifest still gets written
 
         write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
+        write_local(g, staging_dir)
 
         # All writes succeeded: swap staging -> outdir atomically
         _atomic_dir_swap(staging_dir, outdir)

@@ -4,11 +4,11 @@
 **Status:** Canonical Strategy & Roadmap  
 **Date:** 2026-09-26  
 **Related RFCs:**  
-- [RFC: Ecosystem Relationship Graph Expansion](docs/rfcs/rfc-framework-relationship-graph.md)  
-- [RFC: Deep TypeScript / JavaScript Support](docs/rfcs/rfc-language-deep-support-typescript.md)  
-- [RFC: Deep Python Support](docs/rfcs/rfc-language-deep-support-python.md)  
-- [RFC: Strategic Tier 2 Support — JVM vs. Go](docs/rfcs/rfc-language-deep-support-jvm-go.md)  
-- [Prioritized Language Roadmap Issues](docs/ROADMAP_LANGUAGE_ISSUES.md)  
+- [RFC: Ecosystem Relationship Graph Expansion](rfcs/rfc-framework-relationship-graph.md)  
+- [RFC: Deep TypeScript / JavaScript Support](rfcs/rfc-language-deep-support-typescript.md)  
+- [RFC: Deep Python Support](rfcs/rfc-language-deep-support-python.md)  
+- [RFC: Strategic Tier 2 Support — JVM vs. Go](rfcs/rfc-language-deep-support-jvm-go.md)  
+- [Prioritized Language Roadmap Issues](ROADMAP_LANGUAGE_ISSUES.md)  
 
 ---
 
@@ -26,7 +26,7 @@ This document establishes a **strategic roadmap for language support**:
 1. It inspects current repository test coverage, parser failure rates, and feature parity.
 2. It establishes a prioritized tiering order: **Tier 1 (TypeScript/JavaScript, Python)** followed by **Tier 2 (Java/Kotlin, then Go)** based on actual repository capabilities.
 3. It outlines ecosystem-aware extraction opportunities across routes, test links, package imports, DI, configuration, and ORMs.
-4. It delivers the **Language Quality Scorecard** methodology and runnable generator ([`generate_language_scorecard.py`](scripts/generate_language_scorecard.py)).
+4. It delivers the **Language Quality Scorecard** methodology and runnable generator ([`generate_language_scorecard.py`](../scripts/generate_language_scorecard.py)).
 5. It formalizes weak and missing capabilities into tracked RFCs and roadmap issues.
 
 ---
@@ -35,15 +35,15 @@ This document establishes a **strategic roadmap for language support**:
 
 ### 2.1 Parser Failure Rates (Empirical Benchmark Corpus)
 
-From empirical runs across five large open-source repositories ([`docs/limitations.md`](docs/limitations.md) and [`benchmarks/results.json`](benchmarks/results.json)), parser failure rates divide sharply along language paradigms:
+From empirical runs across five large open-source repositories ([`docs/limitations.md`](limitations.md) and [`benchmarks/results.json`](../benchmarks/results.json)), parser failure rates divide sharply along language paradigms:
 
 | Repository | Primary Language | Files Indexed | Files with Parse Errors | Total `parse_errors` | Preprocessor Fallback | Failure Characterization |
 |---|---|---:|---:|---:|---:|---|
-| [Linux kernel](examples/linux/) | C | 3,660 | **1,356 (37.0%)** | 14,631 | 65 files | Severe macro preprocessor divergence (`SYSCALL_DEFINE`, conditional compilation). |
-| [TensorFlow](examples/tensorflow/) | C++ / Python | 1,022 | **325 (31.8%)** | 12,473 | 6 files | Heavy C++ template metaprogramming & macro headers. |
-| [Kubernetes](examples/kubernetes/) | Go | 1,084 | **30 (2.8%)** | 260 | N/A | Clean AST grammar; minor syntax errors in generated clients. |
-| [Django](examples/django/) | Python | 5,629 | **2 (0.04%)** | 11 | N/A | Near-zero parser failure; AST grammar matches modern syntax flawlessly. |
-| [VS Code](examples/vscode/) | TypeScript | 6,000 | **4 (0.07%)** | 6 | N/A | Near-zero parser failure; handles JSX, generics, and type aliases cleanly. |
+| [Linux kernel](../examples/linux) | C | 3,660 | **1,356 (37.0%)** | 14,631 | 65 files | Severe macro preprocessor divergence (`SYSCALL_DEFINE`, conditional compilation). |
+| [TensorFlow](../examples/tensorflow) | C++ / Python | 1,022 | **325 (31.8%)** | 12,473 | 6 files | Heavy C++ template metaprogramming & macro headers. |
+| [Kubernetes](../examples/kubernetes) | Go | 1,084 | **30 (2.8%)** | 260 | N/A | Clean AST grammar; minor syntax errors in generated clients. |
+| [Django](../examples/django) | Python | 5,629 | **2 (0.04%)** | 11 | N/A | Near-zero parser failure; AST grammar matches modern syntax flawlessly. |
+| [VS Code](../examples/vscode) | TypeScript | 6,000 | **4 (0.07%)** | 6 | N/A | Near-zero parser failure; handles JSX, generics, and type aliases cleanly. |
 
 **Key Finding:** C and C++ require active preprocessor mitigation and will always exhibit non-trivial tree-sitter `ERROR` nodes. Conversely, **TypeScript, Python, and Go exhibit near-zero parser errors (<0.1%–2.8%)**, making them ideal foundations for high-confidence semantic relationship graphs.
 
@@ -55,11 +55,11 @@ Call-name ambiguity rates from the benchmark corpus reveal how symbol reuse affe
 
 | Repository | Primary Language | `CALLS` Edges | Resolved by Scope (Tiers 0–4) | Ambiguous (Matched >1 Candidate) | Ambiguity Rate |
 |---|---|---:|---:|---:|---:|
-| [TensorFlow](examples/tensorflow/) | C++ / Python | 58,556 | 24,989 | 12,487 | 21.3% |
-| [Django](examples/django/) | Python | 189,381 | 35,938 | 35,338 | 18.7% |
-| [VS Code](examples/vscode/) | TypeScript | 450,921 | 137,142 | 82,225 | **18.2%** |
-| [Kubernetes](examples/kubernetes/) | Go | 62,630 | 17,059 | 10,948 | 17.5% |
-| [Linux kernel](examples/linux/) | C | 68,785 | 47,205 | 3,155 | 4.6% |
+| [TensorFlow](../examples/tensorflow) | C++ / Python | 58,556 | 24,989 | 12,487 | 21.3% |
+| [Django](../examples/django) | Python | 189,381 | 35,938 | 35,338 | 18.7% |
+| [VS Code](../examples/vscode) | TypeScript | 450,921 | 137,142 | 82,225 | **18.2%** |
+| [Kubernetes](../examples/kubernetes) | Go | 62,630 | 17,059 | 10,948 | 17.5% |
+| [Linux kernel](../examples/linux) | C | 68,785 | 47,205 | 3,155 | 4.6% |
 
 **Key Finding:** In modern object-oriented and functional codebases (TypeScript, Python, Java), **18–21% of calls remain ambiguous** after name matching. In VS Code, method names like `dispose()`, `register()`, and `getId()` appear on hundreds of unrelated types. Resolving this ambiguity requires **type-aware import tracking, interface implementation graphs, and dependency injection linking**.
 
@@ -73,15 +73,15 @@ An audit of `tests/` reveals severe imbalances in dedicated unit tests across th
 |---|---|---|---|
 | **Python** | 6 files | 6 functions + all E2E fixtures | Comprehensive E2E coverage; unit tests for specific edge cases. |
 | **Go** | 3 files | 15 functions (`_test.go` filtering, `go.mod` module path) | Strong import testing; zero route/struct embedding tests. |
-| **C / C++** | 3 files | 10 functions ([`test_cpp_parse.py`](tests/test_cpp_parse.py)) | High coverage of cpp preprocessor fallback and `#377` header sniffing. |
+| **C / C++** | 3 files | 10 functions ([`test_cpp_parse.py`](../tests/test_cpp_parse.py)) | High coverage of cpp preprocessor fallback and `#377` header sniffing. |
 | **PHP** | 3 files | 4 functions (`\` namespace separator, import aliases) | Good targeted regression coverage. |
 | **Ruby** | 3 files | 3 functions (method receiver stripping, require/load) | Moderate coverage. |
 | **Bash** | 5 files | 3 functions (`source`, `.`, surrogateescape encoding) | Moderate coverage. |
-| **Lua** | 2 files | 2 functions ([`test_parse_lua_extracts_functions_and_calls`](tests/test_repo2graph.py#L213)) | Good baseline coverage for a Tier 4 language. |
+| **Lua** | 2 files | 2 functions ([`test_parse_lua_extracts_functions_and_calls`](../tests/test_repo2graph.py#L213)) | Good baseline coverage for a Tier 4 language. |
 | **Swift** | 3 files | 2 functions (import details, symbol extraction) | Moderate coverage. |
 | **CSharp** | 3 files | 2 functions (`using` directives, import aliases) | Low coverage. |
 | **JavaScript** | 3 files | 2 functions (symbol/arrow functions, relative imports) | Low coverage. |
-| **TSX** | 2 files | 1 function ([`test_parse_source_tsx_symbols_calls_and_imports`](tests/test_repo2graph.py#L2497)) | Low coverage. |
+| **TSX** | 2 files | 1 function ([`test_parse_source_tsx_symbols_calls_and_imports`](../tests/test_repo2graph.py#L2497)) | Low coverage. |
 | **Rust** | 3 files | 1 function (outer doc comments, Cargo.toml context) | Low coverage. |
 | **Kotlin** | 3 files | 1 function (import regex) | Low coverage. |
 | **TypeScript** | 3 files | **0 dedicated unit test functions** | **Critical Deficit** (relies on generic/TSX tests). |
@@ -92,7 +92,7 @@ An audit of `tests/` reveals severe imbalances in dedicated unit tests across th
 
 ### 2.4 Language Feature Parity Matrix
 
-Evaluating all 17 languages across core static analysis features in [`repo2graph/parse.py`](repo2graph/parse.py) and [`repo2graph/graph.py`](repo2graph/graph.py):
+Evaluating all 17 languages across core static analysis features in [`repo2graph/parse.py`](../repo2graph/parse.py) and [`repo2graph/graph.py`](../repo2graph/graph.py):
 
 | Language | Grammars Active | Extracted Symbol Kinds | Call Types Captured | Dynamic Callees | Decorators / Annotations | Structured Import Details | Specialized Import Resolver | Manifest / Workspace Awareness | Inheritance (`INHERITS`) |
 |---|---|---|---|---|---|---|---|---|---|
@@ -100,9 +100,9 @@ Evaluating all 17 languages across core static analysis features in [`repo2graph
 | **TypeScript** | Yes | `function`, `class`, `method`, `interface`, `type`, `enum`, `maybe_function` | `call_expression`, `new_expression` | 3 callees | Yes (`@decorator`) | Yes | Yes (relative, `.js`->`.ts`, `src/`) | **No (`tsconfig` paths missing)** | Full (`extends`, `implements`) |
 | **TSX** | Yes | Same as TypeScript | Same as TypeScript | 3 callees | Yes | Yes | Same as TypeScript | No | Full |
 | **JavaScript** | Yes | `function`, `class`, `method`, `maybe_function` | `call_expression`, `new_expression` | 3 callees | Yes | Yes | Yes (relative, `src/`) | No | Full (`extends`) |
-| **Go** | Yes | `function`, `method`, `type` | `call_expression` | None | No | Yes | Yes (package directory mapping) | **Yes (`go.mod` module path)** | **None (no struct embedding)** |
+| **Go** | Yes | `function`, `method` (qualified `<ReceiverType>.<name>`), `type` | `call_expression` | None | No | Yes | Yes (package directory mapping) | **Yes (`go.mod` module path)** | **None (no struct embedding)** |
 | **Java** | Yes | `method`, `class`, `interface`, `enum` | `method_invocation`, `object_creation` | None | Yes (`@annotation`) | Yes | Yes (package dot to slash) | No (`pom.xml`/Gradle missing) | Full (`extends`, `implements`) |
-| **Kotlin** | Yes | `function`, `class`, `object` | `call_expression` | None | Yes | Yes | Yes (package path) | No | Full (`extends`, `implements`) |
+| **Kotlin** | Yes | `function` (top-level, member, extension as `<Receiver>.<name>`, companion members on the class), `class`, `interface`, `object` | `call_expression` | None | Yes | Yes | Yes (package path) | No | Full (`extends`, `implements`) |
 | **Rust** | Yes | `function`, `struct`, `enum`, `trait`, `impl`, `module` | `call_expression`, `macro_invocation` | None | No (outer attributes in doc) | Yes | Yes (`crate::`, `super::`, `self::`) | **Yes (`Cargo.toml` crate name)** | Traits in bases |
 | **CSharp** | Yes | `method`, `class`, `interface`, `struct` | `invocation`, `object_creation` | None | Yes | Yes | Yes (`using` alias & namespace) | No | Full (`extends`, `implements`) |
 | **PHP** | Yes | `function`, `method`, `class`, `interface` | `function_call`, `member_call`, `object_creation` | 3 callees | Yes | Yes | Yes (`App\` -> `app/`, `src/`) | No | Full (`\` namespace stripping) |
@@ -149,12 +149,12 @@ Based on empirical parser stability, developer adoption, repository feature gaps
 #### TypeScript / JavaScript
 - **Strategic Imperative:** Dominates web application and frontend/full-stack development.
 - **Current Blocker:** Severe import fragmentation in monorepos because `tsconfig.json` `paths` (`@app/*`, `@components/*`) and npm/pnpm workspace packages fail resolution and become external modules. High call ambiguity (18.2% in VS Code) due to lack of interface/constructor DI linking.
-- **Deliverables:** [RFC: Deep TypeScript / JavaScript Support](docs/rfcs/rfc-language-deep-support-typescript.md).
+- **Deliverables:** [RFC: Deep TypeScript / JavaScript Support](rfcs/rfc-language-deep-support-typescript.md).
 
 #### Python
 - **Strategic Imperative:** Primary ecosystem for modern AI/ML, data pipelines, and backend APIs. Native language of `repo2graph`.
 - **Current Blocker:** Extremely clean AST parsing (0.04% error rate in Django), but zero extraction of FastAPI/Django/Flask HTTP routes, no pytest-to-implementation linking, and no SQLAlchemy/Django model relationships.
-- **Deliverables:** [RFC: Deep Python Support](docs/rfcs/rfc-language-deep-support-python.md).
+- **Deliverables:** [RFC: Deep Python Support](rfcs/rfc-language-deep-support-python.md).
 
 ---
 
@@ -173,13 +173,13 @@ The choice for the next deep language investment is between **Enterprise JVM (Ja
    - **Targeted Gaps:** Go has no classes, so `INHERITS` is completely empty. Implementing **struct embedding** (`type Server struct { http.Server }`) and **implicit interface satisfaction** is structurally straightforward and delivers immediate cloud-native value.
    - **Recommendation:** **Schedule Go immediately following Java/Kotlin.**
 
-Detailed design: [RFC: Strategic Tier 2 Support — JVM vs. Go](docs/rfcs/rfc-language-deep-support-jvm-go.md).
+Detailed design: [RFC: Strategic Tier 2 Support — JVM vs. Go](rfcs/rfc-language-deep-support-jvm-go.md).
 
 ---
 
 ## 4. Ecosystem-Aware Relationship Extraction Opportunities
 
-To evolve `repo2graph` from a syntactic AST extractor into an ecosystem-aware knowledge graph, we introduce five new edge types defined in [RFC: Ecosystem Relationship Graph Expansion](docs/rfcs/rfc-framework-relationship-graph.md).
+To evolve `repo2graph` from a syntactic AST extractor into an ecosystem-aware knowledge graph, we introduce five new edge types defined in [RFC: Ecosystem Relationship Graph Expansion](rfcs/rfc-framework-relationship-graph.md).
 
 ### 4.1 Summary of New Edge Capabilities Across Priority Languages
 
@@ -196,7 +196,7 @@ To evolve `repo2graph` from a syntactic AST extractor into an ecosystem-aware kn
 
 ## 5. Language Quality Scorecards
 
-Generated via [`scripts/generate_language_scorecard.py`](scripts/generate_language_scorecard.py), evaluating each language across 6 standard dimensions:
+Generated via [`scripts/generate_language_scorecard.py`](../scripts/generate_language_scorecard.py), evaluating each language across 6 standard dimensions:
 - **Parsing:** AST grammar availability, benchmark error rates, macro stability. (Weight: 20%)
 - **Symbols:** Kind breadth (functions, classes, interfaces, types, enums, arrow funcs), signatures, docstrings. (Weight: 20%)
 - **Calls:** Call expressions, dynamic callees, decorators/annotations, scoped resolution tiers. (Weight: 20%)
@@ -232,7 +232,7 @@ Generated via [`scripts/generate_language_scorecard.py`](scripts/generate_langua
 
 1. **The Syntax Ceiling (B/B-):** Currently, no language scores above 82 (`B`). All Tier 1 and 2 languages receive failing grades (`F` or `D`) in **Tests Link** (0–50%) and **Framework Edges** (0–20%) because `repo2graph` does not yet extract routes, DI, or test relationships. Implementing the RFCs will lift Tier 1 languages into the 90–95 (`A`) range.
 2. **Go's Import Strength vs Call Weakness:** Go earns 100 (`A`) on imports due to native `go.mod` module resolution and `*_test.go` filtering, but drops to 55 (`D`) on calls and 65 (`C+`) on symbols due to the absence of struct embedding and dynamic call detection.
-3. **The C/C++ Macro Penalty:** Despite extensive work ([`test_cpp_parse.py`](tests/test_cpp_parse.py)), C/C++ score 54 (`D`) due to macro error rates in real-world kernels and frameworks (32–37% files affected).
+3. **The C/C++ Macro Penalty:** Despite extensive work ([`test_cpp_parse.py`](../tests/test_cpp_parse.py)), C/C++ score 54 (`D`) due to macro error rates in real-world kernels and frameworks (32–37% files affected).
 4. **Test Suite Debt:** TypeScript (0 tests), Java (0 dedicated symbol tests), and Scala (0 tests) suffer from test coverage debt in the repository, despite active grammar support.
 
 ---
@@ -240,7 +240,7 @@ Generated via [`scripts/generate_language_scorecard.py`](scripts/generate_langua
 ## 6. Prioritized Roadmap & Milestone Plan
 
 ### Milestone 1 (v2.1.0): Foundation & Priority 1 Deep Support
-- **Core Schema:** Land [RFC: Ecosystem Relationship Graph Expansion](docs/rfcs/rfc-framework-relationship-graph.md) with metadata normalization for `ROUTES_TO`, `TESTS`, `INJECTS`, `MODELS`, `CONFIGURES`.
+- **Core Schema:** Land [RFC: Ecosystem Relationship Graph Expansion](rfcs/rfc-framework-relationship-graph.md) with metadata normalization for `ROUTES_TO`, `TESTS`, `INJECTS`, `MODELS`, `CONFIGURES`.
 - **TypeScript / JS (LANG-01, LANG-02, LANG-03):**
   - Implement `tsconfig.json` path mapping & monorepo workspace resolver.
   - Implement Express, NestJS, and Next.js route extractors (`ROUTES_TO`).
@@ -282,5 +282,5 @@ To ensure scorecard metrics and language health remain auditable:
   python -m pytest tests/test_language_scorecard.py
   ```
 - Documentation consistency:
-  All edge schema additions must pass [`tests/test_doc_consistency.py`](tests/test_doc_consistency.py) and [`tests/test_output_schema.py`](tests/test_output_schema.py).
+  All edge schema additions must pass [`tests/test_doc_consistency.py`](../tests/test_doc_consistency.py) and [`tests/test_output_schema.py`](../tests/test_output_schema.py).
 

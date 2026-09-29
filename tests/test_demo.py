@@ -253,3 +253,20 @@ def test_demo_cli_reports_an_unwritable_target_without_a_traceback(tmp_path, mon
     message = str(exc.value)
     assert "Read-only file system" in message
     assert "--out" in message
+
+
+def test_blast_radius_question_shows_the_direct_caller(tmp_path):
+    """Question 4 promised direct callers but its pack showed only FakeStore.
+
+    The CALLS edge place_order -> OrderStore.insert exists at low confidence
+    (untyped receiver, name shared with the test double), so search does not
+    walk it; the demo lists the node's own CALLS-in edges instead.
+    """
+    lines: list[str] = []
+    report = run_demo(outdir=tmp_path / "d", emit=lines.append)
+    q4 = report["questions"][3]
+    assert q4["query"] == "What would be affected by changing OrderStore.insert?"
+    assert "sym:app/service.py::OrderService.place_order" in q4["callers"]
+    out = "\n".join(lines)
+    assert "repo2graph explain node 'sym:app/store.py::OrderStore.insert'" in out
+    assert "OrderService.place_order" in out.split("--- 4/5")[1].split("--- 5/5")[0]

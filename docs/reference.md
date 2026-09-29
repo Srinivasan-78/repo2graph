@@ -5,7 +5,7 @@ schema, the languages it parses, and the places it is guessing rather than
 knowing. This is the page to read when you are consuming `.r2g` from your own
 code and need to know exactly what a field means. For how to *produce* it, see
 [the CLI reference](cli.md); for how the pipeline works, see
-[TECHNICAL.md](../TECHNICAL.md).
+[TECHNICAL.md](technical.md).
 
 ## The `.r2g` folder
 
@@ -89,6 +89,21 @@ flowchart LR
 Names on the map are built the same way every time, so you can write one yourself:
 `file:pkg/mod.py`, `sym:pkg/mod.py::Class.method`, `module:requests`, `dir:pkg`.
 
+A symbol's qualname is its enclosing names joined with `.`. Methods declared
+outside their type are qualified by the receiver type, pointer and generic
+parameters stripped: Go `func (a *A) Run()` is `A.Run`, `func (l *List[T]) Len()`
+is `List.Len`, and a Kotlin extension `fun String.ext()` is `String.ext`. Kotlin
+`companion object` members belong to the class (`A.make`, as Kotlin calls them).
+
+When one file defines the same qualname more than once (Java/C#/Kotlin/Swift/C++
+overloads, a Python function redefined under an `if`, `struct A` next to
+`impl A` in Rust), the first definition keeps `sym:<path>::<qualname>` and each
+later one gets `@L<start line>` appended — `sym:A.java::A.run@L3` — so every
+body keeps its own node and chunk. The qualname itself is unchanged, so a call
+by name reaches all of them and splits `1/n` like any other ambiguous name.
+TypeScript overload *signatures* (no body) are not indexed; the implementation
+is the one symbol.
+
 ## What one piece of code looks like
 
 One piece per function or class, cut at about 4000 characters with 8 lines of
@@ -112,7 +127,8 @@ Each piece carries these fields: `id`, `node_id`, `type`, `kind`, `path`, `lang`
 `name`, `qualname`, `start_line`, `end_line`, `entrypoint`, `callers`, `callees`,
 `callees_external`, `text`.
 
-`callees` lists functions inside the project, written as `path::qualname`.
+`callees` lists functions inside the project, written as `path::qualname` (the
+node id without `sym:`, so a later duplicate reads `path::qualname@L<line>`).
 `callees_external` lists plain names from outside it. If a call could not be
 pinned to one place, the header says so, like `helper (confidence 0.5)`, so nobody
 treats a guess as a fact.
@@ -179,6 +195,7 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   |---|---|---|---|
   | 0 | `self_recursive` | 0 | a top-level function calling its own name — unambiguously recursion |
   | 1 | `same_class` | 0 | another method of the enclosing class. Never the caller itself: see below. |
+  | 1 | `base_class` | 0 | `super().m()` / `base.M()` / `parent::m()`: the same-named method on the nearest resolved in-repo base class. Never the caller or its own class; with no in-repo ancestor defining it, the call is `unresolved_external`. |
   | 2 | `same_file` | 1 | another function or class defined in the calling file |
   | 3 | `import_alias` | 2 | reached through an aliased import (`import X as Y`) |
   | 3 | `imported_symbol` | 2 | reached through the calling file's own imports, unaliased |
@@ -187,8 +204,29 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   | 6 | `ambiguous_global_name` | 5 | more than one candidate; confidence is split `1/n` across up to `--max-call-candidates` of them (default 5) |
   | 7 | `unresolved_external` | *(not set)* | no in-repo candidate at all; recorded on a `CALLS_EXTERNAL` edge, not `CALLS` |
 
+  **Untyped receivers.** `os.environ.get(k)` reduces to the name `get`, and the
+  tiers above would bind it to any `get` method nearby. When every call of a
+  builtin-collection method name (`get`, `pop`, `append`, `items`, `join`, `then`,
+  … — `UNTYPED_RECEIVER_BUILTIN_METHODS` in `graph.py`) is made on a receiver other
+  than `self`/`this`/`super`, the in-repo candidate is kept but the edge is marked
+  `untyped_receiver: true`, `ambiguous: true`, and capped at confidence `0.2`
+  (split `1/n`) — `ambiguous: true` even when `candidate_count` is 1. `self.get()`,
+  a bare `get()`, and domain names like `svc.create_order()` are unaffected, and so
+  is a receiver that names where the candidate lives: an imported module
+  (`store.get()` → `store.py`), a type (`Util.remove()`), a `::` scope
+  (`Config::get()`), a Go method's own receiver (`c.find()` in
+  `func (c *Cache) Lookup()`), or a top-level function reached through the file's
+  imports. Decorators count as calls on their receiver (`@router.get` is a call on
+  `router`). The repo map's "Most called symbols", changelog
+  hotspots and entrypoint detection count a `CALLS` edge as a real call by what it
+  is (`edgemeta.counts_as_call`): `untyped_receiver` guesses never count;
+  `self_recursive`, `same_class`, `base_class`, `same_file` and imported edges
+  always count, including an overload set's `1/n` fan-out; every other edge counts
+  at confidence `0.5` or above.
+
   Every `CALLS` edge records `resolution_kind`, `scope_distance`, `candidate_count`,
-  `ambiguous` (true once tier 6 splits confidence across candidates) and
+  `ambiguous` (true once more than one candidate splits confidence, or on an
+  `untyped_receiver` guess) and
   `call_kind` (`static`, `dynamic`, `decorator`, or `possible`).
   `CALLS_EXTERNAL` carries `resolution_kind` (always `unresolved_external`),
   `candidate_count` (always `0`), `count` and `call_kind` — but no
@@ -198,9 +236,9 @@ The map is very good, but it is not perfect. Worth knowing before you trust it:
   certain even though the callee is not ours. See
   [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#what-confidence-means).
 
-  **A method's own name is never resolved outright.** The receiver is not
-  recorded, so inside `Report.to_dict` the calls `self.to_dict()` and
-  `c.to_dict()` both arrive here as the bare name `to_dict` — recursion and a
+  **A method's own name is never resolved outright.** The receiver's type is
+  not known, so inside `Report.to_dict` the calls `self.to_dict()` and
+  `c.to_dict()` both resolve by the bare name `to_dict` — recursion and a
   call to a sibling class's identically named method are the same input. Tier 1
   therefore declines a self-target and lets tier 2 answer, with the caller left
   in the candidate set: alone, that is one self-edge at confidence 1.0; next to

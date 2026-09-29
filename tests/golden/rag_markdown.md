@@ -14,14 +14,6 @@ languages: python=3, md=1
 
 ---
 
-### [cite: .env:1-5] `.env` (seed)
-# file: .env (, 5 lines)
-# deployment ledger credential store
-ACME_DEPLOYMENT_LEDGER_TOKEN=abc123deadbeef
-ACME_DEPLOYMENT_LEDGER_SECRET=zzz999notreal
-DEPLOYMENT_LEDGER_CREDENTIAL=deployment ledger credential inbound request handler
-
-
 ### [cite: docs/notes.md:1-10] `docs/notes.md` (seed)
 # file: docs/notes.md (md, 10 lines)
 # Notes

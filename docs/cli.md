@@ -76,6 +76,8 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
+| `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
+| `--max-nodes` | `0` (unbounded) | Fail the build with `GraphLimitExceeded` once the graph holds more than this many nodes — a guard for CI or shared machines against an unexpectedly huge tree. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
@@ -169,8 +171,12 @@ functions around each answer come along too.
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
-| `--min-conf` | off | Drop `CALLS` arrows below this confidence. |
+| `--min-conf`, `--min-confidence` | off | Drop `CALLS` arrows below this confidence. |
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
+| `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
+| `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
+| `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -221,7 +227,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
-| `--min-conf` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
+| `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
 | `--no-expand` | off | Text search only, no arrow walking. |
@@ -229,15 +235,36 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#answer-sends-your-code-elsewhere). |
 | `--model` | provider default | Override the best-effort default model, only with `--answer`. |
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
+| `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
+| `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
-`query`, so a program can see what got left out:
+`query`, so a program can see what got left out (a compressed neighbour is
+described under the examples below):
 
 ```bash
 repo2graph rag "how does export write the manifest" -o .r2g --format json \
   | jq '{used: .used_chars, budget: .budget_chars, cut: .truncated}'
 ```
+
+A neighbour that did not fit whole is **compressed** to its header and first
+line. Its cite then names the lines it shows, not the whole symbol or file —
+``### [cite: pkg/mod.py:12-12] `Foo.bar` [excerpt of 12-40] (CALLS out of run)``
+— and its `chunks` record carries `excerpt_of: [12, 40]` with `start_line` /
+`end_line` narrowed to match. Where the shown line cannot be mapped back to a
+source line (a file's residual, or a later part of a split chunk) the range is
+kept and marked `[header and first line only, of 1-648]` instead.
+
+### Secrets at query time
+
+`query` and `rag` leave secret-looking files — dotenv files, `.pem`/`.key`,
+keystores, credential stores — out of what they return unless you pass
+`--include-secrets` **on that command**. The build-time flag decides what goes
+*into* the index; it does not decide what every later reader gets back, so an
+index built with `build --include-secrets` still answers a plain `rag` or
+`query` without them. (Previously a plain `rag` only excluded them with
+`--answer`; `--exclude-secrets` is now a deprecated no-op that prints a warning.)
 
 ## `embed` — meaning-based search on top of the words
 
@@ -257,7 +284,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
-| `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. |
+| `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. `rag_extra_installed` is always `true`/`false`, even for an index with no vectors. |
 
 Three things worth knowing:
 
@@ -285,7 +312,7 @@ repo2graph stats -o .r2g --format text   # human-readable quality summary
 `stats` prints `agent/stats.json` verbatim by default — that has always been the
 default, and `--json` is just an explicit way to ask for it. Pass `--format text`
 for a formatted summary of the same counts, covering:
-- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, and `calls_external`.
+- **Calls resolution breakdown**: `calls_scoped` (resolved within class/file/imports), `calls_unique_global`, `calls_ambiguous`, `calls_untyped_receiver` (the subset of ambiguous calls that are builtin method names on an untyped receiver), and `calls_external`.
 - **Inheritance metrics**: `unresolved_bases` counting base classes that could not be mapped to an indexed class node.
 - **Import resolution**: `imports_resolved` vs `imports_unresolved`.
 - **Parsing health**: total files, symbols, chunks, and any `parse_errors` encountered.
@@ -346,7 +373,7 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   repo2graph: sending 18423 chars of repository context to provider openai at api.openai.com (selected by OPENAI_API_KEY)
   ```
 
-- **Secret-ish files are dropped from the pack when `--answer` is on.** Dotfiles,
+- **Secret-ish files are dropped from the pack** (with or without `--answer`, unless you pass `--include-secrets`). Dotfiles,
   `.env`, `.pem`, `.key`, keystores and friends are excluded. This is a guard, not
   a guarantee: a secret pasted into an ordinary `.py` file is still ordinary
   source and still goes.
@@ -513,16 +540,21 @@ maps each symptom to the check that names it.
 ## `explain-path` — explain file inclusion or exclusion
 
 ```bash
-repo2graph explain-path <path> [-r REPO] [--include GLOB] [--exclude GLOB]
-                         [--include-vendor] [--include-secrets] [--json]
+repo2graph explain-path <path> [-r REPO] [-o OUT] [--include GLOB] [--exclude GLOB]
+                         [--exclude-group NAME] [--include-vendor] [--include-secrets]
+                         [--json]
 ```
 
 Evaluates one path against the same rules `build`'s discovery uses, and reports
 the single rule that decided it — not a trace of every rule that was checked.
 `<path>` is relative to `-r`/`--repo` (default: the current directory) or
 absolute; `--include`/`--exclude` are each repeatable, one glob per occurrence.
-There is no `-o`/`--out` — `explain-path` never opens an index. It also takes
-no size flags, so it cannot explain a build that used them: the size check
+`-o`/`--out` (default `.r2g`, resolved exactly as `build`'s) names the output
+directory a build would write to: discovery never indexes it, nor any directory
+holding a repo2graph `agent/manifest.json` (an earlier build's index), and
+`explain-path` reports those as `output_dir` / `index_dir` at step 2 — so
+`explain-path .r2g/agent/nodes.jsonl` says EXCLUDED, as the build behaves. It
+never opens the index. It also takes no size flags, so it cannot explain a build that used them: the size check
 below is always evaluated against the 1.5 MB `--max-file-mb` default with
 `--chunk-large-files` off, whatever the build was actually run with.
 
@@ -582,35 +614,44 @@ repo2graph explain edge "file:src/main.py" "file:src/util.py" -o .r2g
 repo2graph explain node "sym:src/main.py::Runner.run" -o .r2g
 
 # Trace retrieval ranking, candidate seeds, and graph expansion
-repo2graph explain retrieval "how does authentication work" -o .r2g -k 5 --hops 1
+repo2graph explain retrieval "how does authentication work" -o .r2g -k 8 --hops 1
 ```
 
-All explain subcommands support `--json` for machine-readable output.
+All explain subcommands support `--json` for machine-readable output. `explain
+retrieval` defaults to `-k 8`, the same as `rag` and `query`, so it traces the
+retrieval they actually run; `--min-conf` is accepted as an alias of
+`--min-confidence`. Like `rag` and `query`, `explain retrieval` leaves
+secret-looking paths (`.env`, keys, credentials) out of the trace -- they are
+neither listed as candidates, walked to, nor retrieved, and the text report
+counts how many were hidden. `--include-secrets` opts back in;
+`--secret-keyword KEYWORD` and `--secret-dir DIR` (repeatable) extend the rule.
 
 
 ## `impact` — PR & diff architectural impact analysis
 
 ```bash
-repo2graph impact -i <index_dir> [--base <ref>] [--head <ref>] [--diff <file>] [--format <format>]
+repo2graph impact [repo] [-i <index_dir>] [--base <ref>] [--head <ref>] [--diff <file>] [--format <format>]
 ```
 
 Computes the architectural blast radius of a working branch or PR against a base branch using the code graph. Intersects diff hunks with symbol spans, traverses reverse callers (`CALLS in`) and dependent modules (`IMPORTS in`), traces test coverage, and detects suspicious orphan changes or untested public APIs.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-i`, `--index <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
-| `-r`, `--repo <path>` | current directory | Local repository path containing git history. |
-| `--base <ref>` | `main` | Base git ref to compare against. |
-| `--head <ref>` | `HEAD` | Head git ref or commit to compare. |
+| `-i`, `-o`, `--index`, `--out <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
+| `repo` (positional) | current directory | Local repository path containing git history. |
+| `--base <ref>` | `main` | Base git ref to compare against. If git fails and the repository has no `main`, the error ends with a hint to pass `--base`. |
+| `--head <ref>` | working tree | Head git ref or commit to compare; omitted, the working tree (including uncommitted changes) is compared against `--base`. |
 | `--diff <file>` | none | Path to raw unified diff file, or `-` for stdin (bypasses git). |
 | `--format <format>` | `markdown` | Output format: `markdown`, `json`, `sarif`, `pr-comment`. |
 | `--json` | off | Convenience shortcut for `--format json`. |
 | `--sarif` | off | Convenience shortcut for `--format sarif`. |
 | `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
-| `--min-confidence <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
-| `-w`, `--write <path>` | none | Write output to target file path. |
+| `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
+| `--no-auto-build` | off | Fail instead of building the index when it is missing. |
+| `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
+| `--write <path>` | none | Write output to target file path. |
 
-Full architecture, schema details, and GitHub Actions recipes are in [PR_IMPACT.md](../PR_IMPACT.md).
+Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).
 
 
 ## `completion` — shell tab completion

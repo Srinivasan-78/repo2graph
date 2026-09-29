@@ -36,13 +36,18 @@ Verified by enumeration against `repo2graph/secrets.py` and `repo2graph/parse.py
 **Directories, anywhere in the tree** — `.aws`, `.gnupg`, `.kube`, `.ssh`, `credentials`, `secrets`
 
 **Exact filenames** — `.dockercfg`, `.git-credentials`, `.htpasswd`, `.netrc`, `.npmrc`, `.pgpass`,
-`id_dsa`, `id_ecdsa`, `id_ed25519`, `id_rsa`
+`.pypirc`, `.terraformrc`, `auth.json` (Composer; not under a `locales`/`i18n`/`lang`/`translations` directory), `credentials.yml.enc` (Rails), `htpasswd`,
+`id_dsa`, `id_ecdsa`, `id_ed25519`, `id_rsa`, `key.json` (GCP service-account key), `kubeconfig`,
+`wp-config.php`
 
 **Extensions** — `.asc`, `.cer`, `.crt`, `.der`, `.gpg`, `.jks`, `.kdbx`, `.key`, `.keystore`,
-`.ovpn`, `.p12`, `.p8`, `.pem`, `.pfx`, `.pkcs12`, `.secret`, `.secrets`
+`.keytab`, `.ovpn`, `.p12`, `.p8`, `.pem`, `.pfx`, `.pkcs12`, `.ppk`, `.secret`, `.secrets`,
+`.tfstate`, `.tfvars` (including `.auto.tfvars`), `.tfvars.json` — and backups of any excluded file
+(`.bak`, `.backup`, `.old`, `.orig`, `.save`, `.swp`, `.tmp`, `~`), so `terraform.tfstate.backup` is
+excluded too
 
 **Keywords in a filename** — `credential`, `password`, `secret`, `token`, `service-account`,
-`service_account`, plus the `id_*` key names
+`service_account`, `adminsdk` (Firebase `*-firebase-adminsdk-*.json`), plus the `id_*` key names
 
 **Skipped directories** (28) — `.cache`, `.direnv`, `.eggs`, `.git`, `.gradle`, `.hg`, `.idea`,
 `.mypy_cache`, `.next`, `.nuxt`, `.pytest_cache`, `.ruff_cache`, `.svn`, `.terraform`, `.tox`,
@@ -51,7 +56,11 @@ Verified by enumeration against `repo2graph/secrets.py` and `repo2graph/parse.py
 
 **Content patterns scanned in chunk text** (8) — AWS access keys, GitHub tokens, Slack tokens,
 OpenAI keys, Google keys, PEM private keys, JWTs, and URLs carrying basic-auth credentials — plus
-high-entropy values assigned to a secret-looking name.
+high-entropy values assigned to a secret-looking name, and JSON pairs such as `"password": "..."`
+(also single-quoted dict keys and YAML `db_password: "..."`) whose key names a password, secret,
+token, or API/access/private key and whose value is neither a placeholder (`${VAR}`, `{{ var }}`,
+`****`), plain prose, nor a URL. Keys naming a property of the credential (`tokenUrl`,
+`secretName`, `passwordField`, `api_key_header`, `tokenizer`, ...) are not redacted.
 
 ### Adding your own
 
@@ -59,7 +68,7 @@ high-entropy values assigned to a secret-looking name.
 
 ```bash
 repo2graph build . -o .r2g --exclude \
-  '**/*.tfvars' '**/*.tfstate' '**/*.tfstate.backup' \
+\
   '**/.env.*' '**/*.local.yml' '**/*.local.yaml' \
   '**/charts/**/values-prod.yaml' \
   '**/fixtures/**/*dump*' '**/testdata/**/*real*' \
@@ -70,8 +79,6 @@ repo2graph build . -o .r2g --exclude \
 
 Why these, specifically:
 
-- **`*.tfvars` / `*.tfstate`** — Terraform state routinely holds plaintext secrets and matches none
-  of the default patterns. `.terraform/` is skipped but state files are usually committed elsewhere.
 - **`.env.*`** — `.env` itself is covered; `.env.production` is a different filename and worth
   naming explicitly if your layout uses it.
 - **`values-prod.yaml`** — Helm values files are ordinary YAML and look like nothing special.

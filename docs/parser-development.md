@@ -219,10 +219,8 @@ Assert **literal node-id tuples**, hand-derived from the fixture source. Never a
 value recomputed by the code under test — see AGENTS.md, "Tests must pin values, not compare the
 implementation to itself". A test that asserts `len(calls) > 0` passes with the wrong edges.
 
-**The enforced one:** `tests/test_doc_consistency.py::test_languages_documented` and
-`tests/test_i18n_consistency.py::test_every_readme_documents_every_parsed_grammar` assert that
-every `LANG_CFG` key appears in `README.md` **and in all five translated READMEs**. Adding a
-grammar without documenting it fails CI in six places. The mapping from grammar key to the token
+**The enforced one:** `tests/test_doc_consistency.py::test_languages_documented` asserts that
+every `LANG_CFG` key appears in `README.md`. Adding a grammar without documenting it fails CI. The mapping from grammar key to the token
 the READMEs use lives in `tests/test_doc_consistency.py`'s `LANGUAGE_TOKENS` — add your language
 there too, or the sync assertion fails.
 
@@ -233,15 +231,13 @@ there too, or the sync assertion fails.
 All of these, or CI fails or the docs lie:
 
 - [ ] `LANGUAGE_TOKENS` in `tests/test_doc_consistency.py` — the grammar key and its README token.
-- [ ] `README.md` — the "*N* grammars, full treatment" row: add the language, bump the grammar and
-      extension counts.
-- [ ] `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` — same row, same counts, in each.
+- [ ] `README.md` — the language list under "What it can't do".
 - [ ] `docs/comparison.md` — the "Languages parsed for symbols" cell.
 - [ ] `docs/reference.md` — the language table.
 - [ ] `CHANGELOG.md` — under `## [Unreleased]` → `### Added`.
 
-The counts drifted across all six READMEs once already (they said 16 grammars / 28 extensions for
-some time after Lua made it 17/29), which is why the assertion in §5 now exists.
+The counts drifted once already (the docs said 16 grammars / 28 extensions for some time after
+Lua made it 17/29), which is why the assertion in §5 now exists.
 
 ---
 
@@ -260,5 +256,4 @@ than discovered by a user:
   bug in your entry.
 
 If either applies, add a note to `docs/limitations.md` in the same PR. Overstating coverage is
-worse than not adding the language — see [POSITIONING.md](../POSITIONING.md) §1, "What we are not
-claiming".
+worse than not adding the language.

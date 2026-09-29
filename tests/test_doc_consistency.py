@@ -7,12 +7,13 @@ Prevents drift between code and documentation:
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
-- BUILD_STATE.md living at docs/, not the repo root (Issue #403)
+- agent working files (BUILD_STATE*.md, DONE.md) kept out of the tree (Issue #403)
 - docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -22,7 +23,7 @@ README_PATH = REPO_ROOT / "README.md"
 CLI_DOC_PATH = REPO_ROOT / "docs" / "cli.md"
 QUICKSTART_PATH = REPO_ROOT / "docs" / "quickstart.md"
 INDEXING_PATH = REPO_ROOT / "docs" / "INDEXING.md"
-INCREMENTAL_RFC_PATH = REPO_ROOT / "docs" / "rfc-incremental-indexing.md"
+INCREMENTAL_RFC_PATH = REPO_ROOT / "docs" / "rfcs" / "rfc-incremental-indexing.md"
 ACTION_YML_PATH = REPO_ROOT / "action.yml"
 ACTION_DOC_PATH = REPO_ROOT / "docs" / "github-action.md"
 MCP_DOC_PATH = REPO_ROOT / "docs" / "mcp.md"
@@ -203,18 +204,25 @@ def test_npm_launcher_version_matches_pyproject():
     assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
 
 
-def test_build_state_lives_in_docs_not_repo_root():
-    """Issue #403: BUILD_STATE.md must not sit at the repository root.
+def test_agent_working_files_are_not_committed():
+    """Issue #403, widened: build-loop state and run logs are working files.
 
-    `docs/BACKLOG.md` documents `docs/BUILD_STATE.md` as the current build-app run's location
-    (`docs/BUILD_STATE.graphrag-2026-09.md` is the archived one from a past run) -- this test
-    would catch a future change that puts a new BUILD_STATE.md back at the root.
+    They were committed at the root, then under docs/, and read to every visitor as
+    an agent's scratchpad. `.gitignore` now keeps them out wherever they are written.
     """
-    assert not (REPO_ROOT / "BUILD_STATE.md").exists(), (
-        "BUILD_STATE.md is back at the repo root -- it belongs at docs/BUILD_STATE.md (Issue #403)"
+    tracked = (
+        subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, check=False)
+        .stdout.decode("utf8", "surrogateescape")
+        .split()
     )
-    backlog_text = (REPO_ROOT / "docs" / "BACKLOG.md").read_text(encoding="utf-8")
-    assert "docs/BUILD_STATE.md" in backlog_text
+    offenders = [
+        p
+        for p in tracked
+        if re.fullmatch(r"(.*/)?(BUILD_STATE[^/]*\.md|DONE\.md)", p) and (REPO_ROOT / p).exists()
+    ]
+    assert offenders == [], f"agent working files committed: {offenders}"
+    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "BUILD_STATE*.md" in gitignore and "DONE.md" in gitignore
 
 
 def test_threat_model_covers_every_deployment_mode():
@@ -395,12 +403,6 @@ def test_every_shipped_doc_is_listed_in_the_docs_index():
     # are a record of one investigation, not a page to navigate to.
     unlisted_by_design = {
         "README.md",
-        "BUILD_STATE.md",
-        "BUILD_STATE.graphrag-2026-09.md",
-        # A tracking matrix for one completed audit, kept as a record of what
-        # was found and fixed. Undated in the filename, so it needs naming
-        # here rather than matching the dated-working-note rule below.
-        "remediation-tracking.md",
     }
     for path in sorted(docs_dir.glob("*.md")):
         if path.name in unlisted_by_design or re.search(r"\d{4}-\d{2}-\d{2}", path.name):
@@ -438,35 +440,10 @@ def test_reference_and_output_schema_agree_on_the_standard_edge_fields():
 
 
 # --------------------------------------------------------------------------
-# Distribution assets make claims to an outside audience
+# Integration guides make claims to an outside audience
 # --------------------------------------------------------------------------
 
-DISTRIBUTION_DIR = REPO_ROOT / "docs" / "distribution"
 INTEGRATIONS_DIR = REPO_ROOT / "docs" / "integrations"
-
-
-def test_benchmark_numbers_in_distribution_assets_match_the_measurements():
-    """POSITIONING.md forbids "benchmark numbers we did not measure".
-
-    These figures go on screen in a demo video and into launch copy, where a
-    reader will check them against `benchmarks/results.json`. Pinned here so a
-    re-benchmark cannot silently leave the assets overclaiming.
-    """
-    results = json.loads((REPO_ROOT / "benchmarks" / "results.json").read_text(encoding="utf-8"))
-    by_repo = {r["repository"].rsplit("/", 1)[-1]: r for r in results["results"]}
-
-    assets = "\n".join(p.read_text(encoding="utf-8") for p in DISTRIBUTION_DIR.glob("*.md"))
-    for name, files, seconds in (("django", 5629, 34), ("vscode", 6000, 71), ("linux", 3660, 78)):
-        row = by_repo[name]
-        if f"{files:,}" in assets or str(files) in assets:
-            assert row["files"] == files, (
-                f"distribution assets claim {files} files for {name}; "
-                f"benchmarks/results.json says {row['files']}"
-            )
-            assert round(row["build_seconds"]) == seconds, (
-                f"distribution assets claim {seconds}s for {name}; "
-                f"benchmarks/results.json says {row['build_seconds']}"
-            )
 
 
 def test_integration_guides_quote_the_real_mcp_bounds():
@@ -503,64 +480,62 @@ def test_integration_guides_quote_the_real_mcp_bounds():
             "the guide publishes these ceilings as a contract with the reader"
         )
 
-    # "The six tools" is a heading in that guide; every tool must appear under it.
-    assert len(TOOL_DESCRIPTIONS) == 6, (
-        f"claude-code.md says 'The six tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    # "The ten tools" is a heading in that guide; every tool must appear under
+    # it. The count is spelled out in prose, so it cannot be derived from
+    # TOOL_DESCRIPTIONS here -- that would compare the docs to nothing and pass
+    # for any number. Bump both together when a tool is added.
+    assert len(TOOL_DESCRIPTIONS) == 10, (
+        f"claude-code.md says 'The ten tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    )
+    assert "The ten tools" in text, (
+        "docs/integrations/claude-code.md's tool-list heading no longer states the count"
     )
     for tool in TOOL_DESCRIPTIONS:
         assert tool in text, f"MCP tool '{tool}' is missing from docs/integrations/claude-code.md"
 
 
-def test_distribution_drafts_are_marked_unpublished():
-    """Two of these files are copy aimed at an audience. If the approval gate
-    is edited out, the next reader cannot tell a draft from a decision."""
-    for name in ("launch-posts.md", "design-partners.md"):
-        text = (DISTRIBUTION_DIR / name).read_text(encoding="utf-8")
-        head = text[:1200]
-        assert "DRAFT" in head.upper(), f"docs/distribution/{name} lost its draft marker"
-        assert "POSITIONING.md" in text, (
-            f"docs/distribution/{name} must point at the claim constraints it is written inside"
+def _cli_doc_section(command: str) -> str:
+    """The `## `command` ...` section of docs/cli.md, up to the next `## `` heading."""
+    text = (REPO_ROOT / "docs" / "cli.md").read_text(encoding="utf-8")
+    parts = re.split(r"(?m)^## (?=`)", text)
+    hits = [p for p in parts if p.startswith(f"`{command}`")]
+    assert hits, f"docs/cli.md has no section for {command}"
+    return hits[0]
+
+
+def _help_long_flags(argv: list[str]) -> set[str]:
+    import contextlib
+    import io
+
+    from repo2graph.cli import main
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            main([*argv, "--help"])
+        except SystemExit:
+            pass
+    flags = set(re.findall(r"(?<![\w-])(--[a-zA-Z][\w-]*)", buf.getvalue()))
+    return flags - {"--help"}
+
+
+def test_cli_doc_tables_cover_every_flag_of_build_query_and_impact():
+    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md."""
+    for command in ("build", "query", "impact"):
+        section = _cli_doc_section(command)
+        missing = sorted(
+            f
+            for f in _help_long_flags([command])
+            if not re.search(re.escape(f) + r"(?![\w-])", section)
         )
+        assert missing == [], f"docs/cli.md `{command}` section lacks {missing}"
+    explain = _cli_doc_section("explain")
+    for flag in _help_long_flags(["explain", "retrieval"]) - {"--out", "--json"}:
+        assert flag in explain, flag
 
 
-def test_distribution_assets_carry_the_limitations_they_must():
-    """POSITIONING.md §5: any surface long enough to have a limitations section
-    carries the eight. Outward-facing copy is exactly such a surface, and the
-    two that get dropped first under editing pressure are the two that matter
-    most to a skeptical reader."""
-    for name in ("launch-posts.md", "design-partners.md", "demo-script.md"):
-        text = (DISTRIBUTION_DIR / name).read_text(encoding="utf-8").lower()
-        assert "name-based" in text, (
-            f"docs/distribution/{name} does not state that call resolution is name-based"
-        )
-        assert "absent edge is not proof" in text or "no edge does not prove" in text, (
-            f"docs/distribution/{name} does not state that an absent edge is not proof of "
-            "an absent call"
-        )
-
-
-def test_positioning_claims_match_the_code_it_cites():
-    """POSITIONING.md is the source of truth every outward surface derives from.
-
-    Its "where it is kept" column cites the code that keeps each promise, which
-    means a code change can silently make the messaging wrong. Two had already
-    drifted: it said "five read-only tools" after a sixth was added, and cited
-    `confidence` as a `CALLS`-only field after every edge type gained it.
-    """
-    from repo2graph.mcp import TOOL_DESCRIPTIONS
-
-    text = (REPO_ROOT / "POSITIONING.md").read_text(encoding="utf-8")
-
-    words = {5: "five", 6: "six", 7: "seven", 8: "eight"}
-    expected = f"{words[len(TOOL_DESCRIPTIONS)]} read-only tools"
-    assert expected in text, (
-        f"POSITIONING.md does not say {expected!r}; mcp.py exposes {len(TOOL_DESCRIPTIONS)} tools"
-    )
-    for wrong in (v for k, v in words.items() if k != len(TOOL_DESCRIPTIONS)):
-        assert f"{wrong} read-only tools" not in text, (
-            f"POSITIONING.md still claims {wrong!r} read-only tools"
-        )
-
-    assert "`confidence` on every `CALLS` edge" not in text, (
-        "POSITIONING.md still scopes confidence to CALLS edges; every edge type carries it"
-    )
+def test_quickstart_build_output_shows_the_real_out_field():
+    """`build` prints the resolved, absolute index path, not the `-o` argument."""
+    text = QUICKSTART_PATH.read_text(encoding="utf-8")
+    assert '"out": ".r2g"' not in text
+    assert '"out": "/path/to/your/project/.r2g"' in text

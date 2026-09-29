@@ -1,6 +1,6 @@
 # Architecture
 
-A map of the codebase for people changing it. [TECHNICAL.md](../TECHNICAL.md) explains how
+A map of the codebase for people changing it. [TECHNICAL.md](technical.md) explains how
 repo2graph works for people *using* it — the pipeline, the graph model, where it guesses. This page
 is the other half: which module owns what, which direction dependencies run, and where a change of
 a given kind belongs.
@@ -122,12 +122,16 @@ it" refactor fails.
 ### `export.py` ↔ `viz.py`
 
 `export.py` does `from .viz import ... write_html` to emit `graph.html` as one of its artifacts.
-`viz.py` needs the node and edge descriptions that live in `export.py` — and cannot import them.
-So `viz.py:42` keeps a hand-synced copy (`NODE_TYPE_DESC`, `EDGE_TYPE_DESC`) with a comment saying
-exactly this.
+That single direction is the whole constraint, and it is also the resolution: the node and edge
+descriptions now live once in `viz.py` (`NODE_TYPES`, `EDGE_TYPES`) and `export.py` imports them
+along with `write_html`.
 
-They have already drifted. Fixing it means a **third leaf module** both can import, not deleting
-one copy — see issue #349 and starter task 6 in [good-first-issues.md](good-first-issues.md).
+This used to be a hand-synced copy on each side — `viz.py`'s worded for the legend panel,
+`export.py`'s for `manifest.json` — and the two had already drifted. Issue #349 proposed a **third
+leaf module** both could import, on the assumption that either direction was a cycle; only the
+`viz.py → export.py` direction is, so defining them in `viz.py` needs no new module and adds no
+coupling `export.py` did not already have. `manifest.json` keeps the richer `export.py` wording,
+which is what made the move byte-neutral for the artifact.
 
 ### `mcp.py` ↔ `http_server.py` ↔ `tasks.py`
 
@@ -145,7 +149,7 @@ nothing from the package, which is why they are the easiest modules here to chan
 
 | You want to… | Start at | Also touch |
 |---|---|---|
-| Add a language | `parse.py` — `LANG_CFG`, `EXT_LANG` | A fixture, and the language row in all six READMEs (a test enforces this) — see [parser-development.md](parser-development.md) |
+| Add a language | `parse.py` — `LANG_CFG`, `EXT_LANG` | A fixture, and the language list in the README (a test enforces this) — see [parser-development.md](parser-development.md) |
 | Change how a call resolves | `graph.py` — the scoped-resolution tiers | `tests/test_scoped_resolution.py`, `tests/test_resolution_heuristics.py` |
 | Add an edge kind | `graph.py`, then `export.py`'s `EDGE_TYPES`, then `viz.py`'s copy | `docs/reference.md`, and `query.py`'s `DEFAULT_EDGE_DIRS` if it should be traversable |
 | Change retrieval | `query.py` — **`pack_context()`, not `retrieve()`** | AGENTS.md "Two budget models coexist"; `retrieve()` is a pinned back-compat surface |
@@ -187,7 +191,6 @@ Each of these has cost someone a debugging session. Full versions in [AGENTS.md]
 | File | Guards |
 |---|---|
 | `test_doc_consistency.py` | Every CLI subcommand and every `LANG_CFG` grammar appears in the README and `docs/cli.md`; every Action input in `docs/github-action.md`; every MCP tool in `docs/mcp.md`. |
-| `test_i18n_consistency.py` | The same grammar list across all six READMEs, plus the positioning contract in [POSITIONING.md](../POSITIONING.md). |
 | `test_compat.py` | Byte-identical `query`/`rag` output against a pinned baseline; the Action's input/output contract; the `action.yml` shell-vs-expression truthiness gate. |
 | `test_version_surfaces.py` | The version string in every surface that carries it, and that the bump script covers all of them. |
 | `test_encoding.py` | The cp1252 / non-ASCII path class that has caused every historical regression here. |

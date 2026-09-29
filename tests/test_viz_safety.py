@@ -197,7 +197,7 @@ def test_pointer_capture_is_released_on_both_pointerup_and_pointercancel():
     JS runtime (jsdom or playwright), and this repo has no Node toolchain in its
     dev extra. It pins the property that actually regressed -- a handler losing
     its release call -- but it cannot prove the released id matches the captured
-    one. Noted in DONE.md as the one untested-in-a-browser property here.
+    one. This is the one untested-in-a-browser property here.
     """
     for event in ("pointerup", "pointercancel"):
         handler = re.search(r'svg\.addEventListener\("%s",.*?\n\}\);' % event, TEMPLATE, re.S)
@@ -272,3 +272,12 @@ def test_search_focus_and_legend_ui_are_present(tmp_path):
         "CO_CHANGE",
     ):
         assert edge_type in html
+
+
+def test_content_security_policy_is_present(tmp_path):
+    """graph.html must restrict resource loading and script execution via CSP."""
+    html = render(tmp_path, "test_repo")
+    assert (
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:\">"
+        in html
+    )

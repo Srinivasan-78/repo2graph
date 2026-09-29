@@ -2,7 +2,7 @@
 
 This is the canonical security policy for repo2graph — what the tool does and doesn't send over
 the network, how the repository itself is protected, and how to report a vulnerability. See
-[TECHNICAL.md](../TECHNICAL.md) for how the code works, and [README.md](../README.md) for how to
+[docs/technical.md](../docs/technical.md) for how the code works, and [README.md](../README.md) for how to
 use it.
 
 ## Reporting a vulnerability
@@ -57,9 +57,9 @@ If you never pass `--answer`, this code path is not reachable.
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**. Of its five tools, the three that
-can return repository content — `repo_map`, `repo_search`, `repo_neighbours` — exclude secrets
-always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
+The **MCP server goes further and makes this unconditional**. Of its six tools, the four that
+can return repository content — `repo_map`, `repo_search`, `repo_neighbours`, `repo_impact` —
+exclude secrets always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
 `repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
 directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
 get that choice, so the server doesn't offer it. See
@@ -102,7 +102,7 @@ or a released package, independent of anything the tool does at runtime:
   `Code Quality & Static Analysis` (ruff lint, formatting, mypy, and version surfaces),
   `Test Suite` across `ubuntu-latest`, `windows-latest` and `macos-latest` (Python 3.10, 3.11, 3.12, 3.13),
   `Package Distribution & MCP Stdio Smoke Test`, `GitHub Action Composite Integration Test`,
-  `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (evaluating 25 tasks across 5 archetypes).
+  `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (the synthetic regression suite in `benchmarks/corpus/`).
 
   CI *runs* more than it *requires*. In `provenance.yml`, `License & Copyright Compliance (REUSE/SPDX)`
   and `Workflow Security Audit (zizmor)` run on every push and PR to audit licenses and GitHub Actions configuration.
@@ -145,8 +145,6 @@ or a released package, independent of anything the tool does at runtime:
   behind that page: every outbound path and every write location, enumerated from the code.
 - [docs/ENTERPRISE_DEPLOYMENT.md](../docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
   scoping, and package-pinning guidance for a shared or regulated deployment.
-- [docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md) — an area-by-area readiness rating
-  with evidence and remaining risk for each.
 
 ---
 

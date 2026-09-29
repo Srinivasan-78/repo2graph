@@ -5,7 +5,7 @@ The first-supported client. Everything here is verified against Claude Code's
 
 - [Install](#install)
 - [Verify it worked](#verify-it-worked)
-- [The six tools](#the-six-tools)
+- [The ten tools](#the-ten-tools)
 - [First questions worth asking](#first-questions-worth-asking)
 - [Telling the agent how to use it](#telling-the-agent-how-to-use-it)
 - [Troubleshooting](#troubleshooting)
@@ -92,7 +92,7 @@ the repo2graph entry, and names the problem — command not on `PATH`, missing
 `[mcp]` extra, relative or non-existent path, or unparseable JSON. It never
 echoes an entry's `env` values.
 
-## The six tools
+## The ten tools
 
 | Tool | Use it for | Bounds |
 |---|---|---|
@@ -100,14 +100,25 @@ echoes an entry's `env` values.
 | `repo_search` | "where is X handled?" — BM25 seeds expanded one hop through the graph | `k` ≤ 50, `hops` ≤ 4, budget ≤ 12,000 tokens (default 6,000) |
 | `repo_neighbours` | "what calls this?" — from a known `node_id` | `hops` ≤ 4, `limit` ≤ 50 |
 | `repo_impact` | blast radius of a diff against a base branch | — |
+| `repo_find_symbol` | name → `node_id`, when you already know what you're looking for | `limit` ≤ 50 |
+| `repo_read` | widen a `[cite: path:start-end]` citation into more source lines | `context` ≤ 500 lines each side |
+| `repo_path_between` | "how does X reach Y" — a bounded, bidirectional path search | `max_hops` ≤ 8, `max_paths` ≤ 10 |
+| `repo_blast_radius` | reverse reachability from a `node_id` — what depends on it | `max_hops` ≤ 6, `limit` ≤ 50 |
 | `repo_cache_stats` | diagnostics: cache hits/misses | — |
 | `repo_build_status` | progress of an `--async-build` index | — |
 
 Every numeric argument is clamped **in the handler**, so a model that asks for
-`hops: 99` gets 4 rather than an error or a 200,000-character reply. All three
-retrieval tools pass `exclude_secrets=True` unconditionally: a human running
-the CLI can choose to see a `.env`, an agent tool returning one is a different
-class of problem.
+`hops: 99` gets 4 rather than an error or a 200,000-character reply. Every tool
+that reads repository content passes `exclude_secrets=True` unconditionally: a
+human running the CLI can choose to see a `.env`, an agent tool returning one
+is a different class of problem.
+
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius`
+were added after the original six to close round-trips the first set left an
+agent doing by hand: looking up a `node_id` by name instead of a `repo_search`
+detour, widening a citation without touching the filesystem, tracing a call
+chain between two known symbols, and reverse-closure "what breaks if I change
+this" in one call instead of walking `repo_neighbours` repeatedly.
 
 ### The output is markdown, not JSON
 
@@ -143,10 +154,10 @@ working on a fixture before trying it on your own code.
 
 | Ask | What the graph adds over a text search |
 |---|---|
-| `Where is authentication enforced?` | the guard itself, plus every route that calls it |
-| `What calls <function>?` | CALLS edges in, so callers come back even when the name is shadowed |
+| `Where is authentication enforced?` | the guard itself, plus the routes that call it |
+| `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
-| `What would be affected by changing <api>?` | direct callers and what they are called from |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (`repo_neighbours`) |
 | `Trace <a request> from route to persistence.` | a path across modules, each block cited to file and line |
 
 ```bash
@@ -162,9 +173,9 @@ an agent that uses the graph and one that keeps grepping:
 ```markdown
 ## Code navigation
 
-Use the repo2graph MCP tools before grepping:
+Use grep to locate code; use the repo2graph MCP tools for relationships:
 
-- `repo_search` for "where is X handled" — it returns cited source, not paths.
+- `repo_search` for a cited, budget-bounded pack when a question spans several files.
 - `repo_neighbours` for "what calls this" / "what would this break" — pass the
   `[sym:...]` node id from a previous result.
 - Cite the `path:line` from the tool output in your answer. If a tool marks an
@@ -205,7 +216,7 @@ you pass `--include-paths`.
 - **The graph as a substitute for running the code.** An edge says a name
   resolves; it does not say the line executes.
 
-Full list: [POSITIONING.md §5](../../POSITIONING.md).
+Full list: [limitations.md](../limitations.md).
 
 ## See also
 

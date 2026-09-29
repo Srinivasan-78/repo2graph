@@ -84,6 +84,8 @@ DIGEST_INFO_PREFIX = {
 # which is the other classic JWT confusion attack. The `kty == "RSA"`
 # check in decode_jwt is the other half of the same coupling.
 ALGORITHMS = {"RS256": "sha256", "RS384": "sha384", "RS512": "sha512"}
+MIN_RSA_BITS = 2048
+MAX_RSA_EXPONENT_BITS = 64
 
 
 class AuthError(Exception):
@@ -169,7 +171,15 @@ def rsa_verify(n: int, e: int, signature: bytes, message: bytes, hash_name: str)
     # n == 0, and a negative n makes `pow(...).to_bytes(...)` raise
     # OverflowError (the result carries n's sign). Both must fail closed as a
     # plain verification failure, never propagate as an unhandled exception.
+    # MIN_RSA_BITS/MAX_RSA_EXPONENT_BITS are the module-level constants
+    # (#367): a modulus below 2048 bits is not strong enough to mean
+    # anything, and an unbounded exponent is a CPU sink reachable once per
+    # request on the decode_jwt path -- both fail closed the same way a bad
+    # signature would, never as a distinct AuthError a caller could use to
+    # tell "weak key" apart from "forged signature".
     if n <= 0 or e <= 0:
+        return False
+    if n.bit_length() < MIN_RSA_BITS or e.bit_length() > MAX_RSA_EXPONENT_BITS:
         return False
     k = (n.bit_length() + 7) // 8
     if len(signature) != k:
@@ -509,7 +519,13 @@ def decode_jwt(token: str, jwks: JWKSCache, issuer: str, audience: str | None) -
     try:
         header = json.loads(b64url_decode(head_b64))
         claims = json.loads(b64url_decode(payload_b64))
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError, not just ValueError -- the same trap as the body parser
+        # in `http_server` (its `json.loads` handler): a header segment of
+        # `[` * 3000 + `]` * 3000 is ~8 KB of base64, fits in one Authorization
+        # header, and makes `json.loads` blow the stack instead of raising
+        # JSONDecodeError. Escaping here skipped the refusal path entirely: no
+        # `auth_rejected` audit record and a dropped connection instead of a 401.
         raise AuthError("token header or payload is not JSON") from None
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise AuthError("token header or payload is not an object")
@@ -717,10 +733,23 @@ class Authenticator:
                 raise AuthError("invalid bearer token")
 
         if self._jwks is not None and self.config.oidc_issuer:
-            claims = decode_jwt(
-                credential, self._jwks, self.config.oidc_issuer, self.config.audience
-            )
-            subject = str(claims.get("sub") or "unknown")
+            try:
+                claims = decode_jwt(
+                    credential, self._jwks, self.config.oidc_issuer, self.config.audience
+                )
+                subject = str(claims.get("sub") or "unknown")
+            except AuthError:
+                raise
+            except (ValueError, TypeError, KeyError, OverflowError, RecursionError):
+                # Backstop. Every field of the token is attacker-chosen JSON, and
+                # decode_jwt converts each failure it knows about to AuthError --
+                # but one it does not know about (a deeply nested claim reaching
+                # `str()`/`repr()`, a new claim check) must still be a refusal,
+                # not an exception that escapes the transport's AuthError-only
+                # refusal path with no 401 and no `auth_rejected` record. Only
+                # input-shaped exception types are caught: a genuine bug such as
+                # AttributeError still surfaces.
+                raise AuthError("token could not be validated") from None
             return Identity(subject=subject, mode="oidc", claims=claims)
         raise AuthError("invalid bearer token")
 

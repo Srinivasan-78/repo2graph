@@ -258,3 +258,43 @@ def test_a_structured_event_survives_an_unencodable_field(char):
     record = emit("test_event", stream=stream, detail=f"x{char}y")
     assert record["event"] == "test_event"
     assert stream.text.strip()
+
+
+# ------------------------------------------------------- jsonl artifacts ----
+
+
+def test_write_jsonl_escapes_u2028_and_u2029(tmp_path):
+    """Issue 376: write_jsonl escapes U+2028 and U+2029 to avoid splitlines() record tearing."""
+    from repo2graph.export import write_jsonl
+    from repo2graph.query import read_jsonl
+
+    out = tmp_path / "artifacts.jsonl"
+    record1 = {"id": "n1", "text": "line1\u2028line2", "type": "symbol"}
+    record2 = {"id": "n2", "text": "para1\u2029para2", "type": "symbol"}
+    records = [record1, record2]
+
+    written = write_jsonl(out, records)
+    assert written == 2
+
+    raw_text = out.read_text(encoding="utf-8")
+    assert "\u2028" not in raw_text
+    assert "\u2029" not in raw_text
+    assert r"\u2028" in raw_text
+    assert r"\u2029" in raw_text
+
+    # split("\n") and splitlines() agree on line count
+    lines_split = [line for line in raw_text.split("\n") if line]
+    lines_splitlines = raw_text.splitlines()
+    assert len(lines_split) == 2
+    assert len(lines_splitlines) == 2
+    assert len(lines_split) == len(lines_splitlines)
+
+    # reading it back with read_jsonl preserves the original strings
+    read_records = read_jsonl(out)
+    assert read_records == [
+        {"id": "n1", "text": "line1\u2028line2", "type": "symbol"},
+        {"id": "n2", "text": "para1\u2029para2", "type": "symbol"},
+    ]
+
+    # json.loads on each line also preserves the original strings
+    assert [json.loads(line) for line in lines_split] == records

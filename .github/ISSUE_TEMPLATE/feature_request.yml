@@ -10,8 +10,8 @@ body:
 
         - **[docs/BACKLOG.md](../../docs/BACKLOG.md)** — deliberately deferred work, each item with
           the reason it was deferred. That reason usually changes how you'd frame the proposal.
-        - **[POSITIONING.md](../../POSITIONING.md)** — what repo2graph is for, and §1's list of
-          what it deliberately does not claim to be. A proposal that moves it toward being a
+        - **[docs/comparison.md](../../docs/comparison.md)** — what repo2graph is for and when
+          another tool is the better choice. A proposal that moves it toward being a
           general-purpose code-search tool or a compiler-backed analyser is likely out of scope,
           and it's better to know that before writing it up.
 

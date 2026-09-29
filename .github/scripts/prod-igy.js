@@ -199,14 +199,16 @@ function renderLedger(ledger) {
 //     identity. A zero-width space after the `@` renders identically and is
 //     inert to GitHub's mention parser.
 //   - markdown image/link syntax (`![](url)`, `[text](url)`, a reference-style
-//     `[label]: url` definition, an HTML `<img>`, or a bare `https://` in
-//     prose): `![](url)` is fetched server-side by GitHub's camo proxy the
-//     moment the comment renders, confirming the workflow ran and when, and
-//     any of these forms posts a plausible-looking link under the bot's
-//     trusted identity -- a reviewer-phishing primitive either way. The
-//     syntactic triggers (`![`, `](`, `<img`) and the URL itself are all
-//     defanged, so nested brackets and reference-style definitions cannot
-//     route around it: the URL is what does the fetching, wherever it sits.
+//     `[label]: url` definition, any raw HTML tag such as `<img>` or
+//     `<a href>`, a bare `https://`, a protocol-relative `//host`, or an
+//     entity-encoded scheme like `HTTPS&#58;//`): `![](url)` is fetched
+//     server-side by GitHub's camo proxy the moment the comment renders,
+//     confirming the workflow ran and when, and any of these forms posts a
+//     plausible-looking link under the bot's trusted identity -- a
+//     reviewer-phishing primitive either way. `&` and `<` are escaped
+//     outright, and the syntactic triggers (`![`, `](`, `]:`) and every `//`
+//     are defanged, so nested brackets, reference-style definitions and
+//     encoded schemes cannot route around it.
 //   - unbounded length: the last line of defence if max_tokens is ever raised.
 //
 // ZWSP is built from a char code rather than written as a literal: an invisible
@@ -219,21 +221,38 @@ const ZWSP = String.fromCharCode(0x200b);
 
 function sanitizeAiText(text, maxChars = 4000) {
   let s = String(text === null || text === undefined ? '' : text);
-  s = s.replace(/<!--/g, '&lt;!--').replace(/-->/g, '--&gt;');
+  // `&` first, and every one of them. After this no character reference the
+  // model writes can be decoded by the renderer -- `HTTPS&#58;//` stays the
+  // literal text `HTTPS&amp;#58;//`, never `HTTPS://` -- and the `&lt;`/`&gt;`
+  // this function emits below cannot be un-escaped by a crafted `&amp;lt;`.
+  // Prose `A & B` still renders as `A & B`.
+  s = s.replace(/&/g, '&amp;');
+  // Every `<`, not a tag allowlist. This one rule removes raw HTML (`<a href>`,
+  // `<img>`, `<picture>` ...), comment openers (`<!--`) and `<url>` autolinks
+  // at once; an allowlist has to anticipate every tag the renderer accepts.
+  s = s.replace(/</g, '&lt;');
+  // `--!>` closes a comment as well as `-->` (HTML spec, "incorrectly closed
+  // comment"), so both forms are escaped (CodeQL js/bad-tag-filter). With every
+  // `<` escaped the prose cannot open a comment; this stops it closing one the
+  // surrounding template might have open.
+  s = s.replace(/--(!?)>/g, '--$1&gt;');
   s = s.replace(/@(?=[A-Za-z0-9])/g, '@' + ZWSP);
-  // HTML image embeds: sanitised comments render a restricted set of raw
-  // HTML tags, <img> among them, and GitHub camo-proxies its src too.
-  s = s.replace(/<img\b/gi, '&lt;img');
   // Markdown image/link trigger characters. Matching only the two-character
   // openers -- not the whole `![...](...)`  -- means nested brackets in the
-  // alt/link text cannot hide the destination from this pass.
+  // alt/link text cannot hide the destination from this pass. `]:` is the
+  // reference-definition form (`[r]: //evil.example/x`): breaking it kills the
+  // definition whatever its destination looks like.
   s = s.replace(/!\[/g, '!' + ZWSP + '[');
   s = s.replace(/\]\(/g, ']' + ZWSP + '(');
-  // The URL itself, wherever it appears: inline, reference-style definition,
-  // autolink, or bare in prose. Breaking the `//` after the scheme is enough
-  // to keep it from being treated as a live link or image source while
-  // leaving ordinary prose that happens to mention a URL readable.
-  s = s.replace(/\bhttps?:\/\//gi, (m) => m.replace('//', '/' + ZWSP + '/'));
+  s = s.replace(/\]:/g, ']' + ZWSP + ':');
+  // The URL itself, wherever it appears. Every `//` is broken, not only one
+  // after `https:`: that covers any scheme (`ftp://`, `HTTPS://`), the
+  // protocol-relative `//evil.example`, and `///` runs (each slash that is
+  // followed by another gets the ZWSP, so no `//` survives). GFM also autolinks
+  // a bare `www.`, so that is broken too. Prose stays readable: ZWSP is
+  // invisible.
+  s = s.replace(/\/(?=\/)/g, '/' + ZWSP);
+  s = s.replace(/\bwww\./gi, (m) => m.slice(0, 3) + ZWSP + '.');
   if (s.length > maxChars) s = s.slice(0, maxChars) + '… _(truncated)_';
   return s.trim();
 }

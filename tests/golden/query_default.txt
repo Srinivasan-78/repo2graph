@@ -28,14 +28,6 @@ The gateway dispatches an inbound request to a handler.
 The gateway dispatches an inbound request to a handler.
 
 
---- .env::.env [lexical]
-# file: .env (, 5 lines)
-# deployment ledger credential store
-ACME_DEPLOYMENT_LEDGER_TOKEN=abc123deadbeef
-ACME_DEPLOYMENT_LEDGER_SECRET=zzz999notreal
-DEPLOYMENT_LEDGER_CREDENTIAL=deployment ledger credential inbound request handler
-
-
 --- pkg/audit.py::audit_event [lexical]
 # file: pkg/audit.py
 # function: audit_event  (lines 2-7, python)

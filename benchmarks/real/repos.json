@@ -1,0 +1,9 @@
+{
+  "_comment": "Third-party repositories the real-repo retrieval benchmark runs against, each pinned to a tag and the commit that tag resolved to when the tasks were written. `root` is the directory indexed and searched; every task path is relative to it.",
+  "repos": [
+    {"name": "flask", "url": "https://github.com/pallets/flask", "ref": "3.1.2", "sha": "2c1b30d0503cfb064f1cb252e6614a06915a362a", "root": "src", "language": "python"},
+    {"name": "requests", "url": "https://github.com/psf/requests", "ref": "v2.32.5", "sha": "b25c87d7cb8d6a18a37fa12442b5f883f9e41741", "root": "src", "language": "python"},
+    {"name": "fastapi", "url": "https://github.com/fastapi/fastapi", "ref": "0.118.0", "sha": "333f1ba737be6507fc707278f6b69cf1f81efdc1", "root": "fastapi", "language": "python"},
+    {"name": "hono", "url": "https://github.com/honojs/hono", "ref": "v4.9.0", "sha": "82bdc4dff0bfd0b425860db8e25c14d25ca6534d", "root": "src", "language": "typescript"}
+  ]
+}

@@ -17,8 +17,8 @@ Two kinds of surface:
   (`publish.yml`'s "Advance floating major tag" step moves `vN` to each new
   release, so `vN` is a promise about the major and nothing more).
 
-`paths` is an allowlist on purpose, never a glob. `benchmarks/results.json`,
-`examples/*/manifest.json` and `docs/BUILD_STATE.md` all record the version that
+`paths` is an allowlist on purpose, never a glob. `benchmarks/results.json`
+and `examples/*/manifest.json` both record the version that
 *produced* some artifact -- history, not a claim about the current release --
 and a pattern loose enough to reach them would rewrite the past. For the same
 reason the pin pattern matches `==` only: `docs/github-action.md`'s
@@ -135,7 +135,6 @@ SURFACES: tuple[Surface, ...] = (
             "README.md",
             "docs/github-action.md",
             ".github/SECURITY.md",
-            "docs/PRODUCTION_READINESS.md",
             "docs/SECURITY-AUDIT.md",
         ),
         why="prose about the floating tag, which is wrong about a tag that no longer moves",

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from .export import path as artifact_path
 from .export import paths as artifact_paths
+from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
 
 from .secrets import (
     SECRET_CONFIG_EXTS,
@@ -19,6 +20,7 @@ from .secrets import (
     SECRET_KEYWORDS,
     SECRET_WORD_RE,
     _is_secret_path,
+    redact_content,
 )
 
 __all__ = [
@@ -52,6 +54,18 @@ Vector = Sequence[float]
 _T = TypeVar("_T")
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
+# ISS-378: TOKEN_RE requires 2+ characters, so a single-character identifier
+# (Go/Java/TS/Rust's ubiquitous generic `T`, a matrix `A` or vector `b` in
+# numerical code) is never indexed and never matches a query -- a silent
+# zero-result rather than a ranked miss, which reads to a user as "the tool
+# does not know about this symbol". IDENT_RE is the targeted fix: it is a
+# strict superset of TOKEN_RE (same first-char class, `*` not `+`), used only
+# where a declared symbol's own `name` is at stake -- indexing it in
+# Index.__init__, matching it in _boost_identifiers, and admitting a
+# single-character query term in score() -- never for free text, which keeps
+# the index from filling with noise postings for every stray "a"/"i" in body
+# text.
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
 SUBTOKEN_RE = re.compile(r"_|(?<=[a-z0-9])(?=[A-Z])")
 
@@ -109,13 +123,34 @@ PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
 def read_jsonl(path: Path) -> list[Record]:
     """Load a JSONL file written by export.write_jsonl.
 
-    newline="\n" matters: json.dumps(ensure_ascii=False) passes U+2028, U+2029
-    and U+0085 through verbatim, and both str.splitlines() and universal-newline
-    mode treat those as line breaks, which would cut records in half.
+    Reads bytes and splits on raw b"\n" only, never text mode's
+    universal-newline handling: json.dumps(ensure_ascii=False) passes U+2028,
+    U+2029 and U+0085 through verbatim, and universal-newline mode (like
+    str.splitlines()) treats those as line breaks, which would cut records
+    in half.
+
+    ISS-408: each line is bounded at MAX_JSONL_LINE_BYTES (see integrity.py) --
+    a single JSONL record anywhere near that size is malformed regardless of
+    how large a legitimate index is, the same reasoning as
+    answer._BoundedLines' per-response ceiling. The framing comes from
+    integrity._iter_raw_lines rather than `for raw in fh` because the latter
+    reads until a newline: on a file that contains none, the allocation has
+    already happened by the time a per-line check could measure it. There is
+    deliberately no *total*-bytes ceiling here: chunks.jsonl is the
+    repository's own text and is legitimately large on a big monorepo.
+    integrity.MAX_JSONL_TOTAL_BYTES bounds the total on the verification path
+    (integrity/doctor), which reads an untrusted index end to end and can
+    afford to be strict.
     """
     rows: list[Record] = []
-    with open(path, encoding="utf8", errors="surrogateescape", newline="\n") as fh:
-        for lineno, line in enumerate(fh, 1):
+    with open(path, "rb") as fh:
+        for lineno, raw in enumerate(_iter_raw_lines(fh, MAX_JSONL_LINE_BYTES, str(path)), 1):
+            if len(raw) > MAX_JSONL_LINE_BYTES:
+                raise ValueError(
+                    f"{path}: line {lineno} is {len(raw)} bytes, over the "
+                    f"{MAX_JSONL_LINE_BYTES}-byte per-line limit"
+                )
+            line = raw.decode("utf8", "surrogateescape")
             if not line.strip():
                 continue
             try:
@@ -151,6 +186,9 @@ class Index:
     # fused query has run on this Index yet. A class-level default so every
     # Index has the attribute without __init__ having to care.
     fusion_coverage: tuple[int, int] | None = None
+    # The source tree this index describes, when the caller knows it (the MCP
+    # server sets it from its --repo). None means "not known here".
+    repo_root: Path | None = None
 
     def __init__(self, outdir: Path):
         self.dir = Path(outdir)
@@ -180,7 +218,16 @@ class Index:
         for i, c in enumerate(self.chunks):
             # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
             # inspectable) with a null text/qualname must not TypeError in re.findall.
-            counts = Counter(tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3)
+            terms = tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3
+            # ISS-378: a single-character declared name (`name`, not text/
+            # qualname prose) is admitted here even though tokenize() would
+            # drop it -- multi-character names are already reachable through
+            # tokenize(qualname) above, so this only ever adds the narrow case
+            # TOKEN_RE cannot: a name that *is* one identifier character.
+            name = c.get("name") or ""
+            if len(name) == 1 and IDENT_RE.fullmatch(name):
+                terms += [name.lower()] * 3
+            counts = Counter(terms)
             self.lengths.append(sum(counts.values()) or 1)
             for term, n in counts.items():
                 self.postings[term].append((i, n))
@@ -311,8 +358,33 @@ class Index:
 
     _is_secret_path = staticmethod(_is_secret_path)
 
+    def _served(self, c: Record) -> Record:
+        """`c` with its text content-redacted when the index may hold raw secrets.
+
+        Serve-time backstop for the agent path (`exclude_secrets=True`): an index
+        whose manifest does not say its chunks were redacted at build time
+        (`--secret-policy off`/`warn-only`, a pre-fix `--include-secrets` build,
+        or no manifest at all) is scanned here, per returned chunk. A redacted
+        index is passed through untouched, so the default path costs nothing.
+        """
+        policy = self.manifest.get("secret_filter_policy")
+        if policy in ("redact-match", "exclude-file"):
+            return c
+        text = c.get("text")
+        if not isinstance(text, str) or not text:
+            return c
+        red, n = redact_content(text)
+        return {**c, "text": red} if n else c
+
     def score(self, query: str) -> list[tuple[float, int]]:
-        q = Counter(tokenize(query))
+        # ISS-378: tokenize(query) alone drops single-character terms (TOKEN_RE
+        # requires 2+ chars), so a query of exactly "T" would never look up the
+        # "t" posting even though Index.__init__ now creates one for a
+        # single-character symbol name. Adding IDENT_RE's single-char matches
+        # is safe for ordinary queries: `postings.get(term)` below is a no-op
+        # for any term that was never indexed, which is every single character
+        # except a declared one-letter name.
+        q = Counter(tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1])
         acc: dict[int, float] = defaultdict(float)
         for term, qn in q.items():
             posting = self.postings.get(term)
@@ -339,7 +411,10 @@ class Index:
         the query count (not tokenize()'s sub-words), and only chunks BM25
         already scored are touched, so score()'s invariants are unchanged.
         """
-        idents = set(TOKEN_RE.findall(query))
+        # IDENT_RE, not TOKEN_RE: a query of exactly "T" must be able to boost
+        # a chunk whose declared name is "T" (ISS-378). IDENT_RE is a strict
+        # superset of TOKEN_RE, so every multi-character match is unchanged.
+        idents = set(IDENT_RE.findall(query))
         if not idents:
             return
         lowered = {t.lower() for t in idents}
@@ -547,6 +622,9 @@ class Index:
         min_confidence: float | None = None,
         vectors: Mapping[Any, Vector] | None = None,
         embedder: "Embedder | None" = None,
+        exclude_secrets: bool = False,
+        extra_secret_keywords: list[str] | None = None,
+        extra_secret_dirs: list[str] | None = None,
     ) -> list[Record]:
         """Lexical seeds plus their graph neighbours, budgeted on chunk text.
 
@@ -557,8 +635,19 @@ class Index:
         this method's historical behaviour. With `vectors` and `embedder` both
         None -- the default -- seeds come from `score()` exactly as they always
         have; supply either and they come from the fused ranking instead.
+        `exclude_secrets` drops secret-looking paths (same rule as
+        pack_context); False, the default, is the historical behaviour.
         """
         conf = 0.0 if min_confidence is None else min_confidence
+
+        def _secret(c: Record, nid: str) -> bool:
+            if not exclude_secrets:
+                return False
+            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            return _is_secret_path(
+                c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            )
+
         ranked = (
             self.score(query)
             if vectors is None and embedder is None
@@ -572,7 +661,7 @@ class Index:
         for s, i in scored:
             c = self.chunks[i]
             nid = c["node_id"]
-            if nid in seen_nodes_set:
+            if nid in seen_nodes_set or _secret(c, nid):
                 continue
             chunk_len = len(c.get("text") or "")
             # ISS-37: test budget before appending so we do not overshoot by a whole chunk
@@ -580,6 +669,9 @@ class Index:
                 break
             seen_nodes_set.add(nid)
             seen_nodes_list.append(nid)
+            if exclude_secrets:
+                c = self._served(c)
+                chunk_len = len(c.get("text") or "")
             picked.append({**c, "score": round(s, 3), "why": "lexical"})
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
@@ -595,6 +687,10 @@ class Index:
             if len(picked) >= max_total or used >= budget_chars:
                 break
             for c in self.by_node.get(nid, [])[:1]:
+                if _secret(c, nid):
+                    break
+                if exclude_secrets:
+                    c = self._served(c)
                 chunk_len = len(c.get("text") or "")
                 if used + chunk_len > budget_chars:
                     break
@@ -688,6 +784,8 @@ class Index:
                 seen_nodes.add(nid)
                 continue
             seen_nodes.add(nid)
+            if exclude_secrets:
+                c = self._served(c)
             seeds.append({**c, "score": round(s, 3), "why": "seed"})
             if len(seeds) >= k:
                 break
@@ -709,6 +807,8 @@ class Index:
                     c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
                 ):
                     continue
+                if exclude_secrets:
+                    c = self._served(c)
                 src_name = self.nodes.get(src, {}).get("name") or src
                 neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
 
@@ -753,9 +853,13 @@ class Index:
                 body += block
                 continue
             short = _compress(text)
-            block = _cite_block(c, short)
+            # The compressed view shows a header and one line, so its cite must
+            # not claim the whole chunk: `[cite: JsonReader.kt:1-648]` over a
+            # block showing `/*` sent readers to 648 lines nobody quoted.
+            excerpt = _excerpt_record(c, text, short)
+            block = _cite_block(excerpt, short)
             if fits(block):
-                picked.append((c, short))
+                picked.append((excerpt, short))
                 body += block
             truncated = True
 
@@ -849,12 +953,36 @@ def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> st
     is not additive (any token estimate) is applied to the string that will
     actually be emitted. With the default `len` this is exactly the running
     "len(line) + a newline" arithmetic it replaces.
+
+    ISS-345: the old loop rebuilt `"\n".join([*kept, line])` -- a fresh list
+    unpack plus a fresh O(K)-length join -- on every one of N lines, so
+    fitting a K-line prefix cost O(N*K) rather than O(N). `measure is len`
+    (true for the default, and for any caller that passes the builtin back)
+    is the additive case AGENTS.md's "with the default len this is exactly
+    the running len(line) + newline arithmetic" already documents: track the
+    cumulative character count instead of a string, and build the result
+    once at the end via a single join. A non-`len` `measure` is not provably
+    additive (a token estimate need not be), so that path is unchanged in
+    complexity -- it still measures the whole candidate every line -- but no
+    longer pays the `[*kept, line]` unpack on top of the join. Output is
+    unchanged either way: `_fit_lines` has byte-level tests.
     """
     if limit <= 0:
         return ""
+    lines = text.split("\n")  # never splitlines(): see AGENTS.md
+    if measure is len:
+        total = 0
+        n_kept = 0
+        for line in lines:
+            add = len(line) if n_kept == 0 else len(line) + 1  # +1 for the "\n" join adds
+            if total + add > limit:
+                break
+            total += add
+            n_kept += 1
+        return "\n".join(lines[:n_kept])
     kept: list[str] = []
-    for line in text.split("\n"):  # never splitlines(): see AGENTS.md
-        candidate = "\n".join([*kept, line])
+    for line in lines:
+        candidate = "\n".join(kept + [line]) if kept else line
         if measure(candidate) > limit:
             break
         kept.append(line)
@@ -879,13 +1007,92 @@ def _compress(text: str) -> str:
     return "\n".join(kept)
 
 
+#: `# <key>: ` lines chunks.build_chunks writes after `# file:` (and, for a
+#: symbol, its `# <kind>: <qualname>  (lines a-b, lang)` line).
+_HEADER_PREFIXES = (
+    "# imports: ",
+    "# defines: ",
+    "# entry point:",
+    "# inherits: ",
+    "# called by: ",
+    "# calls: ",
+    "# calls (outside the repo): ",
+    "# doc: ",
+)
+_KIND_LINE_RE = re.compile(r"^# [\w-]+: .*\(lines \d+-\d+, [^)]*\)$")
+_PART_SUFFIX_RE = re.compile(r"#\d+$")
+
+
+def _header_len(lines: list[str]) -> int:
+    """How many leading lines of a chunk's text are its generated header."""
+    if not lines or not lines[0].startswith("# file: "):
+        return 0
+    i = 1
+    if i < len(lines) and _KIND_LINE_RE.match(lines[i]):
+        i += 1
+    while i < len(lines) and lines[i].startswith(_HEADER_PREFIXES):
+        i += 1
+    return i
+
+
+def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
+    """`chunk` re-cited to the source lines `_compress` actually kept.
+
+    `excerpt_of` keeps the whole chunk's span. The shown span replaces
+    `start_line`/`end_line` only where chunk text maps line-for-line onto the
+    source from `start_line` -- a whole file or a whole symbol, first part.
+    A file residual (symbol spans carved out, then stripped) or a later split
+    part does not, so those keep their span and rely on the marker alone.
+    """
+    start = chunk.get("start_line")
+    end = chunk.get("end_line")
+    rec = {**chunk, "excerpt_of": [start, end]}
+    if (
+        not isinstance(start, int)
+        or chunk.get("type") not in ("symbol", "file")
+        or _PART_SUFFIX_RE.search(str(chunk.get("id") or ""))
+    ):
+        return rec
+    lines = full.split("\n")  # never splitlines(): see AGENTS.md
+    hdr = _header_len(lines)
+    # Mirror _compress: every leading `#` line, then the first non-blank one.
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    shown = list(range(i))
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines):
+        shown.append(i)
+    body = [x - hdr for x in shown if x >= hdr]
+    if body and short.split("\n")[-1] == lines[shown[-1]]:
+        rec["start_line"] = start + min(body)
+        rec["end_line"] = start + max(body)
+        rec["excerpt_exact"] = True
+    return rec
+
+
 def _cite_block(chunk: Record, text: str) -> str:
-    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line."""
+    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line.
+
+    A compressed neighbour (`excerpt_of` set) cites the lines it shows and
+    says which span they are an excerpt of, between the symbol and the why.
+    """
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
     end = chunk.get("end_line") or start
+    of = chunk.get("excerpt_of")
+    mark = ""
+    if isinstance(of, (list, tuple)) and len(of) == 2:
+        span = f"{of[0] or 1}-{of[1] or of[0] or 1}"
+        mark = (
+            f" [excerpt of {span}]"
+            if chunk.get("excerpt_exact")
+            else f" [header and first line only, of {span}]"
+        )
     head = (
-        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}` ({chunk.get('why') or ''})"
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{mark} "
+        f"({chunk.get('why') or ''})"
     )
     disarmed = "\n".join(
         "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")

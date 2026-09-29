@@ -2159,7 +2159,7 @@ rag = [
 [package.metadata]
 requires-dist = [
     { name = "argcomplete", marker = "extra == 'completion'", specifier = ">=3.0" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0,<3.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0,<3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "numpy", marker = "extra == 'rag'", specifier = ">=1.24" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.5" },

@@ -6,7 +6,19 @@ name: Dependabot triage
 # (The required contexts are now the full test matrix plus packaging, action
 # and windows-cp1252-pipe; `reuse` is no longer among them.) This now only
 # labels and flags the update type; a human decides whether to merge.
-on: pull_request
+#
+# `opened`/`reopened` only, deliberately. `dependabot/fetch-metadata` reads the
+# metadata off the *last commit's* author and refuses with "PR is not from
+# Dependabot" once anything else has pushed -- and something else routinely
+# has to: dependabot's pip ecosystem edits `pyproject.toml` alone, so `uv.lock`
+# needs a follow-up commit before CI can install anything. On the default
+# `pull_request` trigger that turns into a red check on exactly the PRs that
+# have been repaired. The update type cannot change after the PR opens, so
+# nothing is lost by not recomputing it -- and the manual-merge comment below
+# stops being re-posted on every push.
+on:
+  pull_request:
+    types: [opened, reopened]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true

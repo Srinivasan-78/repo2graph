@@ -2,14 +2,13 @@
 
 What repo2graph gets wrong, on purpose or otherwise, and how to tell when it has. Most of the
 static-analysis limitations here are also covered in
-[TECHNICAL.md#where-it-guesses-and-why](../TECHNICAL.md#where-it-guesses-and-why); this page adds
+[TECHNICAL.md#where-it-guesses-and-why](technical.md#where-it-guesses-and-why); this page adds
 what running the pipeline against five real, large, public repositories
 ([examples/](../examples/)) actually surfaced, with the measured numbers, and the limitations that
 only show up at scale.
 
-The short version — one row per limitation, no numbers — is the
-["What it does — and what it does not"](../README.md#does-and-doesnt) table in the README. This page
-is the long version, with the measurements behind each row.
+The short version is the ["What it can't do"](../README.md#what-it-cant-do) list in the README.
+This page is the long version, with the measurements behind each item.
 
 ## Static analysis, generally
 
@@ -24,7 +23,7 @@ is the long version, with the measurements behind each row.
   before it existed, and is the raw name-match fan-out.
 - **No arrow does not prove no call.** Dynamic dispatch — a string-keyed lookup, a plugin registry,
   `getattr`-style dispatch, a virtual call resolved only at runtime — is invisible to a reader that
-  never executes anything. See the empirical failure mode in **[BENCHMARK.md](../BENCHMARK.md#known-weaknesses-failure-cases-and-edge-cases)** (`DYNAMIC-01` plugin registry) and our mitigation design in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
+  never executes anything. See the empirical failure mode in **[regression-suite.md](regression-suite.md#known-failure-cases-it-pins)** (string-keyed plugin registry) and our mitigation design in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
 - **Dependency injection resolves to the declaration, not the implementation.** A DI container —
   Spring's `@Autowired`, .NET's `IServiceCollection`, a NestJS provider, a hand-rolled registry —
   binds an interface to a concrete class at startup. The call site only ever names the interface's
@@ -32,7 +31,7 @@ is the long version, with the measurements behind each row.
   or fans out across every same-named implementation at `1/n` confidence, and never on the class the
   container actually injected. The candidates are still enumerable — walk `INHERITS` *into* the
   interface node to list every type that implements it — but which one runs is a runtime fact, and
-  repo2graph never runs anything. See proposed framework edge extractors in **[LANGUAGE_SUPPORT.md](../LANGUAGE_SUPPORT.md#ecosystem-relationship-extraction-opportunities)**.
+  repo2graph never runs anything. See proposed framework edge extractors in **[LANGUAGE_SUPPORT.md](language-support.md#4-ecosystem-aware-relationship-extraction-opportunities)**.
 - **Reflection and dynamic imports are invisible.** `importlib.import_module(some_variable)`,
   Java reflection, JavaScript's dynamic `import()` with a computed specifier — none of these name a
   literal string tree-sitter can resolve, so no `IMPORTS`/`CALLS` edge is drawn for them.
@@ -171,7 +170,7 @@ reasons stated per repository.
 ## Stale indexes
 
 An index under `.r2g` is a **snapshot of the tree it was built from**, and nothing in repo2graph
-watches the filesystem. Edit a function, and every artifact — `graph.json`, `chunks.jsonl`,
+watches the filesystem. Edit a function, and every artifact — `nodes.jsonl`, `edges.jsonl`, `chunks.jsonl`,
 `graph.html`, the vectors — keeps describing the version that existed at build time. A query will
 answer confidently from it, and the `[cite: path:start-end]` anchor will point at line numbers that
 have since moved. There is no timestamp check in the query path, by design: adding one would mean
@@ -188,11 +187,9 @@ What that means in practice:
   mode not even that, without `--allow-auto-build`. A long-lived `repo2graph-mcp` process serving a
   branch you keep committing to will go stale; rebuild the index out-of-band, or restart the server
   after a large change.
-- **`repo2graph doctor` does not detect this.** It reports index *integrity* — a corrupt
-  `chunks.jsonl`, a missing `vectors.meta.json`, vectors whose `build_id` or per-chunk text hashes
-  no longer match the chunks they were computed from (`status: "stale"` in
-  `repo2graph/integrity.py`). That is vector-vs-chunk drift *inside* the index. It says nothing
-  about whether your working tree has moved on since the build.
+- **Detecting it is manual.** `repo2graph index-status -o .r2g --check` exits 1 when files were
+  added, removed or modified since the build, and `repo2graph doctor` reports the same under
+  Index Freshness. Nothing rebuilds for you; run `repo2graph build --incremental`.
 - **The symptom to watch for** is a citation whose line range no longer contains what the answer
   claimed, or a symbol the answer references that no longer exists. Both mean rebuild, not a bug.
 

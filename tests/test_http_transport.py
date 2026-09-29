@@ -70,9 +70,10 @@ class Server:
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
-    def get(self, path):
+    def get(self, path, headers=None):
+        request = urllib.request.Request(self.url(path), headers=headers or {})
         try:
-            with urllib.request.urlopen(self.url(path), timeout=10) as response:
+            with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
@@ -210,7 +211,10 @@ def test_a_bad_static_credential_returns_401_and_does_not_run_the_tool(
 def test_a_401_carries_a_www_authenticate_challenge(make_server):
     server = make_server(AuthConfig(token="s3cret"))
     request = urllib.request.Request(
-        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', method="POST"
+        server.url(),
+        data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+        method="POST",
+        headers={"Content-Type": "application/json"},
     )
     try:
         urllib.request.urlopen(request, timeout=10)
@@ -270,7 +274,10 @@ def test_a_bad_jwt_returns_401_and_does_not_run_the_tool(make_server, monkeypatc
 def test_the_oidc_challenge_names_the_issuer(make_server):
     server = make_server(oidc(), opener=FakeIssuer())
     request = urllib.request.Request(
-        server.url(), data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}', method="POST"
+        server.url(),
+        data=b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}',
+        method="POST",
+        headers={"Content-Type": "application/json"},
     )
     try:
         urllib.request.urlopen(request, timeout=10)
@@ -525,9 +532,77 @@ def test_a_rejected_host_never_reaches_the_tool(make_server):
     assert server.audit_lines() == []
 
 
+def test_get_metadata_with_disallowed_host_is_refused(make_server):
+    """GET /.well-known/mcp-server-metadata with Host: evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Host": "evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Host header not allowed"
+
+
+def test_get_metadata_with_disallowed_origin_is_refused(make_server):
+    """GET /.well-known/mcp-server-metadata with Origin: https://evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Origin": "https://evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Origin not allowed"
+
+
+def test_get_metadata_with_standard_host_and_no_origin_succeeds(make_server):
+    """GET /.well-known/mcp-server-metadata with standard Host: 127.0.0.1:<port> and no Origin returns 200."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Host": f"127.0.0.1:{server.port}"}
+    )
+    assert status == 200
+    assert body["name"] == "repo2graph"
+
+
+def test_head_metadata_with_disallowed_host_is_refused(make_server):
+    """HEAD /.well-known/mcp-server-metadata with Host: evil.example.com returns 403."""
+    server = make_server()
+    req = urllib.request.Request(
+        server.url("/.well-known/mcp-server-metadata"),
+        method="HEAD",
+        headers={"Host": "evil.example.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc_info.value.code == 403
+    assert len(exc_info.value.read()) == 0
+
+
+def test_head_metadata_with_disallowed_origin_is_refused(make_server):
+    """HEAD /.well-known/mcp-server-metadata with Origin: https://evil.example.com returns 403."""
+    server = make_server()
+    req = urllib.request.Request(
+        server.url("/.well-known/mcp-server-metadata"),
+        method="HEAD",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc_info.value.code == 403
+    assert len(exc_info.value.read()) == 0
+
+
+def test_get_healthz_with_disallowed_host_is_refused(make_server):
+    """GET /healthz with Host: evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get("/healthz", headers={"Host": "evil.example.com"})
+    assert status == 403
+    assert body["error"]["message"] == "Host header not allowed"
+
+
 def test_an_oversized_body_is_refused(make_server):
     server = make_server()
-    request = urllib.request.Request(server.url(), data=b"x" * 10, method="POST")
+    request = urllib.request.Request(
+        server.url(), data=b"x" * 10, method="POST", headers={"Content-Type": "application/json"}
+    )
     request.add_header("Content-Length", str(1 << 30))
     try:
         urllib.request.urlopen(request, timeout=10)
@@ -1184,3 +1259,47 @@ def test_a_missing_index_does_not_tell_the_caller_where_it_looked(tmp_path):
     audited = [r for r in server.audit_lines() if r.get("outcome") == "error"]
     assert len(audited) == 1
     assert "no_index_here" in audited[0]["error"]
+
+
+def test_a_deeply_nested_jwt_header_gets_a_401_and_an_audit_record(make_server):
+    """Repro C:/bench/audit_code/jwt_srv.py: a 3000-deep JWT header used to
+    raise RecursionError out of authenticate(), dropping the connection with no
+    401 and writing no `auth_rejected` record."""
+    import base64
+
+    def b64(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    token = b64(b"[" * 3000 + b"]" * 3000) + "." + b64(b"{}") + "." + b64(b"x")
+    server = make_server(oidc(), opener=FakeIssuer())
+    status, body = server.call("repo_map", token=token)
+    assert status == 401, body
+    records = [r for r in server.audit_lines() if r["event"] == "tool_call"]
+    assert records and records[0]["outcome"] == "auth_rejected"
+
+
+def test_tools_list_annotations_follow_this_server_s_build_capability(make_server, tmp_path):
+    """#292: `readOnlyHint` must describe the server answering, not the tool.
+
+    `tools/list` is answered once for a server's whole lifetime, so the
+    annotation has to reflect whether *this* server can build. A server given
+    a repo to build from may, on the first call to any tool but
+    `repo_build_status`, parse the whole repository, run git and write
+    `.r2g/**` -- and the client inspecting annotations has no other way to
+    learn that.
+
+    Detector: this handler used to spread the flat `TOOL_ANNOTATIONS`
+    constant, so the second half of this test saw `readOnlyHint: True`.
+    """
+    read_only = make_server()
+    _status, body = read_only.rpc("tools/list")
+    hints = {t["name"]: t["annotations"]["readOnlyHint"] for t in body["result"]["tools"]}
+    assert set(hints.values()) == {True}, "a server with no repo to build from is read-only"
+
+    builder = make_server(repo=tmp_path)
+    _status, body = builder.rpc("tools/list")
+    hints = {t["name"]: t["annotations"]["readOnlyHint"] for t in body["result"]["tools"]}
+    assert hints["repo_search"] is False
+    assert hints["repo_map"] is False
+    # The one tool that only ever reads TaskManager state, on every path.
+    assert hints["repo_build_status"] is True

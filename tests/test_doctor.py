@@ -27,6 +27,7 @@ from repo2graph.doctor import (
     check_vectors,
     run_doctor,
 )
+from repo2graph.status import remote_refresh_command
 
 
 def test_doctor_smoke(tmp_path):
@@ -703,3 +704,8 @@ def test_doctor_full_report_includes_every_first_run_check(tmp_path):
         "MCP Client Configuration",
     ):
         assert expected in names, f"doctor no longer reports '{expected}'"
+
+
+def test_remote_refresh_command():
+    cmd = remote_refresh_command("github:Srinivasan-78/repo2graph@73d4a80", ".r2g")
+    assert cmd == "repo2graph github Srinivasan-78/repo2graph -o .r2g"

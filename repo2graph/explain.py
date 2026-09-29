@@ -93,6 +93,10 @@ def explain_retrieval(
     hops: int = 1,
     min_confidence: float | None = None,
     budget_chars: int = RETRIEVE_BUDGET_CHARS,
+    *,
+    exclude_secrets: bool = True,
+    extra_secret_keywords: list[str] | None = None,
+    extra_secret_dirs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Trace query tokenization, seed ranking, graph expansion, and final chunk selection.
 
@@ -103,9 +107,20 @@ def explain_retrieval(
     under a per-hop cap, so a reordered seed list is a different traversal), and
     the expansion passes `ALL_EDGE_DIRS` — see AGENTS.md, "A new default on a
     shared traversal helper narrows its existing callers".
+
+    `exclude_secrets` defaults to True, as `rag`/`query` do at query time: a
+    secret-looking path is neither listed as a candidate, walked to, nor
+    retrieved, so the trace never names a `.env` the answer would not show.
     """
     idx = Index(outdir)
     query_terms = tokenize(query)
+
+    def _secret_path(path: str) -> bool:
+        return exclude_secrets and idx._is_secret_path(
+            path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+        )
+
+    hidden = 0
 
     # BM25 scoring
     scored = idx.score(query)
@@ -119,6 +134,11 @@ def explain_retrieval(
     for rank, (score, chunk_idx) in enumerate(seed_chunks, 1):
         c = idx.chunks[chunk_idx]
         nid = c["node_id"]
+        # Same skip as retrieve(): a secret chunk never becomes a seed and
+        # never consumes budget -- and is not listed either.
+        if _secret_path(c.get("path") or idx.nodes.get(nid, {}).get("path") or ""):
+            hidden += 1
+            continue
         # Find matched terms
         text = (c.get("text") or "").lower()
         qual = (c.get("qualname") or "").lower()
@@ -162,6 +182,9 @@ def explain_retrieval(
     expansion_steps = []
     for dst, etype, direction, src in expansion_order:
         dst_node = idx.nodes.get(dst, {})
+        if _secret_path(dst_node.get("path") or ""):
+            hidden += 1
+            continue
         expansion_steps.append(
             {
                 "from_node": src,
@@ -180,6 +203,9 @@ def explain_retrieval(
         hops=hops,
         budget_chars=budget_chars,
         min_confidence=min_confidence,
+        exclude_secrets=exclude_secrets,
+        extra_secret_keywords=extra_secret_keywords,
+        extra_secret_dirs=extra_secret_dirs,
     )
 
     final_chunks = []
@@ -210,6 +236,8 @@ def explain_retrieval(
         "primary_seeds": primary_seeds,
         "expansion_steps": expansion_steps,
         "retrieved_chunks": final_chunks,
+        "exclude_secrets": exclude_secrets,
+        "secrets_hidden": hidden,
     }
 
 
@@ -325,6 +353,12 @@ def format_explain_retrieval(data: dict[str, Any]) -> str:
     for c in data["retrieved_chunks"]:
         lines.append(
             f"  {c['rank']:2d}. [{c['provenance']}] {c['chunk_id']} ({c['name']}) in {c['path']} ({c['char_len']} chars)"
+        )
+    if data.get("secrets_hidden"):
+        lines.append("")
+        lines.append(
+            f"{data['secrets_hidden']} secret-looking candidate(s) hidden "
+            "(pass --include-secrets to show them)"
         )
 
     return "\n".join(lines) + "\n"
