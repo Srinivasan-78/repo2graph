@@ -783,3 +783,69 @@ def test_the_client_identity_map_is_bounded_by_its_own_ceiling():
     assert len(limiter._windows) <= 16, (
         f"tracked {len(limiter._windows)} identities against a ceiling of 16"
     )
+
+
+class TestRateLimiterPrimitives:
+    """#264's concurrency primitives, exercised directly.
+
+    Every other test here drives them through a live HTTP request, which is the
+    right shape for the policy but leaves the accounting inside `acquire_slot`
+    untested on its own -- and that accounting is the part that can leak. A
+    queue counter that is not decremented on the timeout path degrades the
+    server permanently: every later caller sees a full queue and is refused,
+    while the concurrency semaphore itself sits idle.
+    """
+
+    def _limiter(self, **kw):
+        from repo2graph.http_server import RateLimiter
+
+        return RateLimiter(RateLimitConfig(**kw))
+
+    def test_slots_are_handed_out_up_to_capacity_then_refused(self):
+        limiter = self._limiter(max_concurrent_requests=2, max_queue_size=0)
+        assert limiter.acquire_slot() is True
+        assert limiter.acquire_slot() is True
+        # Capacity reached and no queue allowed: refused immediately rather
+        # than dropped into a wait.
+        assert limiter.acquire_slot() is False
+
+    def test_releasing_a_slot_admits_the_next_caller(self):
+        limiter = self._limiter(max_concurrent_requests=1, max_queue_size=0)
+        assert limiter.acquire_slot() is True
+        assert limiter.acquire_slot() is False
+        limiter.release_slot()
+        assert limiter.acquire_slot() is True
+
+    def test_a_timed_out_queued_waiter_does_not_leak_a_queue_slot(self):
+        """The accounting bug this test exists for: if `_queue_waiting` is not
+        decremented when the wait times out, the queue stays permanently full."""
+        limiter = self._limiter(
+            max_concurrent_requests=1, max_queue_size=1, queue_wait_seconds=0.05
+        )
+        assert limiter.acquire_slot() is True  # capacity taken
+
+        # Queue depth 1: this one waits, then times out and gives up.
+        assert limiter.acquire_slot() is False
+        assert limiter._queue_waiting == 0, "a timed-out waiter left the queue counter raised"
+
+        # Proof it was not a one-off: the queue is reusable, not poisoned.
+        assert limiter.acquire_slot() is False
+        assert limiter._queue_waiting == 0
+
+        limiter.release_slot()
+        assert limiter.acquire_slot() is True
+
+    def test_the_build_gate_is_independent_of_the_request_gate(self):
+        """Builds are capped separately: saturating one must not close the
+        other, or a single in-flight build would stop the server answering
+        from an index that is already on disk."""
+        limiter = self._limiter(max_concurrent_requests=1, max_concurrent_builds=2)
+
+        assert limiter.acquire_build_slot() is True
+        assert limiter.acquire_build_slot() is True
+        assert limiter.acquire_build_slot() is False
+        # Request capacity is untouched by a saturated build gate.
+        assert limiter.acquire_slot() is True
+
+        limiter.release_build_slot()
+        assert limiter.acquire_build_slot() is True
