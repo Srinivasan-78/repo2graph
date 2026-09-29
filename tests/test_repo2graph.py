@@ -12,11 +12,10 @@ import pytest
 from repo2graph.chunks import _split, build_chunks
 from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, parse_all, path_index, resolve_import
-from repo2graph.layout import path as artifact_path
-from repo2graph.parse import parse_source
+from repo2graph.export import path as artifact_path
+from repo2graph.parse import discover, matches_any, parse_source
 from repo2graph.query import Index, tokenize
 from repo2graph.viz import LoadedGraph, node_label, payload, select
-from repo2graph.walker import discover, matches_any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -2207,7 +2206,7 @@ def test_iss142_bm25_avgdl_is_corpus_mean(tmp_path):
 def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
     """Issue 27 (ISS-15, SH-5): DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
     .eggs, .cache, .gradle, .direnv, .yarn) and discovery method is recorded in stats."""
-    from repo2graph.walker import DEFAULT_SKIP_DIRS, discover
+    from repo2graph.parse import DEFAULT_SKIP_DIRS, discover
 
     for d in (".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn"):
         assert d in DEFAULT_SKIP_DIRS
@@ -2583,7 +2582,7 @@ class Runner {
 
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
-    from repo2graph.walker import _glob_re
+    from repo2graph.parse import _glob_re
 
     for pat in ("[]", "[!]", "foo[]", "test[!].py", "unclosed[abc"):
         _glob_re(pat)  # must not raise
@@ -2688,7 +2687,7 @@ def test_rmtree_removes_read_only_files(tmp_path):
 
 def test_atomic_write_leaves_previous_file_on_failure(tmp_path):
     """A crash mid-write must not truncate an artifact a later `query`/`map` reads."""
-    from repo2graph.layout import atomic_write
+    from repo2graph.export import atomic_write
 
     target = tmp_path / "nodes.jsonl"
     target.write_text("OLD GOOD CONTENT\n", encoding="utf8")
@@ -3187,7 +3186,7 @@ def test_iss377_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
 
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
     """Verify atomic_write automatically creates missing parent directories."""
-    from repo2graph.layout import atomic_write
+    from repo2graph.export import atomic_write
 
     nested = tmp_path / "a" / "b" / "c" / "test.txt"
     with atomic_write(nested, "w", encoding="utf8") as fh:

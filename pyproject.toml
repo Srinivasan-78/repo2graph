@@ -149,8 +149,7 @@ module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
     "repo2graph.embed", "repo2graph.fetch",
     "repo2graph.graph", "repo2graph.mcp", "repo2graph.parse",
-    "repo2graph.viz", "repo2graph.langs",
-    "repo2graph.layout", "repo2graph.walker",
+    "repo2graph.viz",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

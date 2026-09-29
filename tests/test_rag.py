@@ -23,8 +23,8 @@ import pytest
 
 from repo2graph import export
 from repo2graph.cli import main
-from repo2graph.layout import path as artifact_path
-from repo2graph.layout import paths as artifact_paths
+from repo2graph.export import path as artifact_path
+from repo2graph.export import paths as artifact_paths
 from repo2graph.query import Index, tokenize
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
