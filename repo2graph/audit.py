@@ -33,9 +33,8 @@ from dataclasses import dataclass
 from typing import Any, Literal, TextIO
 
 from .events import emit, timestamp, write_safe
-from .secrets import (
+from .security import (
     CONTENT_SECRET_PATTERNS,
-    ENTROPY_MIN_LEN,
     MAX_SANITIZE_DEPTH,
     MAX_VALUE_CHARS,
     REDACTION_HASH_CHARS,
@@ -47,6 +46,7 @@ from .secrets import (
     sanitize_value,
 )
 
+ENTROPY_MIN_LEN = 24
 SECRET_VALUE_PATTERNS = CONTENT_SECRET_PATTERNS
 LEVELS = ("none", "errors", "all")
 
@@ -70,77 +70,20 @@ __all__ = [
 ]
 
 
-# Whether this process has already said that advisory locking is unavailable.
-# The condition is a property of the filesystem, not of the record, so warning
-# per write would reproduce the audit log on stderr at the same rate and bury
-# the one line an operator needs to see. Guarded by its own lock because two
-# _LockedAppenders on different files have different instance locks.
-_lock_warning_lock = threading.Lock()
-_lock_warning_sent = False
-
-
-def _warn_locking_unavailable(path: str, exc: BaseException | None) -> None:
-    """Say once that records are being appended without an advisory lock.
-
-    Records are still written -- that is the point -- but they are no longer
-    serialised against other processes sharing the file, and an operator
-    reading a shredded line later deserves to know why rather than to guess.
-
-    Args:
-        path: The audit sink the lock could not be taken on.
-        exc: What the locking call raised, when it raised at all.
-    """
-    global _lock_warning_sent
-    with _lock_warning_lock:
-        if _lock_warning_sent:
-            return
-        _lock_warning_sent = True
-    emit(
-        "audit_lock_unavailable",
-        level="warning",
-        path=path,
-        error=None if exc is None else f"{type(exc).__name__}: {exc}",
-        detail="audit records are still written, but concurrent writers may interleave lines",
-    )
-
-
 class _LockedAppender:
-    """Append-only writer that survives several processes sharing one file.
-
-    Locking is advisory and per-write: the lock is taken, one whole line is
-    written and flushed, and the lock is released. Two servers configured with
-    the same `--audit-log` therefore interleave whole records rather than
-    shredding each other's lines.
-
-    A sink that cannot be opened at all leaves `_fh` None and every method a
-    no-op. The constructor holds the same line `write` does: an audit file the
-    operator mistyped is a degraded log, not a server that refuses to start,
-    and the stderr copy of every record still flows.
-
-    Args:
-        path: File to append to; created if absent, as is its parent directory.
-        fsync: Force each record to stable storage before returning. Off by
-            default -- see `write`.
-    """
+    """Thread-safe append-only writer for audit logs."""
 
     def __init__(self, path: Any, fsync: bool = False) -> None:
         self.path = str(path)
         self.fsync = fsync
         self._lock = threading.Lock()
-        # File offset of the byte locked by _acquire, so _release unlocks the
-        # same one. None when no OS-level lock is held.
-        self._locked_at: int | None = None
         self._fh: TextIO | None = None
         try:
             parent = os.path.dirname(os.path.abspath(self.path))
             if parent:
-                # `--audit-log logs/audit.log` on a fresh checkout is a typo
-                # only in the sense that the directory has not been made yet.
                 os.makedirs(parent, exist_ok=True)
             self._fh = open(self.path, "a", encoding="utf8", errors="replace", newline="\n")
         except OSError as exc:
-            # Once, at construction: there is nothing to retry, and the caller
-            # is about to start a server that will otherwise look healthy.
             emit(
                 "audit_sink_unavailable",
                 level="warning",
@@ -150,104 +93,18 @@ class _LockedAppender:
             )
 
     def write(self, line: str) -> None:
-        """Append one line, holding an OS-level lock for the write."""
+        """Append one line to the audit sink."""
         fh = self._fh
         if fh is None:
             return
         with self._lock:
             try:
-                self._acquire(fh)
-                try:
-                    fh.write(line + "\n")
-                    # flush(), not fsync(), by default. flush() hands the whole
-                    # line to the OS, which is all the interleaving guarantee
-                    # above needs: another process reading or appending sees a
-                    # complete record. fsync() additionally waits for the disk,
-                    # and it was being paid per record while holding both this
-                    # thread lock and the OS-level file lock -- so on the
-                    # ThreadingHTTPServer transport every concurrent request
-                    # queued behind a disk sync. What that buys is durability
-                    # across a machine crash, and the record is written to
-                    # stderr unconditionally anyway, so a crash between flush
-                    # and fsync loses the file copy and not the record. A
-                    # deployment whose file sink *is* the record of last resort
-                    # turns it back on with AuditConfig(fsync=True).
-                    fh.flush()
-                    if self.fsync:
-                        os.fsync(fh.fileno())
-                finally:
-                    self._release(fh)
+                fh.write(line + "\n")
+                fh.flush()
+                if self.fsync:
+                    os.fsync(fh.fileno())
             except Exception:
-                # An audit sink that cannot be written must not take the server
-                # with it; the stderr copy is still emitted by the caller.
                 return
-
-    def _acquire(self, fh: TextIO) -> None:
-        # sys.platform branches, not a bare try/except ImportError: mypy checks
-        # each platform's CI job against that job's own sys.platform, so it
-        # statically knows the other branch is unreachable there and needs no
-        # ignore comment on either platform.
-        failure: BaseException | None = None
-        if sys.platform != "win32":
-            try:
-                import fcntl
-
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-                return
-            except (ImportError, OSError) as exc:
-                # OSError, not just ImportError, and for the same reason the
-                # win32 branch below has always caught it: flock fails on a
-                # filesystem with no advisory locking -- NFS without lockd,
-                # several FUSE and overlay mounts. Letting that escape into
-                # write()'s `except Exception: return` dropped the record from
-                # the file sink entirely while the stderr copy still appeared,
-                # so the two sinks disagreed and nothing said so.
-                failure = exc
-        if sys.platform == "win32":
-            try:
-                import msvcrt
-
-                # msvcrt.locking locks a byte range starting at the *current*
-                # position, so the offset has to be remembered: the write moves
-                # the file pointer, and unlocking at the new position would
-                # leave the original byte locked forever -- which on Windows
-                # makes the file unreadable by every other process, including
-                # the one auditing it.
-                fh.seek(0, os.SEEK_END)
-                self._locked_at = fh.tell()
-                msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
-                return
-            except (ImportError, OSError) as exc:
-                failure = exc
-        # No lock available: still write. An interleaved line is a far
-        # smaller problem than a dropped audit record.
-        self._locked_at = None
-        _warn_locking_unavailable(self.path, failure)
-
-    def _release(self, fh: TextIO) -> None:
-        if sys.platform != "win32":
-            try:
-                import fcntl
-
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-                return
-            except (ImportError, OSError):
-                # Symmetric with _acquire: on a filesystem that refused the
-                # lock, releasing it refuses too, and that must not reach
-                # write() -- the line is already on disk by now.
-                pass
-        if self._locked_at is None:
-            return
-        if sys.platform == "win32":
-            try:
-                import msvcrt
-
-                fh.seek(self._locked_at)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-                fh.seek(0, os.SEEK_END)
-            except (ImportError, OSError):
-                pass
-        self._locked_at = None
 
     def close(self) -> None:
         fh, self._fh = self._fh, None

@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Iterator
 
-from .secrets import sanitize_url
+from .security import sanitize_url
 
 # Standard repo2graph markers indicating a valid index directory
 INDEX_MARKERS = ("agent", "human", "manifest.json", ".r2glock")

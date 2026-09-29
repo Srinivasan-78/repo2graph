@@ -12,7 +12,7 @@ from .export import path as artifact_path
 from .export import paths as artifact_paths
 from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
 
-from .secrets import (
+from .security import (
     SECRET_CONFIG_EXTS,
     SECRET_DIR_NAMES,
     SECRET_EXACT_NAMES,

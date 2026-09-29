@@ -599,7 +599,7 @@ def discover(
             continue
         rp = rel.as_posix()
         if not config.include_secrets:
-            from .secrets import _is_secret_path
+            from .security import _is_secret_path
 
             if _is_secret_path(
                 rp,
@@ -1877,7 +1877,7 @@ def explain_path(
 
     # Step 7: Secret detection
     if not config.include_secrets:
-        from .secrets import _is_secret_path
+        from .security import _is_secret_path
 
         if _is_secret_path(
             rel_str,

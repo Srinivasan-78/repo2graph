@@ -20,7 +20,7 @@ def _process_chunk_content(
 ) -> tuple[str | None, int]:
     """Apply secret scanning and redaction policy to chunk text."""
     if policy == "exclude-file":
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         if scan_content_secrets(text):
             if hasattr(g, "stats"):
@@ -28,7 +28,7 @@ def _process_chunk_content(
             return None, 0
         return text, 0
     elif policy == "redact-match":
-        from .secrets import redact_content
+        from .security import redact_content
 
         redacted, r_count = redact_content(text, policy=policy)
         if r_count > 0 and hasattr(g, "stats"):
@@ -36,7 +36,7 @@ def _process_chunk_content(
         return redacted, r_count
     elif policy == "warn-only":
         from .events import emit
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         findings = scan_content_secrets(text)
         if findings:
