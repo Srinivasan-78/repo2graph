@@ -167,7 +167,7 @@ def test_evidence_points_at_the_line_that_proves_the_edge(
     assert e["evidence"] is not None, f"{etype} edge has no evidence"
     assert e["evidence"]["line"] == expected_line, e["evidence"]
 
-    # split("\n"), never splitlines(): see AGENTS.md.
+    # split("\n"), never splitlines(): see CONTRIBUTING.md.
     text = (src / e["evidence"]["path"]).read_text(encoding="utf8").split("\n")
     line = text[e["evidence"]["line"] - 1]
     assert must_contain in line, (
@@ -679,7 +679,7 @@ def test_mcp_search_returns_cited_markdown(indexed):
 
 
 def test_mcp_tools_return_text_not_json(indexed):
-    """Pinned because docs/OUTPUT_SCHEMA.md documents the citation *form* per
+    """Pinned because docs/architecture.md documents the citation *form* per
     surface, and it previously claimed these returned per-result `path` and
     `start_line` fields. They return strings."""
     from repo2graph.mcp import dispatch

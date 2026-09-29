@@ -243,7 +243,7 @@ def test_iss237_fetch_head_retry_argv_unchanged(tmp_path, monkeypatch, no_token)
 
 
 def _git(*args, cwd=None):
-    # Bytes + surrogateescape, per AGENTS.md: a cp1252 locale must not turn a
+    # Bytes + surrogateescape, per CONTRIBUTING.md: a cp1252 locale must not turn a
     # non-ASCII byte in git's output into a UnicodeDecodeError.
     proc = subprocess.run(
         ["git", *args],

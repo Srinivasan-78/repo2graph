@@ -580,7 +580,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   container injected) and **stale indexes** (the index is a snapshot, nothing
   watches the filesystem, and `repo2graph doctor` checks index integrity and
   vector drift — not whether your working tree moved on). `docs/why-graph.md`
-  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  gained an embedding-search section; `docs/architecture.md`'s "when to use" bullets
   became a persona routing table.
 - **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
   two places, the README's comparison table said 16, and all five translated
@@ -657,7 +657,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
   `path`/`start_line` fields -- they return markdown strings. Both corrected, and
   `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
-- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
+- **Four new docs were unreachable from `docs/architecture.md`**, along with `docs/ACTION_SECURITY.md`,
   which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
   now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
   working note.
@@ -1241,11 +1241,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   `pull_request`-from-fork runs.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
-  [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
+  `docs/SECURITY-AUDIT.md`. See also
   `docs/PRODUCTION_READINESS.md` (since removed),
-  [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
-  [docs/PRIVACY.md](docs/PRIVACY.md) and
-  [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).
+  `docs/PERFORMANCE.md`,
+  `docs/PRIVACY.md` and
+  `docs/ENTERPRISE_DEPLOYMENT.md` (all new).
 
 ## [1.5.1] — 2026-09-16
 

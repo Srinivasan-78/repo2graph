@@ -455,7 +455,7 @@ def test_split_terminates_on_one_huge_line():
 
 
 def test_iss153_split_breaks_a_line_longer_than_max_chars():
-    """Hand-built fixture pinning literal chunk boundaries (AGENTS.md: assert
+    """Hand-built fixture pinning literal chunk boundaries (CONTRIBUTING.md: assert
     literal values, not a property the old, buggy code also happened to hold).
 
     text = "AAAAAAAAAA\nBB\n" (a 10-char line the packer alone can't shrink,
@@ -1843,7 +1843,7 @@ def test_workflows_only_pass_inputs_and_read_outputs_the_action_declares():
 def test_action_yml_query_inputs_match_the_cli_defaults_and_omit_answer():
     """The GraphRAG inputs mirror `repo2graph rag`'s own defaults, and the action
     exposes no --answer/--provider/--model surface: that path uploads repository
-    source to a third-party LLM endpoint (AGENTS.md)."""
+    source to a third-party LLM endpoint (CONTRIBUTING.md)."""
     text = _action_text()
     defaults = _defaults(text)
     # hand-derived from cli.py's `rag` subparser, not read back out of argparse

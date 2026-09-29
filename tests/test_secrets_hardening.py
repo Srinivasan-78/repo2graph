@@ -501,7 +501,7 @@ def test_iss368_sibling_files_in_vendor_dirs_stay_unflagged(path):
 # False-positive corpus for the widened detection (#338 + #368)
 #
 # A false positive here is worse than a false negative: it silently drops
-# real source text out of every RAG pack (AGENTS.md). Every item below must
+# real source text out of every RAG pack (CONTRIBUTING.md). Every item below must
 # come back clean from both the scanner and the redactor.
 # ---------------------------------------------------------------------------
 

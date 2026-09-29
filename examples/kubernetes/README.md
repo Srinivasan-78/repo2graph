@@ -10,11 +10,11 @@ Commit `50b66f3c122cb1553cd4d46d4eba81a101e05b50` on `master`, analyzed 2026-09-
 
 ## Why this repository?
 
-Kubernetes' full tree is on the order of hundreds of thousands of files once vendor/ and generated clients are counted — not a repository size that a single reproducible CI-friendly run should attempt whole. This is a scoped benchmark (see docs/limitations.md and section "Why this scope" below): the controller-manager entrypoint, the built-in controllers, the scheduler, the pod registry, and the API server's request-handling package (apiserver/pkg/endpoints) — a coherent slice that a "how does a request flow through the API server" or "what calls a specific controller" question can actually be answered against.
+Kubernetes' full tree is on the order of hundreds of thousands of files once vendor/ and generated clients are counted — not a repository size that a single reproducible CI-friendly run should attempt whole. This is a scoped benchmark (see ../../architecture.md and section "Why this scope" below): the controller-manager entrypoint, the built-in controllers, the scheduler, the pod registry, and the API server's request-handling package (apiserver/pkg/endpoints) — a coherent slice that a "how does a request flow through the API server" or "what calls a specific controller" question can actually be answered against.
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [../../architecture.md](../../docs/architecture.md#extreme-scale).
 
 **Indexed paths:**
 - `cmd/kube-controller-manager/**`
@@ -90,7 +90,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[../../architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 10,948 out of 62,630 total CALLS edges.
 
 ## Reproduce
@@ -101,4 +101,4 @@ python scripts/generate_examples.py --repo kubernetes
 
 This clones `https://github.com/kubernetes/kubernetes` at `master` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [../../README.md](../../README.md#staleness)).

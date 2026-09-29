@@ -83,7 +83,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[../../architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 35,338 out of 189,381 total CALLS edges.
 
 ## Reproduce
@@ -94,4 +94,4 @@ python scripts/generate_examples.py --repo django
 
 This clones `https://github.com/django/django` at `main` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [../../README.md](../../README.md#staleness)).

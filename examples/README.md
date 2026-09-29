@@ -7,7 +7,7 @@ never typed in by hand.
 
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
 [`../scripts/generate_examples.py`](../scripts/generate_examples.py). See
-[`../docs/examples.md`](../docs/examples.md) for how the pipeline works and
+[`../docs/architecture.md`](../docs/architecture.md) for how the pipeline works and
 [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for what is and is not committed from each repository.
 
 ## The five repositories
@@ -23,7 +23,7 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 "Full repository" means no `--include`/`--exclude` narrowing — every file `repo2graph` would index
 on a plain `repo2graph build`. "Scoped" means only the listed subtrees were cloned and indexed; see
 each repository's own README.md, "Why this scope," for the reasoning, and
-[docs/limitations.md](../docs/limitations.md#extreme-scale) for why the other four are not indexed
+[../architecture.md](../docs/architecture.md#extreme-scale) for why the other four are not indexed
 whole. Django is the pipeline's full-repository baseline precisely because it is the one repository
 in this set small enough for that comparison to mean something.
 
@@ -84,8 +84,8 @@ python scripts/generate_examples.py --all
 The generator clones each repository fresh into a scratch directory (network phase), runs
 `repo2graph.graph.build()` / `export.dump_all()` against the local checkout only (analysis phase —
 no network access from that point on), runs the example queries, validates the result, and writes
-`examples/<id>/`. See [docs/examples.md](../docs/examples.md) for the full pipeline and
-[docs/benchmarks.md](../docs/benchmarks.md) for the methodology and how staleness is handled.
+`examples/<id>/`. See [docs/architecture.md](../docs/architecture.md) for the full pipeline and
+[../README.md](../README.md) for the methodology and how staleness is handled.
 
 Because every one of the five repositories moves upstream, re-running `--all` today will index a
 newer commit and produce different numbers than the table above — that is expected, and is exactly
@@ -99,4 +99,4 @@ Add an entry to [`repositories.yaml`](repositories.yaml) — repository URL, ref
 paragraph, and 3-5 architecture-relevant example queries — then run
 `python scripts/generate_examples.py --repo <id>` and commit the result. No new Python code is
 needed for a well-behaved repository; the framework is data-driven by design (see
-[docs/examples.md](../docs/examples.md#adding-a-repository)).
+[docs/architecture.md](../docs/architecture.md#adding-a-repository)).

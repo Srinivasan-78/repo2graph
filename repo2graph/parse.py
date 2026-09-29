@@ -30,7 +30,7 @@ class ImportDetail:
     # 1-based line of the import statement, for the IMPORTS edge's `evidence`.
     # tree-sitter's Point.row advances on a newline only -- the same convention
     # chunks._lines() slices by -- so this indexes the same line the reader
-    # sees. See AGENTS.md on splitlines().
+    # sees. See CONTRIBUTING.md on splitlines().
     line: int | None = None
 
 
@@ -467,7 +467,7 @@ def _count_gitignored(root: Path) -> int:
     `_git_files` already applies `--exclude-standard` itself, so these files
     never reach `discover()`'s loop below and this never changes what is
     yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
-    decoded with surrogateescape (never text=True -- see AGENTS.md), bounded
+    decoded with surrogateescape (never text=True -- see CONTRIBUTING.md), bounded
     timeout.
     """
     try:
@@ -1507,7 +1507,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         # Never pass text=True to a subprocess reading git/cpp output on
                         # Windows -- it decodes with the cp1252 locale and raises
                         # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                        # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
+                        # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
                         cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
                             cpp_tree = parser.parse(cpp_bytes)

@@ -77,7 +77,7 @@ def git_short_sha(cwd: Path) -> str | None:
     """Best-effort `git rev-parse --short HEAD`. None on any failure -- not a
     git checkout, git missing, a timeout, or a non-zero exit.
 
-    Follows the repo's git-subprocess-decoding rule (AGENTS.md): no
+    Follows the repo's git-subprocess-decoding rule (CONTRIBUTING.md): no
     text=True/encoding=, quotepath disabled, bytes decoded with
     surrogateescape, and a timeout that turns into a plain failure rather
     than a hang.

@@ -65,7 +65,7 @@ def _git_init(src):
 
 
 def test_report_carries_every_promised_field(built):
-    """docs/INDEXING.md promises nine things. This is that list."""
+    """docs/architecture.md promises nine things. This is that list."""
     src, out = built
     report = index_status(out)
 

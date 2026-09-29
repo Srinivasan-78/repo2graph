@@ -420,7 +420,7 @@ def test_cli_explain_path_command(tmp_path: Path, capsys):
 # Each of these was written against a reproduced failure, so each is a detector:
 # reverting its fix turns exactly this test red. Edge assertions are literal
 # `(src, dst, kind)` tuples hand-derived from the fixture above them -- never a
-# value the code under test computed (AGENTS.md).
+# value the code under test computed (CONTRIBUTING.md).
 # ==============================================================================
 
 

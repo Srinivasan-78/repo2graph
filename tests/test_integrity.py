@@ -3,7 +3,7 @@
 Issues covered: #268 (artifact integrity model), #269 (output path hardening),
 #300 (transactional builds), #301 (cross-platform locking).
 
-Per AGENTS.md: assertions use hand-derived literal values, never values recomputed
+Per CONTRIBUTING.md: assertions use hand-derived literal values, never values recomputed
 by the code under test.
 """
 

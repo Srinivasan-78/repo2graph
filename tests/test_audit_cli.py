@@ -379,7 +379,7 @@ def test_exclude_secrets_is_a_deprecated_noop(secret_index, capsys, cmd):
 
 
 def test_retrieve_python_api_default_is_unchanged(secret_index):
-    """AGENTS.md: retrieve() is a back-compat surface; the new keyword defaults off."""
+    """CONTRIBUTING.md: retrieve() is a back-compat surface; the new keyword defaults off."""
     idx = Index(secret_index)
     assert any(c["path"] == ".env" for c in idx.retrieve("ledger token"))
     assert not any(c["path"] == ".env" for c in idx.retrieve("ledger token", exclude_secrets=True))

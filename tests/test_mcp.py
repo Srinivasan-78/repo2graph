@@ -211,7 +211,7 @@ def test_ac28_truncation_happens_on_a_line_boundary(big_index):
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=10**9)
     full = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)["markdown"]
-    full_lines = set(full.split("\n"))  # never splitlines(): see AGENTS.md
+    full_lines = set(full.split("\n"))  # never splitlines(): see CONTRIBUTING.md
     body = out.split("\n")
     for line in body[:-1]:
         assert line in full_lines, line[:120]

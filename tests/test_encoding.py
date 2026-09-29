@@ -26,7 +26,7 @@ from repo2graph.events import SAFE_ERRORS, encodable, write_safe
 ARROW = "→"  # U+2192, the one that started unicode arrow handling
 ACCENT = "é"  # U+00E9, inside cp1252 -- the control case
 CJK = "中"  # U+4E2D, outside every single-byte codec
-LINE_SEP = " "  # the splitlines() hazard from AGENTS.md
+LINE_SEP = " "  # the splitlines() hazard from CONTRIBUTING.md
 LONE_SURROGATE = "\udce9"  # what surrogateescape produces from a stray byte
 
 TRICKY = (ARROW, ACCENT, CJK, LINE_SEP, LONE_SURROGATE)
@@ -80,7 +80,7 @@ class StrictStream(FakeStream):
 # only on the UTF codecs and raises on all four narrow ones.
 #
 # The cost of keeping it is about 0.2s of a 35s suite. The cost of getting it
-# wrong is the bug class AGENTS.md calls the source of every historical
+# wrong is the bug class CONTRIBUTING.md calls the source of every historical
 # regression in this repo , which is why the product is
 # enumerated rather than sampled.
 @pytest.mark.parametrize("encoding", ["cp1252", "ascii", "utf8", "cp932", "latin-1"])

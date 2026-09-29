@@ -84,11 +84,11 @@ def test_every_emitted_node_and_edge_field_is_declared_in_schema(mini_index):
 
     assert undeclared_nodes == [], (
         f"nodes.jsonl emits fields NodeRecord does not declare: {undeclared_nodes}. "
-        f"Add them to repo2graph/schema.py (and docs/OUTPUT_SCHEMA.md)."
+        f"Add them to repo2graph/schema.py (and docs/architecture.md)."
     )
     assert undeclared_edges == [], (
         f"edges.jsonl emits fields EdgeRecord does not declare: {undeclared_edges}. "
-        f"Add them to repo2graph/schema.py (and docs/OUTPUT_SCHEMA.md)."
+        f"Add them to repo2graph/schema.py (and docs/architecture.md)."
     )
 
 

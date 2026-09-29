@@ -261,7 +261,7 @@ def test_read_unknown_path_says_not_indexed(mini_index):
 def test_read_output_is_clamped_and_the_ceiling_actually_binds(tmp_path):
     """Flood proof: many small, back-to-back functions (each well under
     chunks.py's own 4000-char per-chunk split, so each is a single,
-    trustworthy chunk -- AGENTS.md's own note that a file must have real
+    trustworthy chunk -- CONTRIBUTING.md's own note that a file must have real
     content to carry a chunk is why they are not one giant function) whose
     *combined* widened read exceeds MCP_MAX_READ_CHARS."""
     mcp = mcp_module()
@@ -443,7 +443,7 @@ def test_path_between_visited_ceiling_actually_binds_under_flood(mini_index):
     """A hub with far more direct neighbours than MCP_MAX_PATH_VISITED, none
     of them the (unreachable) target, must report `truncated` rather than
     silently exploring the whole fan-out -- proving the visited cap binds
-    on its own, not merely the hop cap (AGENTS.md: a hop bound alone does
+    on its own, not merely the hop cap (CONTRIBUTING.md: a hop bound alone does
     not bound work on a dense graph)."""
     mcp = mcp_module()
     idx = Index(mini_index)

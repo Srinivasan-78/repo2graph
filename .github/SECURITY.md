@@ -2,7 +2,7 @@
 
 This is the canonical security policy for repo2graph — what the tool does and doesn't send over
 the network, how the repository itself is protected, and how to report a vulnerability. See
-[docs/technical.md](../docs/technical.md) for how the code works, and [README.md](../README.md) for how to
+[docs/architecture.md](../docs/architecture.md) for how the code works, and [architecture.md](../docs/architecture.md) for how to
 use it.
 
 ## Reporting a vulnerability
@@ -30,7 +30,7 @@ its authentication, secret exclusion and redaction, and the generated `graph.htm
 
 **Not a vulnerability, though still worth reporting as a bug:** a missing graph edge, an ambiguous
 `CALLS` edge at `confidence = 1/n`, or a stale index — all three are documented behaviour in
-[docs/limitations.md](../docs/limitations.md).
+[../architecture.md](../docs/architecture.md).
 
 ## What never leaves your machine
 
@@ -131,19 +131,19 @@ or a released package, independent of anything the tool does at runtime:
 
 ## Further reading
 
-- [docs/THREAT_MODEL.md](../docs/THREAT_MODEL.md) — **start here**: assets, trust boundaries, what
+- [docs/SECURITY.md](SECURITY.md) — **start here**: assets, trust boundaries, what
   an attacker could try against each surface, what stops it, and what is explicitly out of scope.
   Every open security gap is named there with its issue number rather than left implied.
-- [docs/secure-configuration.md](../docs/secure-configuration.md) — copy-paste hardened
+- [../.github/SECURITY.md](../.github/SECURITY.md) — copy-paste hardened
   configurations: exclusion patterns, an offline build, stdio and HTTP MCP, CI, and how to
   forbid `rag --answer` in a shared environment.
-- [docs/SECURITY-AUDIT.md](../docs/SECURITY-AUDIT.md) — the most recent whole-repository security
+- [docs/SECURITY.md](../.github/SECURITY.md) — the most recent whole-repository security
   pass, with a prioritized findings list and `file:line` evidence for every claim.
-- [docs/PRIVACY.md](../docs/PRIVACY.md) — exactly what leaves the machine, what is written where,
+- [../.github/SECURITY.md](../.github/SECURITY.md) — exactly what leaves the machine, what is written where,
   what is logged, and how to delete all of it.
-- [docs/privacy-audit-2026-09-25.md](../docs/privacy-audit-2026-09-25.md) — the data-handling audit
+- [docs/SECURITY.md](../.github/SECURITY.md) — the data-handling audit
   behind that page: every outbound path and every write location, enumerated from the code.
-- [docs/ENTERPRISE_DEPLOYMENT.md](../docs/ENTERPRISE_DEPLOYMENT.md) — container hardening, network
+- [../.github/SECURITY.md](../.github/SECURITY.md) — container hardening, network
   scoping, and package-pinning guidance for a shared or regulated deployment.
 
 ---

@@ -235,7 +235,7 @@ def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
         "The full repository at the pinned commit was indexed — no `--include`/`--exclude` narrowing."
         if entry["scope"] == "full"
         else "Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, "
-        "not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale)."
+        "not the whole repository) — see [docs/architecture.md](../../docs/architecture.md#3-indexing-behaviour)."
     )
     include_block = ""
     if entry.get("include"):
@@ -334,7 +334,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[docs/architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 {_n(meta["stats"].get("ambiguous_calls", 0))} out of {_n(meta["stats"].get("edge:CALLS", 0))} total CALLS edges.
 
 ## Reproduce
@@ -345,7 +345,7 @@ python scripts/generate_examples.py --repo {entry["id"]}
 
 This clones `{entry["url"]}` at `{entry["ref"]}` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#3-indexing-behaviour)).
 """
     (repo_dir / "README.md").write_text(readme, encoding="utf8", newline="\n")
 

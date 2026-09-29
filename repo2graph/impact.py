@@ -189,7 +189,7 @@ def _validate_ref(ref: str) -> str:
 #: drift apart. All three neutralise a *user's* `~/.gitconfig`, which would
 #: otherwise reshape output this module parses with fixed patterns:
 #:
-#: - `core.quotepath=false` -- the AGENTS.md rule: a non-ASCII path must come
+#: - `core.quotepath=false` -- the CONTRIBUTING.md rule: a non-ASCII path must come
 #:   back raw, not as `"caf\303\251.py"`, which matches no path in the index.
 #: - `diff.noprefix=false` -- with it on, git emits `diff --git f.py f.py`.
 #: - `diff.mnemonicPrefix=false` -- with it on, `diff --git c/f.py w/f.py`.
@@ -210,7 +210,7 @@ _GIT_CONFIG = (
 def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
     """Parse a unified diff into structured FileDiff objects.
 
-    Uses src.split("\\n") according to AGENTS.md text slicing rules.
+    Uses src.split("\\n") according to CONTRIBUTING.md text slicing rules.
     Extracts 1-indexed added/modified line numbers in new file coordinates.
     """
     files: dict[str, FileDiff] = {}
@@ -344,7 +344,7 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
 def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = None) -> str:
     """Retrieve raw unified diff using git subprocess.
 
-    Adheres strictly to AGENTS.md:
+    Adheres strictly to CONTRIBUTING.md:
     - `-c core.quotepath=false`
     - `-c diff.noprefix=false -c diff.mnemonicPrefix=false`, because
       `DIFF_GIT_RE` hard-requires the `a/`...` b/` prefixes. Both are ordinary

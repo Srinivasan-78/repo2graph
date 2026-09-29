@@ -1,7 +1,7 @@
 """Tests for bounded JSONL reads (bounded JSONL reads), fit_lines linearity (_fit_lines linearity),
 and single-character identifier retrieval (single-character identifier retrieval).
 
-Per AGENTS.md: assertions use hand-derived literal values, never values
+Per CONTRIBUTING.md: assertions use hand-derived literal values, never values
 recomputed by the code under test.
 """
 
@@ -105,7 +105,7 @@ class TestJsonlBounds:
 
     def test_read_jsonl_has_no_total_bytes_ceiling(self, tmp_path, monkeypatch):
         """query.Index's read path is deliberately unbounded in total bytes --
-        AGENTS.md: a wrong constant there breaks real indexes. Many small,
+        CONTRIBUTING.md: a wrong constant there breaks real indexes. Many small,
         individually-legal lines that sum well past a hypothetical total
         ceiling must still all come back."""
         import repo2graph.query as query_mod

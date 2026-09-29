@@ -45,7 +45,7 @@ repos:
         # Strict, and green, on the modules that are annotated. The legacy
         # modules carry the remaining annotation debt; a hook that is red on
         # every commit gets disabled within a week, so they are relaxed in
-        # pyproject and the debt is tracked in docs/BACKLOG.md instead of pretended away.
+        # pyproject and the debt is tracked in docs/CONTRIBUTING.md instead of pretended away.
         #
         # The scope lives in pyproject's [[tool.mypy.overrides]] and nowhere
         # else. This used to restate it as a regex of six module names, which

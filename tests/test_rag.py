@@ -1486,7 +1486,7 @@ def test_ac34_no_splitlines_in_new_code(rel):
     assert target.exists(), f"{rel} does not exist"
     with open(target, encoding="utf8", newline="\n") as fh:
         text = fh.read()
-    # ast, not a grep: the AGENTS.md rule itself is quoted in docstrings and
+    # ast, not a grep: the CONTRIBUTING.md rule itself is quoted in docstrings and
     # comments, and only a real attribute call is a violation.
     tree = ast.parse(text, filename=str(target))
     offenders = [
@@ -1746,7 +1746,7 @@ def test_is_secret_path_163_no_overmatch(rag_index):
     """Verify _is_secret_path() must not over-match legitimate source files
     via bare substrings ("-env" in name, "token" in name), while still
     excluding genuinely secret-ish paths. Both directions pinned literally
-    per AGENTS.md ("Tests must pin values, not compare the implementation to
+    per CONTRIBUTING.md ("Tests must pin values, not compare the implementation to
     itself"). Verified as a detector: on the pre-fix code this test fails on
     the "must NOT match" assertions for react-app-env.d.ts and tokenizer.json.
     """

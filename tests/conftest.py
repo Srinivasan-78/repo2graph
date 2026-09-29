@@ -182,7 +182,7 @@ def big_index(tmp_path_factory):
 # module, no long docstrings, because this generates on a 9-cell CI matrix.
 # Each module still carries a module-level table so its *file* node has a
 # chunk -- a file that is nothing but `def`s falls under the file_residual
-# floor and emits none (see AGENTS.md).
+# floor and emits none (see CONTRIBUTING.md).
 # --------------------------------------------------------------------------
 
 WIDE_MODULES = PARALLEL_MIN_FILES + 6

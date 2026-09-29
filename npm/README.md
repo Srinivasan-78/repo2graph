@@ -58,7 +58,7 @@ launcher it resolves to — `/path/to/project`, `--out`, `--http-port`, `--auth-
   actionable, not a fallback that quietly runs `pip install` on your behalf.
 - **No version pin of its own by default.** `uvx --from "repo2graph[mcp]" repo2graph-mcp` resolves
   the latest compatible release each time it runs, exactly like invoking `uvx` yourself — see
-  [`docs/ENTERPRISE_DEPLOYMENT.md`](../docs/ENTERPRISE_DEPLOYMENT.md) if you need a pinned,
+  [`../.github/SECURITY.md`](../.github/SECURITY.md) if you need a pinned,
   reproducible deployment; pin there, not in this launcher.
 
 ## Release story
@@ -73,7 +73,7 @@ checks.
 Publishing is a manual `npm publish --provenance` from this directory today (`publishConfig` in
 `package.json` already requests provenance attestations, matching the `attestations: true` this
 repository's PyPI publish step already sets — see
-[`docs/publishing.md`](../docs/publishing.md)); wiring it into the same `publish.yml` tag-triggered
+[`docs/CONTRIBUTING.md`](../.github/CONTRIBUTING.md)); wiring it into the same `publish.yml` tag-triggered
 job that ships the PyPI release is tracked as follow-up work rather than done in this change, so
 that a bad npm publish cannot block or partially complete the PyPI release it is meant to pair with.
 

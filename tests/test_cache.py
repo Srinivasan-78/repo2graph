@@ -86,7 +86,7 @@ def test_a_key_is_bounded_however_large_the_arguments_are():
 def test_a_key_survives_any_lone_surrogate_in_an_argument(bad):
     """`make_key` promises never to raise; hashing the body must not break that.
 
-    Two separate routes put a lone surrogate in an argument: AGENTS.md requires
+    Two separate routes put a lone surrogate in an argument: CONTRIBUTING.md requires
     git/repo bytes be decoded `utf8`/`surrogateescape`, which produces the
     U+DC80-U+DCFF range, and a JSON-RPC caller can simply send `"\\ud800"`.
 

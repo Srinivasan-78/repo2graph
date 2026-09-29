@@ -767,7 +767,7 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
 # panel describe the same six node types and seven edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
-# and docs/OUTPUT_SCHEMA.md. Written into manifest.json so a consumer reading
+# and docs/architecture.md. Written into manifest.json so a consumer reading
 # an index does not have to find the source to learn what the fields mean.
 EDGE_FIELDS = {
     "type": "the relationship; one of the edge_types above",
@@ -780,7 +780,7 @@ EDGE_FIELDS = {
         "P(dst is the correct target | the relationship at `evidence` exists), 0..1. "
         "Not a probability that the relationship exists: that is what `evidence` is for. "
         "An ambiguous name matching n candidates yields n edges at 1/n each. "
-        "Never encodes dynamic dispatch -- see call_kind and docs/limitations.md"
+        "Never encodes dynamic dispatch -- see call_kind and docs/architecture.md"
     ),
     "evidence": (
         "{path, line} where the relationship is written, 1-based, or null when there is "

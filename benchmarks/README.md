@@ -10,8 +10,8 @@ Machine-readable results from running `repo2graph build` against real, public re
   a number in `results.json` yourself.
 
 The narrative version of this data — tables, per-repository breakdowns, what the numbers actually
-mean — is [docs/benchmarks.md](../docs/benchmarks.md). This directory is the machine-readable
-source those tables are generated from; nothing in `docs/benchmarks.md` is hand-typed independently
+mean — is [../README.md](../README.md). This directory is the machine-readable
+source those tables are generated from; nothing in `../README.md` is hand-typed independently
 of `results.json`.
 
 ## Reproduce
@@ -21,6 +21,6 @@ pip install -e "." pyyaml
 python scripts/generate_examples.py --all --results benchmarks/results.json
 ```
 
-See [examples/README.md](../examples/README.md) and
-[docs/examples.md](../docs/examples.md) for what else this produces (the `examples/<id>/`
+See [examples/architecture.md](../docs/architecture.md) and
+[docs/architecture.md](../docs/architecture.md) for what else this produces (the `examples/<id>/`
 directories) and why the same run drives both.

@@ -1082,7 +1082,7 @@ def test_mcp_tool_repo_impact_depth_clamping(sample_graph_index):
 def flood_index():
     """An index wide enough that the tool's output ceiling actually binds.
 
-    A bound asserted against a four-symbol fixture proves nothing (AGENTS.md's
+    A bound asserted against a four-symbol fixture proves nothing (CONTRIBUTING.md's
     MCP rule says so explicitly), so this builds 300 files x 4 public symbols,
     each called from the next file, which is what makes the rendered report --
     symbols, callers, modules, dependency paths -- exceed the ceiling.
@@ -1591,7 +1591,7 @@ def test_iss422_workflow_interpolates_no_expression_into_a_run_body():
 # and nothing in the suite looked at the table.
 # ---------------------------------------------------------------------------
 
-PR_IMPACT_DOC = Path(__file__).resolve().parent.parent / "docs" / "pr-impact.md"
+PR_IMPACT_DOC = Path(__file__).resolve().parent.parent / "docs" / "cli.md"
 
 
 def _impact_help() -> str:
@@ -1612,12 +1612,12 @@ def _impact_help() -> str:
 
 
 def _documented_flags() -> list[str]:
-    """Every `-x` / `--long` token in the doc's Formats & Options table."""
+    """Every `-x` / `--long` token in the flag table of docs/cli.md's `impact` section."""
     lines = PR_IMPACT_DOC.read_text(encoding="utf-8").split("\n")
-    start = next(i for i, ln in enumerate(lines) if ln.startswith("### Formats & Options"))
+    start = next(i for i, ln in enumerate(lines) if ln.startswith("## `impact`"))
     flags: list[str] = []
     for line in lines[start + 1 :]:
-        if line.startswith("###"):
+        if line.startswith("## "):
             break
         if not line.startswith("|"):
             continue
@@ -1644,10 +1644,10 @@ def _real_flags(help_text: str) -> set[str]:
 def test_pr_impact_doc_documents_only_real_flags():
     real = _real_flags(_impact_help())
     documented = _documented_flags()
-    assert documented, "parsed no flags out of the Formats & Options table"
+    assert documented, "parsed no flags out of the impact flag table in docs/cli.md"
 
     phantom = sorted(set(documented) - real)
-    assert phantom == [], f"PR_IMPACT.md documents flags the impact parser has not: {phantom}"
+    assert phantom == [], f"docs/cli.md documents impact flags the parser has not: {phantom}"
 
 
 def test_pr_impact_doc_covers_every_impact_flag():
@@ -1657,7 +1657,7 @@ def test_pr_impact_doc_covers_every_impact_flag():
     real = {f for f in _real_flags(_impact_help()) if f.startswith("--") and f != "--help"}
     documented = set(_documented_flags())
     undocumented = sorted(real - documented)
-    assert undocumented == [], f"impact flags missing from PR_IMPACT.md: {undocumented}"
+    assert undocumented == [], f"impact flags missing from docs/cli.md: {undocumented}"
 
 
 def test_get_git_diff_ref_validation_prevents_command_injection(tmp_path):
@@ -1731,7 +1731,7 @@ def test_get_git_diff_returns_a_real_diff_between_two_refs(tmp_path):
     code, so neither the CLI nor `.github/workflows/pr-impact.yml` notices.
 
     `added_lines == {2}` is hand-derived from the two writes below (line 1 is
-    unchanged `def a():`, line 2 becomes `return 2`), per the AGENTS.md rule
+    unchanged `def a():`, line 2 becomes `return 2`), per the CONTRIBUTING.md rule
     against asserting a value the code under test computed -- which also makes
     this the only coverage of `parse_unified_diff`'s arithmetic against a diff
     git actually produced rather than one a fixture hand-wrote.
@@ -1757,7 +1757,7 @@ def test_get_git_diff_returns_a_real_diff_between_two_refs(tmp_path):
     }
 
     def git(*args: str) -> None:
-        # Bytes, never text=True -- the AGENTS.md git-decoding rule.
+        # Bytes, never text=True -- the CONTRIBUTING.md git-decoding rule.
         proc = subprocess.run(
             ["git", "-C", str(tmp_path), *args],
             capture_output=True,

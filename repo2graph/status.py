@@ -95,7 +95,7 @@ def _git_head(repo: Path) -> str | None:
     if proc.returncode != 0:
         return None
     # Never text=True on git output: a cp1252 console decodes a non-ASCII
-    # path with UnicodeDecodeError, sometimes inside the handler. See AGENTS.md.
+    # path with UnicodeDecodeError, sometimes inside the handler. See CONTRIBUTING.md.
     return proc.stdout.decode("utf8", "surrogateescape").strip() or None
 
 
@@ -116,7 +116,7 @@ def stored_source_root(agent_dir: Path) -> Path | None:
     """The source root the build recorded, if it still exists.
 
     Read from the machine-local `local.json` at the index root (never shipped;
-    see docs/PRIVACY.md), else from `manifest.json`'s `source_root` for an
+    see ../.github/SECURITY.md), else from `manifest.json`'s `source_root` for an
     index built before that file existed. None for an index with neither, an
     unreadable file, or a recorded root that is gone (the index was moved or
     shipped to another machine) -- callers then fall back to the

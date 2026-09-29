@@ -1,6 +1,6 @@
 """`human/CHANGELOG.md`: a per-push structural diff of the graph.
 
-Per AGENTS.md's "tests must pin values, not compare the implementation to
+Per CONTRIBUTING.md's "tests must pin values, not compare the implementation to
 itself": every assertion below is a literal string hand-derived from the
 fixture source, never a value recomputed by `repo2graph.changelog` itself.
 """

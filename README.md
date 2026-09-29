@@ -38,13 +38,13 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 ```
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
-output: [docs/quickstart.md](docs/quickstart.md).
+output: [docs/architecture.md](docs/architecture.md).
 
 ## Is it better than grep?
 
 **No, not at finding code.** We measured it on 35 questions about Flask, requests, FastAPI and
 Hono, scored against the definitions that answer them, with both tools held to the same token
-budget ([method, per-question results, reproduction](docs/retrieval-benchmark.md)):
+budget ([method, per-question results, reproduction](docs/architecture.md)):
 
 | Budget | repo2graph | grep, then read around the hits |
 |---:|---:|---:|
@@ -70,7 +70,7 @@ What it does do that grep doesn't:
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
 Cursor's index and Claude Code's own search, including when to use those instead:
-**[docs/comparison.md](docs/comparison.md)**.
+**[docs/architecture.md](docs/architecture.md)**.
 
 ## Five questions to start with
 
@@ -95,8 +95,8 @@ Cursor's index and Claude Code's own search, including when to use those instead
 ```
 
 `@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
-calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/github-action.md](docs/github-action.md),
-[docs/pr-impact.md](docs/pr-impact.md).
+calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli.md),
+[docs/cli.md](docs/cli.md).
 
 ## Commands
 
@@ -128,14 +128,14 @@ Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/py
 
 <a id="languages"></a>Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
 C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. Measured
-rates for each limitation: [docs/limitations.md](docs/limitations.md).
+rates for each limitation: [architecture.md](docs/architecture.md).
 
 ## Status
 
 The 2.x CLI, MCP tools and output schema follow semver: breaking changes wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
-unconditionally ([privacy](docs/PRIVACY.md), [threat model](docs/THREAT_MODEL.md),
+unconditionally ([privacy](.github/SECURITY.md), [threat model](.github/SECURITY.md),
 [security policy](.github/SECURITY.md)). A Docker image for read-only, non-root deployments is
-described in [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md).
+described in [.github/SECURITY.md](.github/SECURITY.md).
 
 ## Contributing
 
@@ -146,9 +146,9 @@ make lint format-check typecheck test
 ```
 
 Branch from `develop`. Start with [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md),
-[docs/good-first-issues.md](docs/good-first-issues.md) and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The most useful contribution right now is new
-questions for the [retrieval benchmark](docs/retrieval-benchmark.md), especially on repositories
-you know well. All docs: [docs/README.md](docs/README.md).
+[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) and
+[docs/architecture.md](docs/architecture.md). The most useful contribution right now is new
+questions for the [retrieval benchmark](docs/architecture.md), especially on repositories
+you know well. All docs: [docs/architecture.md](docs/architecture.md).
 
 MIT licensed.

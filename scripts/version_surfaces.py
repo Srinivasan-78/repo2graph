@@ -21,7 +21,7 @@ Two kinds of surface:
 and `examples/*/manifest.json` both record the version that
 *produced* some artifact -- history, not a claim about the current release --
 and a pattern loose enough to reach them would rewrite the past. For the same
-reason the pin pattern matches `==` only: `docs/github-action.md`'s
+reason the pin pattern matches `==` only: `docs/cli.md`'s
 `repo2graph>=1.4,<2` illustrates the *form* of a range spec and must survive
 every bump unchanged.
 """
@@ -122,7 +122,7 @@ SURFACES: tuple[Surface, ...] = (
         pattern=r"repo2graph@v(?P<v>\d+)(?![.\d])",
         paths=(
             "README.md",
-            "docs/github-action.md",
+            "docs/cli.md",
         ),
         why="the `uses:` line every copy-pasted workflow starts from",
     ),
@@ -131,7 +131,7 @@ SURFACES: tuple[Surface, ...] = (
         pattern=r"`@v(?P<v>\d+)`",
         paths=(
             "README.md",
-            "docs/github-action.md",
+            "docs/cli.md",
             ".github/SECURITY.md",
         ),
         why="prose about the floating tag, which is wrong about a tag that no longer moves",
@@ -139,19 +139,19 @@ SURFACES: tuple[Surface, ...] = (
     Surface(
         kind="version",
         pattern=rf"`@v(?P<v>{SEMVER})`",
-        paths=("README.md", "docs/github-action.md"),
+        paths=("README.md", "docs/cli.md"),
         why="the worked example of pinning an exact tag instead of the floating one",
     ),
     Surface(
         kind="version",
         pattern=rf"repo2graph(?:\[[a-z,]+\])?==(?P<v>{SEMVER})",
-        paths=("docs/github-action.md",),
+        paths=("docs/cli.md",),
         why="install pins an operator is meant to copy",
     ),
     Surface(
         kind="major",
         pattern=r"every (?P<v>\d+)\.x release",
-        paths=("README.md", "docs/github-action.md"),
+        paths=("README.md", "docs/cli.md"),
         why="states which release line the floating tag tracks",
     ),
 )

@@ -140,7 +140,7 @@ ignore_missing_imports = true
 #
 # query.py and export.py are done -- they were taken first because everything
 # else imports them, so their `Any` returns were what made callers unprovable.
-# See docs/BACKLOG.md for the ranked plan.
+# See docs/CONTRIBUTING.md for the ranked plan.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]

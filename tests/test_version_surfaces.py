@@ -7,7 +7,7 @@ Action consumer is told to put in `uses:`, and the `repo2graph==X.Y.Z` pin
 examples -- so after 2.0.0 shipped, the README still said `@v1` and described it
 as following "every 1.x release", pointing users at a dead release line.
 
-Per AGENTS.md, values here are hand-derived from the repo's own files, never
+Per CONTRIBUTING.md, values here are hand-derived from the repo's own files, never
 recomputed by the code under test: the expected version comes from
 `pyproject.toml` read directly, and the things that must *not* move are literal
 strings.
@@ -120,8 +120,8 @@ MUST_SURVIVE = (
     # test_bump_moves_every_surface_to_the_new_version could not see it, since
     # both lines would agree on the new value.
     ("CITATION.cff", "cff-version: 1.2.0"),
-    ("docs/github-action.md", "repo2graph>=1.4,<2"),
-    ("docs/github-action.md", "actions/checkout@v4"),
+    ("docs/cli.md", "repo2graph>=1.4,<2"),
+    ("docs/cli.md", "actions/checkout@v4"),
     ("README.md", "actions/checkout@v4"),
 )
 
@@ -163,7 +163,7 @@ def test_bump_rewrites_the_documented_major_tag(tmp_path):
     assert "Srinivasan-78/repo2graph@v9" in rewritten["README.md"]
     assert "`@v9` follows every 9.x release" in rewritten["README.md"]
     assert "`@v9.9.9`" in rewritten["README.md"]
-    assert "repo2graph==9.9.9" in rewritten["docs/github-action.md"]
+    assert "repo2graph==9.9.9" in rewritten["docs/cli.md"]
 
 
 def _rewrite_in_sandbox(tmp_path: Path, version: str) -> dict[str, str]:

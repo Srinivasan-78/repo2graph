@@ -571,12 +571,12 @@ def test_emit_fails_closed_when_the_sanitiser_raises(monkeypatch):
     fall back to writing the raw field values to stderr. It must drop them."""
     import io
 
-    from repo2graph import events, secrets
+    from repo2graph import events, security
 
     def boom(key, value):
         raise RuntimeError("sanitiser broke")
 
-    monkeypatch.setattr(secrets, "sanitize_value", boom)
+    monkeypatch.setattr(security, "sanitize_value", boom)
     out = io.StringIO()
     record = events.emit("probe", stream=out, token="ghp_" + "x" * 36)
     assert "ghp_" not in out.getvalue()

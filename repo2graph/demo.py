@@ -32,7 +32,7 @@ from typing import Any, Callable
 # floor. A file whose body is entirely `def`s and imports gets a node but no
 # chunk, and a node with no chunk can be neither a seed nor a retrievable
 # neighbour -- so each fixture module below carries a module-level constant or
-# docstring. See AGENTS.md, "A file with little residue emits no file-level
+# docstring. See CONTRIBUTING.md, "A file with little residue emits no file-level
 # chunk".
 
 _ROUTES_PY = '''\
@@ -416,7 +416,7 @@ class StarterQuestion:
     callers_of: str = ""
 
 
-# The single source of truth for the starter prompts. docs/quickstart.md,
+# The single source of truth for the starter prompts. docs/architecture.md,
 # README.md and `repo2graph demo` all render this list, and
 # tests/test_doc_consistency.py fails if a docs copy drifts from it.
 STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
@@ -493,7 +493,7 @@ def _brief(pack: dict[str, Any]) -> str:
 
     `split("\\n")` rather than `splitlines()`: chunk text is verbatim source,
     and a U+2028 in it is not a line break to anything that produced it.
-    See AGENTS.md.
+    See CONTRIBUTING.md.
     """
     chunks = pack.get("chunks") or []
     if not chunks:
