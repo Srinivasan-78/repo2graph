@@ -849,3 +849,38 @@ class TestRateLimiterPrimitives:
 
         limiter.release_build_slot()
         assert limiter.acquire_build_slot() is True
+
+
+def test_make_handler_binds_configuration_onto_the_handler_class():
+    """`BaseHTTPRequestHandler` is instantiated once per request, so everything
+    a request needs has to live on the *class* -- `make_handler` is where that
+    binding happens, and two fixes in this change depend on it being right:
+    `self.repo` drives the auto-build tool annotations (#292), and
+    `trust_proxy`/`trusted_proxies` decide whether `X-Forwarded-For` is ever
+    consulted (#267). Both read attributes that nothing would notice were
+    missing until a request arrived.
+    """
+    from repo2graph.http_server import RateLimiter, make_handler
+
+    limiter = RateLimiter(RateLimitConfig())
+    handler = make_handler(
+        "/some/index",
+        repo="/some/repo",
+        rate_limiter=limiter,
+        trust_proxy=True,
+        trusted_proxies=frozenset({"10.0.0.1"}),
+    )
+
+    assert handler.index_dir == "/some/index"
+    assert handler.repo == "/some/repo"
+    assert handler.rate_limiter is limiter
+    assert handler.trust_proxy is True
+    assert handler.trusted_proxies == frozenset({"10.0.0.1"})
+
+    # A second handler must not inherit the first's configuration: each call
+    # returns its own subclass, or two servers in one process share state.
+    other = make_handler("/other/index")
+    assert other.repo is None
+    assert other.trust_proxy is False
+    assert other.trusted_proxies == frozenset()
+    assert handler.repo == "/some/repo"
