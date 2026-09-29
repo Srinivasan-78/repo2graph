@@ -68,12 +68,16 @@ dev = [
 # boost with zero extra dependencies when these are not installed.
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
-# Both SDK generations are supported: `serve()` branches on
-# `hasattr(Server, "list_tools")` and drives the 1.x decorator API or the 2.x
-# registration API accordingly, so 2.x no longer crashes the server on start.
-# The bound is `<3.0` -- an unreleased 3.x is the thing that has not been
-# tested, not 2.x. Keep this in sync with `SDK_SPEC` in repo2graph/mcp.py.
-mcp = ["mcp>=1.0,<3.0"]
+# 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
+# first `tools/call` on the parallel path
+# (test_iss90_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
+# ~4 minutes to time out. serve() drove 1.x's decorator API
+# (`hasattr(Server, "list_tools")`) only to work around that generation, and the
+# workaround was untested -- CI always resolved 2.x from PyPI. The lower bound is
+# now 2.0, matching what is actually exercised. The upper bound stays `<3.0`: an
+# unreleased 3.x is the thing that has not been tested, not 2.x. Keep this in
+# sync with `SDK_SPEC` in repo2graph/mcp.py.
+mcp = ["mcp>=2.0,<3.0"]
 # Shell tab completion via argcomplete
 completion = ["argcomplete>=3.0"]
 

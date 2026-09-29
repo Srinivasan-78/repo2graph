@@ -199,27 +199,41 @@ class _Types:
         def __init__(self, name, arguments):
             self.name, self.arguments = name, arguments
 
+    class ToolAnnotations:
+        def __init__(self, **fields):
+            for key, value in fields.items():
+                setattr(self, key, value)
 
-def _install_fake_sdk(monkeypatch, generation):
+    class Tool:
+        # Declared at class level on purpose: `get_tools` decides whether this
+        # SDK supports annotations with `hasattr(tool_cls, "annotations")`, and
+        # an attribute only ever set in __init__ is invisible to that check --
+        # the tools would come back silently unannotated.
+        annotations = None
+
+        def __init__(self, name, description=None, inputSchema=None, annotations=None):
+            self.name = name
+            self.description = description
+            self.inputSchema = inputSchema
+            self.annotations = annotations
+
+
+def _install_fake_sdk(monkeypatch):
+    """A stand-in `mcp` package exposing only the 2.x registration API.
+
+    ISS-407/#291: there used to be a `Server1x` here too, driven by a
+    `generation` parameter, because `serve()` branched on
+    `hasattr(Server, "list_tools")` to speak either SDK generation. 1.x is no
+    longer supported -- it deadlocks on the first tool call -- so that branch
+    is gone and a 1.x-shaped fake would only assert that dead code still
+    exists. The guard that actually refuses a 1.x install reads the installed
+    distribution's version, not the module's shape, so it cannot be exercised
+    by a fake at all; `tests/test_mcp.py::test_iss407_a_1x_sdk_is_refused_at_startup_not_hung`
+    covers it against a patched version instead.
+    """
     import types as pytypes
 
     captured: dict = {}
-
-    class Server1x:
-        def __init__(self, name, version=None):
-            pass
-
-        def list_tools(self):
-            return lambda f: captured.setdefault("list", f)
-
-        def call_tool(self):
-            return lambda f: captured.setdefault("call", f)
-
-        def create_initialization_options(self):
-            return None
-
-        async def run(self, *a):
-            return None
 
     class Server2x:
         def __init__(self, name, version=None, on_list_tools=None, on_call_tool=None):
@@ -239,12 +253,12 @@ def _install_fake_sdk(monkeypatch, generation):
             return False
 
     types_mod = pytypes.ModuleType("mcp.types")
-    for attr in ("TextContent", "CallToolResult", "ListToolsResult"):
+    for attr in ("TextContent", "CallToolResult", "ListToolsResult", "Tool", "ToolAnnotations"):
         setattr(types_mod, attr, getattr(_Types, attr))
     root = pytypes.ModuleType("mcp")
     root.types = types_mod  # type: ignore[attr-defined]
     server_mod = pytypes.ModuleType("mcp.server")
-    server_mod.Server = Server1x if generation == 1 else Server2x  # type: ignore[attr-defined]
+    server_mod.Server = Server2x  # type: ignore[attr-defined]
     stdio_mod = pytypes.ModuleType("mcp.server.stdio")
     stdio_mod.stdio_server = lambda: _Stdio()  # type: ignore[attr-defined]
     for name, mod in (
@@ -257,32 +271,61 @@ def _install_fake_sdk(monkeypatch, generation):
     return captured
 
 
-@pytest.mark.parametrize("generation", [1, 2])
-def test_serve_flags_tool_errors_as_is_error_on_both_sdk_generations(
-    git_index, monkeypatch, generation
-):
+def test_serve_list_tools_handler_reports_every_tool_and_honest_annotations(git_index, monkeypatch):
+    """The registered list handler is what a real client reads the tool set
+    and its annotations from, so it is the path #292's honesty has to hold on.
+
+    `_install_fake_sdk` captured this callback but nothing ever invoked it,
+    which is why the impact analysis flagged `serve.list_tools_handler` as a
+    public API with no test caller -- correctly.
+    """
     import asyncio
 
     _repo, out = git_index
-    captured = _install_fake_sdk(monkeypatch, generation)
+
+    # No repo to build from: this server can only read an index that exists.
+    captured = _install_fake_sdk(monkeypatch)
+    mcp_mod.serve(out)
+    tools = asyncio.run(captured["list"](None, None)).tools
+    names = [t.name for t in tools]
+    assert set(names) == set(mcp_mod.TOOL_DESCRIPTIONS)
+    assert len(names) == len(set(names)), f"a tool is registered twice: {names}"
+    assert all(_ann(t, "read_only_hint", "readOnlyHint") is True for t in tools)
+
+    # Given a repo, the first call to any tool but repo_build_status may build.
+    captured = _install_fake_sdk(monkeypatch)
+    mcp_mod.serve(out, repo=_repo)
+    by_name = {t.name: t for t in asyncio.run(captured["list"](None, None)).tools}
+    assert _ann(by_name["repo_search"], "read_only_hint", "readOnlyHint") is False
+    assert _ann(by_name["repo_build_status"], "read_only_hint", "readOnlyHint") is True
+
+
+def _ann(tool, *names):
+    """One annotation off a Tool, tolerating either SDK's field naming."""
+    annotations = getattr(tool, "annotations", None)
+    for name in names:
+        if hasattr(annotations, name):
+            return getattr(annotations, name)
+        if isinstance(annotations, dict) and name in annotations:
+            return annotations[name]
+    raise AssertionError(f"no annotation named any of {names} on {tool.name}")
+
+
+def test_serve_flags_tool_errors_as_is_error(git_index, monkeypatch):
+    """A failing tool is reported as `isError`, never as a crashed server."""
+    import asyncio
+
+    _repo, out = git_index
+    captured = _install_fake_sdk(monkeypatch)
     mcp_mod.serve(out)
     call = captured["call"]
 
-    if generation == 1:
-        ok = asyncio.run(call("repo_search", {"query": "greet"}))
-        assert "[cite:" in ok[0].text
-        # Every 1.x SDK turns a handler exception into CallToolResult(isError=True).
-        with pytest.raises(mcp_mod.ToolCallFailed, match="node not found"):
-            asyncio.run(call("repo_neighbours", {"node_id": "sym:x.py::y"}))
-        with pytest.raises(mcp_mod.ToolCallFailed, match="unknown tool"):
-            asyncio.run(call("bogus", {}))
-    else:
-        ok = asyncio.run(call(None, _Types.Params("repo_search", {"query": "greet"})))
-        assert ok.isError is False and "[cite:" in ok.content[0].text
-        bad = asyncio.run(call(None, _Types.Params("repo_neighbours", {"node_id": "sym:x::y"})))
-        assert bad.isError is True and "node not found" in bad.content[0].text
-        bad = asyncio.run(call(None, _Types.Params("repo_search", {})))
-        assert bad.isError is True and "query" in bad.content[0].text
+    ok = asyncio.run(call(None, _Types.Params("repo_search", {"query": "greet"})))
+    assert ok.isError is False and "[cite:" in ok.content[0].text
+    bad = asyncio.run(call(None, _Types.Params("repo_neighbours", {"node_id": "sym:x::y"})))
+    assert bad.isError is True and "node not found" in bad.content[0].text
+    bad = asyncio.run(call(None, _Types.Params("repo_search", {})))
+    assert bad.isError is True and "query" in bad.content[0].text
 
 
 # ---------------------------------------------------------------- item 5

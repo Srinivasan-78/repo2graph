@@ -16,7 +16,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any, Iterator
 
 from .secrets import sanitize_url
 
@@ -152,6 +152,122 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
     if len(raw) > limit:
         raise ValueError(f"{path}: {what} grew past the {limit}-byte limit while being read")
     return raw
+
+
+# Ceilings for the JSONL artifacts (nodes/edges/chunks.jsonl), which read_bounded
+# does not cover -- they are streamed line by line, not read whole. ISS-408:
+# #405 bounded the metadata files (manifest.json, vectors.meta.json/.npy) above
+# but explicitly left these open, because a single `for line in fh` reads until
+# a newline -- a file with none is a single allocation the size of the file,
+# the same shape MAX_ANSWER_BYTES / answer._BoundedLines bounds for a provider
+# response with no newline.
+#
+# A legitimate chunk's text is capped at chunks.MAX_CHARS (4000 characters,
+# well under 64 KiB even at UTF-8's worst-case 4 bytes/char) before it is ever
+# written, and a node/edge record carries no comparable free-text field at
+# all -- so a single JSONL line anywhere near 1 MiB is malformed regardless of
+# how large the index legitimately is.
+MAX_JSONL_LINE_BYTES = 1 << 20  # 1 MiB
+
+# Total-bytes ceiling for the *verification* path only (integrity.verify_artifacts,
+# doctor.check_vectors): both read a received, untrusted index end to end and
+# can afford to be strict about it. query.Index deliberately does not apply
+# this ceiling -- chunks.jsonl is the repository's own text and is
+# legitimately large on a big monorepo. For scale: this repo's own `examples/`
+# tree's largest node list (`examples/linux/nodes.jsonl.gz`, 136k records)
+# decompresses to ~47 MB, and chunks.jsonl -- which carries full chunk text on
+# top of the same per-record metadata -- runs larger still. 1 GiB is
+# comfortably above that while still bounding a hostile file.
+MAX_JSONL_TOTAL_BYTES = 1 << 30  # 1 GiB
+
+# Block size for the framing reader below. Matches answer.READ_BLOCK's role:
+# large enough that framing costs nothing on a real index, small enough that it
+# is the entire overshoot allowance on a hostile one.
+JSONL_READ_BLOCK = 1 << 16  # 64 KiB
+
+
+def _iter_raw_lines(fh: IO[bytes], max_line_bytes: int, what: str = "input") -> Iterator[bytes]:
+    """Frame `b"\\n"`-terminated lines over fixed-size blocks.
+
+    `for raw in fh` cannot implement a per-line ceiling: it reads until it finds
+    a newline, so by the time the caller can measure the line, a file containing
+    no newline at all has *already* been allocated whole -- which is the first of
+    the two attack shapes ISS-408 names, not a case the measurement catches. The
+    check has to happen while reading, not after, so the read is blocked and the
+    partial line is measured between blocks. This is the same construction
+    answer._BoundedLines uses over a provider response body, for the same reason.
+
+    Peak memory is therefore `max_line_bytes + JSONL_READ_BLOCK`, not the file
+    size. Lines are yielded *with* their trailing newline so a caller summing
+    `len(raw)` gets the real byte count.
+    """
+    buf = b""
+    while True:
+        block = fh.read(JSONL_READ_BLOCK)
+        if not block:
+            break
+        buf += block
+        start = 0
+        while (nl := buf.find(b"\n", start)) >= 0:
+            yield buf[start : nl + 1]
+            start = nl + 1
+        buf = buf[start:]
+        # What is left is an unterminated partial line. Refusing here -- rather
+        # than after a newline finally arrives -- is what bounds the allocation.
+        if len(buf) > max_line_bytes:
+            raise ValueError(
+                f"{what}: an unterminated line exceeds the {max_line_bytes}-byte per-line limit"
+            )
+    if buf:
+        yield buf
+
+
+def iter_jsonl_bounded(
+    path: Path | str,
+    *,
+    max_line_bytes: int = MAX_JSONL_LINE_BYTES,
+    max_total_bytes: int | None = None,
+) -> Iterator[tuple[int, Any]]:
+    """Stream `(lineno, record)` from a JSONL file, refusing oversized input.
+
+    Reads and splits on raw `b"\\n"` only -- never text mode's universal-newline
+    handling, which would treat U+2028/U+2029/U+0085 as line breaks and cut a
+    `json.dumps(ensure_ascii=False)` record in half (same reasoning as
+    query.read_jsonl's newline="\\n").
+
+    Two independent ceilings:
+    - `max_line_bytes` bounds any single line, always.
+    - `max_total_bytes`, when given, bounds the running sum of bytes read --
+      the verification path only; callers that must tolerate a legitimately
+      large file (query.Index) pass None (the default).
+
+    Raises:
+        ValueError: a line, or the running total, exceeds its ceiling; or a
+        line is not valid JSON. Never lets a lower-level exception escape.
+    """
+    total = 0
+    with open(path, "rb") as fh:
+        for lineno, raw in enumerate(_iter_raw_lines(fh, max_line_bytes, str(path)), 1):
+            total += len(raw)
+            if len(raw) > max_line_bytes:
+                # _iter_raw_lines bounds the allocation but allows up to one
+                # block of overshoot; this is the exact enforcement.
+                raise ValueError(
+                    f"{path}: line {lineno} is {len(raw)} bytes, over the "
+                    f"{max_line_bytes}-byte per-line limit"
+                )
+            if max_total_bytes is not None and total > max_total_bytes:
+                raise ValueError(
+                    f"{path}: exceeds the {max_total_bytes}-byte total limit at line {lineno}"
+                )
+            line = raw.decode("utf8", "surrogateescape")
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}: line {lineno} is not valid JSON: {e}") from None
+            yield lineno, rec
 
 
 def compute_file_checksum(path: Path | str) -> str:
@@ -380,24 +496,26 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
     chunk_text_hashes: dict[str, str] = {}
     if chunks_path.exists():
         try:
-            with open(chunks_path, encoding="utf8", errors="surrogateescape", newline="\n") as fh:
-                for lineno, line in enumerate(fh, 1):
-                    line_s = line.strip()
-                    if not line_s:
-                        continue
-                    try:
-                        c = json.loads(line_s)
-                        cid = c.get("id")
-                        if cid:
-                            chunk_ids.add(cid)
-                            text = c.get("text") or ""
-                            chunk_text_hashes[cid] = hashlib.sha256(
-                                text.encode("utf8", "surrogateescape")
-                            ).hexdigest()
-                    except json.JSONDecodeError as jde:
-                        report.status = "corrupt"
-                        report.errors.append(f"chunks.jsonl line {lineno} corrupt JSON: {jde}")
-                        break
+            for _lineno, c in iter_jsonl_bounded(
+                chunks_path,
+                max_line_bytes=MAX_JSONL_LINE_BYTES,
+                max_total_bytes=MAX_JSONL_TOTAL_BYTES,
+            ):
+                if not isinstance(c, dict):
+                    continue
+                cid = c.get("id")
+                if cid:
+                    chunk_ids.add(cid)
+                    text = c.get("text") or ""
+                    chunk_text_hashes[cid] = hashlib.sha256(
+                        text.encode("utf8", "surrogateescape")
+                    ).hexdigest()
+        except ValueError as exc:
+            # Malformed JSON, an oversized line, or the total-bytes ceiling --
+            # same failure class, same "corrupt" answer, never an exception
+            # escaping into doctor (ISS-408).
+            report.status = "corrupt"
+            report.errors.append(f"chunks.jsonl: {exc}")
         except OSError as exc:
             report.status = "corrupt"
             report.errors.append(f"Error reading chunks.jsonl: {exc}")

@@ -616,10 +616,22 @@ def check_vectors(path: Path) -> CheckResult:
         chunk_ids = meta.get("chunk_ids", [])
         details.append(f"Model: {model_id}, Dimension: {dim}, Embedded chunks: {len(chunk_ids)}")
 
-        # Check correspondence with chunks.jsonl
+        # Check correspondence with chunks.jsonl. Bounded the same way
+        # verify_artifacts bounds chunks.jsonl (ISS-408): `doctor` is the
+        # documented way to check an index built elsewhere, and a plain
+        # `sum(1 for line in f ...)` reads until a newline -- a file with none
+        # is a single allocation the size of the file.
         if chunks_file.exists():
-            with open(chunks_file, "r", encoding="utf-8", errors="replace") as f:
-                actual_chunks = sum(1 for line in f if line.strip())
+            from .integrity import MAX_JSONL_LINE_BYTES, MAX_JSONL_TOTAL_BYTES, iter_jsonl_bounded
+
+            actual_chunks = sum(
+                1
+                for _lineno, _rec in iter_jsonl_bounded(
+                    chunks_file,
+                    max_line_bytes=MAX_JSONL_LINE_BYTES,
+                    max_total_bytes=MAX_JSONL_TOTAL_BYTES,
+                )
+            )
             if actual_chunks != len(chunk_ids):
                 details.append(
                     f"Warning: chunks.jsonl has {actual_chunks} chunks but vectors has {len(chunk_ids)}"

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from .export import path as artifact_path
 from .export import paths as artifact_paths
+from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
 
 from .secrets import (
     SECRET_CONFIG_EXTS,
@@ -53,6 +54,18 @@ Vector = Sequence[float]
 _T = TypeVar("_T")
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
+# ISS-378: TOKEN_RE requires 2+ characters, so a single-character identifier
+# (Go/Java/TS/Rust's ubiquitous generic `T`, a matrix `A` or vector `b` in
+# numerical code) is never indexed and never matches a query -- a silent
+# zero-result rather than a ranked miss, which reads to a user as "the tool
+# does not know about this symbol". IDENT_RE is the targeted fix: it is a
+# strict superset of TOKEN_RE (same first-char class, `*` not `+`), used only
+# where a declared symbol's own `name` is at stake -- indexing it in
+# Index.__init__, matching it in _boost_identifiers, and admitting a
+# single-character query term in score() -- never for free text, which keeps
+# the index from filling with noise postings for every stray "a"/"i" in body
+# text.
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
 SUBTOKEN_RE = re.compile(r"_|(?<=[a-z0-9])(?=[A-Z])")
 
@@ -110,13 +123,34 @@ PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
 def read_jsonl(path: Path) -> list[Record]:
     """Load a JSONL file written by export.write_jsonl.
 
-    newline="\n" matters: json.dumps(ensure_ascii=False) passes U+2028, U+2029
-    and U+0085 through verbatim, and both str.splitlines() and universal-newline
-    mode treat those as line breaks, which would cut records in half.
+    Reads bytes and splits on raw b"\n" only, never text mode's
+    universal-newline handling: json.dumps(ensure_ascii=False) passes U+2028,
+    U+2029 and U+0085 through verbatim, and universal-newline mode (like
+    str.splitlines()) treats those as line breaks, which would cut records
+    in half.
+
+    ISS-408: each line is bounded at MAX_JSONL_LINE_BYTES (see integrity.py) --
+    a single JSONL record anywhere near that size is malformed regardless of
+    how large a legitimate index is, the same reasoning as
+    answer._BoundedLines' per-response ceiling. The framing comes from
+    integrity._iter_raw_lines rather than `for raw in fh` because the latter
+    reads until a newline: on a file that contains none, the allocation has
+    already happened by the time a per-line check could measure it. There is
+    deliberately no *total*-bytes ceiling here: chunks.jsonl is the
+    repository's own text and is legitimately large on a big monorepo.
+    integrity.MAX_JSONL_TOTAL_BYTES bounds the total on the verification path
+    (integrity/doctor), which reads an untrusted index end to end and can
+    afford to be strict.
     """
     rows: list[Record] = []
-    with open(path, encoding="utf8", errors="surrogateescape", newline="\n") as fh:
-        for lineno, line in enumerate(fh, 1):
+    with open(path, "rb") as fh:
+        for lineno, raw in enumerate(_iter_raw_lines(fh, MAX_JSONL_LINE_BYTES, str(path)), 1):
+            if len(raw) > MAX_JSONL_LINE_BYTES:
+                raise ValueError(
+                    f"{path}: line {lineno} is {len(raw)} bytes, over the "
+                    f"{MAX_JSONL_LINE_BYTES}-byte per-line limit"
+                )
+            line = raw.decode("utf8", "surrogateescape")
             if not line.strip():
                 continue
             try:
@@ -184,7 +218,16 @@ class Index:
         for i, c in enumerate(self.chunks):
             # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
             # inspectable) with a null text/qualname must not TypeError in re.findall.
-            counts = Counter(tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3)
+            terms = tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3
+            # ISS-378: a single-character declared name (`name`, not text/
+            # qualname prose) is admitted here even though tokenize() would
+            # drop it -- multi-character names are already reachable through
+            # tokenize(qualname) above, so this only ever adds the narrow case
+            # TOKEN_RE cannot: a name that *is* one identifier character.
+            name = c.get("name") or ""
+            if len(name) == 1 and IDENT_RE.fullmatch(name):
+                terms += [name.lower()] * 3
+            counts = Counter(terms)
             self.lengths.append(sum(counts.values()) or 1)
             for term, n in counts.items():
                 self.postings[term].append((i, n))
@@ -334,7 +377,14 @@ class Index:
         return {**c, "text": red} if n else c
 
     def score(self, query: str) -> list[tuple[float, int]]:
-        q = Counter(tokenize(query))
+        # ISS-378: tokenize(query) alone drops single-character terms (TOKEN_RE
+        # requires 2+ chars), so a query of exactly "T" would never look up the
+        # "t" posting even though Index.__init__ now creates one for a
+        # single-character symbol name. Adding IDENT_RE's single-char matches
+        # is safe for ordinary queries: `postings.get(term)` below is a no-op
+        # for any term that was never indexed, which is every single character
+        # except a declared one-letter name.
+        q = Counter(tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1])
         acc: dict[int, float] = defaultdict(float)
         for term, qn in q.items():
             posting = self.postings.get(term)
@@ -361,7 +411,10 @@ class Index:
         the query count (not tokenize()'s sub-words), and only chunks BM25
         already scored are touched, so score()'s invariants are unchanged.
         """
-        idents = set(TOKEN_RE.findall(query))
+        # IDENT_RE, not TOKEN_RE: a query of exactly "T" must be able to boost
+        # a chunk whose declared name is "T" (ISS-378). IDENT_RE is a strict
+        # superset of TOKEN_RE, so every multi-character match is unchanged.
+        idents = set(IDENT_RE.findall(query))
         if not idents:
             return
         lowered = {t.lower() for t in idents}
@@ -900,12 +953,36 @@ def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> st
     is not additive (any token estimate) is applied to the string that will
     actually be emitted. With the default `len` this is exactly the running
     "len(line) + a newline" arithmetic it replaces.
+
+    ISS-345: the old loop rebuilt `"\n".join([*kept, line])` -- a fresh list
+    unpack plus a fresh O(K)-length join -- on every one of N lines, so
+    fitting a K-line prefix cost O(N*K) rather than O(N). `measure is len`
+    (true for the default, and for any caller that passes the builtin back)
+    is the additive case AGENTS.md's "with the default len this is exactly
+    the running len(line) + newline arithmetic" already documents: track the
+    cumulative character count instead of a string, and build the result
+    once at the end via a single join. A non-`len` `measure` is not provably
+    additive (a token estimate need not be), so that path is unchanged in
+    complexity -- it still measures the whole candidate every line -- but no
+    longer pays the `[*kept, line]` unpack on top of the join. Output is
+    unchanged either way: `_fit_lines` has byte-level tests.
     """
     if limit <= 0:
         return ""
+    lines = text.split("\n")  # never splitlines(): see AGENTS.md
+    if measure is len:
+        total = 0
+        n_kept = 0
+        for line in lines:
+            add = len(line) if n_kept == 0 else len(line) + 1  # +1 for the "\n" join adds
+            if total + add > limit:
+                break
+            total += add
+            n_kept += 1
+        return "\n".join(lines[:n_kept])
     kept: list[str] = []
-    for line in text.split("\n"):  # never splitlines(): see AGENTS.md
-        candidate = "\n".join([*kept, line])
+    for line in lines:
+        candidate = "\n".join(kept + [line]) if kept else line
         if measure(candidate) > limit:
             break
         kept.append(line)

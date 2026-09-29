@@ -16,6 +16,8 @@ Setup, test commands and the PR flow: **[.github/CONTRIBUTING.md](../.github/CON
 
 ## 1. Single-character identifiers are unsearchable — [#378](https://github.com/Srinivasan-78/repo2graph/issues/378)
 
+> **Done** — fixed for [#378](https://github.com/Srinivasan-78/repo2graph/issues/378); `IDENT_RE` in `query.py` now indexes and matches a one-character declared name. Left here as a worked example, not as a task to pick up.
+
 **Size:** XS · **Area:** `area/query` · **Type:** bug
 
 `repo2graph/query.py:54`:
@@ -121,6 +123,8 @@ saying why — the next person will otherwise "simplify" it back.
 
 ## 5. Quadratic string joining in `_fit_lines` — [#345](https://github.com/Srinivasan-78/repo2graph/issues/345)
 
+> **Done** — fixed for [#345](https://github.com/Srinivasan-78/repo2graph/issues/345); `_fit_lines` takes an O(N) path when `measure is len`, with the arbitrary-`measure` semantics unchanged. Left here as a worked example, not as a task to pick up.
+
 **Size:** S · **Area:** `area/query` · **Type:** refactor
 
 `repo2graph/query.py:845`:
@@ -154,6 +158,8 @@ token-based `measure` is not.
 ---
 
 ## 6. Deduplicate the node and edge descriptions — [#349](https://github.com/Srinivasan-78/repo2graph/issues/349)
+
+> **Done** — fixed for [#349](https://github.com/Srinivasan-78/repo2graph/issues/349), but *not* the way the catch below predicts: only the `viz.py → export.py` direction is a cycle, so the definitions moved into `viz.py` and `export.py` imports them. No third module was needed. Left here as a worked example, not as a task to pick up.
 
 **Size:** S · **Area:** `area/graph` · **Type:** refactor
 
