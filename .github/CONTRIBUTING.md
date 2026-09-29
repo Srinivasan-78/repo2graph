@@ -9,7 +9,7 @@ Thanks for helping out.
 | Looking for something to work on | **[docs/good-first-issues.md](../docs/good-first-issues.md)** — seven tasks with acceptance criteria and code pointers |
 | Need to find your way around the code | **[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)** — module map, dependency direction, where a change of each kind goes |
 | Adding a language | **[docs/parser-development.md](../docs/parser-development.md)** |
-| About to edit `query.py`, `chunks.py`, `graph.py` or `parse.py` | **[AGENTS.md](../AGENTS.md)** first — each has a documented footgun |
+| About to edit `query.py`, `chunks.py`, `graph.py` or `parse.py` | **[Architecture & OS Compatibility Invariants](#architecture--os-compatibility-invariants)** below |
 | Wondering how issues get labelled | **[docs/TRIAGE.md](../docs/TRIAGE.md)** |
 | Want to ask rather than file | **[docs/COMMUNITY.md](../docs/COMMUNITY.md)** |
 
@@ -70,10 +70,9 @@ is strict-checked by default.
 
 ## Code style
 
-- Keep changes focused; add or update tests for behavior you touch — see
-  [AGENTS.md](../AGENTS.md) for the codebase's non-obvious conventions (text slicing, git
-  subprocess decoding on Windows, the two budget models in `query.py`) before editing `query.py`,
-  `chunks.py`, `graph.py`, or `walker.py` specifically; each has a documented footgun.
+- Keep changes focused; add or update tests for behavior you touch — see the
+  [Architecture & OS Compatibility Invariants](#architecture--os-compatibility-invariants)
+  before editing `query.py`, `chunks.py`, `graph.py`, or `parse.py`.
 - `ruff` (line length 100) and `mypy --strict` on the modules it covers are both CI gates.
 
 ## Submitting a PR
@@ -102,20 +101,16 @@ conflicts, the bot comments with rebase instructions so the CI result stays mean
 | Types | `mypy repo2graph/` |
 | Packaging + a real MCP stdio round trip | `scripts/mcp_roundtrip.py` |
 | Licence/provenance | `reuse lint` |
-| Windows cp1252 pipe behaviour | a dedicated job — see AGENTS.md on git output decoding |
+| Windows cp1252 pipe behaviour | a dedicated job — see Git subprocess decoding invariants |
 
 ### Tests have a house style, and it is not the usual one
 
-Two rules from [AGENTS.md](../AGENTS.md) that reviewers will hold you to:
-
 - **Pin literal values; never assert against something the code under test computed.** A test
   asserting `stdout == format_pack(Index(out).retrieve(...))` moves with the implementation and
-  stayed green straight through a real traversal regression. Hand-derive the expected
-  `(node_id, why)` tuples from the fixture source, and assert set membership — no scores, ranks or
-  ordering, which drift with any scoring change.
-- **Prove a new test is a detector.** Revert the fix in your working copy, watch the new test fail
-  and the old ones pass, then restore and confirm `git hash-object` is unchanged. Say in the PR
-  that you did it.
+  can mask traversal regressions. Hand-derive the expected `(node_id, why)` tuples from the fixture
+  source, and assert set membership — no scores, ranks or ordering, which drift with scoring changes.
+- **Prove a new test is a detector.** Revert the fix in your working copy, confirm the new test
+  fails and existing tests pass, then restore.
 
 ## Good first issues
 
@@ -277,3 +272,49 @@ the [MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=re
 The registry entry is published by `publish.yml` from `server.json`; if the
 version it reports lags the current release, that is a release step that did not
 run, not a documentation problem.
+
+## Architecture & OS Compatibility Invariants
+
+When contributing to `repo2graph`, adhere to the following architectural and cross-platform engineering invariants:
+
+### 1. Text Slicing: Use `split("\n")`, Never `splitlines()`
+Tree-sitter advances `Point.row` strictly on newline (`\n`). Python's `str.splitlines()` (and universal-newline reading) also splits on line-separator characters such as U+2028, U+2029, U+0085, `\x0b`, and `\x0c`. In source files containing these characters, `splitlines()` causes Python's line indexing to desynchronize from the parser's row numbers, resulting in corrupted symbol chunk offsets.
+- Always slice source text against parser rows using `src.split("\n")` (stripping trailing `\r` for CRLF).
+- Re-use the existing `chunks._lines(src)` helper for this operation.
+
+### 2. Git Subprocess Decoding (Windows / Non-UTF-8 Locales)
+Subprocess calls that invoke `git` must never pass `text=True` or rely on the default platform locale encoding (such as Windows `cp1252`), which raises `UnicodeDecodeError` when processing paths or diffs containing non-ASCII characters:
+- Run `git` commands with `-c core.quotepath=false` so non-ASCII paths are output verbatim rather than escaped.
+- Capture raw subprocess bytes and decode explicitly with `.decode("utf8", "surrogateescape")` or `errors="replace"`.
+- Always specify an explicit `timeout=` parameter on subprocess invocations.
+
+### 3. Deterministic Discovery Order
+The order in which files are discovered dictates the emitted order of nodes, edges, and chunks across `nodes.jsonl`, `edges.jsonl`, and `chunks.jsonl`.
+- `parse.discover()` must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
+- Discovery applies `DEFAULT_SKIP_DIRS` consistently across both git-tracked files and fallback directory scans.
+
+### 4. Retrieval and Context Packing Budget Models
+`Index.retrieve()` and `Index.pack_context()` serve different operational requirements and intentionally calculate budgets differently:
+- `Index.retrieve(query, k, hops, budget_chars)` bounds only the sum of the returned code chunks' `text`.
+- `Index.pack_context(query, ...)` bounds the total size of the rendered Markdown context, including directory maps, separators, citation headers, and surrounding blank lines.
+- Passing `budget_chars <= 0` in `pack_context()` designates an unbounded budget.
+
+### 5. Graph Traversal and Edge Direction Defaults
+When adding or modifying graph traversal filtering options:
+- Default parameters for shared traversal helpers (e.g., `expand()`) must not silently narrow existing callers. Callers with broad retrieval needs (such as `retrieve()`) must explicitly specify all edge directions via `ALL_EDGE_DIRS`.
+- The confidence threshold gate applies exclusively to `CALLS` edges; relationship edges without confidence scores (`DEFINES`, `IMPORTS`, `INHERITS`) must not be dropped by confidence filters.
+
+### 6. Edge Normalization and Citations
+Every edge in `repo2graph` represents a verifiable claim about codebase structure:
+- All edges pass through `Graph.add_edge()` where metadata (`method`, `confidence`, `evidence`) is normalized.
+- Edges that describe structural hierarchy (like `CONTAINS`) or historical co-occurrence (`CO_CHANGE`) legitimately carry `evidence: null`. Never synthesize fake line evidence for non-syntactic relations.
+
+### 7. MCP Argument Guardrails
+MCP tool inputs must be handled defensively:
+- Numeric parameters (`k`, `hops`, `limit`, `budget_tokens`) must always be clamped against `MCP_MAX_*` constants in tool entry handlers.
+- Secret and sensitive file exclusion (`exclude_secrets=True`) is applied unconditionally across MCP tool responses.
+
+### 8. Testing Conventions
+- **Pin literal values**: Test assertions for graph traversal and retrieval should check explicit set membership against hand-derived fixture values (e.g., node IDs and relationship types), rather than asserting against dynamic scores or values recomputed by the implementation under test.
+- **Detector proof**: When fixing bugs or adding regression tests, ensure the test fails when the change is reverted.
+

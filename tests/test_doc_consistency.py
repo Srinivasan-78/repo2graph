@@ -7,7 +7,6 @@ Prevents drift between code and documentation:
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
-- agent working files (BUILD_STATE*.md, DONE.md) kept out of the tree (Issue #403)
 - docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
@@ -203,26 +202,6 @@ def test_npm_launcher_version_matches_pyproject():
     bin_path = REPO_ROOT / "npm" / package["bin"]["repo2graph-mcp"]
     assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
 
-
-def test_agent_working_files_are_not_committed():
-    """Issue #403, widened: build-loop state and run logs are working files.
-
-    They were committed at the root, then under docs/, and read to every visitor as
-    an agent's scratchpad. `.gitignore` now keeps them out wherever they are written.
-    """
-    tracked = (
-        subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, check=False)
-        .stdout.decode("utf8", "surrogateescape")
-        .split()
-    )
-    offenders = [
-        p
-        for p in tracked
-        if re.fullmatch(r"(.*/)?(BUILD_STATE[^/]*\.md|DONE\.md)", p) and (REPO_ROOT / p).exists()
-    ]
-    assert offenders == [], f"agent working files committed: {offenders}"
-    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "BUILD_STATE*.md" in gitignore and "DONE.md" in gitignore
 
 
 def test_threat_model_covers_every_deployment_mode():

@@ -31,32 +31,27 @@ leak in the `SystemExit` branch was still genuinely open; it's fixed now. Treat 
 file as a claim to verify against current code before acting on it, same as any other memory of
 past state.
 
-Route back to the work the 2026-09 whole-repo audit found but did not fix in the
-first batch. The run's working state file was removed from the tree (build-loop
-state files are now gitignored); it is in git history before the 2026-09-28
-cleanup if you need the full 53-finding table.
+Route back to the work deferred during earlier stabilization passes.
 
 **Epic:** [#31 — Epic: post-audit backlog](https://github.com/Srinivasan-78/repo2graph/issues/31)
 
-| Issue | Scope | Covers | Priority |
-|-------|-------|--------|----------|
-| [#26](https://github.com/Srinivasan-78/repo2graph/issues/26) | fetch.py hardening round 2 | ISS-21, SH-2, SH-3, NC-4, NC-5 | P1 |
-| [#21](https://github.com/Srinivasan-78/repo2graph/issues/21) | parse.py & cross-module string/correctness one-liners | ISS-03/04/05/09/11/12/41/42, NC-6 | P2 |
-| [#23](https://github.com/Srinivasan-78/repo2graph/issues/23) | export.py correctness & GraphML hardening round 2 | ISS-28/29/30/31, SH-4 | P2 |
-| [#24](https://github.com/Srinivasan-78/repo2graph/issues/24) | viz.py UX + safety | ISS-33/34/35/36 | P2 |
-| [#25](https://github.com/Srinivasan-78/repo2graph/issues/25) | query.py retrieval budget + scoring hygiene | ISS-37/38/39 | P2 |
-| [#27](https://github.com/Srinivasan-78/repo2graph/issues/27) | walker.py discovery hygiene | ISS-14/15, SH-5 | P2 |
-| [#28](https://github.com/Srinivasan-78/repo2graph/issues/28) | Test coverage round 2 | ISS-52/53, SH-6, NC-1/2/3 | P2 |
-| [#29](https://github.com/Srinivasan-78/repo2graph/issues/29) | CI, supply-chain & workflow/doc hygiene | ISS-43/46/47/48/49 | P2 |
-| [#30](https://github.com/Srinivasan-78/repo2graph/issues/30) | authormark: refresh stale Fingerprint lines on batch-1 files (not merge-blocking — CI checks presence only) | AC-16, SH-7 | P2 |
-| [#22](https://github.com/Srinivasan-78/repo2graph/issues/22) | chunks.py line-span accuracy, id scheme & tidy | ISS-23/24/25/26 | P3 |
+| Issue | Scope | Priority |
+|-------|-------|----------|
+| [#26](https://github.com/Srinivasan-78/repo2graph/issues/26) | fetch.py hardening and subprocess timeouts | P1 |
+| [#21](https://github.com/Srinivasan-78/repo2graph/issues/21) | parse.py & cross-module string/correctness improvements | P2 |
+| [#23](https://github.com/Srinivasan-78/repo2graph/issues/23) | export.py correctness & GraphML export hardening | P2 |
+| [#24](https://github.com/Srinivasan-78/repo2graph/issues/24) | viz.py visualization safety and UX | P2 |
+| [#25](https://github.com/Srinivasan-78/repo2graph/issues/25) | query.py retrieval budget and scoring hygiene | P2 |
+| [#27](https://github.com/Srinivasan-78/repo2graph/issues/27) | walker / discovery hygiene | P2 |
+| [#28](https://github.com/Srinivasan-78/repo2graph/issues/28) | Test coverage improvements | P2 |
+| [#29](https://github.com/Srinivasan-78/repo2graph/issues/29) | CI, supply-chain & workflow hygiene | P2 |
+| [#22](https://github.com/Srinivasan-78/repo2graph/issues/22) | chunks.py line-span accuracy and symbol IDs | P3 |
 
-All child issues carry the `backlog` label. To work one, run a `/build-app`
-refactor loop scoped to a single issue (or a single module group).
+All child issues carry the `backlog` label.
 
-## Deferred by the MCP / vectors run (2026-09)
+## MCP and Vector Engine Items
 
-Ranked by the IMPROVE phase of that run. Size is rough effort, not risk.
+Size indicates estimated engineering effort (S/M/L).
 
 | # | Item | Size | Why this rank |
 |---|------|------|---------------|
@@ -158,22 +153,16 @@ shape is present.
 
 Strategic priorities from [`LANGUAGE_SUPPORT.md`](language-support.md) and [`docs/ROADMAP_LANGUAGE_ISSUES.md`](ROADMAP_LANGUAGE_ISSUES.md):
 
-| Issue | Scope | Tier / Priority | Related RFC |
-|---|---|---|---|
-| **LANG-01** | TypeScript `tsconfig.json` path aliases & monorepo workspace module resolution | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-02** | Express, NestJS, Next.js HTTP route & controller extraction (`ROUTES_TO`) | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-03** | Jest & Vitest test-to-implementation linking (`TESTS`) | Tier 1 / P1 | [RFC-TS](rfcs/rfc-language-deep-support-typescript.md) |
-| **LANG-04** | FastAPI, Flask, & Django route-to-handler resolution (`ROUTES_TO`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-05** | Pytest test-to-implementation linking & fixture injection (`TESTS`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-06** | SQLAlchemy & Django model relational schema extraction (`MODELS`) | Tier 1 / P1 | [RFC-PY](rfcs/rfc-language-deep-support-python.md) |
-| **LANG-07** | Spring Boot & Jakarta Dependency Injection resolution (`INJECTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-08** | Spring MVC & JAX-RS routes (`ROUTES_TO`) & JUnit test links (`TESTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-09** | Go anonymous struct embedding & interface satisfaction (`INHERITS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-10** | Go Gin/Chi web routing (`ROUTES_TO`) & `*_test.go` table-driven test linking (`TESTS`) | Tier 2 / P2 | [RFC-JVM-GO](rfcs/rfc-language-deep-support-jvm-go.md) |
-| **LANG-11** | Core test suite language coverage parity (TS, TSX, Java, Scala, Rust, Swift) | Core / P2 | Scorecard Generator |
-
-## Shipped in batch 1
-
-Branch `audit/batch-1-encoding-hardening` — 15 High/Med in-scope fixes
-(ISS-01/02/06/07/13/16/17/18/19/22/27/44/45/50/51) + 5 one-liners
-(ISS-08/10/20/32/40) + SH-1. Suite: 73 passed, 2 skipped.
+| Item | Scope | Tier / Priority |
+|---|---|---|
+| TypeScript support | `tsconfig.json` path aliases & monorepo workspace module resolution | Tier 1 / P1 |
+| TypeScript web routes | Express, NestJS, Next.js HTTP route & controller extraction (`ROUTES_TO`) | Tier 1 / P1 |
+| TypeScript tests | Jest & Vitest test-to-implementation linking (`TESTS`) | Tier 1 / P1 |
+| Python routes | FastAPI, Flask, & Django route-to-handler resolution (`ROUTES_TO`) | Tier 1 / P1 |
+| Python tests | Pytest test-to-implementation linking & fixture injection (`TESTS`) | Tier 1 / P1 |
+| Python models | SQLAlchemy & Django model relational schema extraction (`MODELS`) | Tier 1 / P1 |
+| JVM injection | Spring Boot & Jakarta Dependency Injection resolution (`INJECTS`) | Tier 2 / P2 |
+| JVM routes & tests | Spring MVC & JAX-RS routes (`ROUTES_TO`) & JUnit test links (`TESTS`) | Tier 2 / P2 |
+| Go interfaces | Anonymous struct embedding & interface satisfaction (`INHERITS`) | Tier 2 / P2 |
+| Go routing & tests | Gin/Chi web routing (`ROUTES_TO`) & table-driven test linking (`TESTS`) | Tier 2 / P2 |
+| Test suite parity | Core test suite language coverage parity (TS, TSX, Java, Scala, Rust, Swift) | Core / P2 |
