@@ -1,12 +1,11 @@
-"""Change 1 -- make vectors real. AC-10 .. AC-21, plus AC-36 .. AC-38.
+"""Vector storage, format handling, and retrieval fusion tests.
 
 Nothing here imports sentence-transformers, and nothing here needs numpy: every
-embedder is a stub from conftest.py, and the one criterion that is *about*
-numpy (AC-13) blocks the import rather than requiring it.
+embedder is a stub from conftest.py, and tests verify the zero-dependency
+discipline rather than requiring heavy optional libraries.
 
-No score value, rank number or float comparison is asserted. AC-21 proves
-fusion is live purely by chunk identity, with the dense ranking supplied
-explicitly by the test.
+No score value, rank number or float comparison is asserted. Fusion is proved
+purely by chunk identity, with the dense ranking supplied explicitly by the test.
 """
 
 import json
@@ -83,14 +82,12 @@ def rigged_sims(candidates):
 
 
 # ==========================================================================
-# AC-10 / AC-11 -- the `embed` subcommand and its metadata
+# Embed subcommand and metadata verification
 # ==========================================================================
 
 
-def test_ac10_embed_writes_both_artifacts_and_reports_the_count(
-    mini_index, use_stub_embedder, capsys
-):
-    """AC-10: vectors.npy + vectors.meta.json, and `vectors` == chunk count."""
+def test_embed_writes_both_artifacts_and_reports_the_count(mini_index, use_stub_embedder, capsys):
+    """Verify vectors.npy + vectors.meta.json are written and report vector count."""
     npy, meta = vec_paths(mini_index)
     assert not npy.exists() and not meta.exists()
 
@@ -102,8 +99,8 @@ def test_ac10_embed_writes_both_artifacts_and_reports_the_count(
     assert npy.stat().st_size > 0
 
 
-def test_ac11_vector_meta_fields(mini_index, use_stub_embedder, capsys):
-    """AC-11: model_id, dim, count, chunk_ids and text_hashes, all consistent."""
+def test_vector_meta_fields(mini_index, use_stub_embedder, capsys):
+    """Verify model_id, dim, count, chunk_ids, and text_hashes are consistent."""
     run_embed(mini_index, capsys)
     meta = read_meta(mini_index)
 
@@ -122,8 +119,8 @@ def test_ac11_vector_meta_fields(mini_index, use_stub_embedder, capsys):
     assert meta["count"] == len(chunk_records(mini_index))
 
 
-def test_ac11_text_hashes_track_the_chunk_text(mini_index, use_stub_embedder, capsys):
-    """AC-11: text_hashes[row] is embed.text_hash of the chunk at that row."""
+def test_text_hashes_track_the_chunk_text(mini_index, use_stub_embedder, capsys):
+    """Verify text_hashes[row] is embed.text_hash of the chunk at that row."""
     from repo2graph import embed
 
     run_embed(mini_index, capsys)
@@ -134,7 +131,7 @@ def test_ac11_text_hashes_track_the_chunk_text(mini_index, use_stub_embedder, ca
 
 
 # ==========================================================================
-# AC-12 / AC-13 -- the .npy reader/writer
+# NPY reader and writer verification
 # ==========================================================================
 
 SAMPLE_VECTORS = {
@@ -145,8 +142,8 @@ SAMPLE_VECTORS = {
 SAMPLE_IDS = list(SAMPLE_VECTORS)
 
 
-def test_ac12_write_then_load_round_trips_exactly(tmp_path):
-    """AC-12: same ids, same dim, every float equal after float32 rounding."""
+def test_write_then_load_round_trips_exactly(tmp_path):
+    """Verify same ids, same dim, and equality after float32 rounding."""
     import struct
 
     from repo2graph import embed
@@ -167,8 +164,8 @@ def test_ac12_write_then_load_round_trips_exactly(tmp_path):
             assert a == struct.unpack("<f", struct.pack("<f", b))[0], cid
 
 
-def test_ac12_meta_is_a_sibling_json_file(tmp_path):
-    """AC-12: the pair is <name>.npy + vectors.meta.json next to it."""
+def test_meta_is_a_sibling_json_file(tmp_path):
+    """Verify artifact pair is <name>.npy with vectors.meta.json alongside."""
     from repo2graph import embed
 
     target = tmp_path / VEC_NPY
@@ -184,8 +181,8 @@ def block_numpy(monkeypatch):
     monkeypatch.setitem(sys.modules, "numpy", None)
 
 
-def test_ac13_round_trip_works_with_numpy_unimportable(tmp_path, monkeypatch):
-    """AC-13 (a): the stdlib reader/writer stands alone."""
+def test_round_trip_works_with_numpy_unimportable(tmp_path, monkeypatch):
+    """Verify stdlib reader/writer operates without third-party dependencies."""
     from repo2graph import embed
 
     block_numpy(monkeypatch)
@@ -199,8 +196,8 @@ def test_ac13_round_trip_works_with_numpy_unimportable(tmp_path, monkeypatch):
     assert meta["dim"] == 4
 
 
-def test_ac13_numpy_can_still_read_what_the_stdlib_writer_wrote(tmp_path, monkeypatch):
-    """AC-13 (b): the file stays a real .npy, not a private format."""
+def test_numpy_can_still_read_what_the_stdlib_writer_wrote(tmp_path, monkeypatch):
+    """Verify the file remains a valid .npy format."""
     from repo2graph import embed
 
     block_numpy(monkeypatch)
@@ -218,14 +215,12 @@ def test_ac13_numpy_can_still_read_what_the_stdlib_writer_wrote(tmp_path, monkey
 
 
 # ==========================================================================
-# AC-14 -- manifest registration
+# Manifest registration verification
 # ==========================================================================
 
 
-def test_ac14_embed_appends_to_the_manifest_without_disturbing_it(
-    mini_index, use_stub_embedder, capsys
-):
-    """AC-14: the two artifacts appear in `written` and `files`; every other
+def test_embed_appends_to_the_manifest_without_disturbing_it(mini_index, use_stub_embedder, capsys):
+    """Verify the two artifacts appear in `written` and `files`; every other
     manifest key is byte-identical to what `build` wrote."""
     before = read_manifest(mini_index)
     run_embed(mini_index, capsys)
@@ -253,12 +248,12 @@ def test_ac14_embed_appends_to_the_manifest_without_disturbing_it(
 
 
 # ==========================================================================
-# AC-15 / AC-16 -- Index auto-load
+# Index auto-load verification
 # ==========================================================================
 
 
-def test_ac15_index_loads_vectors_keyed_by_chunk_list_index(mini_index, use_stub_embedder, capsys):
-    """AC-15: idx.vectors keys are valid chunk list indices and the stored
+def test_index_loads_vectors_keyed_by_chunk_list_index(mini_index, use_stub_embedder, capsys):
+    """Verify idx.vectors keys are valid chunk list indices and the stored
     model id is reported on idx.vector_meta."""
     run_embed(mini_index, capsys)
     idx = Index(mini_index)
@@ -278,8 +273,8 @@ def test_ac15_index_loads_vectors_keyed_by_chunk_list_index(mini_index, use_stub
             assert a == pytest.approx(b, rel=0, abs=1e-6), chunk["id"]
 
 
-def test_ac15_index_without_vectors_reports_none(mini_index):
-    """AC-15 (b): the attributes exist even when nothing was embedded."""
+def test_index_without_vectors_reports_none(mini_index):
+    """Verify the attributes exist even when nothing was embedded."""
     idx = Index(mini_index)
     assert idx.vectors is None
     assert idx.vector_meta in (None, {})
@@ -297,8 +292,8 @@ CORRUPTIONS = {
 
 
 @pytest.mark.parametrize("corruption", sorted(CORRUPTIONS))
-def test_ac16_corrupt_vectors_degrade_silently(mini_index, use_stub_embedder, capsys, corruption):
-    """AC-16: a bad pair leaves idx.vectors None, raises nothing, and
+def test_corrupt_vectors_degrade_silently(mini_index, use_stub_embedder, capsys, corruption):
+    """Verify a bad pair leaves idx.vectors None, raises nothing, and
     pack_context still answers."""
     run_embed(mini_index, capsys)
     npy, meta = vec_paths(mini_index)
@@ -310,8 +305,8 @@ def test_ac16_corrupt_vectors_degrade_silently(mini_index, use_stub_embedder, ca
     assert "### [cite:" in pack["markdown"], corruption
 
 
-def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_embedder, capsys):
-    """AC-16 (b): ids that chunks.jsonl no longer holds must not become
+def test_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_embedder, capsys):
+    """Verify ids that chunks.jsonl no longer holds must not become
     wrongly-aligned rows -- they are dropped, and the rest still load."""
     run_embed(mini_index, capsys)
     _npy, meta_path = vec_paths(mini_index)
@@ -327,7 +322,7 @@ def test_ac16_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_emb
 
 
 # ==========================================================================
-# ISS-242 -- the on-disk format marker is read back
+# On-disk format marker verification
 # ==========================================================================
 #
 # `write_vectors` has stamped `"format": "repo2graph/vectors-1"` since the
@@ -354,8 +349,8 @@ def rewrite_meta(meta_file: Path, mutate) -> None:
         json.dump(meta, fh)
 
 
-def test_iss242_write_vectors_stamps_the_literal_format_marker(tmp_path):
-    """ISS-242 (a): the value on disk is the one this suite checks against."""
+def test_write_vectors_stamps_the_literal_format_marker(tmp_path):
+    """Verify value on disk is the one this suite checks against."""
     from repo2graph import embed
 
     target = tmp_path / VEC_NPY
@@ -364,8 +359,8 @@ def test_iss242_write_vectors_stamps_the_literal_format_marker(tmp_path):
         assert json.load(fh)["format"] == VECTORS_FORMAT_ON_DISK
 
 
-def test_iss242_load_vectors_accepts_a_correctly_stamped_pair(tmp_path):
-    """ISS-242 (b), neutrality: the good case must still load, or the gate is
+def test_load_vectors_accepts_a_correctly_stamped_pair(tmp_path):
+    """Verify neutrality: the valid format marker loads cleanly, or the gate is
     just 'vectors are off'."""
     from repo2graph import embed
 
@@ -389,8 +384,8 @@ def test_iss242_load_vectors_accepts_a_correctly_stamped_pair(tmp_path):
     ],
     ids=["later", "trailing_space", "upper", "null", "int", "absent"],
 )
-def test_iss242_load_vectors_refuses_an_unrecognised_format(tmp_path, mutate):
-    """ISS-242 (c): anything but the exact marker -- including no marker at all
+def test_load_vectors_refuses_an_unrecognised_format(tmp_path, mutate):
+    """Verify anything but the exact marker -- including no marker at all
     -- is a ValueError, the same shape as the chunk_ids and row-count checks."""
     from repo2graph import embed
 
@@ -402,8 +397,8 @@ def test_iss242_load_vectors_refuses_an_unrecognised_format(tmp_path, mutate):
         embed.load_vectors(target)
 
 
-def test_iss242_a_bad_format_degrades_to_bm25_end_to_end(mini_index, use_stub_embedder, capsys):
-    """ISS-242 (d): through query.Index, a format bump is indistinguishable
+def test_a_bad_format_degrades_to_bm25_end_to_end(mini_index, use_stub_embedder, capsys):
+    """Verify through query.Index, a format bump is indistinguishable
     from having no vectors -- nothing raises, and the pack still answers.
 
     The correctly-stamped load is asserted first so this cannot pass by
@@ -426,20 +421,20 @@ def test_iss242_a_bad_format_degrades_to_bm25_end_to_end(mini_index, use_stub_em
 
 
 # ==========================================================================
-# AC-17 / AC-18 / AC-19 / AC-20 -- the mismatch guard
+# Vector model mismatch guard verification
 # ==========================================================================
 
 
-def test_ac17_model_id_of_reads_the_embedder(mini_index):
-    """AC-17 (a): the identity fuse_ok compares comes off the embedder."""
+def test_model_id_of_reads_the_embedder(mini_index):
+    """Verify the identity fuse_ok compares comes off the embedder."""
     from repo2graph import embed
 
     assert embed.model_id_of(StubEmbedder(model_id="stub/alpha")) == "stub/alpha"
     assert embed.DEFAULT_MODEL == "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def test_ac17_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder, capsys):
-    """AC-17 (b): (False, reason) naming the index model and the query model."""
+def test_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder, capsys):
+    """Verify (False, reason) naming the index model and the query model."""
     use_stub_embedder.model_id = "stub/alpha"
     run_embed(mini_index, capsys)
     idx = Index(mini_index)
@@ -450,8 +445,8 @@ def test_ac17_fuse_ok_rejects_a_model_mismatch(mini_index, use_stub_embedder, ca
     assert "stub/beta" in reason, reason
 
 
-def test_ac17_fuse_ok_rejects_a_dim_mismatch(mini_index, use_stub_embedder, capsys):
-    """AC-17 (c): same model id, different width, still refused -- and the
+def test_fuse_ok_rejects_a_dim_mismatch(mini_index, use_stub_embedder, capsys):
+    """Verify same model id, different width, still refused -- and the
     reason names both widths."""
     use_stub_embedder.model_id = "stub/alpha"
     use_stub_embedder.dim = 8
@@ -463,8 +458,8 @@ def test_ac17_fuse_ok_rejects_a_dim_mismatch(mini_index, use_stub_embedder, caps
     assert "8" in reason and "16" in reason, reason
 
 
-def test_ac17_fuse_ok_accepts_a_match(mini_index, use_stub_embedder, capsys):
-    """AC-17 (d): the matching case is accepted, or the guard is just 'off'."""
+def test_fuse_ok_accepts_a_match(mini_index, use_stub_embedder, capsys):
+    """Verify the matching case is accepted, or the guard is just 'off'."""
     use_stub_embedder.model_id = "stub/alpha"
     run_embed(mini_index, capsys)
     idx = Index(mini_index)
@@ -481,8 +476,8 @@ def mismatched_index(mini_index, use_stub_embedder, capsys):
     return mini_index
 
 
-def test_ac18_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(mismatched_index, capsys):
-    """AC-18: explicit --vectors fails loudly, names both model ids, and does
+def test_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(mismatched_index, capsys):
+    """Verify explicit --vectors fails loudly, names both model ids, and does
     not print a pack."""
     with pytest.raises(SystemExit) as exc:
         main(["rag", MINI_QUERY, "-o", str(mismatched_index), "--vectors"])
@@ -493,8 +488,8 @@ def test_ac18_rag_vectors_on_a_mismatch_exits_and_emits_no_pack(mismatched_index
     assert "### [cite:" not in capsys.readouterr().out
 
 
-def test_ac19_rag_without_a_vector_flag_degrades_to_bm25(mismatched_index, capsys):
-    """AC-19: auto mode exits 0, emits a pack, and does not fuse -- proved by
+def test_rag_without_a_vector_flag_degrades_to_bm25(mismatched_index, capsys):
+    """Verify auto mode exits 0, emits a pack, and does not fuse -- proved by
     the pack being identical to the same query with vectors switched off."""
     rc = main(["rag", MINI_QUERY, "-o", str(mismatched_index)])
     auto = capsys.readouterr().out
@@ -506,10 +501,8 @@ def test_ac19_rag_without_a_vector_flag_degrades_to_bm25(mismatched_index, capsy
     assert auto == off
 
 
-def test_ac20_no_vectors_equals_an_index_with_the_files_deleted(
-    mini_index, use_stub_embedder, capsys
-):
-    """AC-20: `rag --no-vectors` against a *matching* vectorised index gives
+def test_no_vectors_equals_an_index_with_the_files_deleted(mini_index, use_stub_embedder, capsys):
+    """Verify `rag --no-vectors` against a *matching* vectorised index gives
     exactly what the same command gives once the two files are removed."""
     run_embed(mini_index, capsys)
     main(["rag", MINI_QUERY, "-o", str(mini_index), "--no-vectors"])
@@ -525,8 +518,8 @@ def test_ac20_no_vectors_equals_an_index_with_the_files_deleted(
     assert "### [cite:" in with_files
 
 
-def test_ac20_no_vectors_matches_the_baseline_golden(mini_index, use_stub_embedder, capsys):
-    """AC-20 / AC-2: --no-vectors is the baseline BM25 pack, byte for byte."""
+def test_no_vectors_matches_the_baseline_golden(mini_index, use_stub_embedder, capsys):
+    """Verify --no-vectors is the baseline BM25 pack, byte for byte."""
     from conftest import golden_text
 
     run_embed(mini_index, capsys)
@@ -535,12 +528,12 @@ def test_ac20_no_vectors_matches_the_baseline_golden(mini_index, use_stub_embedd
 
 
 # ==========================================================================
-# AC-21 -- fusion is live
+# Reciprocal rank fusion verification
 # ==========================================================================
 
 
-def test_ac21_a_rigged_dense_ranking_changes_the_top_chunk(big_index):
-    """AC-21 (a): via the in-memory `vectors=` contract Index will populate.
+def test_a_rigged_dense_ranking_changes_the_top_chunk(big_index):
+    """Verify via the in-memory `vectors=` contract Index will populate.
 
     The dense ranking is supplied by the test, so the only thing asserted is
     which chunk *id* comes first -- no score, no rank number, no float.
@@ -563,8 +556,8 @@ def test_ac21_a_rigged_dense_ranking_changes_the_top_chunk(big_index):
     assert fused_top != bm25_top
 
 
-def test_ac21_a_rigged_embedder_changes_the_top_chunk(big_index):
-    """AC-21 (b): the same through the `embedder=` path, with a scripted
+def test_a_rigged_embedder_changes_the_top_chunk(big_index):
+    """Verify the same through the `embedder=` path, with a scripted
     embedder that never looks at the text it is handed."""
     from conftest import ScriptedEmbedder
     from repo2graph.query import RRF_CANDIDATES
@@ -580,11 +573,11 @@ def test_ac21_a_rigged_embedder_changes_the_top_chunk(big_index):
     assert idx.chunks[fused[0][1]]["id"] != idx.chunks[base[0][1]]["id"]
 
 
-def test_iss157_mismatched_vector_dims_degrade_to_bm25(big_index):
-    """ISS-157 regression: a candidate vector whose width does not match the
+def test_mismatched_vector_dims_degrade_to_bm25(big_index):
+    """Verify a candidate vector whose width does not match the
     query vector's must not silently truncate through zip() and produce a
     meaningless cosine score. It must disable fusion and fall back to BM25,
-    same as any other malformed vector (AC-16) -- never raise out of
+    handled as an invalid vector without raising unhandled exceptions out of
     score_rrf, and never fuse a truncated, meaningless similarity in."""
     from repo2graph.query import RRF_CANDIDATES
 
@@ -604,8 +597,8 @@ def test_iss157_mismatched_vector_dims_degrade_to_bm25(big_index):
     assert idx.fusion_coverage == (0, len(candidates))
 
 
-def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index, use_stub_embedder, capsys):
-    """AC-21 (c): `rag --vectors` on a matching index succeeds and consults the
+def test_rag_vectors_uses_the_persisted_vectors(mini_index, use_stub_embedder, capsys):
+    """Verify `rag --vectors` on a matching index succeeds and consults the
     embedder (so the flag is wired through, not silently a no-op)."""
     run_embed(mini_index, capsys)
     before = len(use_stub_embedder.made)
@@ -618,12 +611,12 @@ def test_ac21_rag_vectors_uses_the_persisted_vectors(mini_index, use_stub_embedd
 
 
 # ==========================================================================
-# AC-36 / AC-37 / AC-38 -- vector reuse
+# Vector reuse verification
 # ==========================================================================
 
 
-def test_ac36_second_embed_reuses_everything(mini_index, use_stub_embedder, capsys):
-    """AC-36: reused == vectors, embedded == 0, and vectors.npy is byte-identical."""
+def test_second_embed_reuses_everything(mini_index, use_stub_embedder, capsys):
+    """Verify reused == vectors, embedded == 0, and vectors.npy is byte-identical."""
     first = run_embed(mini_index, capsys)
     npy, _meta = vec_paths(mini_index)
     first_bytes = npy.read_bytes()
@@ -635,8 +628,8 @@ def test_ac36_second_embed_reuses_everything(mini_index, use_stub_embedder, caps
     assert npy.read_bytes() == first_bytes
 
 
-def test_ac37_only_changed_chunks_are_re_embedded(mini_repo, tmp_path, use_stub_embedder, capsys):
-    """AC-37: embedded >= 1, reused >= 1, and `encode` saw only the texts of
+def test_only_changed_chunks_are_re_embedded(mini_repo, tmp_path, use_stub_embedder, capsys):
+    """Verify embedded >= 1, reused >= 1, and `encode` saw only the texts of
     the chunks whose text actually changed."""
     out = build_mini_index(mini_repo, tmp_path / "reuse_idx")
     capsys.readouterr()  # the build report is not ours to parse
@@ -678,16 +671,16 @@ def test_ac37_only_changed_chunks_are_re_embedded(mini_repo, tmp_path, use_stub_
     assert not (unchanged & seen), "an unchanged chunk was re-embedded"
 
 
-def test_ac38_force_disables_reuse(mini_index, use_stub_embedder, capsys):
-    """AC-38: `embed --force` after a successful embed reports reused == 0."""
+def test_force_disables_reuse(mini_index, use_stub_embedder, capsys):
+    """Verify `embed --force` after a successful embed reports reused == 0."""
     first = run_embed(mini_index, capsys)
     forced = run_embed(mini_index, capsys, "--force")
     assert forced["reused"] == 0
     assert forced["embedded"] == forced["vectors"] == first["vectors"]
 
 
-def test_ac10_embed_reports_model_and_dim(mini_index, use_stub_embedder, capsys):
-    """AC-10 / AC-36: the report carries every key the three reuse criteria
+def test_embed_reports_model_and_dim(mini_index, use_stub_embedder, capsys):
+    """Verify the report carries every key the reuse criteria
     read, so a partial implementation fails here rather than with a KeyError."""
     report = run_embed(mini_index, capsys)
     assert set(report) >= {"vectors", "reused", "embedded", "model", "dim"}

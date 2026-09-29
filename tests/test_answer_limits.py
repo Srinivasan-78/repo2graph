@@ -119,7 +119,7 @@ def sse(pieces) -> bytes:
 # ------------------------------------------------- axis 1: one huge line ----
 
 
-def test_iss241_a_body_with_no_newline_cannot_be_read_unbounded(monkeypatch, capsys):
+def test_a_body_with_no_newline_cannot_be_read_unbounded(monkeypatch, capsys):
     """Axis 1: a response that never sends "\\n" is still bounded.
 
     The old line iterator had to reach EOF before yielding anything, so the
@@ -154,7 +154,7 @@ def test_iss241_a_body_with_no_newline_cannot_be_read_unbounded(monkeypatch, cap
 # --------------------------------------------- axis 2: many small deltas ----
 
 
-def test_iss241_many_small_deltas_are_capped_in_total(monkeypatch, capsys):
+def test_many_small_deltas_are_capped_in_total(monkeypatch, capsys):
     """Axis 2: a well-framed stream of small deltas stops at the ceiling.
 
     Every line here is short and valid, so the per-line bound never binds; only
@@ -180,12 +180,12 @@ def test_iss241_many_small_deltas_are_capped_in_total(monkeypatch, capsys):
 # ------------------------------------------------------- the stderr note ----
 
 
-def test_iss241_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsys):
+def test_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsys):
     """stdout stays the answer and stays pipeable; the warning is on stderr.
 
     stdout now carries the answer *and* the "Confidence and limitations"
     segment, which is answer content -- a reader piping `rag --answer` to a
-    file wants the caveats in that file. The ISS-241 property this test
+    file wants the caveats in that file. The answer limit property property this test
     exists for is narrower and unchanged: the *provider stream truncation
     warning* is a tool diagnostic, so it goes to stderr and never pollutes
     the answer on stdout.
@@ -215,7 +215,7 @@ def test_iss241_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsy
 # ------------------------------------------------ no false truncation ----
 
 
-def test_iss241_a_short_answer_is_never_reported_truncated(monkeypatch, capsys):
+def test_a_short_answer_is_never_reported_truncated(monkeypatch, capsys):
     """An ordinary answer must not grow a warning it did not earn."""
     only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
     serve(monkeypatch, ndjson(["Hello ", "world"]))
@@ -227,7 +227,7 @@ def test_iss241_a_short_answer_is_never_reported_truncated(monkeypatch, capsys):
     assert "truncated" not in capsys.readouterr().err
 
 
-def test_iss241_a_body_ending_exactly_on_the_ceiling_is_not_truncated(monkeypatch, capsys):
+def test_a_body_ending_exactly_on_the_ceiling_is_not_truncated(monkeypatch, capsys):
     """The bound is `>`, not `>=`: nothing was dropped, so say nothing.
 
     The ceiling is lowered for this one case because the point is the exact
@@ -280,16 +280,14 @@ def test_iss241_a_body_ending_exactly_on_the_ceiling_is_not_truncated(monkeypatc
         ),
     ],
 )
-def test_iss241_every_provider_framing_survives_the_reframer(
-    monkeypatch, env, value, body, expected
-):
+def test_every_provider_framing_survives_the_reframer(monkeypatch, env, value, body, expected):
     """Re-framing the byte stream must not drop line semantics for any provider."""
     only_provider(monkeypatch, env, value)
     serve(monkeypatch, body)
     assert answer.stream_answer(PACK, out=io.StringIO()) == expected
 
 
-def test_iss241_a_line_spanning_several_read_blocks_is_reassembled(monkeypatch):
+def test_a_line_spanning_several_read_blocks_is_reassembled(monkeypatch):
     """A delta larger than one read() must arrive whole, not in pieces.
 
     Reading in blocks only works if the framer rejoins a line split across a
@@ -305,7 +303,7 @@ def test_iss241_a_line_spanning_several_read_blocks_is_reassembled(monkeypatch):
     assert text == "start " + piece + " end"
 
 
-def test_iss241_crlf_framing_survives(monkeypatch):
+def test_crlf_framing_survives(monkeypatch):
     """Some proxies rewrite the SSE terminator; the framer splits on "\\n" only."""
     only_provider(monkeypatch, "OPENAI_API_KEY", "sk-test")
     serve(
@@ -320,7 +318,7 @@ def test_iss241_crlf_framing_survives(monkeypatch):
 # ------------------------------------------- the response-double contract ----
 
 
-def test_iss241_an_iteration_only_response_still_works(monkeypatch):
+def test_an_iteration_only_response_still_works(monkeypatch):
     """`_blocks` falls back to iteration for objects with a no-argument read().
 
     `tests/test_rag.py`'s FakeResponse is exactly that shape, and so is anything

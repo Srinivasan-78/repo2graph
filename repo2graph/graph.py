@@ -43,26 +43,20 @@ PARALLEL_MIN_FILES = 64
 # every path in it. Co-change signal saturates long before this, so cap the
 # window and record when we did.
 MAX_COCHANGE_COMMITS = 5000
-# Independent of MAX_COCHANGE_COMMITS (ISS-82): that bounds how many commits
-# are requested, but a single pathological commit -- a vendor import touching
+# Independent of MAX_COCHANGE_COMMITS: that bounds how many commits
+# are requested, but a single commit -- e.g. a vendor import touching
 # hundreds of thousands of files -- can still emit an unbounded blob of paths
-# within that commit count. Enforced during the read, not after a full
-# capture_output() buffer has already grown past it: `add_cochange` streams the
-# pipe and stops at this many bytes, then kills git (ISS-236).
+# within that commit count. Enforced during the read: `add_cochange` streams the
+# pipe and stops at this many bytes, then terminates git.
 MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
-# Wall clock for the whole `git log` read. `subprocess.run(timeout=...)` used to
-# provide this; a streamed read has to enforce it itself.
+# Wall clock for the whole `git log` read.
 COCHANGE_TIMEOUT = 120
 # One read() per block. Big enough that a 10 MB cap is ~160 reads, small enough
 # that the buffer never jumps far past the cap.
 _COCHANGE_READ_BLOCK = 64 * 1024
 # How long to wait for a killed child (and the thread reading it) to go away.
-# Only a kernel in trouble takes this long; the build carries on regardless.
 _COCHANGE_REAP_TIMEOUT = 10
-# max_files bounds file count and is opt-in; nobody has to remember to pass
-# it. This is not a hard cap (ISS-85 asks for a soft one) -- past this many
-# nodes or edges a build just tells the operator on stderr, once, that memory
-# use is growing unbounded and how to bound it.
+# Soft warning threshold -- past this many nodes or edges a build alerts on stderr.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
 # confidence. Overridable per build (`build(max_call_candidates=)`, the
@@ -164,7 +158,7 @@ COMMON_STDLIB_BASES = frozenset(
 
 
 class GraphLimitExceeded(RuntimeError):
-    """Raised when the graph exceeds a configured resource limit (ISS-85, ISS-156)."""
+    """Raised when the graph exceeds a configured resource limit."""
 
     pass
 
@@ -216,7 +210,7 @@ class Graph:
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
-            # ISS-11: preserve legitimate 0 and False values on re-add
+            # Preserve legitimate 0 and False values on re-add:
             self.nodes[nid].update(
                 {
                     k: v
@@ -690,7 +684,7 @@ _UTF8_MAX_SEQ = 4
 def _incomplete_utf8_tail(buf: bytes) -> int:
     """Length of the *truncated* UTF-8 sequence at the end of `buf`, else 0.
 
-    ISS-196: slices are taken at raw byte offsets, so a multi-byte character can
+    Slices are taken at raw byte offsets, so a multi-byte character can
     straddle a boundary -- its lead byte ends slice N and its continuation bytes
     begin slice N+1. Both then fail to decode and *both* were dropped, losing up
     to 2 x max_file_bytes of source with nothing recording it. Reporting the
@@ -737,7 +731,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
     # file for the digest and the line count, so the one path max_file_bytes
-    # exists to bound had no memory bound at all (ISS-196). sha256 over the raw
+    # exists to bound had no memory bound at all. sha256 over the raw
     # bytes in file order and a running newline count are exactly the values the
     # buffered version produced, byte for byte.
     hasher = hashlib.sha256()
@@ -850,7 +844,7 @@ _ORIGINAL_READ_BYTES = Path.read_bytes
 
 
 def _safe_read_bytes(path: Path) -> bytes:
-    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races (ISS-87).
+    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races.
 
     On POSIX systems, O_NOFOLLOW causes open() to fail if the trailing component is a
     symlink (protecting against an attacker replacing a discovered regular file with a
@@ -876,7 +870,7 @@ def _safe_read_bytes(path: Path) -> bytes:
 
 
 def _safe_open(path: Path, mode: str = "rb"):
-    """Open a file with O_NOFOLLOW where supported (ISS-87).
+    """Open a file with O_NOFOLLOW where supported.
 
     Like _safe_read_bytes, but returns a file object for chunked reading
     (used by _chunk_and_parse for files larger than config.max_file_bytes).
@@ -956,7 +950,7 @@ def _read_and_parse(item):
 # a field would otherwise reconstruct with a silently wrong default, and a wrong
 # symbol is exactly the "wrong in a way nothing detects" failure this feature
 # was cut for in the first place.
-# 2: chunked entries gained "undecodable_slices" (ISS-196). A cache written by
+# 2: chunked entries gained "undecodable_slices". A cache written by
 # format 1 has no way to report it, and an incremental build restoring one would
 # report a 0 where a full build reports the real count -- the one thing an
 # incremental build is not allowed to do.
@@ -1253,7 +1247,7 @@ def parse_all(files, jobs: int, config=None):
     import concurrent.futures
 
     try:
-        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
+        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests:
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=jobs, initializer=silence_worker_io
         ) as pool:
@@ -1387,7 +1381,7 @@ def build(
             g.stats["files_with_parse_errors"] += 1
         if getattr(pf, "used_cpp", False):
             g.stats["cpp_fallback_files"] += 1
-        # ISS-196: a chunked file whose slices do not decode still gets a node,
+        # A chunked file whose slices do not decode still gets a node,
         # a `chunked: true` flag and a correct line count, so the index looks
         # healthy while the file is simply unqueryable. This is the only signal
         # that any of it was lost.
@@ -1878,9 +1872,15 @@ def build(
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
-    g.stats["parse_errors_summary"] = (
-        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    # `stats` is a Counter so the 18 `stats[k] += 1` sites get a 0 default, and
+    # this is the one entry that holds prose rather than a count. Retyping it as
+    # `dict[str, Any]` would take that default away from every one of them, so
+    # the narrower suppression is the cheaper trade.
+    parse_errors_summary = (
+        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  "
+        f"({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"
     )
+    g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
 
 
@@ -1951,8 +1951,7 @@ def _read_capped(stream, limit: int) -> tuple[bytes, bool]:
 
     Reads one byte past the cap deliberately: that byte is the only way to tell
     "the output was exactly `limit` bytes" from "the output was larger and we
-    stopped early" without reading the rest of it -- and not reading the rest of
-    it is the entire point (ISS-236).
+    stopped early" without reading the rest of it.
     """
     buf = bytearray()
     while len(buf) <= limit:
@@ -2017,17 +2016,14 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         # Popen, not run(capture_output=True): run() reads the child's stdout to
         # EOF before it returns, so a byte cap applied to its result bounds only
         # the decode and the pair counting -- the blob is already resident by
-        # then (ISS-236). Streaming the pipe is what makes MAX_COCHANGE_BYTES a
+        # then. Streaming the pipe is what makes MAX_COCHANGE_BYTES a
         # memory bound rather than a post-hoc trim.
         #
         # -c core.quotepath=false: without it git backslash-escapes any
         # non-ASCII path ("caf\303\251.py"), which never matches file_index and
         # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
-        # as UTF-8 ourselves, exactly as walker._git_files does, so a non-ASCII
-        # path cannot raise UnicodeDecodeError under a cp1252 locale.
-        # stdin=DEVNULL for the same reason as parse._git_files: without it git
-        # inherits *our* stdin, and a git that blocks on the MCP server's
-        # JSON-RPC pipe stalls until the timeout and can eat client frames.
+        # as UTF-8 ourselves, so a non-ASCII path cannot raise UnicodeDecodeError.
+        # stdin=DEVNULL: prevents git from inheriting server stdin.
         proc = subprocess.Popen(
             [
                 "git",
@@ -2076,18 +2072,12 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     # means nothing. Only a read that reached EOF can report a real git failure.
     if not capped and proc.returncode not in (0, None):
         return
-    # ISS-82: MAX_COCHANGE_COMMITS bounds how many commits are requested, not
-    # how many bytes a single pathological commit's file list can still emit
-    # within that count. Record that the cap bound -- same "cap and record when
-    # we did" idiom as MAX_COCHANGE_COMMITS above. The value is the number of
-    # bytes read, i.e. the cap itself: how large the output would have been is
-    # exactly the thing we no longer pay to find out.
+    # MAX_COCHANGE_COMMITS bounds how many commits are requested, not
+    # how many bytes a single commit's file list can emit.
     if capped:
         g.stats["cochange_output_capped"] = len(stdout)
         # Drop the trailing partial commit: git log delimits commits with a blank
-        # line ("\n\n" or "\r\n\r\n"). Stopping at an arbitrary byte count cuts into the oldest
-        # commit block, and flushing whatever is in current at end-of-input can turn
-        # a >25 file noise commit into a small (<25) co-change signal.
+        # line ("\n\n" or "\r\n\r\n").
         m = None
         for m in re.finditer(rb"(\r?\n){2}", stdout):
             pass
@@ -2097,7 +2087,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     sampled = 0
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
-    # in two so it never matches file_index (same bug class as ISS-22).
+    # in two so it never matches file_index.
     for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
         line = line.rstrip("\r")
         if not line:

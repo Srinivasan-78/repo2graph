@@ -3,17 +3,14 @@
 Prevents drift between code and documentation:
 - CLI subcommands in repo2graph.cli vs README and docs/cli.md
 - Parser language support in LANG_CFG vs README
-- Action inputs and outputs in action.yml vs docs/github-action.md
+- Action inputs and outputs in action.yml vs docs/cli.md
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
-- agent working files (BUILD_STATE*.md, DONE.md) kept out of the tree (Issue #403)
-- docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -21,21 +18,14 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README_PATH = REPO_ROOT / "README.md"
 CLI_DOC_PATH = REPO_ROOT / "docs" / "cli.md"
-QUICKSTART_PATH = REPO_ROOT / "docs" / "quickstart.md"
-INDEXING_PATH = REPO_ROOT / "docs" / "INDEXING.md"
-INCREMENTAL_RFC_PATH = REPO_ROOT / "docs" / "rfcs" / "rfc-incremental-indexing.md"
+ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
+
 ACTION_YML_PATH = REPO_ROOT / "action.yml"
-ACTION_DOC_PATH = REPO_ROOT / "docs" / "github-action.md"
+ACTION_DOC_PATH = REPO_ROOT / "docs" / "cli.md"
 MCP_DOC_PATH = REPO_ROOT / "docs" / "mcp.md"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 CITATION_PATH = REPO_ROOT / "CITATION.cff"
 NPM_PACKAGE_PATH = REPO_ROOT / "npm" / "package.json"
-THREAT_MODEL_PATH = REPO_ROOT / "docs" / "THREAT_MODEL.md"
-# The operator-facing companion: docs/THREAT_MODEL.md enumerates assets, trust
-# boundaries and attacks; this one issues a supported/not-recommended verdict
-# per deployment shape. The per-mode topics and the transport constants below
-# are the second document's job, so they are checked against it.
-DEPLOYMENT_SECURITY_PATH = REPO_ROOT / "docs" / "deployment-security.md"
 
 
 def _pyproject_version() -> str:
@@ -130,7 +120,7 @@ def test_languages_documented():
 
 
 def test_action_inputs_and_outputs_documented():
-    """Verify every input and output in action.yml is documented in docs/github-action.md."""
+    """Verify every input and output in action.yml is documented in docs/cli.md."""
     assert ACTION_YML_PATH.exists()
     assert ACTION_DOC_PATH.exists()
 
@@ -145,12 +135,12 @@ def test_action_inputs_and_outputs_documented():
 
     for input_name in inputs:
         assert f"`{input_name}`" in doc_text, (
-            f"Action input '{input_name}' is not documented in docs/github-action.md"
+            f"Action input '{input_name}' is not documented in docs/cli.md"
         )
 
     for output_name in outputs:
         assert f"`{output_name}`" in doc_text, (
-            f"Action output '{output_name}' is not documented in docs/github-action.md"
+            f"Action output '{output_name}' is not documented in docs/cli.md"
         )
 
 
@@ -204,102 +194,25 @@ def test_npm_launcher_version_matches_pyproject():
     assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
 
 
-def test_agent_working_files_are_not_committed():
-    """Issue #403, widened: build-loop state and run logs are working files.
-
-    They were committed at the root, then under docs/, and read to every visitor as
-    an agent's scratchpad. `.gitignore` now keeps them out wherever they are written.
-    """
-    tracked = (
-        subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files"], capture_output=True, check=False)
-        .stdout.decode("utf8", "surrogateescape")
-        .split()
-    )
-    offenders = [
-        p
-        for p in tracked
-        if re.fullmatch(r"(.*/)?(BUILD_STATE[^/]*\.md|DONE\.md)", p) and (REPO_ROOT / p).exists()
-    ]
-    assert offenders == [], f"agent working files committed: {offenders}"
-    gitignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
-    assert "BUILD_STATE*.md" in gitignore and "DONE.md" in gitignore
-
-
-def test_threat_model_covers_every_deployment_mode():
-    """Issue #263: docs/deployment-security.md must exist and name every required mode/topic.
-
-    A loose substring check rather than a hand-derived membership assertion (AGENTS.md's usual
-    rule for *behavioural* tests) -- this is a documentation-completeness check, so the thing
-    being pinned is "the required topic is discussed somewhere in the file," not a value the
-    code under test computes.
-    """
-    assert THREAT_MODEL_PATH.exists(), "docs/THREAT_MODEL.md is missing"
-    assert DEPLOYMENT_SECURITY_PATH.exists(), "docs/deployment-security.md is missing"
-    text = DEPLOYMENT_SECURITY_PATH.read_text(encoding="utf-8")
-
-    required_topics = [
-        "Trusted-local CLI",
-        "CI indexing",
-        "Stdio MCP",
-        "HTTP MCP on loopback",
-        "reverse proxy",
-        "Multi-tenant",
-        "--answer",
-        "GEMINI_API_KEY",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OLLAMA_HOST",
-        "exclude_secrets",
-        "Authenticated vs. authorized",
-        "ssl_certificate",  # the worked reverse-proxy example is a real TLS config, not prose only
-        "rotation",
-    ]
-    for topic in required_topics:
-        assert topic in text, f"docs/deployment-security.md is missing required topic: {topic!r}"
-
-
-def test_threat_model_numeric_claims_match_the_http_and_auth_source():
-    """docs/deployment-security.md cites specific constants from http_server.py/auth.py in prose --
-    this pins those constants so a future change to either module without a doc edit fails
-    here instead of leaving the threat model quietly wrong.
-    """
-    from repo2graph import auth, http_server
-
-    assert http_server.MAX_BODY_BYTES == 1 << 20
-    assert http_server.REQUEST_TIMEOUT_SECONDS == 30.0
-    assert auth.DEFAULT_MIN_REFRESH_INTERVAL == 5.0
-    assert set(auth.ALGORITHMS) == {"RS256", "RS384", "RS512"}
-
-
 def test_starter_questions_match_the_docs_verbatim():
     """The five starter prompts are authored once, in repo2graph/demo.py.
 
-    README.md and docs/quickstart.md both render them, and `repo2graph demo`
-    runs them -- so a prompt edited in one place and not the others would
-    leave the docs telling users to run something the demo never exercises.
-    Both the template form (what a reader copies onto their own repo) and the
-    demo form (what actually runs) are pinned.
+    README.md renders them and `repo2graph demo` runs them, so a prompt edited
+    in one place and not the other would leave the docs telling users to run
+    something the demo never exercises. Both the template form (what a reader
+    copies onto their own repo) and the one-line rationale beside it are pinned.
     """
     from repo2graph.demo import STARTER_QUESTIONS
 
     readme_text = README_PATH.read_text(encoding="utf-8")
-    quickstart_text = QUICKSTART_PATH.read_text(encoding="utf-8")
 
     assert len(STARTER_QUESTIONS) == 5
     for q in STARTER_QUESTIONS:
         assert f"`{q.template}`" in readme_text, (
             f"starter prompt missing from README.md: {q.template!r}"
         )
-        assert f"`{q.template}`" in quickstart_text, (
-            f"starter prompt missing from docs/quickstart.md: {q.template!r}"
-        )
-        # `shows` is the one-line explanation the table's right-hand column
-        # carries; it drifts just as easily as the prompt itself.
         assert q.shows in readme_text, (
             f"starter prompt rationale missing from README.md: {q.shows!r}"
-        )
-        assert q.shows in quickstart_text, (
-            f"starter prompt rationale missing from docs/quickstart.md: {q.shows!r}"
         )
 
 
@@ -312,138 +225,110 @@ def test_every_exclusion_group_is_documented():
     """
     from repo2graph.exclusions import GROUPS
 
-    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    indexing_text = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     cli_text = CLI_DOC_PATH.read_text(encoding="utf-8")
 
     for name, group in GROUPS.items():
-        assert f"`{name}`" in indexing_text, f"exclusion group '{name}' missing from INDEXING.md"
+        assert f"`{name}`" in indexing_text, (
+            f"exclusion group '{name}' missing from architecture.md"
+        )
         assert name in cli_text, f"exclusion group '{name}' missing from docs/cli.md"
         assert group.globs, f"exclusion group '{name}' has no patterns"
         assert group.representative, f"exclusion group '{name}' declares no representative paths"
 
 
 def test_indexing_doc_names_determinism_tests_that_exist():
-    """INDEXING.md's guarantee table points at specific tests by name.
+    """architecture.md's guarantee table points at specific tests by name.
 
     A renamed or deleted test would leave the documented guarantee pointing
     at nothing while still reading as though it were enforced.
     """
-    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    indexing_text = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     determinism_src = (REPO_ROOT / "tests" / "test_determinism.py").read_text(encoding="utf-8")
 
-    # INDEXING.md also cites tests that live next door, in the index-status
+    # architecture.md also cites tests that live next door, in the index-status
     # suite, so both files are searched rather than just the obvious one.
     status_src = (REPO_ROOT / "tests" / "test_index_status.py").read_text(encoding="utf-8")
     haystack = determinism_src + status_src
 
     named = set(re.findall(r"`(test_[a-z0-9_]+)`", indexing_text))
-    assert named, "INDEXING.md no longer names any test"
+    assert named, "architecture.md no longer names any test"
     for test_name in named:
         assert f"def {test_name}(" in haystack, (
-            f"INDEXING.md names '{test_name}', which exists in neither "
+            f"architecture.md names '{test_name}', which exists in neither "
             "tests/test_determinism.py nor tests/test_index_status.py"
         )
 
 
-def test_indexing_docs_and_rfc_are_cross_linked():
-    """The RFC carries the benchmarks INDEXING.md's performance section defers
-    to; a broken link between them leaves the numbers unfindable."""
-    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
-    rfc_text = INCREMENTAL_RFC_PATH.read_text(encoding="utf-8")
-
-    assert "rfc-incremental-indexing.md" in indexing_text
-    assert "INDEXING.md" in rfc_text
-    # The RFC's whole argument rests on these being reported, not asserted.
-    for required in ("Method", "best of 3", "Acceptance criteria"):
-        assert required in rfc_text, f"the incremental RFC no longer states '{required}'"
-
-
 def test_git_metadata_fields_are_documented():
-    """Every provenance field `index-status` surfaces is named in INDEXING.md.
+    """Every provenance field `index-status` surfaces is named in architecture.md.
 
     `manifest.json`'s `source_revision` is a public surface -- `--json`
     prints it verbatim -- so a field added without a doc edit is an
     undocumented API. The *shape* of the report is asserted against a real
     index in tests/test_index_status.py, not by scraping this source.
     """
-    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
+    indexing_text = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     for field in ("base_branch", "merge_base", "dirty_files", "commits_ahead_of_base"):
-        assert field in indexing_text, f"git metadata field '{field}' missing from INDEXING.md"
+        assert field in indexing_text, f"git metadata field '{field}' missing from architecture.md"
 
 
-def test_quickstart_names_the_doctor_checks_it_promises():
-    """The quickstart's troubleshooting table routes each symptom to a named
-    doctor check. A check renamed or dropped without a doc edit leaves the
-    table pointing at output that never appears."""
-    quickstart_text = QUICKSTART_PATH.read_text(encoding="utf-8")
-    for check_name in (
-        "uv / pip Availability",
-        "Index Freshness",
-        "Parser Coverage",
-        "Ignored Paths",
-        "Generated / Vendored Code",
-        "MCP Client Configuration",
-        "Platform & Encoding",
-    ):
-        assert check_name in quickstart_text, (
-            f"docs/quickstart.md no longer mentions the '{check_name}' doctor check"
+def test_cli_doc_names_every_doctor_check_that_exists():
+    """docs/cli.md lists the doctor checks by the name doctor actually prints.
+
+    A check renamed or dropped without a doc edit leaves the list pointing at
+    output that never appears; a check added without one leaves it undocumented.
+    Asserted against the report a real run produces, not against the source.
+    """
+    from repo2graph.doctor import run_doctor
+
+    cli_text = CLI_DOC_PATH.read_text(encoding="utf-8")
+    names = {c.name for c in run_doctor(REPO_ROOT).checks}
+    assert names, "doctor ran no checks"
+    for check_name in sorted(names):
+        assert check_name in cli_text, (
+            f"docs/cli.md does not mention the '{check_name}' doctor check"
         )
 
 
-def test_every_shipped_doc_is_listed_in_the_docs_index():
-    """A doc nobody can reach from docs/README.md is a doc nobody reads.
+def test_the_shipped_doc_set_is_the_documented_one():
+    """`docs/` is four reference pages, and adding a fifth is a decision.
 
-    Caught four at once: quickstart, INDEXING, OUTPUT_SCHEMA and the
-    incremental RFC were all written and none was linked.
+    The tree previously grew to 29 documents -- compliance theater, speculative
+    RFCs, roadmap trackers and three overlapping architecture pages -- with an
+    index file to make them findable. Pinning the set means a new page has to be
+    added here deliberately, which is where the "should this be a section of an
+    existing page" question gets asked.
     """
     docs_dir = REPO_ROOT / "docs"
-    index_text = (docs_dir / "README.md").read_text(encoding="utf-8")
-
-    # Dated working notes and per-run reports are deliberately unlisted: they
-    # are a record of one investigation, not a page to navigate to.
-    unlisted_by_design = {
-        "README.md",
-    }
-    for path in sorted(docs_dir.glob("*.md")):
-        if path.name in unlisted_by_design or re.search(r"\d{4}-\d{2}-\d{2}", path.name):
-            continue
-        assert path.name in index_text, (
-            f"docs/{path.name} is not linked from docs/README.md; add it to the section "
-            "it belongs in, or to unlisted_by_design here if it is a working note"
-        )
+    shipped = {p.name for p in docs_dir.glob("*.md")}
+    assert shipped == {"architecture.md", "cli.md", "mcp.md", "python-api.md"}, (
+        f"docs/ no longer holds the documented set: {sorted(shipped)}"
+    )
 
 
-def test_reference_and_output_schema_agree_on_the_standard_edge_fields():
-    """`docs/reference.md` claims to list every field an edge can carry.
+def test_architecture_doc_names_the_standard_edge_fields():
+    """docs/architecture.md lists every field an edge can carry.
 
-    It said `CALLS_EXTERNAL` carries no `confidence` -- true until every edge
-    type gained the standard trio, and wrong afterwards. Both pages describe
-    the same records, so both must name the same three fields.
+    It used to say `CALLS_EXTERNAL` carries no `confidence` -- true until every
+    edge type gained the standard trio, and wrong afterwards. The edge-metadata
+    section and `edgemeta.STANDARD_FIELDS` describe the same records.
     """
     from repo2graph.edgemeta import STANDARD_FIELDS
 
-    reference = (REPO_ROOT / "docs" / "reference.md").read_text(encoding="utf-8")
-    schema = (REPO_ROOT / "docs" / "OUTPUT_SCHEMA.md").read_text(encoding="utf-8")
-
+    schema = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     for field in ("method", "confidence", "evidence"):
         assert field in STANDARD_FIELDS
-        assert f"`{field}`" in reference, f"docs/reference.md does not mention `{field}`"
-        assert f"`{field}`" in schema, f"docs/OUTPUT_SCHEMA.md does not mention `{field}`"
+        assert f"`{field}`" in schema, f"docs/architecture.md does not mention `{field}`"
 
-    # The specific claim that went stale.
-    assert "no\n  `scope_distance` or `ambiguous`" in reference or (
-        "`scope_distance` or `ambiguous`" in reference
-    ), "reference.md's CALLS_EXTERNAL field list no longer parses as expected"
-    assert "no `scope_distance`, `confidence` or `ambiguous`" not in reference, (
-        "docs/reference.md still claims CALLS_EXTERNAL carries no confidence; it does (1.0)"
+    assert "no `scope_distance`, `confidence` or `ambiguous`" not in schema, (
+        "docs/architecture.md still claims CALLS_EXTERNAL carries no confidence; it does (1.0)"
     )
 
 
 # --------------------------------------------------------------------------
 # Integration guides make claims to an outside audience
 # --------------------------------------------------------------------------
-
-INTEGRATIONS_DIR = REPO_ROOT / "docs" / "integrations"
 
 
 def test_integration_guides_quote_the_real_mcp_bounds():
@@ -461,7 +346,7 @@ def test_integration_guides_quote_the_real_mcp_bounds():
         TOOL_DESCRIPTIONS,
     )
 
-    text = (INTEGRATIONS_DIR / "claude-code.md").read_text(encoding="utf-8")
+    text = MCP_DOC_PATH.read_text(encoding="utf-8")
 
     # In context, not as a bare substring. `str(MCP_MAX_HOPS) in text` passes
     # for any value whose digits appear anywhere in the prose -- "4" is in
@@ -476,7 +361,7 @@ def test_integration_guides_quote_the_real_mcp_bounds():
         ("MCP_BUDGET_TOKENS", f"default {MCP_BUDGET_TOKENS:,}"),
     ):
         assert phrase in text, (
-            f"docs/integrations/claude-code.md does not state {label} as {phrase!r}; "
+            f"docs/mcp.md does not state {label} as {phrase!r}; "
             "the guide publishes these ceilings as a contract with the reader"
         )
 
@@ -485,13 +370,11 @@ def test_integration_guides_quote_the_real_mcp_bounds():
     # TOOL_DESCRIPTIONS here -- that would compare the docs to nothing and pass
     # for any number. Bump both together when a tool is added.
     assert len(TOOL_DESCRIPTIONS) == 10, (
-        f"claude-code.md says 'The ten tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+        f"mcp.md says 'The ten tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
     )
-    assert "The ten tools" in text, (
-        "docs/integrations/claude-code.md's tool-list heading no longer states the count"
-    )
+    assert "The ten tools" in text, "docs/mcp.md's tool-list heading no longer states the count"
     for tool in TOOL_DESCRIPTIONS:
-        assert tool in text, f"MCP tool '{tool}' is missing from docs/integrations/claude-code.md"
+        assert tool in text, f"MCP tool '{tool}' is missing from docs/mcp.md"
 
 
 def _cli_doc_section(command: str) -> str:
@@ -519,9 +402,15 @@ def _help_long_flags(argv: list[str]) -> set[str]:
     return flags - {"--help"}
 
 
-def test_cli_doc_tables_cover_every_flag_of_build_query_and_impact():
-    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md."""
-    for command in ("build", "query", "impact"):
+def test_cli_doc_tables_cover_every_flag_of_the_retrieval_commands():
+    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md.
+
+    `rag` was added to this list after its table was found to be missing
+    `--secret-policy`, `--secret-keyword` and `--secret-dir`: the three commands
+    originally covered here were the ones that had drifted once, and `rag` then
+    drifted silently because nothing checked it.
+    """
+    for command in ("build", "query", "rag", "impact"):
         section = _cli_doc_section(command)
         missing = sorted(
             f
@@ -534,8 +423,26 @@ def test_cli_doc_tables_cover_every_flag_of_build_query_and_impact():
         assert flag in explain, flag
 
 
-def test_quickstart_build_output_shows_the_real_out_field():
-    """`build` prints the resolved, absolute index path, not the `-o` argument."""
-    text = QUICKSTART_PATH.read_text(encoding="utf-8")
-    assert '"out": ".r2g"' not in text
-    assert '"out": "/path/to/your/project/.r2g"' in text
+def test_build_reports_the_resolved_absolute_out_path(tmp_path, capsys):
+    """`build` reports the resolved index path, not the `-o` argument verbatim.
+
+    A relative `out` in the report sends a reader looking in whichever directory
+    they happen to be in. This was previously guarded only by a sample pasted
+    into the quickstart, so it broke silently when that page moved; asserting it
+    against the real report keeps it pinned wherever the docs go.
+    """
+    import json
+
+    from repo2graph.cli import main
+
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    (repo / "mod.py").write_text(
+        "TITLE = 'module-level residue so this file carries a chunk'\n\n\n"
+        "def go():\n    return TITLE\n",
+        encoding="utf-8",
+    )
+    assert main(["build", str(repo), "-o", ".r2g"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert Path(report["out"]).is_absolute(), report["out"]
+    assert report["out"] != ".r2g"

@@ -98,7 +98,7 @@ def source_commit(root: Path = ROOT) -> dict:
             return None
         if res.returncode != 0:
             return None
-        # bytes + surrogateescape, never text=True (AGENTS.md)
+        # bytes + surrogateescape, never text=True (CONTRIBUTING.md)
         return res.stdout.decode("utf8", "surrogateescape").strip()
 
     sha = _git("rev-parse", "HEAD")

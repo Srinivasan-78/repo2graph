@@ -1,8 +1,8 @@
 # CLI reference
 
 Every flag `repo2graph` takes, and what it actually counts. See the
-[README](../README.md) for the five-minute version, or
-[docs/quickstart.md](quickstart.md) for the two-minute one.
+[README](architecture.md) for the five-minute version, or
+[docs/architecture.md](architecture.md) for the two-minute one.
 
 ```
 repo2graph demo              index a bundled example repo and answer 5 questions
@@ -55,7 +55,7 @@ can run further commands against `<dir>/.r2g`.
 Each answer prints its citation table — `path:start-end`, the symbol, and
 *why* the block is in the pack (`seed`, or the edge that reached it) —
 followed by the head of the first cited block. The five questions themselves
-are listed in [the quickstart](quickstart.md#the-five-starter-questions).
+are listed in [the README](../README.md#five-questions-to-start-with).
 
 ## `build` — make the map
 
@@ -81,7 +81,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
-| `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/INDEXING.md](INDEXING.md#controlling-what-gets-indexed)**. |
+| `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/architecture.md](architecture.md#what-gets-excluded-and-by-which-layer)**. |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
@@ -237,6 +237,9 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 | `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
+| `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
+| `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
@@ -419,7 +422,7 @@ could be checked (no `index.state.json`, not a git checkout, or past the
 
 Related: `stats` reports retrieval *quality* (call-resolution tiers,
 unresolved imports); `doctor` reports whether anything is *broken*. Full
-detail, including the determinism guarantees: **[docs/INDEXING.md](INDEXING.md)**.
+detail, including the determinism guarantees: **[docs/architecture.md](architecture.md)**.
 
 ## `bug-report` — a bundle that is safe to paste into a public issue
 
@@ -450,7 +453,7 @@ can tell two entries apart without learning what they are.
 The commit sha *is* included: it makes a wrong edge reproducible against a
 public repo and reveals nothing a private repo's own history does not.
 
-Full contents and the reasoning: **[docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#feedback-and-the-bug-report-bundle)**.
+Full contents and the reasoning: **[below](#bug-report--a-bundle-that-is-safe-to-paste-into-a-public-issue)**.
 
 ## `doctor` — diagnose the environment and artifacts
 
@@ -458,84 +461,37 @@ Full contents and the reasoning: **[docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md#feed
 repo2graph doctor [path] [--json]
 ```
 
-Inspects the runtime environment, the index and the MCP client wiring for the
-problems that actually stop a first run. `[path]` may be either a repository
-or an index directory; the checks that need both work either way.
+Inspects the runtime environment and, if one is present, the index's artifacts.
+`[path]` may be either a repository or an index directory.
 
 **Environment**
 
-- **Python version**: checks that Python is >= 3.10.
-- **Package version**: warns when the imported module and the installed
-  dist-info disagree — a shadowed editable install, or a stale dist-info from
-  a partial upgrade.
-- **uv / pip availability**: reports `uv`/`uvx` and `pip`. Absent uv is *not*
-  an error — only the `uvx repo2graph ...` one-liner needs it — but neither
-  uv nor pip is, since nothing can then install the `[mcp]` or `[rag]` extras
-  the other checks recommend.
-- **Tree-sitter & grammars**: checks that `tree-sitter` and
-  `tree-sitter-language-pack` are installed and loads every supported grammar.
-- **Git integration**: verifies `git` availability and non-ASCII path support.
-- **Directory permissions**: verifies write permissions in the target directory.
-- **Platform encoding**: checks console and filesystem encoding to detect
-  potential charmap limitations.
+- **Python Version**: checks that Python is >= 3.10.
+- **Platform Encoding**: reports the default, preferred and stdout encodings,
+  which is what distinguishes a genuine parse failure from a cp1252 console
+  mangling the output.
+- **Git CLI**: verifies `git` is on `PATH` and reports its version. Absent git
+  is a warning, not a failure — discovery falls back to a directory walk, but
+  `CO_CHANGE` edges and `--git-history` need it.
+- **Tree-sitter Grammars**: loads the language table and reports how many
+  grammars are configured.
+- **Permissions**: verifies the target directory can be created and written to,
+  cleaning up anything it had to create to find out.
 
 **The index**
 
-- **Artifact integrity**: validates `manifest.json`, `chunks.jsonl`,
-  `nodes.jsonl` and `edges.jsonl` if an index exists.
-- **Index freshness**: does the index still describe the tree it was built
-  from? Three signals, cheapest first — the commit recorded in the manifest
-  against the tree's current `HEAD`; the discovered file set against
-  `index.state.json`; and a real sha256 for any file whose mtime is newer
-  than the manifest's. The mtime only chooses *what* to hash, so a checkout
-  that rewrites every mtime without changing a byte does not report stale.
-- **Parser coverage**: parse errors and files with no grammar *in this
-  index*. Distinct from the grammar check above: a grammar that loads fine
-  still yields a symbol-free file node when the source uses syntax it does
-  not model, and that file is then reachable by text but carries no CALLS
-  edges.
-- **Ignored paths**: discovery mode (`git ls-files` vs `os.walk`) and what
-  each skip rule excluded. Warns when more than two thirds of the candidate
-  files were skipped, which is the signature of a repository whose source
-  lives under a name in `DEFAULT_SKIP_DIRS` (`build/`, `target/`, `dist/`) —
-  it indexes cleanly and answers every question with nothing.
-- **Generated / vendored code**: files that made it *into* the index and look
-  machine-written — vendored directories, lockfiles, `*_pb2.py`, `*.pb.go`,
-  `*.min.js`, and files whose first 2 KB carry `@generated`, `Code generated
-  by` or `DO NOT EDIT`. Generated output is usually the largest and most
-  repetitive text in a repository, so it dominates BM25 and crowds
-  hand-written code out of a bounded pack. The remediation prints the
-  `--exclude` globs to rebuild with.
-- **Dense vector integrity**: checks `vectors.npy` and `vectors.meta.json`
-  correspondence with `chunks.jsonl`.
+- **Artifact Integrity**: when an index is present, validates `manifest.json`
+  and verifies the artifact checksums. Reports `corrupt` or incomplete
+  artifacts with the rebuild command.
 
-**Agent wiring**
-
-- **MCP SDK**: probes `mcp.server.Server` — the thing `serve()` needs — not
-  just that `import mcp` succeeds.
-- **MCP client configuration**: finds the Claude Code, Claude Desktop, Cursor
-  and Windsurf config files, and validates every repo2graph server entry in
-  them — a `command` that is not on `PATH`, `uvx` without
-  `--from "repo2graph[mcp]"`, a relative or non-existent repository path, and
-  JSON that does not parse (a trailing comma here surfaces to the user only
-  as "server failed to start"). It never reads or echoes an entry's `env`
-  values.
-- **LLM providers**: reports whether provider environment variables are set,
-  never their values — no prefix, no tail, no length.
-
-Every scan over an index is bounded, because `doctor` is the documented way
-to inspect an index built somewhere else: `MAX_NODE_LINES`,
-`MAX_FRESHNESS_FILES` and `MAX_GENERATED_CONTENT_SCANS` in
-`repo2graph/doctor.py`. Exceeding one degrades the check to its cheap signal
-and says so, rather than reading an attacker-chosen number of bytes.
+Freshness is deliberately not a `doctor` check — `repo2graph index-status`
+owns that answer, so the two cannot drift into disagreeing. See
+[`index-status`](#index-status--is-this-index-current-and-what-is-in-it).
 
 Pass `--json` for machine-readable output suitable for CI or automation.
 Exits `0` when every check passes or only warns, `1` when a check fails
 outright — so `repo2graph doctor . --json` is safe to attach to a bug report
 and safe to gate a pipeline on.
-
-[The quickstart's troubleshooting table](quickstart.md#when-something-goes-wrong)
-maps each symptom to the check that names it.
 
 ## `explain-path` — explain file inclusion or exclusion
 
@@ -651,7 +607,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
 | `--write <path>` | none | Write output to target file path. |
 
-Full architecture, schema details, and GitHub Actions recipes are in [pr-impact.md](pr-impact.md).
+Full architecture, schema details, and GitHub Actions recipes are in [docs/architecture.md](architecture.md).
 
 
 ## `completion` — shell tab completion
@@ -680,4 +636,262 @@ eval "$(repo2graph completion zsh)"
 **Fish:**
 ```fish
 repo2graph completion fish | source
+```
+
+## In CI: the GitHub Action
+
+repo2graph is published on the GitHub Marketplace, so it is one step in any
+workflow.
+
+```yaml
+- uses: actions/checkout@v4
+  with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
+- uses: Srinivasan-78/repo2graph@v2
+  with:
+    path: .              # or: repo: some-org/other-repo
+    git-history: "500"
+    artifact-name: repo-graph
+```
+
+`@v2` follows every 2.x release. Pin an exact version (`@v2.2.0`) if you would
+rather upgrade by hand.
+
+The action never calls an LLM: `--answer` is deliberately not exposed. It packs
+the context and leaves the answering to whatever reads the pack afterwards.
+
+It also writes a structured summary into the job summary page, so the shape of
+the map shows up in the run without downloading anything. The summary is built
+by a small stdlib-only script (`.github/scripts/summary.py`) straight from the
+build's own artifacts — it never truncates a large repo the way printing the
+first N lines of a file would. It has:
+
+- an at-a-glance table: files indexed, functions, classes, total edges,
+  languages found, chunks, and the short commit SHA the build ran at (omitted
+  if the checkout isn't a git repo);
+- a "Top 5 hub files" table, ranked by in-degree across every edge type;
+- a "CO_CHANGE hotspots" table of the most frequently co-changed file pairs
+  (omitted when `git-history` is `0` or no pair crosses the co-change
+  threshold);
+- a "Graph delta" section condensed from `human/CHANGELOG.md` when a previous
+  build's CHANGELOG is present next to this one — just the new/removed node
+  and edge counts and the new-hotspot lines, not the full item lists.
+
+Any piece it can't compute (a missing field, a non-git checkout, no
+CHANGELOG.md) degrades to "N/A" or an omitted row/section rather than failing
+the step.
+
+### Inputs
+
+| Input | Default | What it does |
+| --- | --- | --- |
+| `repo` | `""` | Map a different project: `owner/repo` or a GitHub URL. Leave blank to map the checked-out one. |
+| `path` | `.` | Folder in the workspace to map, used when `repo` is blank. |
+| `ref` | `""` | Branch or tag to map, used with `repo`. Blank means the default branch. |
+| `out` | `.r2g` | Where the map is written. |
+| `formats` | `jsonl,graphml,cypher,overview,html` | Which files to write. Drop the ones you do not need to save time. |
+| `git-history` | `0` | Commits to read for `CO_CHANGE` arrows. `0` skips it. Needs `fetch-depth: 0`. |
+| `include` | `""` | Space-separated globs to keep, e.g. `"src/**"`. |
+| `exclude` | `""` | Space-separated globs to skip, e.g. `"**/test/** vendor/**"`. |
+| `query` | `""` | Also pack a cited GraphRAG context for this question. Blank skips it. |
+| `query-k` | `8` | Pieces the text search starts with. |
+| `query-hops` | `1` | Steps to walk along the arrows. |
+| `query-budget` | `24000` | Character budget for the whole pack, map and cite headers included. |
+| `query-budget-tokens` | `""` | Token budget for the whole pack. Set it and it replaces `query-budget` as the unit. Blank keeps the character budget. |
+| `query-min-conf` | `1.0` | Drop `CALLS` arrows below this confidence. |
+| `query-format` | `markdown` | `markdown` or `json`. |
+| `query-out` | `""` | File to write the pack to. Blank means `<out>/agent/pack.md` (or `pack.json`). |
+| `embed` | `false` | Also embed the chunks for meaning-based search. Installs the `rag` extra and downloads a model, so it is off by default. When `true` the pack is packed with `--vectors`. |
+| `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step get this model, so the two always agree. |
+| `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
+| `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
+| `commit-force` | `true` | Whether to force-push when pushing to `commit-branch`. Set to `false` for standard fast-forward push. |
+| `token` | `""` | Token that can read `repo` when the target is private. |
+| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==2.2.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+| `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
+| `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
+| `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
+| `parse-policy` | `best-effort` | Policy for AST parse errors: `best-effort`, `warn`, `strict`. |
+| `max-call-candidates` | `5` | Maximum call edge candidates to retain per ambiguous call site. |
+
+### Pinning the package instead of the checkout
+
+By default the action installs itself — the source that came with the `uses:`
+ref — so the action and the package can never disagree. Set `version` to install
+from PyPI instead, which is the artifact `publish.yml` builds under Trusted
+Publishing with attested provenance:
+
+```yaml
+- uses: Srinivasan-78/repo2graph@v2
+  with:
+    version: repo2graph==2.2.0
+```
+
+Any pip spec works (`repo2graph>=1.4,<2`, a `git+https://…@<ref>` URL, a local
+wheel path). It is passed to `pip install` verbatim, so a bad spec fails the step
+loudly rather than falling back to the checkout.
+
+This input used to be accepted and ignored: the install always gated on a
+`pyproject.toml` that a composite action always has, so the editable install of
+the checkout won every time. If you were already setting `version`, you were
+getting the checkout — you now get what you asked for.
+
+### Outputs
+
+| Output | What it holds |
+| --- | --- |
+| `out` | The output folder: `human/` (`overview.md`, `graph.html`, …) and `agent/` (`chunks.jsonl`, …). |
+| `nodes` | How many dots the map has. |
+| `edges` | How many arrows. |
+| `chunks` | How many code pieces were cut. |
+| `pack-file` | Path to the GraphRAG pack written for `query`. Empty when `query` is blank. |
+| `pack-chars` | How long that pack is, in characters. `0` when `query` is blank. |
+
+### Permissions & Least Privilege
+
+Follow the principle of least privilege:
+- **Default usage (read-only):** When building and uploading artifacts, the action requires only read access to repository contents:
+  ```yaml
+  permissions:
+    contents: read
+  ```
+- **Branch publishing:** Write permissions are **only** needed if you configure `commit-branch`:
+  ```yaml
+  permissions:
+    contents: write
+  ```
+
+### Security Guardrails & Best Practices
+
+### 1. Never use `commit-branch` or `contents: write` on untrusted Pull Requests
+
+Granting `contents: write` to workflows triggered by `pull_request` (or worse, `pull_request_target`) exposes your repository to unauthorized branch updates or token extraction:
+- The action automatically **refuses to push** if it detects execution inside a pull request originating from a fork repository (`github.event.pull_request.head.repo.fork == true`).
+- For pull requests, always prefer `artifact-name: repo-graph` to inspect artifacts via GitHub Actions summary and artifact downloads without write permissions.
+
+#### Insecure Example (DO NOT USE)
+```yaml
+# INSECURE: Grants write token on untrusted pull requests and force-pushes
+name: Unsafe PR Graph
+on: pull_request_target  # DANGEROUS with write permissions!
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Srinivasan-78/repo2graph@v2
+        with:
+          commit-branch: graph  # DANGEROUS: untrusted code can trigger branch push
+```
+
+#### Secure Recommended Example
+```yaml
+# SECURE: Read-only on PRs; uploads artifacts for inspection
+name: Pull Request Graph
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Srinivasan-78/repo2graph@v2
+        with:
+          artifact-name: pr-graph
+          # commit-branch omitted! No write access required
+```
+
+### 2. Use a dedicated orphan branch, never a protected branch
+
+Never point `commit-branch` at a primary or protected branch (e.g. `main`, `develop`, `master`):
+- Point it at a dedicated orphan branch (e.g. `graph`, `repo-graph`, or `docs/graph`).
+- Configure branch protection rules on your repository to prevent accidental pushes to protected branches.
+
+### 3. Safe Force-Pushes with `commit-force`
+
+By default, `commit-branch` creates an orphan branch with a single root commit and uses `--force` (`commit-force: true`) so the graph branch remains clean and minimal.
+If your compliance or security policy disallows force pushes, set `commit-force: false` to require standard fast-forward pushes:
+```yaml
+- uses: Srinivasan-78/repo2graph@v2
+  with:
+    commit-branch: graph
+    commit-force: "false"
+```
+
+### 4. Handling Private Repositories
+
+When indexing private remote repositories via `repo`:
+- Never commit personal access tokens in workflow files or CLI arguments.
+- Pass repository secrets via the `token` input:
+  ```yaml
+  - uses: Srinivasan-78/repo2graph@v2
+    with:
+      repo: my-org/private-repo
+      token: ${{ secrets.READ_ONLY_REPO_PAT }}
+  ```
+- Use fine-grained Personal Access Tokens (PATs) scoped to **read-only contents** on the specific target repository.
+
+### Keep a fresh map next to your own code
+
+`.github/workflows/self-index.yml` is the copy this project runs on itself, on
+every push to `main` and once a week:
+
+```yaml
+name: Index this repository
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Srinivasan-78/repo2graph@v2
+        with:
+          path: .
+          git-history: "500"
+          artifact-name: repo-graph
+          commit-branch: graph   # drop this line to only publish an artifact
+```
+
+With `commit-branch: graph`, an AI pipeline can always grab an up-to-date copy of
+the code pieces with one request:
+
+```bash
+curl -sL https://raw.githubusercontent.com/Srinivasan-78/repo2graph/graph/agent/chunks.jsonl -o chunks.jsonl
+```
+
+### Map any project from the Actions tab
+
+`.github/workflows/index-repo.yml` is a button you press. Type a project name, get
+a map back. It downloads the project, builds the map, prints the summary into the
+job page, and uploads `graph-<owner>__<repo>` as a file you can download. Set
+`publish_release: true` and it also attaches a zip to a GitHub Release.
+
+The download includes `graph.html`, so opening that one file gives you the picture
+with nothing installed.
+
+Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For
+a private project, add a `TARGET_REPO_TOKEN` secret that can read it. Otherwise
+the job's own token is used.
+
+All from the terminal:
+
+```bash
+gh workflow run index-repo.yml -f repo=psf/requests
+gh run watch
+gh run download --name graph-psf__requests --dir ./graph
 ```

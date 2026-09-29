@@ -39,13 +39,13 @@ repos:
         # surfaces too: a commit that edits only README.md can stale the `@vN`
         # tag, and the old regex named three files and would not have fired.
         files: >-
-          ^(pyproject\.toml|server\.json|uv\.lock|repo2graph/__init__\.py|README\.md|\.github/SECURITY\.md|docs/(github-action|ACTION_SECURITY|SECURITY-AUDIT|ENTERPRISE_DEPLOYMENT)\.md|scripts/(version_surfaces|check_version|bump_version)\.py)$
+          ^(pyproject\.toml|server\.json|uv\.lock|CITATION\.cff|npm/package\.json|repo2graph/__init__\.py|README\.md|\.github/SECURITY\.md|docs/cli\.md|scripts/(version_surfaces|check_version|bump_version)\.py)$
 
       - id: mypy-strict
         # Strict, and green, on the modules that are annotated. The legacy
         # modules carry the remaining annotation debt; a hook that is red on
         # every commit gets disabled within a week, so they are relaxed in
-        # pyproject and the debt is tracked in docs/BACKLOG.md instead of pretended away.
+        # pyproject and the debt is tracked in docs/CONTRIBUTING.md instead of pretended away.
         #
         # The scope lives in pyproject's [[tool.mypy.overrides]] and nowhere
         # else. This used to restate it as a regex of six module names, which

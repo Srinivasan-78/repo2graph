@@ -70,13 +70,13 @@ rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
 # first `tools/call` on the parallel path
-# (test_iss90_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
+# (test_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
 # ~4 minutes to time out. serve() drove 1.x's decorator API
 # (`hasattr(Server, "list_tools")`) only to work around that generation, and the
 # workaround was untested -- CI always resolved 2.x from PyPI. The lower bound is
 # now 2.0, matching what is actually exercised. The upper bound stays `<3.0`: an
 # unreleased 3.x is the thing that has not been tested, not 2.x. Keep this in
-# sync with `SDK_SPEC` in repo2graph/mcp.py.
+# sync with `SDK_SPEC` in repo2graph/mcp/server.py.
 mcp = ["mcp>=2.0,<3.0"]
 # Shell tab completion via argcomplete
 completion = ["argcomplete>=3.0"]
@@ -138,19 +138,17 @@ ignore_missing_imports = true
 # target and the pre-commit hook both check the whole package and defer to it,
 # so removing a module here is the one edit that tightens the check everywhere.
 #
-# 179 errors remain, concentrated in mcp (40), graph (39), parse (27) and
-# cli (23). query.py and export.py are done -- they were taken first because
-# everything else imports them, so their `Any` returns were what made callers
-# unprovable. See docs/BACKLOG.md for the ranked plan.
+# query.py and export.py are done -- they were taken first because everything
+# else imports them, so their `Any` returns were what made callers unprovable.
+# See docs/CONTRIBUTING.md for the ranked plan.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
 module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
     "repo2graph.embed", "repo2graph.fetch",
-    "repo2graph.graph", "repo2graph.mcp", "repo2graph.parse",
-    "repo2graph.viz", "repo2graph.langs",
-    "repo2graph.layout", "repo2graph.walker",
+    "repo2graph.graph", "repo2graph.mcp", "repo2graph.mcp.*", "repo2graph.parse",
+    "repo2graph.viz",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

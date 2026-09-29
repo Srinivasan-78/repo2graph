@@ -86,7 +86,7 @@ def test_a_key_is_bounded_however_large_the_arguments_are():
 def test_a_key_survives_any_lone_surrogate_in_an_argument(bad):
     """`make_key` promises never to raise; hashing the body must not break that.
 
-    Two separate routes put a lone surrogate in an argument: AGENTS.md requires
+    Two separate routes put a lone surrogate in an argument: CONTRIBUTING.md requires
     git/repo bytes be decoded `utf8`/`surrogateescape`, which produces the
     U+DC80-U+DCFF range, and a JSON-RPC caller can simply send `"\\ud800"`.
 
@@ -262,9 +262,18 @@ def test_dispatch_serves_a_repeat_from_the_cache(mini_index, monkeypatch):
     assert cache.stats()["hits"] == 1
 
 
-def test_dispatch_without_a_cache_still_works(mini_index):
+def test_dispatch_without_a_cache_still_returns_a_real_repo_map(mini_index):
+    """No cache means every call recomputes, and still answers.
+
+    Comparing two calls to each other only proved determinism: it passed for any
+    deterministic value, including an empty string. The map's own content is
+    pinned instead.
+    """
     index = mcp.open_index(mini_index)
-    assert mcp.dispatch(index, "repo_map", {}) == mcp.dispatch(index, "repo_map", {})
+    first = mcp.dispatch(index, "repo_map", {})
+    assert "# Repo map:" in first, first[:200]
+    assert "pkg/gateway.py" in first, first[:400]
+    assert first == mcp.dispatch(index, "repo_map", {})
 
 
 def test_a_different_query_is_not_served_from_the_cache(mini_index):

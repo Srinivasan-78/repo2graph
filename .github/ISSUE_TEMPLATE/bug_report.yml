@@ -22,6 +22,22 @@ body:
       required: true
 
   - type: dropdown
+    id: category
+    attributes:
+      label: Issue category
+      description: >
+        If you generated a diagnostic bundle with `repo2graph bug-report --category <cat>`, select the matching category.
+      options:
+        - incorrect-relationship
+        - missing-relationship
+        - stale-index
+        - parser-failure
+        - answer-unhelpful
+        - other
+    validations:
+      required: false
+
+  - type: dropdown
     id: python-version
     attributes:
       label: Python version
@@ -126,7 +142,7 @@ body:
             reached its current state. (The index is a snapshot — nothing watches the filesystem,
             so an edited file keeps being described by the old graph until you rebuild.)
           required: true
-        - label: I checked [docs/limitations.md](../../docs/limitations.md) and this is not documented behaviour.
+        - label: I checked [docs/architecture.md](../../docs/architecture.md) and this is not documented behaviour.
           required: true
         - label: I'm on the latest release of repo2graph (or can confirm the bug reproduces there).
           required: false

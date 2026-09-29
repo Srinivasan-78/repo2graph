@@ -30,7 +30,7 @@ class ImportDetail:
     # 1-based line of the import statement, for the IMPORTS edge's `evidence`.
     # tree-sitter's Point.row advances on a newline only -- the same convention
     # chunks._lines() slices by -- so this indexes the same line the reader
-    # sees. See AGENTS.md on splitlines().
+    # sees. See CONTRIBUTING.md on splitlines().
     line: int | None = None
 
 
@@ -467,7 +467,7 @@ def _count_gitignored(root: Path) -> int:
     `_git_files` already applies `--exclude-standard` itself, so these files
     never reach `discover()`'s loop below and this never changes what is
     yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
-    decoded with surrogateescape (never text=True -- see AGENTS.md), bounded
+    decoded with surrogateescape (never text=True -- see CONTRIBUTING.md), bounded
     timeout.
     """
     try:
@@ -599,7 +599,7 @@ def discover(
             continue
         rp = rel.as_posix()
         if not config.include_secrets:
-            from .secrets import _is_secret_path
+            from .security import _is_secret_path
 
             if _is_secret_path(
                 rp,
@@ -782,7 +782,7 @@ def _callee_name(src: bytes, node) -> str | None:
     # Strip wrapping parens for function-pointer / expression invocations e.g. (*fn)(arg) or (cb)(arg)
     while txt.startswith("(") and txt.endswith(")") and len(txt) >= 2:
         txt = txt[1:-1].strip()
-    # ISS-159: resolve the rightmost member-access segment *before* stripping
+    # Resolve the rightmost member-access segment *before* stripping
     # "(" / "<" noise. A chained call's `function` field text is the whole
     # member expression, e.g. `obj.get_user().save` for `obj.get_user().save()`
     # — the "(" that closes the inner `get_user()` call sits in the middle of
@@ -797,7 +797,7 @@ def _callee_name(src: bytes, node) -> str | None:
         if sep in txt:
             txt = txt.split(sep)[-1]
     txt = txt.split("(")[0].split("<")[0]
-    # ISS-05: Strip only leading pointer/deref and trailing macro !
+    # Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
 
@@ -989,7 +989,7 @@ def _docstring(src: bytes, node, lang: str) -> str:
             if first.type == "expression_statement" and first.named_child_count:
                 first = first.named_children[0]
             if first.type == "string":
-                # ISS-03: Strip only the matching outer quote delimiter (handling r/u/b prefixes)
+                # Strip only the matching outer quote delimiter (handling r/u/b prefixes)
                 raw = _text(src, first).strip()
                 pfx = 0
                 while pfx < len(raw) and raw[pfx] in "rRuUbB":
@@ -1507,15 +1507,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         # Never pass text=True to a subprocess reading git/cpp output on
                         # Windows -- it decodes with the cp1252 locale and raises
                         # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                        # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
+                        # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
                         cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)
                             if cpp_errors < errors:
-                                # ISS-126 (approach a): do not adopt cpp_bytes
-                                # or cpp_tree. cpp is invoked with -P, which
-                                # strips `# <linenum> "<file>"` markers, so
+                                # Do not adopt cpp_bytes or cpp_tree.
+                                # cpp is invoked with -P, which strips
+                                # `# <linenum> "<file>"` markers, so
                                 # preprocessed row numbers cannot be mapped
                                 # back to the on-disk file. chunks.py always
                                 # slices the original, and storing cpp rows
@@ -1582,7 +1582,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
-            # so drop them here rather than accumulating dead data (ISS-02).
+            # so drop them here rather than accumulating dead data.
             if callee and owner is not None:
                 call_kind = "static"
                 if ntype in ("macro_invocation", "macro_call"):
@@ -1877,7 +1877,7 @@ def explain_path(
 
     # Step 7: Secret detection
     if not config.include_secrets:
-        from .secrets import _is_secret_path
+        from .security import _is_secret_path
 
         if _is_secret_path(
             rel_str,

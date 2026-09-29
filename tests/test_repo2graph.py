@@ -12,11 +12,10 @@ import pytest
 from repo2graph.chunks import _split, build_chunks
 from repo2graph.cli import main, parse_formats
 from repo2graph.graph import build, import_targets, parse_all, path_index, resolve_import
-from repo2graph.layout import path as artifact_path
-from repo2graph.parse import parse_source
+from repo2graph.export import path as artifact_path
+from repo2graph.parse import discover, matches_any, parse_source
 from repo2graph.query import Index, tokenize
 from repo2graph.viz import LoadedGraph, node_label, payload, select
-from repo2graph.walker import discover, matches_any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -166,8 +165,8 @@ def test_parse_bases_are_names_not_keywords():
         assert sym.bases == expected, (lang, sym.bases)
 
 
-def test_parse_multi_param_generic_bases_iss162():
-    """ISS-162: commas inside a generic's type args must not split the base list.
+def test_parse_multi_param_generic_bases():
+    """Verify commas inside a generic's type args must not split the base list.
 
     `class Repo(Generic[T, U], BaseRepo)` used to split on every raw comma,
     yielding the malformed tokens ['Generic[T', 'U]', 'BaseRepo'] instead of
@@ -262,7 +261,7 @@ def test_import_targets_python():
     assert import_targets("import os, sys as system", "python") == ["os", "sys"]
 
 
-def test_iss160_import_targets_relative_bare_dot():
+def test_import_targets_relative_bare_dot():
     """`from . import X` / `from .. import X, Y`: the dots have no module name of
     their own, so the imported names ARE the submodule targets (#160). Before the
     fix, import_targets() returned ["."]/[".."] and dropped the names entirely."""
@@ -270,7 +269,7 @@ def test_iss160_import_targets_relative_bare_dot():
     assert import_targets("from .. import utils, foo", "python") == ["..utils", "..foo"]
 
 
-def test_iss160_resolve_import_relative_bare_dot():
+def test_resolve_import_relative_bare_dot():
     files = {"pkg/__init__.py", "pkg/utils.py", "pkg/main.py"}
     ctx = path_index(files)
     assert resolve_import(".utils", "pkg/main.py", "python", files, ctx) == "pkg/utils.py"
@@ -285,7 +284,7 @@ def test_resolve_import_relative_and_absolute():
 
 
 def test_import_targets_python_from_import_captures_symbol():
-    """ISS-161: `from pkg import name` must carry `name`, not just `pkg`."""
+    """Verify `from pkg import name` must carry `name`, not just `pkg`."""
     assert import_targets("from mypkg import mymod", "python") == ["mypkg.mymod"]
     assert import_targets("from mypkg import mymod, other as o", "python") == [
         "mypkg.mymod",
@@ -294,14 +293,14 @@ def test_import_targets_python_from_import_captures_symbol():
 
 
 def test_resolve_import_prefers_submodule_file_over_init():
-    """ISS-161: `mypkg/mymod.py` exists, so `from mypkg import mymod` must resolve to it."""
+    """Verify `mypkg/mymod.py` exists, so `from mypkg import mymod` must resolve to it."""
     files = {"mypkg/__init__.py", "mypkg/mymod.py"}
     ctx = path_index(files)
     assert resolve_import("mypkg.mymod", "consumer.py", "python", files, ctx) == "mypkg/mymod.py"
 
 
 def test_resolve_import_falls_back_to_init_when_no_submodule_file():
-    """ISS-161: no `mypkg/thing.py` on disk -- `thing` must be a name in __init__.py."""
+    """Verify no `mypkg/thing.py` on disk -- `thing` must be a name in __init__.py."""
     files = {"mypkg/__init__.py"}
     ctx = path_index(files)
     assert resolve_import("mypkg.thing", "consumer.py", "python", files, ctx) == "mypkg/__init__.py"
@@ -362,7 +361,7 @@ def test_build_edges(sample_graph):
     )
 
 
-def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
+def test_build_edges_bare_dot_relative_import(tmp_path):
     """`from . import utils` must register an IMPORTS edge to the sibling module
     pkg/utils.py, not to pkg/__init__.py (#160)."""
     pkg = tmp_path / "pkg"
@@ -378,7 +377,7 @@ def test_iss160_build_edges_bare_dot_relative_import(tmp_path):
     assert ("file:pkg/main.py", "file:pkg/__init__.py") not in edges
 
 
-# ---------- ISS-161: `from pkg import submodule` must resolve to the submodule ----------
+# ---------- Verify `from pkg import submodule` resolves to the submodule ----------
 
 PKG3_INIT = "ANSWER = 42\n\n\nclass Thing:\n    pass\n"
 PKG3_MYMOD = "VALUE = 1\n\n\ndef foo():\n    return VALUE\n"
@@ -397,7 +396,7 @@ def submodule_import_repo(tmp_path):
     return tmp_path
 
 
-def test_iss161_from_import_resolves_to_submodule_not_init(submodule_import_repo):
+def test_from_import_resolves_to_submodule_not_init(submodule_import_repo):
     g = build(submodule_import_repo)
     assert ("file:consumer.py", "file:pkg3/mymod.py") in edges_of(g, "IMPORTS")
     assert ("file:consumer.py", "file:pkg3/__init__.py") not in edges_of(g, "IMPORTS")
@@ -449,14 +448,14 @@ def test_split_respects_size_and_overlaps():
 def test_split_terminates_on_one_huge_line():
     parts = _split("x" * 10_000 + "\ny\n", max_chars=100)
     assert parts
-    # ISS-153: a single oversized line must not be emitted as one unbounded
+    # a single oversized line must not be emitted as one unbounded
     # chunk -- every piece stays within the requested budget.
     assert all(len(p) <= 100 for p in parts)
     assert "".join(parts).replace("\n", "") == "x" * 10_000 + "y"  # no text lost
 
 
-def test_iss153_split_breaks_a_line_longer_than_max_chars():
-    """Hand-built fixture pinning literal chunk boundaries (AGENTS.md: assert
+def test_split_breaks_a_line_longer_than_max_chars():
+    """Hand-built fixture pinning literal chunk boundaries (CONTRIBUTING.md: assert
     literal values, not a property the old, buggy code also happened to hold).
 
     text = "AAAAAAAAAA\nBB\n" (a 10-char line the packer alone can't shrink,
@@ -514,8 +513,8 @@ def test_chunk_ids_are_unique(sample_graph):
     assert len({c["id"] for c in chunks}) == len(chunks)
 
 
-def test_iss141_file_chunk0_id_matches_node_id(tmp_path):
-    """ISS-141: file chunk 0 uses the unsuffixed node id, same as symbols.
+def test_file_chunk0_id_matches_node_id(tmp_path):
+    """Verify file chunk 0 uses the unsuffixed node id, same as symbols.
 
     On main, file chunks were `file:{path}#0` while symbol chunk 0 was
     `sym:{path}::{qualname}`. A lookup for `file:notes.md` therefore missed
@@ -595,7 +594,7 @@ def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
     idx = Index(out)
     assert any(c["path"] == "pkg/sep.py" for c in idx.chunks)
     assert idx.retrieve("uses_sep", k=3)
-    # ISS-50: the chunk must carry the *body* of uses_sep, not a mis-sliced
+    # the chunk must carry the *body* of uses_sep, not a mis-sliced
     # fragment. splitlines() breaks on U+2028/U+2029/U+0085 but tree-sitter's
     # row numbers do not, so at HEAD the chunk text is sliced from the wrong
     # lines and never contains "return MSG".
@@ -745,7 +744,7 @@ def test_manifest_usage_hints_are_present_and_non_empty(tmp_path, sample_repo):
 
 
 @pytest.mark.parametrize("limit", [2, 7])
-def test_iss245_manifest_states_the_fan_out_this_build_used(tmp_path, sample_repo, limit):
+def test_manifest_states_the_fan_out_this_build_used(tmp_path, sample_repo, limit):
     """#245: the fan-out limit is per build (`--max-call-candidates`), but the
     manifest's prose used to hardcode "up to 5" -- so an index built with 2
     shipped an artifact asserting 5, to an agent that was told the manifest is
@@ -772,7 +771,7 @@ def test_iss245_manifest_states_the_fan_out_this_build_used(tmp_path, sample_rep
     assert "{n}" not in whole
 
 
-def test_iss245_manifest_defaults_when_the_graph_never_went_through_build(tmp_path):
+def test_manifest_defaults_when_the_graph_never_went_through_build(tmp_path):
     """write_manifest has only ever duck-typed `g`, and a Graph assembled by
     hand has no build to inherit a fan-out limit from. It must still write a
     manifest stating the default rather than raising: a wrong number is the
@@ -805,7 +804,7 @@ def test_chunks_separate_in_repo_and_external_calls(tmp_path, sample_repo):
     assert run["callees_external"] == ["getpid"]
     assert "# calls: pkg/util.py::helper" in run["text"]
     assert "# calls (outside the repo): getpid" in run["text"]
-    # ISS-159: `entry()`'s body is `Runner().run(3)` -- a chained call. Now that
+    # `entry()`'s body is `Runner().run(3)` -- a chained call. Now that
     # the outer `.run(...)` callee resolves correctly (not just the inner
     # `Runner()` constructor call), `entry` calls `Runner.run` directly, so
     # `Runner.run` has an in-repo caller and is no longer an entry point.
@@ -895,8 +894,8 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
     assert len(set(coords)) == len(coords)  # no stack of boxes at the origin
 
 
-def test_iss155_graphml_preserves_custom_nodegraphics_edgegraphics_attributes(tmp_path):
-    """Issue 155: write_graphml preserves custom attributes named nodegraphics and edgegraphics."""
+def test_graphml_preserves_custom_nodegraphics_edgegraphics_attributes(tmp_path):
+    """Verify write_graphml preserves custom attributes named nodegraphics and edgegraphics."""
     import xml.etree.ElementTree as ET
     from repo2graph.export import write_graphml
     from repo2graph.graph import Graph
@@ -1162,16 +1161,16 @@ def test_node_label_truncates(sample_graph):
 
 
 # ======================================================================
-# Refactor loop: characterization + one regression test per in-scope bug.
-# ISS ids and acceptance-criteria numbers are named in each test.
+# Graph-shape characterization, then one regression test per fixed bug.
 # ======================================================================
 
-# ---------- Level 1: characterization (AC-13) ----------
-# Literals generated from the HEAD build (baseline 81519d6a) of the sample_repo
-# fixture. The `repo:<root.name>` id is normalised to `repo:<ROOT>` because the
-# fixture root is a per-run tmp_path (Risk 1). This test must PASS at HEAD and
-# keep passing through the refactor (dataclass field removal, walker
-# unification, the add_cochange decode change).
+# ---------- Characterization ----------
+# Hand-checked literals for the sample_repo fixture: every node id, every
+# (src, dst, type) triple and every chunk id the build emits. The
+# `repo:<root.name>` id is normalised to `repo:<ROOT>` because the fixture root
+# is a per-run tmp_path. Any change to discovery, symbol extraction or chunking
+# that moves one of these shows up here as a diff rather than as a silent
+# behaviour change.
 
 CHAR_NODES = [
     "dir:pkg",
@@ -1205,7 +1204,7 @@ CHAR_TRIPLES = [
     ("sym:pkg/main.py::Runner.run", "external:getpid", "CALLS_EXTERNAL"),
     ("sym:pkg/main.py::Runner.run", "sym:pkg/util.py::helper", "CALLS"),
     ("sym:pkg/main.py::entry", "sym:pkg/main.py::Runner", "CALLS"),
-    # ISS-159: entry()'s body is `Runner().run(3)`, a chained call. Fixing the
+    # entry()'s body is `Runner().run(3)`, a chained call. Fixing the
     # outer-callee attribution bug means `.run(3)` now correctly resolves to
     # `Runner.run` (previously the bug attributed it to the inner `Runner`
     # constructor call a second time, so this edge was silently dropped).
@@ -1222,9 +1221,8 @@ CHAR_CHUNK_IDS = [
 ]
 
 
-def test_refactor_preserves_graph_shape(sample_repo):
-    """AC-13: node ids, (src, dst, type) triples and chunk ids are byte-identical
-    before and after the refactor for the sample repo."""
+def test_graph_shape_matches_the_characterization(sample_repo):
+    """Node ids, (src, dst, type) triples and chunk ids match the pinned literals."""
     g = build(sample_repo)
     token = f"repo:{sample_repo.name}"
 
@@ -1240,11 +1238,11 @@ def test_refactor_preserves_graph_shape(sample_repo):
     assert chunk_ids == CHAR_CHUNK_IDS
 
 
-# ---------- Level 2: one regression test per in-scope bug ----------
+# ---------- Regression tests, one per fixed bug ----------
 
 
-def test_iss22_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
-    """AC-1 (ISS-22): a file whose first line holds U+2028 must still slice each
+def test_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
+    """Verify a file whose first line holds U+2028 must still slice each
     later symbol's chunk from the right source lines. At HEAD `splitlines()`
     splits on U+2028 while tree-sitter row numbers do not, so the body comes out
     as "\\ndef uses_sep():" and never contains "return MSG"."""
@@ -1259,8 +1257,8 @@ def test_iss22_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
     assert 'MSG = "a' not in chunk["text"]
 
 
-def test_iss22_file_residual_excludes_symbol_body(tmp_path):
-    """AC-2 (ISS-22): the residual chunk holds only lines no symbol claimed. At
+def test_file_residual_excludes_symbol_body(tmp_path):
+    """Verify the residual chunk holds only lines no symbol claimed. At
     HEAD the same mis-slice pulls `return MSG` (the body of uses_sep) into the
     residual and drops part of the real residual span."""
     repo = tmp_path / "repo"
@@ -1283,8 +1281,8 @@ def test_iss22_file_residual_excludes_symbol_body(tmp_path):
     assert "return MSG" not in text
 
 
-def test_iss06_cochange_survives_non_ascii_filenames(tmp_path):
-    """AC-3/AC-4 (ISS-06): two non-ASCII paths committed together three times
+def test_cochange_survives_non_ascii_filenames(tmp_path):
+    """Verify two non-ASCII paths committed together three times
     must yield a CO_CHANGE edge. At HEAD `git log` runs with text=True and
     core.quotepath=true, so the paths come back quoted/locale-decoded, never
     match file_index, and the edge silently vanishes (or raises
@@ -1308,7 +1306,7 @@ def test_iss06_cochange_survives_non_ascii_filenames(tmp_path):
 
 
 class FakeGitProc:
-    """Stand-in for the `git log` child `add_cochange` streams (ISS-236).
+    """Stand-in for the `git log` child `add_cochange` streams .
 
     add_cochange no longer calls run(capture_output=True), which handed back a
     CompletedProcess with the whole blob attached; it opens a Popen and reads
@@ -1345,8 +1343,8 @@ def fake_git_popen(stdout: bytes, returncode: int = 0, seen=None):
     return _popen
 
 
-def test_sh1_add_cochange_splits_git_log_on_newline_only(monkeypatch):
-    """REVIEW SH-1 (ISS-22 bug class, graph.py:380): add_cochange must split
+def test_add_cochange_splits_git_log_on_newline_only(monkeypatch):
+    """Verify add_cochange must split
     `git log` output on "\\n" only. With core.quotepath=false git emits a path
     containing a raw U+2028; str.splitlines() would cut that path in two so
     neither fragment matches file_index and the CO_CHANGE edge vanishes."""
@@ -1362,8 +1360,8 @@ def test_sh1_add_cochange_splits_git_log_on_newline_only(monkeypatch):
     assert (f"file:{a}", f"file:{b}") in edges_of(g, "CO_CHANGE")
 
 
-def test_iss27_graphml_roundtrips_with_a_control_char(tmp_path):
-    """AC-5 (ISS-27): a C0 control char inside a docstring must not make the
+def test_graphml_roundtrips_with_a_control_char(tmp_path):
+    """Verify a C0 control char inside a docstring must not make the
     GraphML unparseable. stdlib only, never skipped. At HEAD ElementTree writes
     the raw \\x0c and ET.parse raises ParseError."""
     import xml.etree.ElementTree as ET
@@ -1392,8 +1390,8 @@ def test_iss27_graphml_roundtrips_with_a_control_char(tmp_path):
 
 
 @pytest.mark.parametrize("spec", ["owner/..", "../evil", "-x/-y", "owner/"])
-def test_iss19_parse_spec_rejects_traversal_and_option_specs(spec):
-    """AC-6 (ISS-19): traversal / option-like specs must raise. At HEAD
+def test_parse_spec_rejects_traversal_and_option_specs(spec):
+    """Verify traversal / option-like specs must raise. At HEAD
     parse_spec("owner/..") returns ("owner", "..") instead of raising."""
     from repo2graph.fetch import parse_spec
 
@@ -1409,8 +1407,8 @@ def test_iss19_parse_spec_rejects_traversal_and_option_specs(spec):
         "git@github.com:owner/repo.git",
     ],
 )
-def test_iss19_parse_spec_still_accepts_valid_specs(spec):
-    """AC-6 (ISS-19): the hardening must not reject legitimate specs."""
+def test_parse_spec_still_accepts_valid_specs(spec):
+    """Verify the hardening must not reject legitimate specs."""
     from repo2graph.fetch import parse_spec
 
     assert parse_spec(spec) == ("owner", "repo")
@@ -1433,8 +1431,8 @@ class _RunRecorder:
         return _Result()
 
 
-def test_iss16_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
-    """AC-7 (ISS-16): no argv element handed to subprocess.run may contain the
+def test_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
+    """Verify no argv element handed to subprocess.run may contain the
     token. At HEAD the token is interpolated into the clone URL argv element."""
     from repo2graph import fetch
 
@@ -1448,8 +1446,8 @@ def test_iss16_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
             assert token not in str(part), cmd
 
 
-def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch):
-    """AC-8 (ISS-18, SH-6): every subprocess.run in fetch.py must carry a timeout
+def test_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch):
+    """Verify every subprocess.run in fetch.py must carry a timeout
     and specify encoding='utf8' and errors='replace'."""
     from repo2graph import fetch
 
@@ -1464,8 +1462,8 @@ def test_iss18_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch)
         assert kwargs.get("errors") == "replace", cmd
 
 
-def test_iss13_discover_matches_between_git_and_walk(tmp_path):
-    """AC-9 (ISS-13, NC-2): discover() must return the same relative paths whether or
+def test_discover_matches_between_git_and_walk(tmp_path):
+    """Verify discover() must return the same relative paths whether or
     not the tree is a git checkout. At HEAD the os.walk fallback drops every
     dot-directory while the git path keeps it, so `.github/**` appears only in a
     git checkout."""
@@ -1488,8 +1486,8 @@ def test_iss13_discover_matches_between_git_and_walk(tmp_path):
     assert len(git_set) >= 3
 
 
-def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
-    """AC-10 (ISS-07, NC-1): a BrokenProcessPool must fall back to the serial path and
+def test_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
+    """Verify a BrokenProcessPool must fall back to the serial path and
     return the jobs=1 result for all files without raising."""
     import concurrent.futures
     from concurrent.futures.process import BrokenProcessPool
@@ -1537,7 +1535,7 @@ def test_iss07_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
     assert digest(got) == digest(serial)
 
 
-def test_iss67_build_takes_the_pool_path_above_parallel_min_files(wide_repo, monkeypatch):
+def test_build_takes_the_pool_path_above_parallel_min_files(wide_repo, monkeypatch):
     """#67: every other fixture is under PARALLEL_MIN_FILES, so nothing in the
     suite ever entered `parse_all`'s ProcessPoolExecutor branch -- which is how
     the MCP auto-build hang (#90) survived a green run.
@@ -1572,8 +1570,8 @@ def test_iss67_build_takes_the_pool_path_above_parallel_min_files(wide_repo, mon
     assert "sym:widepkg/mod0.py::handle_0" in g.nodes
 
 
-def test_iss01_iss02_dead_dataclass_fields_are_gone():
-    """AC-11 (ISS-01/ISS-02): Symbol has no start_byte/end_byte and ParsedFile
+def test_dead_dataclass_fields_are_gone():
+    """Verify Symbol has no start_byte/end_byte and ParsedFile
     has no file_calls. At HEAD all three fields are present."""
     import dataclasses
 
@@ -1585,7 +1583,7 @@ def test_iss01_iss02_dead_dataclass_fields_are_gone():
     assert "file_calls" not in {f.name for f in dataclasses.fields(ParsedFile)}
 
 
-# ---------- Level 3: workflow-YAML text assertions ----------
+# ---------- Workflow-YAML text assertions ----------
 
 
 def _run_blocks(yaml_text: str):
@@ -1608,8 +1606,8 @@ def _run_blocks(yaml_text: str):
     return blocks
 
 
-def test_iss44_index_repo_workflow_has_no_run_interpolation():
-    """AC-14 (ISS-44): no `${{ inputs. }}` or `${{ github.event. }}` inside any
+def test_index_repo_workflow_has_no_run_interpolation():
+    """Verify no `${{ inputs. }}` or `${{ github.event. }}` inside any
     run: block of index-repo.yml; the slug is computed from "$R2G_REPO". At HEAD
     the "Compute slug" step interpolates ${{ inputs.repo }} straight into bash."""
     text = (REPO_ROOT / ".github" / "workflows" / "index-repo.yml").read_text(encoding="utf-8")
@@ -1619,8 +1617,8 @@ def test_iss44_index_repo_workflow_has_no_run_interpolation():
     assert '"$R2G_REPO"' in text
 
 
-def test_iss45_ci_workflow_tests_job_covers_windows():
-    """AC-15 (ISS-45): the ci.yml `tests` job runs on ubuntu and windows across
+def test_ci_workflow_tests_job_covers_windows():
+    """Verify the ci.yml `tests` job runs on ubuntu and windows across
     both Python versions. At HEAD the matrix is ubuntu-latest only."""
     text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     tests_job = text.split("\n  tests:", 1)[1].split("\n  action:", 1)[0]
@@ -1844,7 +1842,7 @@ def test_workflows_only_pass_inputs_and_read_outputs_the_action_declares():
 def test_action_yml_query_inputs_match_the_cli_defaults_and_omit_answer():
     """The GraphRAG inputs mirror `repo2graph rag`'s own defaults, and the action
     exposes no --answer/--provider/--model surface: that path uploads repository
-    source to a third-party LLM endpoint (AGENTS.md)."""
+    source to a third-party LLM endpoint (CONTRIBUTING.md)."""
     text = _action_text()
     defaults = _defaults(text)
     # hand-derived from cli.py's `rag` subparser, not read back out of argparse
@@ -1900,8 +1898,8 @@ def test_ci_action_job_smoke_tests_the_query_input():
     assert r"grep -q '\[cite:'" in job
 
 
-def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
-    """Issue 26 (NC-4, NC-5): GIT_TERMINAL_PROMPT is 0 unconditionally, and
+def test_auth_env_terminal_prompt_and_config_count(monkeypatch):
+    """Verify GIT_TERMINAL_PROMPT is 0 unconditionally, and
     GIT_CONFIG_COUNT preserves inherited count."""
     from repo2graph.fetch import _auth_env
 
@@ -1919,8 +1917,8 @@ def test_iss26_auth_env_terminal_prompt_and_config_count(monkeypatch):
     assert "basic" in env_with_token.get("GIT_CONFIG_VALUE_2", "")
 
 
-def test_iss148_git_version_failure_not_cached(monkeypatch):
-    """Issue 148: a transient `git --version` failure must not be permanently
+def test_git_version_failure_not_cached(monkeypatch):
+    """Verify a transient `git --version` failure must not be permanently
     cached. First call fails -> fallback (2, 40, 0); second call, with the
     transient condition cleared, must probe again and return the real version."""
     from repo2graph import fetch
@@ -1941,8 +1939,8 @@ def test_iss148_git_version_failure_not_cached(monkeypatch):
     assert fetch._git_version() == (2, 45, 1)
 
 
-def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
-    """Issue 26 (SH-3): clone failure error message redacts both raw token and basic credential."""
+def test_clone_redacts_base64_and_token(tmp_path, monkeypatch):
+    """Verify clone failure error message redacts both raw token and basic credential."""
     import base64
     from repo2graph import fetch
 
@@ -1963,8 +1961,8 @@ def test_iss26_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     assert "***" in msg
 
 
-def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
-    """Issue 26 (ISS-21): clone detects an existing checkout and reuses it."""
+def test_clone_reuses_existing_checkout(tmp_path, monkeypatch):
+    """Verify clone detects an existing checkout and reuses it."""
     from repo2graph import fetch
 
     target = tmp_path / "repo"
@@ -1980,7 +1978,7 @@ def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
     assert res == target
 
 
-# ---------- Issue #28: Test coverage round 2 (ISS-52, ISS-53, NC-3) ----------
+# ---------- Test coverage round 2 ----------
 
 
 @pytest.mark.parametrize(
@@ -2000,8 +1998,8 @@ def test_iss26_clone_reuses_existing_checkout(tmp_path, monkeypatch):
         ("owner/repo/", ("owner", "repo")),
     ],
 )
-def test_iss52_parse_spec_valid_table(spec, expected):
-    """ISS-52: table-test parse_spec across all supported URL/SSH/slug formats."""
+def test_parse_spec_valid_table(spec, expected):
+    """Verify table-test parse_spec across all supported URL/SSH/slug formats."""
     from repo2graph.fetch import parse_spec
 
     assert parse_spec(spec) == expected
@@ -2026,16 +2024,16 @@ def test_iss52_parse_spec_valid_table(spec, expected):
         "https://gitlab.com/owner/repo",
     ],
 )
-def test_iss52_parse_spec_invalid_table(spec):
-    """ISS-52: table-test parse_spec rejection of traversal, options, and invalid URLs."""
+def test_parse_spec_invalid_table(spec):
+    """Verify table-test parse_spec rejection of traversal, options, and invalid URLs."""
     from repo2graph.fetch import parse_spec
 
     with pytest.raises(ValueError):
         parse_spec(spec)
 
 
-def test_iss52_clone_argv_construction(tmp_path, monkeypatch):
-    """ISS-52: clone argv construction under different options."""
+def test_clone_argv_construction(tmp_path, monkeypatch):
+    """Verify clone argv construction under different options."""
     from repo2graph import fetch
 
     rec = _RunRecorder()
@@ -2068,8 +2066,8 @@ def test_iss52_clone_argv_construction(tmp_path, monkeypatch):
     ]
 
 
-def test_iss53_parallel_parse_matches_serial(tmp_path):
-    """ISS-53: parallel parse path (>= 64 files) produces identical node ids and
+def test_parallel_parse_matches_serial(tmp_path):
+    """Verify parallel parse path (>= 64 files) produces identical node ids and
     edge triples to serial."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -2091,8 +2089,8 @@ def test_iss53_parallel_parse_matches_serial(tmp_path):
     assert triples_serial == triples_parallel
 
 
-def test_nc3_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_repo):
-    """NC-3: GraphML output contains the expected node labels and definitions verbatim."""
+def test_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_repo):
+    """Verify GraphML output contains the expected node labels and definitions verbatim."""
     import xml.etree.ElementTree as ET
 
     out = tmp_path / "idx"
@@ -2110,8 +2108,8 @@ def test_nc3_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_
     assert "helper" in text
 
 
-def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
-    """Issue 25 (ISS-37, ISS-38, ISS-39): BM25 constants are named, char budget
+def test_query_constants_and_budget_bounds(tmp_path, sample_repo):
+    """Verify BM25 constants are named, char budget
     is checked before appending to prevent overshooting, and expansion is bounded."""
     from repo2graph.query import BM25_K1, BM25_B, BM25_AVG_LEN, Index
 
@@ -2137,8 +2135,8 @@ def test_iss25_query_constants_and_budget_bounds(tmp_path, sample_repo):
     assert len(ample_hits) <= 4
 
 
-def test_iss142_bm25_avgdl_is_corpus_mean(tmp_path):
-    """Issue 142: BM25 length norm uses corpus avgdl, not hardcoded 400.0.
+def test_bm25_avgdl_is_corpus_mean(tmp_path):
+    """Verify BM25 length norm uses corpus avgdl, not hardcoded 400.0.
 
     Hand-built chunks have known token lengths (no qualname, no camelCase /
     underscore splits). avgdl must be their mean; score() must use that mean
@@ -2204,10 +2202,10 @@ def test_iss142_bm25_avgdl_is_corpus_mean(tmp_path):
     assert dynamic[0] / dynamic[1] > against_400[0] / against_400[1]
 
 
-def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
-    """Issue 27 (ISS-15, SH-5): DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
+def test_skip_dirs_and_discovery_stat(tmp_path):
+    """Verify DEFAULT_SKIP_DIRS includes cache dirs (.ruff_cache,
     .eggs, .cache, .gradle, .direnv, .yarn) and discovery method is recorded in stats."""
-    from repo2graph.walker import DEFAULT_SKIP_DIRS, discover
+    from repo2graph.parse import DEFAULT_SKIP_DIRS, discover
 
     for d in (".ruff_cache", ".eggs", ".cache", ".gradle", ".direnv", ".yarn"):
         assert d in DEFAULT_SKIP_DIRS
@@ -2226,8 +2224,8 @@ def test_iss27_skip_dirs_and_discovery_stat(tmp_path):
     assert stats.get("discovery") in ("git", "walk")
 
 
-def test_iss21_docstring_inner_quotes_preserved(tmp_path):
-    """Issue 21 (ISS-03): Python docstring outer quote stripping does not strip inner quotes."""
+def test_docstring_inner_quotes_preserved(tmp_path):
+    """Verify Python docstring outer quote stripping does not strip inner quotes."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "doc.py").write_text('def f():\n    """\'inner\'"""\n    pass\n', encoding="utf-8")
@@ -2236,8 +2234,8 @@ def test_iss21_docstring_inner_quotes_preserved(tmp_path):
     assert "'inner'" in chunk["text"]
 
 
-def test_iss21_add_node_preserves_zero_and_false():
-    """Issue 21 (ISS-11): add_node preserves legitimate 0 and False values on re-add."""
+def test_add_node_preserves_zero_and_false():
+    """Verify add_node preserves legitimate 0 and False values on re-add."""
     from repo2graph.graph import Graph
 
     g = Graph(Path("."), "test")
@@ -2248,8 +2246,8 @@ def test_iss21_add_node_preserves_zero_and_false():
     assert g.nodes["n1"]["flag"] is False
 
 
-def test_iss21_cochange_commits_skipped_counter(monkeypatch):
-    """Issue 21 (ISS-12): commits touching > 25 files increment stats['cochange_commits_skipped']."""
+def test_cochange_commits_skipped_counter(monkeypatch):
+    """Verify commits touching > 25 files increment stats['cochange_commits_skipped']."""
     from repo2graph.graph import Graph, add_cochange
 
     # 26 files in one commit
@@ -2262,8 +2260,8 @@ def test_iss21_cochange_commits_skipped_counter(monkeypatch):
     assert g.stats["cochange_commits_skipped"] == 1
 
 
-def test_iss23_write_jsonl_always_uses_lf_newlines(tmp_path):
-    """Issue 23 (ISS-28): write_jsonl writes LF newlines on all platforms, including Windows."""
+def test_write_jsonl_always_uses_lf_newlines(tmp_path):
+    """Verify write_jsonl writes LF newlines on all platforms, including Windows."""
     from repo2graph.export import write_jsonl
 
     p = tmp_path / "test.jsonl"
@@ -2273,8 +2271,8 @@ def test_iss23_write_jsonl_always_uses_lf_newlines(tmp_path):
     assert raw.count(b"\n") == 2
 
 
-def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
-    """Issue 23 (SH-4): write_graphml applies _xml_safe to node id and edge endpoints."""
+def test_graphml_node_and_edge_ids_xml_safe(tmp_path):
+    """Verify write_graphml applies _xml_safe to node id and edge endpoints."""
     import xml.etree.ElementTree as ET
     from repo2graph.export import write_graphml
     from repo2graph.graph import Graph
@@ -2295,8 +2293,8 @@ def test_iss23_graphml_node_and_edge_ids_xml_safe(tmp_path):
     assert "\x0c" not in out.read_text(encoding="utf-8")
 
 
-def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
-    """Issue 154: write_cypher backtick-quotes property keys so a Cypher reserved
+def test_write_cypher_backtick_escapes_property_keys(tmp_path):
+    """Verify write_cypher backtick-quotes property keys so a Cypher reserved
     word (e.g. `order`) doesn't break the generated statement, an embedded
     backtick is escaped by doubling (no breaking out of the quoting), and a
     normal bare-identifier-safe key stays exactly as before."""
@@ -2318,8 +2316,8 @@ def test_iss154_write_cypher_backtick_escapes_property_keys(tmp_path):
     assert content == expected
 
 
-def test_iss371_write_cypher_invalid_label_or_reltype_raises(tmp_path):
-    """Issue 371: invalid Cypher node label or relationship type raises ValueError."""
+def test_write_cypher_invalid_label_or_reltype_raises(tmp_path):
+    """Verify invalid Cypher node label or relationship type raises ValueError."""
     from repo2graph.export import write_cypher
     from repo2graph.graph import Graph
 
@@ -2352,8 +2350,8 @@ def test_iss371_write_cypher_invalid_label_or_reltype_raises(tmp_path):
         write_cypher(g_bad_rel_bt, tmp_path / "g4.cypher")
 
 
-def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
-    """Issue 24 (ISS-33): repo name containing __R2G_DATA__ is not replaced by JSON blob in title."""
+def test_write_html_handles_placeholder_in_title(tmp_path):
+    """Verify repo name containing __R2G_DATA__ is not replaced by JSON blob in title."""
     from repo2graph.graph import Graph
     from repo2graph.viz import write_html
 
@@ -2370,7 +2368,7 @@ def test_iss24_write_html_handles_placeholder_in_title(tmp_path):
 def test_select_zero_draws_an_empty_graph():
     """0 means zero nodes, and `None` is the only spelling for "no cap".
 
-    This replaces the ISS-34 behaviour, where `max_nodes <= 0` meant no cap.
+    Previously, `max_nodes <= 0` meant no cap.
     That made "draw everything" and "draw nothing" -- the two most opposite
     intentions a caller can have -- share a spelling, so a mistyped or
     defaulted-to-zero argument silently rendered the *largest* possible page.
@@ -2432,8 +2430,8 @@ def test_build_with_viz_nodes_zero_writes_an_empty_map(tmp_path, capsys):
     assert report["nodes"] == report["of"]["nodes"]
 
 
-def test_iss22_chunk_caps_and_residual_span(tmp_path):
-    """Issue 22 (ISS-23, ISS-26): named constants for chunk caps, and real line spans for residuals."""
+def test_chunk_caps_and_residual_span(tmp_path):
+    """Verify named constants for chunk caps, and real line spans for residuals."""
     from repo2graph.chunks import (
         MAX_CALLERS,
         MAX_CALLEES,
@@ -2468,7 +2466,7 @@ def test_iss22_chunk_caps_and_residual_span(tmp_path):
 
 def test_split_does_not_break_a_chunk_on_u2028():
     """_split must cut only on "\\n"; a U+2028 inside a line is not a row break
-    for tree-sitter and must not become a chunk boundary (the ISS-22 class)."""
+    for tree-sitter and must not become a chunk boundary (line separators)."""
     from repo2graph.chunks import _keepends_lf
 
     plain = "first line\n" + "x" * 5000 + "\nlast"
@@ -2583,7 +2581,7 @@ class Runner {
 
 def test_glob_re_tolerates_malformed_bracket_classes():
     """A stray/empty bracket in --include/--exclude must not raise re.error."""
-    from repo2graph.walker import _glob_re
+    from repo2graph.parse import _glob_re
 
     for pat in ("[]", "[!]", "foo[]", "test[!].py", "unclosed[abc"):
         _glob_re(pat)  # must not raise
@@ -2688,7 +2686,7 @@ def test_rmtree_removes_read_only_files(tmp_path):
 
 def test_atomic_write_leaves_previous_file_on_failure(tmp_path):
     """A crash mid-write must not truncate an artifact a later `query`/`map` reads."""
-    from repo2graph.layout import atomic_write
+    from repo2graph.export import atomic_write
 
     target = tmp_path / "nodes.jsonl"
     target.write_text("OLD GOOD CONTENT\n", encoding="utf8")
@@ -2742,7 +2740,7 @@ def test_add_cochange_caps_the_history_window(monkeypatch):
 
 
 def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch):
-    """ISS-82: MAX_COCHANGE_COMMITS bounds the commit count, not how many
+    """Verify MAX_COCHANGE_COMMITS bounds the commit count, not how many
     bytes a single pathological commit's file list can still emit. A run that
     returns a giant stdout must be truncated before it is decoded/processed,
     and the truncation recorded."""
@@ -2755,7 +2753,7 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
     monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(huge))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
-    # The stat is the number of bytes read, which is the cap: since ISS-236 the
+    # The stat is the number of bytes read, which is the cap: the
     # read stops there, so how much more git had to say is never learned.
     assert g.stats["cochange_output_capped"] == MAX_COCHANGE_BYTES
 
@@ -2814,7 +2812,7 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
 
 
 def test_graph_warns_once_past_the_large_graph_threshold(monkeypatch, capsys):
-    """ISS-85: no hard cap (max_files stays opt-in), but a build nobody bounded
+    """Verify no hard cap (max_files stays opt-in), but a build nobody bounded
     gets exactly one stderr warning once it grows past the threshold."""
     from repo2graph.graph import Graph
 
@@ -2899,8 +2897,8 @@ def test_index_github_end_to_end_against_a_local_repo(tmp_path, monkeypatch):
     assert "sym:app.py::main" in {json.loads(x)["id"] for x in node_lines if x.strip()}
 
 
-def test_iss145_index_github_options(tmp_path, monkeypatch):
-    """Issue 145: index_github and repo2graph github respect config, exclude-dir, vendor, and chunking options."""
+def test_index_github_options(tmp_path, monkeypatch):
+    """Verify index_github and repo2graph github respect config, exclude-dir, vendor, and chunking options."""
     from repo2graph import fetch
     from repo2graph.cli import main
     from repo2graph.parse import BuildConfig
@@ -2955,7 +2953,7 @@ def test_iss145_index_github_options(tmp_path, monkeypatch):
     assert not artifact_path(out2, "chunks.jsonl").exists()
 
 
-def test_iss85_iss156_graph_max_nodes_limit(tmp_path):
+def test_graph_max_nodes_limit(tmp_path):
     """Issues 85 & 156: Graph node accumulation is bounded by max_nodes limit."""
     from repo2graph.graph import GraphLimitExceeded, build
     from repo2graph.parse import BuildConfig
@@ -2977,8 +2975,8 @@ def test_iss85_iss156_graph_max_nodes_limit(tmp_path):
     assert len(g.nodes) > 2
 
 
-def test_iss87_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
-    """Issue 87: _safe_read_bytes uses O_NOFOLLOW where supported to avoid symlink TOCTOU races."""
+def test_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
+    """Verify _safe_read_bytes uses O_NOFOLLOW where supported to avoid symlink TOCTOU races."""
     import os
     from repo2graph.graph import _safe_read_bytes
 
@@ -3007,8 +3005,8 @@ def test_iss87_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
     assert opened_flags[0] & 0x20000 == 0x20000
 
 
-def test_iss147_make_path_avoids_mkdir_when_parent_exists(tmp_path, monkeypatch):
-    """Issue 147: make_path and make_paths avoid mkdir on existing parent directories (read-only safe)."""
+def test_make_path_avoids_mkdir_when_parent_exists(tmp_path, monkeypatch):
+    """Verify make_path and make_paths avoid mkdir on existing parent directories (read-only safe)."""
     from repo2graph.export import make_path, make_paths
 
     out = tmp_path / "out"
@@ -3045,8 +3043,8 @@ def test_docstring_rust_outer_attributes():
     assert pf.symbols[0].docstring == "/// Important documentation"
 
 
-def test_iss159_chained_call_attributes_outer_callee():
-    """ISS-159: a chained call `obj.get_user().save()` must record BOTH
+def test_chained_call_attributes_outer_callee():
+    """Verify a chained call `obj.get_user().save()` must record BOTH
     `save` (the outer call) and `get_user` (the inner call) as callees --
     not `get_user` twice with `save` silently dropped.
 
@@ -3082,7 +3080,7 @@ def test_callee_name_macro_and_fn_pointers():
     assert "my_macro" in pf_rs.symbols[0].calls
 
 
-def test_iss344_callee_name_resolves_php_namespace_separator():
+def test_callee_name_resolves_php_namespace_separator():
     """#344: a PHP namespaced call must resolve to its bare function name.
 
     `\\App\\Utils\\compute()` is a fully-qualified call outside any class; its
@@ -3096,7 +3094,7 @@ def test_iss344_callee_name_resolves_php_namespace_separator():
     assert calls == ["compute", "helper"]
 
 
-def test_iss341_inherits_edges_for_cpp_scope_and_php_namespace_bases(tmp_path):
+def test_inherits_edges_for_cpp_scope_and_php_namespace_bases(tmp_path):
     """#341: `::`- and `\\`-qualified base classes must resolve to their node.
 
     Uses class names outside COMMON_STDLIB_BASES (`Base`/`Model`/... are
@@ -3120,7 +3118,7 @@ def test_iss341_inherits_edges_for_cpp_scope_and_php_namespace_bases(tmp_path):
     assert ("sym:derived.php::Derived", "sym:model.php::BaseModel") in edges_of(g_php, "INHERITS")
 
 
-def test_iss342_self_recursive_function_is_still_an_entrypoint_root(tmp_path):
+def test_self_recursive_function_is_still_an_entrypoint_root(tmp_path):
     """#342: a self-CALLS edge (src == dst) must not disqualify a root.
 
     `entry` calls only itself and has no external caller, so it must still be
@@ -3137,7 +3135,7 @@ def test_iss342_self_recursive_function_is_still_an_entrypoint_root(tmp_path):
     assert ("sym:m.py::entry", "sym:m.py::entry") in edges_of(g, "CALLS")
 
 
-def test_iss377_header_content_sniff_picks_c_or_cpp(tmp_path):
+def test_header_content_sniff_picks_c_or_cpp(tmp_path):
     """#377: `.h` must be parsed as cpp when its content says so, else c."""
     (tmp_path / "c_style.h").write_text(
         "struct Point { int x; int y; };\nvoid move_point(struct Point *p);\n"
@@ -3157,7 +3155,7 @@ def test_iss377_header_content_sniff_picks_c_or_cpp(tmp_path):
     assert g.stats["header_files_as_cpp"] == 1
 
 
-def test_iss377_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
+def test_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
     """#377: a `.h` over `max_file_bytes` takes the chunked reader, which must sniff too.
 
     `_read_and_parse` sniffs the full bytes it already read, but a file larger
@@ -3187,7 +3185,7 @@ def test_iss377_header_sniff_also_applies_to_a_chunked_large_header(tmp_path):
 
 def test_atomic_write_creates_parent_and_cleans_up(tmp_path):
     """Verify atomic_write automatically creates missing parent directories."""
-    from repo2graph.layout import atomic_write
+    from repo2graph.export import atomic_write
 
     nested = tmp_path / "a" / "b" / "c" / "test.txt"
     with atomic_write(nested, "w", encoding="utf8") as fh:
@@ -3443,8 +3441,8 @@ def test_pack_context_exclude_secrets(tmp_path):
     assert "main.py" in paths_clean
 
 
-def test_iss75_ext_lang_mts_cts(tmp_path):
-    """Issue 75: EXT_LANG recognizes .mts and .cts as TypeScript."""
+def test_ext_lang_mts_cts(tmp_path):
+    """Verify EXT_LANG recognizes .mts and .cts as TypeScript."""
     from repo2graph.parse import EXT_LANG, parse_source
 
     assert EXT_LANG.get(".mts") == "typescript"
@@ -3458,8 +3456,8 @@ def test_iss75_ext_lang_mts_cts(tmp_path):
     assert any(s.name == "greet" for s in pf_cts.symbols)
 
 
-def test_iss135_overview_human_respects_custom_max_file_mb(tmp_path):
-    """Issue 135: write_overview_human dynamically labels the skipped_too_large
+def test_overview_human_respects_custom_max_file_mb(tmp_path):
+    """Verify write_overview_human dynamically labels the skipped_too_large
     threshold based on config.max_file_mb rather than hardcoding 1.5 MB."""
     from repo2graph.export import write_overview_human
     from repo2graph.graph import Graph
@@ -3476,8 +3474,8 @@ def test_iss135_overview_human_respects_custom_max_file_mb(tmp_path):
     assert "1.5 MB" not in text
 
 
-def test_iss140_fetch_subprocess_passes_stdin_devnull(tmp_path, monkeypatch):
-    """Issue 140: fetch.py subprocess invocations must specify stdin=subprocess.DEVNULL."""
+def test_fetch_subprocess_passes_stdin_devnull(tmp_path, monkeypatch):
+    """Verify fetch.py subprocess invocations must specify stdin=subprocess.DEVNULL."""
     from repo2graph import fetch
 
     recorded_calls = []
@@ -3509,8 +3507,8 @@ def test_iss140_fetch_subprocess_passes_stdin_devnull(tmp_path, monkeypatch):
     assert recorded_calls[-1][1].get("stdin") == subprocess.DEVNULL
 
 
-def test_iss149_clone_fetches_ref_on_existing_clone(tmp_path, monkeypatch):
-    """Issue 149: clone() fetches target ref before checkout when reusing existing clone."""
+def test_clone_fetches_ref_on_existing_clone(tmp_path, monkeypatch):
+    """Verify clone() fetches target ref before checkout when reusing existing clone."""
     from repo2graph import fetch
 
     target = tmp_path / "repo"
@@ -3545,8 +3543,8 @@ def test_iss149_clone_fetches_ref_on_existing_clone(tmp_path, monkeypatch):
         assert stdin_val == subprocess.DEVNULL, f"{cmd} missing stdin=DEVNULL"
 
 
-def test_iss143_expand_respects_per_hop(tmp_path):
-    """Issue 143: expand(per_hop=...) allows expansion beyond 60 nodes."""
+def test_expand_respects_per_hop(tmp_path):
+    """Verify expand(per_hop=...) allows expansion beyond 60 nodes."""
     from repo2graph.query import Index
 
     agent = tmp_path / "agent"
@@ -3576,8 +3574,8 @@ def test_iss143_expand_respects_per_hop(tmp_path):
     assert len(exp40) == 40
 
 
-def test_iss147_load_parse_cache_does_not_create_directories(tmp_path, monkeypatch):
-    """Issue 147: load_parse_cache does not call make_paths or mkdir on nonexistent/read-only directories."""
+def test_load_parse_cache_does_not_create_directories(tmp_path, monkeypatch):
+    """Verify load_parse_cache does not call make_paths or mkdir on nonexistent/read-only directories."""
     from repo2graph.export import load_parse_cache
 
     nonexistent = tmp_path / "nonexistent_index"

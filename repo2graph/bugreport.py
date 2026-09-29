@@ -64,7 +64,7 @@ _CATEGORY_ASKS: dict[str, tuple[str, ...]] = {
     "missing-relationship": (
         "the two node ids that should be connected (`repo2graph explain node <id> -o <out>`)",
         "the line of code that should have produced the edge, if you can share it",
-        "whether the call is dynamic -- see docs/limitations.md, which makes most of these expected",
+        "whether the call is dynamic -- see docs/architecture.md, which makes most of these expected",
     ),
     "stale-index": (
         "the output of `repo2graph index-status -o <out>`",

@@ -1,6 +1,6 @@
 # Methodology
 
-How the numbers in [`results.json`](results.json) and [docs/benchmarks.md](../docs/benchmarks.md)
+How the numbers in [`results.json`](results.json) and [../README.md](../README.md)
 were produced, and what would have to match for you to reproduce them exactly.
 
 ## What is controlled
@@ -8,7 +8,7 @@ were produced, and what would have to match for you to reproduce them exactly.
 - **Repository revision.** Every result is pinned to the exact commit SHA `scripts/generate_examples.py`
   checked out, recorded in both `results.json` and that repository's `examples/<id>/metadata.json`.
   Re-running against the same `ref` (usually `main`/`master`) later will check out a *different*,
-  newer commit — see [docs/benchmarks.md#staleness](../docs/benchmarks.md#staleness).
+  newer commit — see [docs/architecture.md](../docs/architecture.md#staleness).
 - **repo2graph version.** Recorded per result (`repo2graph_version`, from `repo2graph.__version__`
   at generation time).
 - **Scope.** For the four scoped repositories, the exact `include`/`exclude`/`max_files` parameters
@@ -23,11 +23,11 @@ were produced, and what would have to match for you to reproduce them exactly.
 - **Hardware.** These are single-machine numbers (this project's own development machine, Windows,
   Python 3.13.15, whatever else happened to be running at the time) with no isolation, warm-up
   discipline, or repeated-trial averaging. Do not use `build_seconds` here for capacity planning on
-  different hardware — see [docs/PERFORMANCE.md](../docs/PERFORMANCE.md) for numbers that were
+  different hardware — see [../architecture.md](../docs/architecture.md) for numbers that were
   measured with that goal in mind, on a controlled synthetic fixture.
 - **Network conditions.** `clone_seconds` reflects this run's actual bandwidth and GitHub's response
   time at that moment; it is the least reproducible number in the file for exactly that reason.
-- **Peak memory.** Not measured — see [docs/benchmarks.md](../docs/benchmarks.md) for why.
+- **Peak memory.** Not measured — see [../README.md](../README.md) for why.
 
 ## How results.json is updated
 
@@ -49,5 +49,5 @@ was produced by the same invocation.
    --git-history <same git_history>` yourself.
 
 A different number under otherwise-identical parameters most likely means different hardware or
-network conditions, not a regression — cross-check against `docs/PERFORMANCE.md`'s controlled
+network conditions, not a regression — cross-check against `../architecture.md`'s controlled
 synthetic-fixture numbers if you need a hardware-independent comparison.

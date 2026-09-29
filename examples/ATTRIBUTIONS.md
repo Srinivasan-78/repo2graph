@@ -8,7 +8,7 @@ license requires. License identifiers below were pulled from each repository's o
 ## Why `chunks.jsonl` is not committed
 
 `repo2graph build` writes a `chunks.jsonl` that embeds each symbol's actual source text (see
-[docs/reference.md](../docs/reference.md#what-one-piece-of-code-looks-like) — that is what makes it
+[examples/README.md](README.md) — that is what makes it
 useful for retrieval). For a repository this project does not own, shipping that file would mean
 redistributing large, largely complete portions of someone else's source tree inside this project's
 own repository. `examples/generate_examples.py` builds it transiently (to run the example queries
@@ -82,7 +82,7 @@ are facts about the repository's structure, not the expression the repository's 
 - **Analyzed commit:** see `examples/linux/metadata.json`
 - **Purpose of inclusion:** extreme-scale, maximally heterogeneous C codebase; kernel subsystems, a
   filesystem, and a device driver as representative slices (see
-  [docs/limitations.md](../docs/limitations.md#extreme-scale))
+  [what it can't do](../README.md#what-it-cant-do))
 - **Generated graph metadata committed:** yes
 - **Source code copied:** no
 - **Attribution requirement:** GPL-2.0 governs *redistribution of the software itself*

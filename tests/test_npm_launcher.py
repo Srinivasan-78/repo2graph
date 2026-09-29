@@ -66,7 +66,7 @@ def test_launcher_spawns_batch_shims_through_a_shell():
 def _run_launcher(tmp_path: Path, shim_dir: Path, args: list[str]) -> subprocess.CompletedProcess:
     """Run the launcher with PATH pointing only at `shim_dir`.
 
-    Bytes, never `text=True`: the same decoding discipline AGENTS.md requires
+    Bytes, never `text=True`: the same decoding discipline CONTRIBUTING.md requires
     for git subprocesses applies to any non-ASCII a shim might echo on a
     cp1252 Windows locale.
     """

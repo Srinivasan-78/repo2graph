@@ -1,0 +1,17 @@
+[
+  {
+    "id": "TASK-01",
+    "repo": "sample_repo",
+    "category": "Call Trace",
+    "query": "Where is process_data called and what helper does it use?",
+    "expected_answer": "main calls process_data in service.py, which calls helper in utils.py",
+    "evidence_locations": [
+      "main.py:4-8",
+      "service.py:4-8",
+      "utils.py:1-6"
+    ],
+    "acceptable_variants": [
+      "main -> process_data -> helper"
+    ]
+  }
+]

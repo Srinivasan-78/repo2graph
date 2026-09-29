@@ -437,7 +437,7 @@ ALIAS_CALL = (
 def entry_calls(out):
     """The `(src, dst, type, resolution_kind)` tuples `entry` emits on disk."""
     # split("\n"), never splitlines(): U+2028 and friends are legal in a JSONL
-    # payload and would split a record in half (AGENTS.md).
+    # payload and would split a record in half (CONTRIBUTING.md).
     lines = artifact(out, "edges.jsonl").decode("utf8").split("\n")
     edges = [json.loads(ln) for ln in lines if ln.strip()]
     return {

@@ -6,7 +6,7 @@ from typing import Any
 MAX_CHARS = 4000
 OVERLAP_LINES = 8
 
-# ISS-26: Context caps for headers
+# Context caps for headers
 MAX_CALLERS = 12
 MAX_CALLEES = 12
 MAX_EXT_CALLS = 12
@@ -20,7 +20,7 @@ def _process_chunk_content(
 ) -> tuple[str | None, int]:
     """Apply secret scanning and redaction policy to chunk text."""
     if policy == "exclude-file":
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         if scan_content_secrets(text):
             if hasattr(g, "stats"):
@@ -28,7 +28,7 @@ def _process_chunk_content(
             return None, 0
         return text, 0
     elif policy == "redact-match":
-        from .secrets import redact_content
+        from .security import redact_content
 
         redacted, r_count = redact_content(text, policy=policy)
         if r_count > 0 and hasattr(g, "stats"):
@@ -36,7 +36,7 @@ def _process_chunk_content(
         return redacted, r_count
     elif policy == "warn-only":
         from .events import emit
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         findings = scan_content_secrets(text)
         if findings:
@@ -55,8 +55,8 @@ def _lines(src: str) -> list[str]:
     """Split source the way tree-sitter counts rows: on "\\n" only.
 
     str.splitlines() also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c, which
-    tree-sitter's row numbers do not; using it here slices every later symbol's
-    chunk from the wrong lines (ISS-22). Drop a trailing "\\r" per line so
+    tree-sitter's row numbers do not; using it here slices symbol chunks
+    from incorrect lines. Drop a trailing "\\r" per line so
     CRLF files still index cleanly.
     """
     return [ln[:-1] if ln.endswith("\r") else ln for ln in src.split("\n")]
@@ -67,8 +67,8 @@ def _keepends_lf(text: str) -> list[str]:
 
     str.splitlines(keepends=True) also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c,
     which tree-sitter does not treat as row breaks; splitting a chunk there makes
-    its pieces depend on whichever stray separators the source happens to hold
-    (the ISS-22 bug class). Same "\\n"-only rule as _lines, but lossless.
+    its pieces depend on whichever stray separators the source happens to hold.
+    Same "\\n"-only rule as _lines, but lossless.
     """
     parts = text.split("\n")
     lines = [p + "\n" for p in parts[:-1]]
@@ -81,7 +81,7 @@ def _split(text: str, max_chars: int = MAX_CHARS):
     if len(text) <= max_chars:
         return [text]
     lines = _keepends_lf(text)
-    # ISS-153: a single line longer than max_chars (minified JS/CSS, a long SVG
+    # A single line longer than max_chars (minified JS/CSS, a long SVG
     # path, base64, one-line JSON, ...) can't be shrunk by grouping on line
     # boundaries alone -- the packer below would emit it whole, unbounded.
     # Break any such line into max_chars-sized pieces first so every entry the
@@ -287,7 +287,6 @@ def iter_chunks(g, include_files: bool = True):
             if len(body) < 40:
                 continue
             label_kind = "file_residual"
-            # ISS-23: emit real span for residual chunks
             span_start = line_indices[0] if line_indices else None
             span_end = line_indices[-1] if line_indices else None
         else:
@@ -306,7 +305,6 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
         if defines:
             header.append(f"# defines: {', '.join(defines)}")
-        # ISS-141: same id rule as symbols — chunk 0 is unsuffixed `nid`.
         for i, part in enumerate(_split(body)):
             proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
             if proc_part is None:

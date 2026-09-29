@@ -19,30 +19,39 @@ def test_max_file_mb_validator():
         _max_file_mb("abc")
 
 
-def test_file_limits(tmp_path):
-    # create files
+def test_the_documented_default_size_ceiling():
+    """The 1.5 MB default is a documented number, so it is pinned as a literal
+    rather than re-read from the config that would move with it."""
+    from repo2graph.parse import MAX_BYTES
+
+    assert MAX_BYTES == 1_500_000
+    assert BuildConfig().max_file_bytes == 1_500_000
+
+
+def test_a_file_over_the_size_ceiling_is_skipped_unless_chunking_is_on(tmp_path):
+    """Over the ceiling the file gets no node; `chunk_large_files` rescues it.
+
+    Run against a small `max_file_bytes` rather than the 1.5 MB default: the
+    branch is a single `st.st_size > config.max_file_bytes` comparison, identical
+    at any threshold, and the default version wrote 3 MB to disk and built the
+    graph twice for 5.7s -- the slowest test in the suite by 5x. The default
+    itself is pinned by the test above.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
+    limit = 2_000
 
-    under_limit_file = repo / "under_limit.py"
-    over_limit_file = repo / "over_limit.py"
+    under = b"a = 1\n" * 300  # 1,800 bytes
+    over = b"b = 2\n" * 400  # 2,400 bytes
+    assert len(under) < limit < len(over), (len(under), len(over))
+    (repo / "under_limit.py").write_bytes(under)
+    (repo / "over_limit.py").write_bytes(over)
 
-    under_content = b"a = 1\n" * (1_499_900 // 6)
-    under_content += b"x" * (1_499_900 - len(under_content))
-    under_limit_file.write_bytes(under_content)
-
-    over_content = b"b = 2\n" * (1_500_100 // 6)
-    over_content += b"y" * (1_500_100 - len(over_content))
-    over_limit_file.write_bytes(over_content)
-
-    # default config
-    g = build(repo)
+    g = build(repo, config=BuildConfig(max_file_bytes=limit))
     assert "file:under_limit.py" in g.nodes
     assert "file:over_limit.py" not in g.nodes
 
-    # chunk large files config
-    config = BuildConfig(chunk_large_files=True)
-    g2 = build(repo, config=config)
+    g2 = build(repo, config=BuildConfig(max_file_bytes=limit, chunk_large_files=True))
     assert "file:under_limit.py" in g2.nodes
     assert "file:over_limit.py" in g2.nodes
     assert g2.nodes["file:over_limit.py"].get("chunked") is True
@@ -59,10 +68,10 @@ def test_file_limits(tmp_path):
 # instead: only the one path answers "non-regular and huge", every other path
 # gets the real stat, so the walk, the binary sniff and the yield are otherwise
 # untouched.
-_ISS248_HUGE = 50_000_000
+_HUGE_SIZE = 50_000_000
 
 
-def _iss248_fake_stat(mode: int, size: int):
+def _fake_stat(mode: int, size: int):
     class _St:
         st_mode = mode
         st_size = size
@@ -71,7 +80,7 @@ def _iss248_fake_stat(mode: int, size: int):
 
 
 @pytest.fixture
-def iss248_repo(tmp_path, monkeypatch):
+def oversized_fifo_repo(tmp_path, monkeypatch):
     """A plain (non-git) folder where `special` lstats as an oversized FIFO."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -83,31 +92,31 @@ def iss248_repo(tmp_path, monkeypatch):
 
     def fake_lstat(self, *args, **kwargs):
         if os.path.normcase(str(self)) == os.path.normcase(str(special)):
-            return _iss248_fake_stat(statmod.S_IFIFO | 0o644, _ISS248_HUGE)
+            return _fake_stat(statmod.S_IFIFO | 0o644, _HUGE_SIZE)
         return real_lstat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "lstat", fake_lstat)
     return repo
 
 
-def test_iss248_oversized_non_regular_file_is_never_yielded(iss248_repo):
+def test_oversized_non_regular_file_is_never_yielded(oversized_fifo_repo):
     """A non-regular entry must be rejected even when it is also too large and
     `chunk_large_files` says large files are welcome. The type check is not a
     thing a size flag gets to waive."""
     config = BuildConfig(chunk_large_files=True)
     stats = defaultdict(int)
-    got = {rel for rel, _abspath in discover(iss248_repo, stats=stats, config=config)}
+    got = {rel for rel, _abspath in discover(oversized_fifo_repo, stats=stats, config=config)}
     assert "regular.py" in got, got
     assert "special" not in got, got
 
 
-def test_iss248_skipped_too_large_counts_only_oversized_regular_files(iss248_repo):
+def test_skipped_too_large_counts_only_oversized_regular_files(oversized_fifo_repo):
     """The other half of #248: the counter used to be bumped from inside a
     branch that also handled non-regular files, so a FIFO was reported to the
     human overview as a file skipped for its size."""
     config = BuildConfig(chunk_large_files=False)
     stats = defaultdict(int)
-    got = {rel for rel, _abspath in discover(iss248_repo, stats=stats, config=config)}
+    got = {rel for rel, _abspath in discover(oversized_fifo_repo, stats=stats, config=config)}
     assert got == {"regular.py"}, got
     assert stats["skipped_too_large"] == 0, dict(stats)
 

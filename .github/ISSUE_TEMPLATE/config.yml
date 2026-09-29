@@ -1,6 +1,6 @@
 # Discussion categories cannot be created through the GitHub API -- there is no
 # `createDiscussionCategory` mutation, so they are web-UI only. The `Support`
-# category proposed in docs/COMMUNITY.md does not exist yet; until it is created,
+# category proposed in ../../.github/CONTRIBUTING.md does not exist yet; until it is created,
 # the "Help" link below points at Q&A so this chooser cannot 404. Switch it to
 # /discussions/categories/support in the same change that creates the category.
 blank_issues_enabled: false
@@ -19,7 +19,7 @@ contact_links:
     about: Half-formed directions are welcome here. Ideas that firm up become feature proposals.
   - name: Documentation
     url: https://github.com/Srinivasan-78/repo2graph/blob/main/docs/README.md
-    about: Architecture, CLI/MCP reference, and the known limitations — worth a look before filing, especially docs/limitations.md.
+    about: Architecture, CLI/MCP reference, and the known limitations — worth a look before filing, especially docs/architecture.md.
   - name: Security vulnerability
     url: https://github.com/Srinivasan-78/repo2graph/security/advisories/new
     about: Report privately — see SECURITY.md. Never open a public issue for an undisclosed vulnerability.

@@ -72,7 +72,7 @@ repositories:
       Kubernetes' full tree is on the order of hundreds of thousands of files
       once vendor/ and generated clients are counted — not a repository size
       that a single reproducible CI-friendly run should attempt whole. This
-      is a scoped benchmark (see docs/limitations.md and section "Why this
+      is a scoped benchmark (see docs/architecture.md and section "Why this
       scope" below): the controller-manager entrypoint, the built-in
       controllers, the scheduler, the pod registry, and the API server's
       request-handling package (apiserver/pkg/endpoints) — a coherent slice
@@ -113,7 +113,7 @@ repositories:
       and `python/eager` are the Python-side op/eager machinery, `core/framework`
       and `core/common_runtime` are the C++ execution core they call into —
       the pair this project exists to test cross-language behavior against
-      (see docs/limitations.md, "cross-language resolution").
+      (see docs/architecture.md, "cross-language resolution").
     queries:
       - "Where does a Python API cross into C++?"
       - "What participates in eager execution?"
@@ -174,7 +174,7 @@ repositories:
       The full kernel tree is architecture-specific code times every
       supported CPU family times every driver ever merged — not a size any
       single machine should attempt to index in one CI-friendly run (see
-      docs/limitations.md, "extreme-scale"). This scope is one representative
+      docs/architecture.md, "extreme-scale"). This scope is one representative
       slice of each category the task calls out: `kernel/` (core subsystems:
       scheduler, cgroups, module loading), `fs/ext4/` (a representative
       filesystem), `drivers/net/ethernet/intel/e1000/` (a representative
