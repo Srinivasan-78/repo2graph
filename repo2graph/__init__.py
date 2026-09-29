@@ -1,6 +1,7 @@
 import importlib.metadata
 import re
 from pathlib import Path
+from typing import Any
 
 from .graph import build, Graph
 from .chunks import build_chunks, iter_chunks
@@ -17,6 +18,32 @@ __all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
 __version__ = "2.2.0"
 
 
+def _parse_toml(content: str) -> tuple[bool, dict[str, Any] | None]:
+    """`(tomllib_was_available, parsed_or_None)`.
+
+    The two failures have to stay distinguishable: no tomllib means fall back
+    to the regex reader, whereas tomllib rejecting the file means the file is
+    malformed and there is nothing to fall back *to*.
+
+    tomllib is 3.11+ and this project supports 3.10, so the import must be
+    conditional. Returning the result rather than rebinding the module name to
+    None is deliberate: `tomllib = None` in an except branch needs a
+    `type: ignore[assignment]` under a mypy run that can see the module, and
+    that same ignore is reported as unused under one that cannot -- so the
+    pattern fails under exactly one of the two `python_version` settings
+    whichever way it is written. A local import with no rebinding is correct
+    under both.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        return False, None
+    try:
+        return True, tomllib.loads(content)
+    except Exception:
+        return True, None
+
+
 def _pyproject_version(pyproject: Path) -> str | None:
     """`[project] version` read straight out of a pyproject.toml, or None.
 
@@ -28,14 +55,9 @@ def _pyproject_version(pyproject: Path) -> str | None:
         content = pyproject.read_text(encoding="utf8")
     except OSError:
         return None
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
-    if tomllib is not None:
-        try:
-            data = tomllib.loads(content)
-        except Exception:
+    available, data = _parse_toml(content)
+    if available:
+        if data is None:
             return None
         project = data.get("project") if isinstance(data, dict) else None
         if isinstance(project, dict) and project.get("name") == "repo2graph":
