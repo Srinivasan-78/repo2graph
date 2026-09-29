@@ -74,7 +74,7 @@ def _capture(capsys, argv):
     return capsys.readouterr().out
 
 
-def test_ac1_query_output_is_byte_identical_to_baseline(mini_index, capsys):
+def test_query_output_is_byte_identical_to_baseline(mini_index, capsys):
     """Verify repo2graph query on a vector-less index is unchanged from baseline."""
     text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index)])
     assert "vectors.npy" not in {p.name for p in mini_index.rglob("*")}
@@ -83,7 +83,7 @@ def test_ac1_query_output_is_byte_identical_to_baseline(mini_index, capsys):
     assert text == golden_text("query_default.txt")
 
 
-def test_ac1_query_json_output_is_byte_identical_to_baseline(mini_index, capsys):
+def test_query_json_output_is_byte_identical_to_baseline(mini_index, capsys):
     """Verify query --format json produces byte-identical output to baseline."""
     text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     if REGEN:
@@ -91,7 +91,7 @@ def test_ac1_query_json_output_is_byte_identical_to_baseline(mini_index, capsys)
     assert text == golden_text("query_json.json")
 
 
-def test_ac2_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
+def test_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
     """Verify repo2graph rag markdown on a vector-less index is unchanged from baseline."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index)])
     if REGEN:
@@ -99,7 +99,7 @@ def test_ac2_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
     assert text == golden_text("rag_markdown.md")
 
 
-def test_ac2_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
+def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
     """Verify JSON form gains exactly tokens_used and tokens_budget without changing other fields."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
@@ -114,7 +114,7 @@ def test_ac2_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
         assert payload[key] == baseline[key], key
 
 
-def test_ac9_pack_context_without_vectors_matches_the_baseline(mini_index):
+def test_pack_context_without_vectors_matches_the_baseline(mini_index):
     """Verify markdown, chunks, seeds, neighbors and truncated are unchanged when no vectors exist."""
     idx = Index(mini_index)
     keys = ("markdown", "chunks", "seeds", "neighbors", "truncated")
@@ -128,7 +128,7 @@ def test_ac9_pack_context_without_vectors_matches_the_baseline(mini_index):
     assert got == golden_json("pack_context.json")
 
 
-def test_ac3_score_rrf_without_vectors_is_exactly_score(mini_index):
+def test_score_rrf_without_vectors_is_exactly_score(mini_index):
     """Verify list equality (order and values) between score and score_rrf without vectors."""
     idx = Index(mini_index)
     for query in (MINI_QUERY, "audit event journal", "no such token anywhere"):
@@ -191,7 +191,7 @@ def _cli_inventory(monkeypatch) -> dict:
     return inventory
 
 
-def test_ac4_every_baseline_subcommand_and_flag_survives(monkeypatch):
+def test_every_baseline_subcommand_and_flag_survives(monkeypatch):
     """Verify every baseline subcommand still parses and still accepts every
     flag it accepted, with the same default, type, nargs and choices. New
     subcommands and new flags are allowed; removals and changes are not."""
@@ -209,7 +209,7 @@ def test_ac4_every_baseline_subcommand_and_flag_survives(monkeypatch):
             assert got[flag] == spec, (command, flag, got[flag], spec)
 
 
-def test_ac4_baseline_subcommands_are_all_present(monkeypatch):
+def test_baseline_subcommands_are_all_present(monkeypatch):
     """Verify expected baseline subcommands are all present."""
     inventory = _cli_inventory(monkeypatch)
     expected = {"build", "github", "gh", "query", "rag", "map", "stats", "version"}
@@ -271,7 +271,7 @@ def parse_action_block(text: str, block: str) -> dict:
 
     action.yml's two declaration blocks are a flat two-level mapping of plain
     scalars, so a deliberately small parser covers them exactly. It is
-    cross-checked against PyYAML in test_ac8_hand_parser_agrees_with_pyyaml
+    cross-checked against PyYAML in test_hand_parser_agrees_with_pyyaml
     whenever PyYAML happens to be installed, and the suite does not require it
     -- `pip install repo2graph[dev]` is pytest + ruff and nothing else.
     """
@@ -298,7 +298,7 @@ def parse_action_block(text: str, block: str) -> dict:
     return out
 
 
-def test_ac8_hand_parser_agrees_with_pyyaml():
+def test_hand_parser_agrees_with_pyyaml():
     """Verify hand parser agrees with PyYAML."""
     yaml = pytest.importorskip("yaml", reason="PyYAML is not a test dependency")
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
@@ -317,7 +317,7 @@ def test_ac8_hand_parser_agrees_with_pyyaml():
                 assert got == want, (block, name, key, got, want)
 
 
-def test_ac8_action_inputs_and_outputs_keep_their_baseline_contract():
+def test_action_inputs_and_outputs_keep_their_baseline_contract():
     """Verify every baseline input keeps its default and baseline output keeps its value."""
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         text = fh.read()
@@ -347,7 +347,7 @@ def test_ac8_action_inputs_and_outputs_keep_their_baseline_contract():
         assert "default" in spec, (name, spec)
 
 
-def test_ac8_new_action_inputs_default_to_baseline_behaviour():
+def test_new_action_inputs_default_to_baseline_behaviour():
     """Verify new action inputs default to baseline behaviour."""
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         inputs = parse_action_block(fh.read(), "inputs")
@@ -421,7 +421,7 @@ def _state(outdir: Path) -> dict:
         return json.load(fh)
 
 
-def test_ac34_build_writes_index_state_with_a_hash_per_file_node(mini_index):
+def test_build_writes_index_state_with_a_hash_per_file_node(mini_index):
     """Verify files keys match indexed file paths and values are 64-char hex digests."""
     state = _state(mini_index)
     assert isinstance(state.get("files"), dict), state
@@ -432,7 +432,7 @@ def test_ac34_build_writes_index_state_with_a_hash_per_file_node(mini_index):
         assert isinstance(digest, str) and HEX64.match(digest), (rel, digest)
 
 
-def test_ac34_state_hash_is_the_sha256_of_the_file_bytes(mini_repo, mini_index):
+def test_state_hash_is_the_sha256_of_the_file_bytes(mini_repo, mini_index):
     """Verify file digest is reproducible by hand from disk contents."""
     state = _state(mini_index)
     rel = "pkg/gateway.py"
@@ -440,7 +440,7 @@ def test_ac34_state_hash_is_the_sha256_of_the_file_bytes(mini_repo, mini_index):
     assert state["files"][rel] == expected
 
 
-def test_ac35_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
+def test_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
     """Verify rebuilding after a one-file edit leaves every other entry unchanged."""
     out = build_mini_index(mini_repo, tmp_path / "state_idx")
     before = _state(out)["files"]
@@ -676,7 +676,7 @@ def _resolved_push_git_calls(
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_iss165_the_token_never_appears_in_a_git_argv_word(tmp_path):
+def test_the_token_never_appears_in_a_git_argv_word(tmp_path):
     """The exact secret value must not be a word in any `git` invocation's
     argv -- not just the `push` call, since a leak in `remote add` or
     elsewhere would be just as visible to `ps`."""
@@ -688,7 +688,7 @@ def test_iss165_the_token_never_appears_in_a_git_argv_word(tmp_path):
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_iss165_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
+def test_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
     """`git push`'s own argv is exactly the safe, credential-free form --
     the URL-with-embedded-token this issue reports is gone, and so is any
     other rendering of the credential (e.g. a bare `x-access-token`)."""
@@ -796,7 +796,7 @@ def _resolved_pip_calls(tmp_path: Path, version: str, *, pyproject: bool = True)
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_iss204_a_blank_version_installs_the_action_checkout(tmp_path):
+def test_a_blank_version_installs_the_action_checkout(tmp_path):
     """#204 (a): the default path is unchanged -- `uses: ./` and every workflow
     that never sets `version` still gets an editable install of the checkout."""
     action_path = (tmp_path / "action_checkout").as_posix()
@@ -814,7 +814,7 @@ def test_iss204_a_blank_version_installs_the_action_checkout(tmp_path):
         "git+https://github.com/Srinivasan-78/repo2graph@v1",
     ],
 )
-def test_iss204_a_non_blank_version_is_the_spec_pip_receives(tmp_path, version):
+def test_a_non_blank_version_is_the_spec_pip_receives(tmp_path, version):
     """#204 (b): the reported bug. The fixture writes a pyproject.toml into
     the action checkout -- the precondition the bug lived on, and the normal
     case for a composite action -- and a pinned spec must still reach pip
@@ -829,7 +829,7 @@ def test_iss204_a_non_blank_version_is_the_spec_pip_receives(tmp_path, version):
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_iss204_a_blank_version_with_no_checkout_source_fails_loudly(tmp_path):
+def test_a_blank_version_with_no_checkout_source_fails_loudly(tmp_path):
     """#204 (c): blank + nothing to install from is a hard error naming the
     input, not a silent `pip install ''` or a stale hardcoded fallback."""
     rc, calls = _resolved_pip_calls(tmp_path, "", pyproject=False)
@@ -837,7 +837,7 @@ def test_iss204_a_blank_version_with_no_checkout_source_fails_loudly(tmp_path):
     assert calls == [], calls
 
 
-def test_iss204_the_version_input_defaults_to_blank():
+def test_the_version_input_defaults_to_blank():
     """#204 (d): the default must stay blank. A non-empty default would flip
     every existing workflow -- CI's own `uses: ./` included -- from installing
     the checkout to installing a published spec."""
@@ -846,7 +846,7 @@ def test_iss204_the_version_input_defaults_to_blank():
     assert inputs["version"].get("default") == "", inputs["version"]
 
 
-def test_iss204_the_install_step_gates_on_the_version_input():
+def test_the_install_step_gates_on_the_version_input():
     """Verify source-level guard on the install step gate so the file test
     is not the first branch, and -n/-z casing behavior is respected."""
     body = _run_body(
@@ -857,7 +857,7 @@ def test_iss204_the_install_step_gates_on_the_version_input():
     assert first_test.group(1) == '-n "$R2G_VERSION"', first_test.group(1)
 
 
-def test_iss108_examples_workflow_routes_inputs_through_env():
+def test_examples_workflow_routes_inputs_through_env():
     """Verify examples.yml routes ${{ inputs.repo }} via env:, not direct run: interpolation."""
     workflow_path = REPO_ROOT / ".github" / "workflows" / "examples.yml"
     assert workflow_path.exists()
@@ -869,7 +869,7 @@ def test_iss108_examples_workflow_routes_inputs_through_env():
     assert '"$INPUT_REPO"' in run_part
 
 
-def test_iss137_generate_examples_split_rule(tmp_path):
+def test_generate_examples_split_rule(tmp_path):
     """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
     import gzip
     import importlib.util
@@ -892,7 +892,7 @@ def test_iss137_generate_examples_split_rule(tmp_path):
     assert lines[0] == record
 
 
-def test_iss139_commit_release_api_timeout(monkeypatch):
+def test_commit_release_api_timeout(monkeypatch):
     """Verify api() in commit_release_via_api.py passes timeout to urlopen."""
     import importlib.util
     import io
@@ -988,7 +988,7 @@ def _run_commit_release(mod, monkeypatch, *, branch_exists, file_path="release.t
     return rest_calls, graphql_calls
 
 
-def test_iss146_commit_release_api_path_posix(monkeypatch):
+def test_commit_release_api_path_posix(monkeypatch):
     """Verify commit_release_via_api.py normalizes Windows paths."""
     mod = _load_commit_release_module()
     _, graphql_calls = _run_commit_release(
@@ -1146,7 +1146,7 @@ def _subprocess_spawn_calls(path: Path):
     return found
 
 
-def test_iss240_every_subprocess_spawn_in_the_package_closes_stdin():
+def test_every_subprocess_spawn_in_the_package_closes_stdin():
     """Verify no subprocess.run/Popen/call in repo2graph/ inherits standard input."""
     package = REPO_ROOT / "repo2graph"
     offenders = []

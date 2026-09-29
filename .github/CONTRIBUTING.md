@@ -1108,7 +1108,7 @@ Size indicates estimated engineering effort (S/M/L).
 
 | # | Item | Size | Why this rank |
 |---|------|------|---------------|
-| 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** *(Shipped)* | S | **Shipped in PR #54:** CI installs `[dev,mcp]` and runs `test_ac34_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC. (Previously `serve()` had no automated test coverage). |
+| 1 | **CI job that installs the `[mcp]` extra and does one stdio round trip** *(Shipped)* | S | **Shipped in PR #54:** CI installs `[dev,mcp]` and runs `test_stdio_server_roundtrip`, exercising `serve()` end-to-end over stdio JSON-RPC. (Previously `serve()` had no automated test coverage). |
 | 2 | **Say so when fusion silently switches itself off** *(Shipped)* | S | **Shipped:** `_vectors_for` now returns a reason, `score_rrf` emits a `rag_fusion_disabled` JSON line on stderr and records `Index.fusion_coverage`, and `repo2graph embed --verify-rag` self-tests the whole path. |
 | 3 | **Port the MCP server to the 2.x SDK API** (detail below) | M | Deliberate deferral, not debt — but the `<2` pin ages, and 1.x will stop getting fixes. |
 | 4 | **Graph-level incremental rebuild** *(Shipped)* | L | **Shipped as `repo2graph build --incremental`.** Resolved the way the analysis below predicted it had to be: cache `ParsedFile` per file, re-run the *whole* resolution phase every build. See "Incremental rebuild, as shipped". |

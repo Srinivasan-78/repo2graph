@@ -228,7 +228,7 @@ def _install_fake_sdk(monkeypatch):
     is gone and a 1.x-shaped fake would only assert that dead code still
     exists. The guard that actually refuses a 1.x install reads the installed
     distribution's version, not the module's shape, so it cannot be exercised
-    by a fake at all; `tests/test_mcp.py::test_iss407_a_1x_sdk_is_refused_at_startup_not_hung`
+    by a fake at all; `tests/test_mcp.py::test_a_1x_sdk_is_refused_at_startup_not_hung`
     covers it against a patched version instead.
     """
     import types as pytypes

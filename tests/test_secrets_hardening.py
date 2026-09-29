@@ -348,7 +348,7 @@ def test_false_positive_resistance():
 # ---------------------------------------------------------------------------
 
 
-def test_iss338_lowercase_hex_assignment_is_detected():
+def test_lowercase_hex_assignment_is_detected():
     """The exact repro from #338: an all-lowercase hex value must be flagged."""
     text = 'api_key = "abcdef12345678901234567890123456"'
     findings = scan_content_secrets(text)
@@ -356,14 +356,14 @@ def test_iss338_lowercase_hex_assignment_is_detected():
     assert text[11:43] == "abcdef12345678901234567890123456"
 
 
-def test_iss338_mixed_case_assignment_still_detected():
+def test_mixed_case_assignment_still_detected():
     """The pre-fix behaviour (one uppercase char flips detection on) must hold too."""
     text = 'api_key = "Abcdef12345678901234567890123456"'
     findings = scan_content_secrets(text)
     assert findings == [("CREDENTIAL_ASSIGNMENT", 11, 43)]
 
 
-def test_iss338_lowercase_alphanumeric_api_key_is_redacted():
+def test_lowercase_alphanumeric_api_key_is_redacted():
     text = 'api_key = "4f6a8b1c2d3e4f5a6b7c8d9e0f1a2b3c"'
     redacted, count = redact_content(text)
     assert count == 1
@@ -379,7 +379,7 @@ def test_iss338_lowercase_alphanumeric_api_key_is_redacted():
         'secret = "just_snake_case_words_only"',
     ],
 )
-def test_iss338_pure_word_assignments_stay_ignored(text):
+def test_pure_word_assignments_stay_ignored(text):
     """Plain identifiers/words -- no digit at all -- must still be ignored.
 
     This is the regression guard: a fix that widens detection to *any*
@@ -420,7 +420,7 @@ _VENDOR_FIXTURES: tuple[tuple[str, str], ...] = (
 
 
 @pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
-def test_iss368_vendor_prefix_is_scanned(expected_type, secret):
+def test_vendor_prefix_is_scanned(expected_type, secret):
     text = f'token = "{secret}"'
     findings = scan_content_secrets(text)
     types = {f[0] for f in findings}
@@ -428,7 +428,7 @@ def test_iss368_vendor_prefix_is_scanned(expected_type, secret):
 
 
 @pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
-def test_iss368_vendor_prefix_is_redacted_preserving_lines(expected_type, secret):
+def test_vendor_prefix_is_redacted_preserving_lines(expected_type, secret):
     """redact-match redacts the fixture and the newline count is unchanged."""
     text = f"line one\ntoken = '{secret}'\nline three\n"
     redacted, count = redact_content(text)
@@ -440,7 +440,7 @@ def test_iss368_vendor_prefix_is_redacted_preserving_lines(expected_type, secret
     assert "line three" in redacted
 
 
-def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
+def test_anthropic_key_types_correctly_not_as_generic_openai():
     """`sk-ant-...` must be typed as anthropic_key, not the looser openai_key.
 
     Both patterns match the same span; this is the ordering/dedup contract
@@ -475,7 +475,7 @@ def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
         "home/.config/gh/hosts.yml",
     ],
 )
-def test_iss368_new_secret_paths_are_detected(path):
+def test_new_secret_paths_are_detected(path):
     assert _is_secret_path(path), f"{path!r} should be classified as a secret path"
 
 
@@ -493,7 +493,7 @@ def test_iss368_new_secret_paths_are_detected(path):
         "src/hosts.yml",
     ],
 )
-def test_iss368_sibling_files_in_vendor_dirs_stay_unflagged(path):
+def test_sibling_files_in_vendor_dirs_stay_unflagged(path):
     assert not _is_secret_path(path), f"{path!r} should NOT be classified as a secret path"
 
 

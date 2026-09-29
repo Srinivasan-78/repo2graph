@@ -299,7 +299,7 @@ def compressed_form(text: str) -> tuple[list[str], list[str]]:
 # ==========================================================================
 
 
-def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
+def test_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
     """Verify adj entries are (dst, type, direction, edge) and confidence reads."""
     entries = rag_index.adj[SYM_DISPATCH]
     assert entries, "fixture produced no adjacency for dispatch"
@@ -311,7 +311,7 @@ def test_ac1_adjacency_entries_are_four_tuples_with_edge_records(rag_index):
     assert any(c < 1.0 for c in confidences), confidences
 
 
-def test_ac2_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
+def test_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
     """Verify Index.overview mirrors agent/overview.md; missing file -> ""."""
     # human/overview.md and agent/overview.md now carry different content (the
     # human copy is the structured table view, the agent copy is the prose
@@ -325,7 +325,7 @@ def test_ac2_overview_is_loaded_and_absence_is_graceful(rag_out, bare_out):
     assert Index(bare_out).overview == ""
 
 
-def test_ac3_manifest_is_loaded_and_unparseable_degrades(rag_out):
+def test_manifest_is_loaded_and_unparseable_degrades(rag_out):
     """Verify Index.manifest is the parsed manifest; junk/absent -> {}."""
     idx = Index(rag_out)
     assert isinstance(idx.manifest, dict)
@@ -344,7 +344,7 @@ def test_ac3_manifest_is_loaded_and_unparseable_degrades(rag_out):
 # ==========================================================================
 
 
-def test_ac4_min_confidence_prunes_ambiguous_calls(rag_index):
+def test_min_confidence_prunes_ambiguous_calls(rag_index):
     """Verify no CALLS tuple whose edge record has confidence < 1.0 survives."""
     got = rag_index.expand([SYM_DISPATCH], min_confidence=1.0)
     for dst, etype, _direction, src in got:
@@ -358,7 +358,7 @@ def test_ac4_min_confidence_prunes_ambiguous_calls(rag_index):
     assert SYM_BETA_HANDLE not in dsts(got)
 
 
-def test_ac5_confidence_gate_never_drops_non_calls_edges(rag_index):
+def test_confidence_gate_never_drops_non_calls_edges(rag_index):
     """Verify INHERITS/DEFINES carry no `confidence` and must survive the gate."""
     got = rag_index.expand([SYM_CHILD], min_confidence=1.0)
     assert edge_record(rag_index, SYM_CHILD, SYM_BASE, "INHERITS") is not None
@@ -369,7 +369,7 @@ def test_ac5_confidence_gate_never_drops_non_calls_edges(rag_index):
     assert FILE_SESSION in dsts(from_sym), from_sym
 
 
-def test_ac6_lower_min_confidence_is_a_strict_superset(rag_index):
+def test_lower_min_confidence_is_a_strict_superset(rag_index):
     """Verify 0.5 returns strictly more nodes than 1.0 on the ambiguous fixture."""
     strict = dsts(rag_index.expand([SYM_DISPATCH], min_confidence=1.0))
     loose = dsts(rag_index.expand([SYM_DISPATCH], min_confidence=0.5))
@@ -377,7 +377,7 @@ def test_ac6_lower_min_confidence_is_a_strict_superset(rag_index):
     assert {SYM_ALPHA_HANDLE, SYM_BETA_HANDLE} <= loose
 
 
-def test_ac7_default_edge_directions(rag_index):
+def test_default_edge_directions(rag_index):
     """Verify CALLS out = callees, CALLS in = callers, DEFINES in = parent."""
     out = rag_index.expand([SYM_AUTHENTICATE], min_confidence=1.0)
     assert (SYM_VERIFY, "CALLS", "out", SYM_AUTHENTICATE) in out, out
@@ -395,7 +395,7 @@ def test_ac7_default_edge_directions(rag_index):
 # ==========================================================================
 
 
-def test_ac8_exact_identifier_boost_beats_a_lexical_decoy(rag_index):
+def test_exact_identifier_boost_beats_a_lexical_decoy(rag_index):
     """Verify the symbol chunk outranks the decoy chunk for a pinpoint query."""
     scored = rag_index.score("normalize_provider")
     assert scored, "fixture produced no hit for normalize_provider"
@@ -403,7 +403,7 @@ def test_ac8_exact_identifier_boost_beats_a_lexical_decoy(rag_index):
     assert top["node_id"].endswith("::normalize_provider"), top["node_id"]
 
 
-def test_ac9_score_invariants_survive_the_boost(rag_index):
+def test_score_invariants_survive_the_boost(rag_index):
     """Verify still sorted descending, still only chunks holding a query term."""
     scored = rag_index.score("normalize_provider verify_token")
     assert scored == sorted(scored, reverse=True)
@@ -413,13 +413,13 @@ def test_ac9_score_invariants_survive_the_boost(rag_index):
         assert terms & set(tokenize((c.get("text") or "") + (c.get("qualname") or "")))
 
 
-def test_ac10_score_rrf_without_vectors_equals_score(rag_index):
+def test_score_rrf_without_vectors_equals_score(rag_index):
     """Verify no vectors and no embedder -> byte-for-byte score()."""
     q = "login handshake credential"
     assert rag_index.score_rrf(q) == rag_index.score(q)
 
 
-def test_ac10_importing_query_pulls_in_no_optional_dependency():
+def test_importing_query_pulls_in_no_optional_dependency():
     """Verify importing repo2graph.query imports neither numpy nor
     sentence_transformers. Run out-of-process so an unrelated pytest plugin
     that happens to import numpy cannot mask the regression."""
@@ -437,7 +437,7 @@ def test_ac10_importing_query_pulls_in_no_optional_dependency():
     assert out == "False False", (out, err)
 
 
-def test_ac11_score_rrf_with_a_stub_embedder(rag_index):
+def test_score_rrf_with_a_stub_embedder(rag_index):
     """Verify a stub embedder returning plain lists is enough; no numpy needed."""
     numpy_was_loaded = "numpy" in sys.modules
 
@@ -467,7 +467,7 @@ def test_ac11_score_rrf_with_a_stub_embedder(rag_index):
 # ==========================================================================
 
 
-def test_ac12_retrieve_still_finds_seeds_and_graph_neighbours(rag_out):
+def test_retrieve_still_finds_seeds_and_graph_neighbours(rag_out):
     """Verify retrieve() keeps returning lexical seeds plus expanded neighbours."""
     hits = Index(rag_out).retrieve(ABLATION_QUERY, k=3, hops=1)
     assert any(h["path"] == "pkg/session.py" for h in hits), hits
@@ -475,7 +475,7 @@ def test_ac12_retrieve_still_finds_seeds_and_graph_neighbours(rag_out):
     assert all("score" in h and "why" in h for h in hits)
 
 
-def test_ac13_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, capsys):
+def test_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, capsys):
     """Verify positional order preserved; `query` output still == format_pack."""
     import inspect
 
@@ -504,7 +504,7 @@ def test_ac13_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, cap
     )
 
 
-def test_ac13_retrieve_keeps_every_edge_direction(dirs_out):
+def test_retrieve_keeps_every_edge_direction(dirs_out):
     """Verify retrieve() must not inherit expand()'s DEFAULT_EDGE_DIRS.
 
     The assertion above compares `cmd_query` output against `format_pack(
@@ -543,7 +543,7 @@ def test_ac13_retrieve_keeps_every_edge_direction(dirs_out):
 
 
 @pytest.mark.parametrize("budget", [200, 1000, 4000, 24000])
-def test_ac14_whole_markdown_respects_the_budget(rag_index, budget):
+def test_whole_markdown_respects_the_budget(rag_index, budget):
     """Verify budget_chars bounds the WHOLE markdown, map and headers included."""
     res = rag_index.pack_context(ABLATION_QUERY, budget_chars=budget)
     assert len(res["markdown"]) <= budget, len(res["markdown"])
@@ -551,7 +551,7 @@ def test_ac14_whole_markdown_respects_the_budget(rag_index, budget):
     assert res["used_chars"] == len(res["markdown"])
 
 
-def test_ac15_every_block_has_a_citation_header_matching_its_chunk(rag_index):
+def test_every_block_has_a_citation_header_matching_its_chunk(rag_index):
     """Verify header path/start/end equal the chunk's path/start_line/end_line."""
     res = rag_index.pack_context(ABLATION_QUERY, budget_chars=0)
     _map_text, blocks = split_pack(res["markdown"])
@@ -561,7 +561,7 @@ def test_ac15_every_block_has_a_citation_header_matching_its_chunk(rag_index):
         assert (b["path"], b["start"], b["end"]) in by_span, b
 
 
-def test_ac16_blocks_are_sorted_by_path_then_start_line(rag_index):
+def test_blocks_are_sorted_by_path_then_start_line(rag_index):
     """Verify non-decreasing (path, start_line) order in the markdown."""
     res = rag_index.pack_context(ABLATION_QUERY, budget_chars=0)
     _map_text, blocks = split_pack(res["markdown"])
@@ -569,7 +569,7 @@ def test_ac16_blocks_are_sorted_by_path_then_start_line(rag_index):
     assert keys == sorted(keys), keys
 
 
-def test_ac17_map_prepend_then_separator_then_context(rag_index, rag_out):
+def test_map_prepend_then_separator_then_context(rag_index, rag_out):
     """Verify map, a bare `---` line, then the blocks; no map -> still blocks."""
     res = rag_index.pack_context(ABLATION_QUERY, budget_chars=0)
     md = res["markdown"]
@@ -586,7 +586,7 @@ def test_ac17_map_prepend_then_separator_then_context(rag_index, rag_out):
     assert "### [cite:" in bare["markdown"]
 
 
-def test_ac18_map_entrypoints_come_from_the_manifest(rag_index):
+def test_map_entrypoints_come_from_the_manifest(rag_index):
     """Verify first listed qualname == manifest["entrypoints"][0]["qualname"]."""
     entry = rag_index.manifest["entrypoints"]
     assert entry, "fixture produced no entrypoints"
@@ -599,7 +599,7 @@ def test_ac18_map_entrypoints_come_from_the_manifest(rag_index):
     assert min(present, key=present.get) == entry[0]["qualname"], present
 
 
-def test_ac19_seeds_are_prioritised_over_neighbours(rag_index):
+def test_seeds_are_prioritised_over_neighbours(rag_index):
     """Verify a pack never holds a neighbour without holding a seed."""
     for budget in range(400, 6000, 200):
         res = rag_index.pack_context(ABLATION_QUERY, budget_chars=budget)
@@ -608,7 +608,7 @@ def test_ac19_seeds_are_prioritised_over_neighbours(rag_index):
             assert "seed" in whys, (budget, whys)
 
 
-def test_ac19_a_squeezed_neighbour_is_compressed_not_truncated(rag_index):
+def test_a_squeezed_neighbour_is_compressed_not_truncated(rag_index):
     """Verify the compressed form is header lines + the signature line."""
     full = {c["id"]: c for c in rag_index.pack_context(ABLATION_QUERY, budget_chars=0)["chunks"]}
     for budget in range(400, 8000, 100):
@@ -631,7 +631,7 @@ def test_ac19_a_squeezed_neighbour_is_compressed_not_truncated(rag_index):
     pytest.fail("no budget in 400..8000 produced a compressed neighbour block")
 
 
-def test_ac20_expand_graph_false_is_seeds_only(rag_index):
+def test_expand_graph_false_is_seeds_only(rag_index):
     """Verify no neighbours, every chunk's why is `seed`."""
     res = rag_index.pack_context(ABLATION_QUERY, budget_chars=0, expand_graph=False)
     assert res["neighbors"] == []
@@ -639,7 +639,7 @@ def test_ac20_expand_graph_false_is_seeds_only(rag_index):
     assert {c["why"] for c in res["chunks"]} == {"seed"}
 
 
-def test_ac21_ablation_graph_expansion_finds_what_lexical_misses(rag_index):
+def test_ablation_graph_expansion_finds_what_lexical_misses(rag_index):
     """Verify set membership only -- no score, no rank, no ordering asserted."""
     lexical = {
         c["node_id"]
@@ -662,14 +662,14 @@ def test_ac21_ablation_graph_expansion_finds_what_lexical_misses(rag_index):
 # ==========================================================================
 
 
-def test_ac22_rag_with_one_positional_is_the_query(rag_out, capsys):
+def test_rag_with_one_positional_is_the_query(rag_out, capsys):
     """Verify `rag -o IDX "question"` -- one positional, prints markdown."""
     main(["rag", "-o", str(rag_out), "how does login handshake credential work?"])
     printed = capsys.readouterr().out
     assert "### [cite:" in printed, printed[:400]
 
 
-def test_ac23_target_index_dir_is_used_as_is(rag_out, capsys):
+def test_target_index_dir_is_used_as_is(rag_out, capsys):
     """Verify an existing index target is not rebuilt."""
     manifest = artifact_path(rag_out, "manifest.json")
     before = (manifest.stat().st_mtime_ns, manifest.read_bytes())
@@ -678,7 +678,7 @@ def test_ac23_target_index_dir_is_used_as_is(rag_out, capsys):
     assert (manifest.stat().st_mtime_ns, manifest.read_bytes()) == before
 
 
-def test_ac23_target_source_dir_is_built_first(rag_repo, tmp_path, capsys):
+def test_target_source_dir_is_built_first(rag_repo, tmp_path, capsys):
     """Verify a source directory target is built into -o before retrieval."""
     new_out = tmp_path / "fresh"
     main(["rag", str(rag_repo), ABLATION_QUERY, "-o", str(new_out)])
@@ -686,7 +686,7 @@ def test_ac23_target_source_dir_is_built_first(rag_repo, tmp_path, capsys):
     assert "### [cite:" in capsys.readouterr().out
 
 
-def test_ac24_unresolvable_target_names_all_three_forms(tmp_path):
+def test_unresolvable_target_names_all_three_forms(tmp_path):
     """Verify the error tells the user every accepted target form."""
     with pytest.raises(SystemExit) as exc:
         main(["rag", "not/a real spec/x", "q", "-o", str(tmp_path / "o")])
@@ -695,7 +695,7 @@ def test_ac24_unresolvable_target_names_all_three_forms(tmp_path):
         assert word in msg, msg
 
 
-def test_ac24_missing_index_reuses_the_existing_message(tmp_path):
+def test_missing_index_reuses_the_existing_message(tmp_path):
     """Verify the `_require_index` wording is reused verbatim."""
     empty = tmp_path / "empty"
     with pytest.raises(SystemExit) as exc:
@@ -703,7 +703,7 @@ def test_ac24_missing_index_reuses_the_existing_message(tmp_path):
     assert f"no index at {empty}: run `repo2graph build" in str(exc.value)
 
 
-def test_ac25_unit_float_validator(rag_out):
+def test_unit_float_validator(rag_out):
     """Verify --min-conf rejects nan/inf/out-of-range/garbage, accepts [0, 1]."""
     from repo2graph import cli
 
@@ -716,7 +716,7 @@ def test_ac25_unit_float_validator(rag_out):
 
 
 @pytest.mark.parametrize("bad", ["nan", "inf", "-0.1", "1.1", "abc"])
-def test_ac25_bad_min_conf_exits_non_zero(rag_out, bad, capsys):
+def test_bad_min_conf_exits_non_zero(rag_out, bad, capsys):
     """Verify argparse turns a bad --min-conf into a non-zero SystemExit that
     names the offending flag and value (not some unrelated parse error)."""
     with pytest.raises(SystemExit) as exc:
@@ -728,13 +728,13 @@ def test_ac25_bad_min_conf_exits_non_zero(rag_out, bad, capsys):
 
 
 @pytest.mark.parametrize("good", ["0", "0.5", "1.0"])
-def test_ac25_good_min_conf_is_accepted(rag_out, good, capsys):
+def test_good_min_conf_is_accepted(rag_out, good, capsys):
     """Verify 0, 0.5 and 1.0 are all accepted."""
     main(["rag", ABLATION_QUERY, "-o", str(rag_out), "--min-conf", good])
     assert "### [cite:" in capsys.readouterr().out
 
 
-def test_ac26_format_json_prints_the_pack_object(rag_out, capsys):
+def test_format_json_prints_the_pack_object(rag_out, capsys):
     """Verify --format json emits markdown/chunks/truncated/used_chars."""
     main(["rag", ABLATION_QUERY, "-o", str(rag_out), "--format", "json"])
     payload = json.loads(capsys.readouterr().out)
@@ -742,7 +742,7 @@ def test_ac26_format_json_prints_the_pack_object(rag_out, capsys):
     assert isinstance(payload["chunks"], list)
 
 
-def test_ac26_rag_defaults(rag_out, monkeypatch, capsys):
+def test_rag_defaults(rag_out, monkeypatch, capsys):
     """Verify -k 8, --hops 1, --budget 24000, --min-conf 1.0."""
     seen = {}
 
@@ -776,7 +776,7 @@ def test_ac26_rag_defaults(rag_out, monkeypatch, capsys):
     assert seen["min_confidence"] == 1.0
 
 
-def test_ac26_no_expand_flag_reaches_pack_context(rag_out, monkeypatch, capsys):
+def test_no_expand_flag_reaches_pack_context(rag_out, monkeypatch, capsys):
     """Verify --no-expand turns off graph expansion."""
     seen = {}
 
@@ -799,7 +799,7 @@ def test_ac26_no_expand_flag_reaches_pack_context(rag_out, monkeypatch, capsys):
     assert seen.get("expand_graph") is False, seen
 
 
-def test_ac27_existing_subcommands_are_untouched(rag_repo, tmp_path, capsys):
+def test_existing_subcommands_are_untouched(rag_repo, tmp_path, capsys):
     """Verify build / query / map / stats keep working exactly as before."""
     out = tmp_path / "all"
     main(["build", str(rag_repo), "-o", str(out)])
@@ -885,7 +885,7 @@ def clear_provider_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_ac28_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
+def test_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
     """Verify the request body carries the grounding rules and the pack; the
     only host contacted is the provider's -- nothing real is dialled."""
     import repo2graph.answer as answer
@@ -929,7 +929,7 @@ def test_ac28_grounded_prompt_and_citations_reach_the_endpoint(monkeypatch):
     assert "Hello world" in sink.getvalue()
 
 
-def test_ac28_real_urllib_path_against_a_localhost_server(monkeypatch):
+def test_real_urllib_path_against_a_localhost_server(monkeypatch):
     """Verify the same contract over a real socket, 127.0.0.1 only."""
     import repo2graph.answer as answer
 
@@ -975,7 +975,7 @@ def test_ac28_real_urllib_path_against_a_localhost_server(monkeypatch):
     assert "hi" in text
 
 
-def test_ac29_no_provider_env_names_all_four_variables(monkeypatch):
+def test_no_provider_env_names_all_four_variables(monkeypatch):
     """Verify the SystemExit message lists every supported env var."""
     import repo2graph.answer as answer
 
@@ -988,7 +988,7 @@ def test_ac29_no_provider_env_names_all_four_variables(monkeypatch):
         assert name in msg, msg
 
 
-def test_ac30_cp1252_stdout_never_raises_unicodeencodeerror(monkeypatch):
+def test_cp1252_stdout_never_raises_unicodeencodeerror(monkeypatch):
     """Verify non-ASCII model output survives a cp1252 console."""
     import repo2graph.answer as answer
 
@@ -1018,7 +1018,7 @@ def test_ac30_cp1252_stdout_never_raises_unicodeencodeerror(monkeypatch):
     assert fake.buffer.getvalue(), "nothing was written to sys.stdout"
 
 
-def test_iss169_writer_uses_stdout_text_not_buffer_bytes(monkeypatch):
+def test_writer_uses_stdout_text_not_buffer_bytes(monkeypatch):
     """Verify _writer(None) must write through sys.stdout's text `write`,
     never through sys.stdout.buffer. Writing raw UTF-8 bytes straight to the
     buffer bypasses TextIOWrapper's console codepage translation on Windows,
@@ -1282,7 +1282,7 @@ def test_compress_pinned_literal_output(rag_index):
     assert "return verify_token(provider)" not in compressed
 
 
-def test_ac4_expand_non_numeric_confidence_handled_defensively(rag_index):
+def test_expand_non_numeric_confidence_handled_defensively(rag_index):
     """S-8: non-numeric or None confidence does not raise and is treated as 0.0."""
     edge_nan = {
         "src": "sym:test_source",
@@ -1367,7 +1367,7 @@ def test_pack_context_exclude_secrets(rag_index):
     assert not any(c.get("path") in (".env", "secret_key.pem") for c in res_excluded["neighbors"])
 
 
-def test_iss83_configurable_secret_denylist(rag_index):
+def test_configurable_secret_denylist(rag_index):
     """Issue 83: pack_context supports user-configurable secret keywords and directories."""
     chunk1 = [c for c in rag_index.chunks if c.get("name") == "authenticate"][0]
     chunk1["path"] = "custom_vault/config.json"
@@ -1394,7 +1394,7 @@ def test_iss83_configurable_secret_denylist(rag_index):
     assert "corp_internal_secret.py" not in res_custom["markdown"]
 
 
-def test_iss83_cli_flags(monkeypatch):
+def test_cli_flags(monkeypatch):
     """Issue 83: CLI supports --secret-keyword, --secret-dir, and --exclude-secrets flags."""
     from repo2graph import cli
 
@@ -1451,7 +1451,7 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
 # ==========================================================================
 
 
-def test_ac31_optional_rag_extra_and_untouched_core_dependencies():
+def test_optional_rag_extra_and_untouched_core_dependencies():
     """Verify the rag extra exists; core deps stay tree-sitter only."""
     try:
         import tomllib
@@ -1466,7 +1466,7 @@ def test_ac31_optional_rag_extra_and_untouched_core_dependencies():
     ]
 
 
-def test_ac32_how_to_read_documents_the_graphrag_protocol(rag_out):
+def test_how_to_read_documents_the_graphrag_protocol(rag_out):
     """Verify HOW_TO_READ mentions pack_context + confidence filtering, and a
     freshly built manifest carries it."""
     joined = "\n".join(export.HOW_TO_READ)
@@ -1480,7 +1480,7 @@ def test_ac32_how_to_read_documents_the_graphrag_protocol(rag_out):
 @pytest.mark.parametrize(
     "rel", ["repo2graph/query.py", "repo2graph/answer.py", "repo2graph/cli.py"]
 )
-def test_ac34_no_splitlines_in_new_code(rel):
+def test_no_splitlines_in_new_code(rel):
     """Verify splitlines() desyncs rows from tree-sitter ."""
     target = REPO_ROOT / rel
     assert target.exists(), f"{rel} does not exist"
@@ -1560,7 +1560,7 @@ def test_pick_provider_google_api_key_fallback():
     assert spec_both["value"] == "gem-key"
 
 
-def test_iss130_default_models_current_and_overridable():
+def test_default_models_current_and_overridable():
     """#130: DEFAULT_MODELS stay on current cheap/fast ids; --model overrides."""
     import repo2graph.answer as answer
 

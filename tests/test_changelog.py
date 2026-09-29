@@ -179,7 +179,7 @@ def test_unchanged_repo_produces_no_delta_sections(tmp_path):
         assert heading not in text
 
 
-def test_iss144_changelog_registered_in_manifest(tmp_path, capsys):
+def test_changelog_registered_in_manifest(tmp_path, capsys):
     """Issue 144: CHANGELOG.md is registered in manifest.json and CLI report written list."""
     repo = write_repo(tmp_path)
     out = tmp_path / "idx"

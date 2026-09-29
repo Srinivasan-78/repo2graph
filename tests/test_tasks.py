@@ -359,7 +359,7 @@ def test_async_build_is_off_by_default(mini_repo, monkeypatch):
     assert seen["tasks"] is not None, "--async-build did not reach serve()"
 
 
-def test_iss151_default_estimator_runs_in_background_thread(tmp_path, monkeypatch):
+def test_default_estimator_runs_in_background_thread(tmp_path, monkeypatch):
     """Issue 151: TaskManager.start does not run _default_estimator synchronously on calling thread."""
     calling_thread_id = threading.get_ident()
     estimator_thread_ids = []

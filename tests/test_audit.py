@@ -276,14 +276,14 @@ def test_identifier_queries_are_not_high_entropy():
     for text in (
         "resolve_import_python3_relative",
         "sha256_of_the_bytes_that_were_indexed",
-        "test_iss25_query_constants_and_budget_bounds",
+        "test_query_constants_and_budget_bounds",
         "parse_source",
         "how does export write manifest",
     ):
         assert sanitize_value("query", text) == text, text
 
-    params = sanitize_params({"query": "test_iss25_query_constants_and_budget_bounds"})
-    assert params == {"query": "test_iss25_query_constants_and_budget_bounds"}
+    params = sanitize_params({"query": "test_query_constants_and_budget_bounds"})
+    assert params == {"query": "test_query_constants_and_budget_bounds"}
 
 
 def test_high_entropy_and_vendor_shapes_still_redact_identifier_fields():

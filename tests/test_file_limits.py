@@ -59,10 +59,10 @@ def test_file_limits(tmp_path):
 # instead: only the one path answers "non-regular and huge", every other path
 # gets the real stat, so the walk, the binary sniff and the yield are otherwise
 # untouched.
-_ISS248_HUGE = 50_000_000
+_HUGE_SIZE = 50_000_000
 
 
-def _iss248_fake_stat(mode: int, size: int):
+def _fake_stat(mode: int, size: int):
     class _St:
         st_mode = mode
         st_size = size
@@ -71,7 +71,7 @@ def _iss248_fake_stat(mode: int, size: int):
 
 
 @pytest.fixture
-def iss248_repo(tmp_path, monkeypatch):
+def oversized_fifo_repo(tmp_path, monkeypatch):
     """A plain (non-git) folder where `special` lstats as an oversized FIFO."""
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -83,31 +83,31 @@ def iss248_repo(tmp_path, monkeypatch):
 
     def fake_lstat(self, *args, **kwargs):
         if os.path.normcase(str(self)) == os.path.normcase(str(special)):
-            return _iss248_fake_stat(statmod.S_IFIFO | 0o644, _ISS248_HUGE)
+            return _fake_stat(statmod.S_IFIFO | 0o644, _HUGE_SIZE)
         return real_lstat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "lstat", fake_lstat)
     return repo
 
 
-def test_iss248_oversized_non_regular_file_is_never_yielded(iss248_repo):
+def test_oversized_non_regular_file_is_never_yielded(oversized_fifo_repo):
     """A non-regular entry must be rejected even when it is also too large and
     `chunk_large_files` says large files are welcome. The type check is not a
     thing a size flag gets to waive."""
     config = BuildConfig(chunk_large_files=True)
     stats = defaultdict(int)
-    got = {rel for rel, _abspath in discover(iss248_repo, stats=stats, config=config)}
+    got = {rel for rel, _abspath in discover(oversized_fifo_repo, stats=stats, config=config)}
     assert "regular.py" in got, got
     assert "special" not in got, got
 
 
-def test_iss248_skipped_too_large_counts_only_oversized_regular_files(iss248_repo):
+def test_skipped_too_large_counts_only_oversized_regular_files(oversized_fifo_repo):
     """The other half of #248: the counter used to be bumped from inside a
     branch that also handled non-regular files, so a FIFO was reported to the
     human overview as a file skipped for its size."""
     config = BuildConfig(chunk_large_files=False)
     stats = defaultdict(int)
-    got = {rel for rel, _abspath in discover(iss248_repo, stats=stats, config=config)}
+    got = {rel for rel, _abspath in discover(oversized_fifo_repo, stats=stats, config=config)}
     assert got == {"regular.py"}, got
     assert stats["skipped_too_large"] == 0, dict(stats)
 

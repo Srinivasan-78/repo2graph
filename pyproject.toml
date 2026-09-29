@@ -70,7 +70,7 @@ rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
 # first `tools/call` on the parallel path
-# (test_iss90_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
+# (test_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
 # ~4 minutes to time out. serve() drove 1.x's decorator API
 # (`hasattr(Server, "list_tools")`) only to work around that generation, and the
 # workaround was untested -- CI always resolved 2.x from PyPI. The lower bound is

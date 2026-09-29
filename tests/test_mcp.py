@@ -39,7 +39,7 @@ def _has_mcp():
     installed, every test gated on it silently skipped forever. Detector:
     reverting this to the old hasattr check makes
     test_stdio_roundtrip_against_a_repo_with_no_index and
-    test_ac34_stdio_server_roundtrip skip again against this repo's own
+    test_stdio_server_roundtrip skip again against this repo's own
     installed SDK.
     """
     try:
@@ -65,7 +65,7 @@ HAS_REAL_MCP = _has_mcp()
 def _has_any_mcp():
     """Any `mcp` SDK is importable at all, supported or not.
 
-    Only `test_iss90_...parallel_path` uses this -- it exercises `serve()`'s
+    Only `test_tools_call_over_serve_completes_on_the_parallel_path` uses this -- it exercises `serve()`'s
     own real behaviour (including refusing an unsupported SDK), so it must
     run whenever *some* SDK is installed, not only a supported one.
     """
@@ -98,7 +98,7 @@ def tokens(text: str) -> int:
 # ==========================================================================
 
 
-def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
+def test_repo_map_is_exactly_map_prepend(mini_index):
     """Verify no reformatting, no truncation, no query argument."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -106,7 +106,7 @@ def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
     assert idx.map_prepend().strip(), "the fixture produced an empty map"
 
 
-def test_iss383_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_index):
+def test_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_index):
     """#383: an index whose tree has not moved reports no staleness note --
     the check must not become a false positive on every call."""
     mcp = mcp_module()
@@ -114,7 +114,7 @@ def test_iss383_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_in
     assert "index may be stale" not in mcp.tool_repo_map(idx)
 
 
-def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
+def test_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
     """#383: `_index_mtime`/`open_index`'s reload check both compare the index
     against itself at an earlier moment -- neither ever looks at the source
     tree, so a long-running server answered from a stale graph indefinitely
@@ -125,7 +125,7 @@ def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index
 
     Detector: reverting `tool_repo_map` to `index.map_prepend()` (its
     pre-#383 body) makes this fail while
-    test_iss383_repo_map_is_silent_when_the_tree_is_unchanged keeps passing.
+    test_repo_map_is_silent_when_the_tree_is_unchanged keeps passing.
     """
     import os
     import time
@@ -153,7 +153,7 @@ def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index
 # ==========================================================================
 
 
-def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
+def test_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
     """Verify at least one `### [cite: path:start-end]` header, and the result
     measures no more than MCP_BUDGET_TOKENS.
 
@@ -176,7 +176,7 @@ def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_i
 
 
 @pytest.mark.parametrize("budget", [10**9, 10**6, 100000])
-def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
+def test_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
     """Verify the ceiling is enforced, not advisory."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -190,7 +190,7 @@ def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
 
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9)])
-def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
+def test_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
     """Verify no crash, no traceback, and still a bounded string."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -199,13 +199,13 @@ def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budge
     assert tokens(out) <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_ac28_ceiling_is_above_the_default(big_index):
+def test_ceiling_is_above_the_default(big_index):
     """Verify the two constants are ordered the way the plan says."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_BUDGET_TOKENS <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_ac28_truncation_happens_on_a_line_boundary(big_index):
+def test_truncation_happens_on_a_line_boundary(big_index):
     """Verify a clamped result is still parseable markdown -- no half line."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -222,7 +222,7 @@ def test_ac28_truncation_happens_on_a_line_boundary(big_index):
 # ==========================================================================
 
 
-def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
+def test_repo_search_never_returns_a_secret_chunk(mini_index):
     """Verify the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
     still must not appear; the same query with exclude_secrets=False does
     return it, which is what makes this a real test."""
@@ -245,7 +245,7 @@ def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
     assert "abc123deadbeef" not in out
 
 
-def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
+def test_repo_map_and_neighbours_also_exclude_secrets(mini_index):
     """Verify the other two tools must not become the leak instead."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -259,7 +259,7 @@ def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
 # ==========================================================================
 
 
-def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
+def test_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
     """Verify route_request -> audit_event over CALLS out is in the fixture
     graph, so it must be named, with its edge type and its direction."""
     mcp = mcp_module()
@@ -277,7 +277,7 @@ def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_inde
     assert "out" in out, out
 
 
-def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
+def test_an_unknown_node_id_returns_a_short_message(mini_index):
     """Verify not found, not a traceback, and not a wall of text."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -287,7 +287,7 @@ def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
     assert len(out) <= 400, len(out)
 
 
-def test_ac30_neighbours_respects_its_limit(mini_index):
+def test_neighbours_respects_its_limit(mini_index):
     """Verify an agent-facing tool must be bounded here too."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -301,7 +301,7 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 # ==========================================================================
 
 
-def test_ac31_tool_descriptions_stay_under_budget():
+def test_tool_descriptions_stay_under_budget():
     """Verify the published tool set, capped under a combined character budget.
 
     The character budget balances agent context overhead against Glama TDQS
@@ -338,9 +338,6 @@ def test_ac31_tool_descriptions_stay_under_budget():
         )
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())
     assert total <= 6000, f"Combined tool descriptions ({total} chars) exceed 6000-char budget"
-
-
-test_ac31_tool_descriptions_stay_under_600_chars = test_ac31_tool_descriptions_stay_under_budget
 
 
 def test_tool_descriptions_contain_usage_guidance_and_siblings():
@@ -492,7 +489,7 @@ def test_list_tools_returns_quality_annotations():
 
 
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
-def test_iss292_annotations_are_honest_about_auto_build():
+def test_annotations_are_honest_about_auto_build():
     """#292: a client inspecting annotations must not be told a tool is
     read-only when its first call, on a server that can auto-build, may
     parse the whole repository, run git, and write `.r2g/**` to disk.
@@ -527,7 +524,7 @@ def test_iss292_annotations_are_honest_about_auto_build():
             )
 
 
-def test_iss292_repo_build_status_is_the_only_non_build_capable_tool():
+def test_repo_build_status_is_the_only_non_build_capable_tool():
     """Pins BUILD_CAPABLE_TOOLS against `run_tool`'s own special case, so a
     future tool added to TOOL_DESCRIPTIONS without updating the annotation
     set fails loudly here rather than silently miscategorising a new tool.
@@ -563,7 +560,7 @@ def requirement_names(specs):
     return out
 
 
-def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
+def test_mcp_is_an_optional_extra_with_a_console_script():
     """Verify `mcp` extra + `repo2graph-mcp` entry point."""
     data = load_pyproject()
     extras = data["project"]["optional-dependencies"]
@@ -574,7 +571,7 @@ def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
     assert scripts.get("repo2graph") == "repo2graph.cli:main", scripts
 
 
-def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
+def test_runtime_dependencies_are_still_only_tree_sitter():
     """Verify a bare `pip install repo2graph` brings in nothing new."""
     data = load_pyproject()
     assert requirement_names(data["project"]["dependencies"]) == {
@@ -583,7 +580,7 @@ def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
     }
 
 
-def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
+def test_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
     """Verify a user without the extra gets an actionable message and a
     non-zero exit, never an ImportError traceback."""
     mcp = mcp_module()
@@ -595,7 +592,7 @@ def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeyp
     assert exc.value.code not in (0, None)
 
 
-def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
+def test_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
     """Verify the guard lives at the import site, not only in main()."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
@@ -604,7 +601,7 @@ def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monke
     assert 'pip install "repo2graph[mcp]"' in str(exc.value)
 
 
-def test_ac33_open_index_caches_one_index_per_directory(mini_index):
+def test_open_index_caches_one_index_per_directory(mini_index):
     """Verify the server must not re-read the whole index per tool call."""
     mcp = mcp_module()
     first = mcp.open_index(mini_index)
@@ -619,7 +616,7 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
 
 
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
-def test_ac34_stdio_server_roundtrip(mini_index):
+def test_stdio_server_roundtrip(mini_index):
     """Verify automated round-trip against the live stdio server."""
     proc = subprocess.Popen(
         [sys.executable, "-m", "repo2graph.mcp", "--out", str(mini_index)],
@@ -962,7 +959,7 @@ def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
     assert mcp._require_sdk() is fake
 
 
-def test_iss407_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
+def test_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
     """#407: mcp 1.x hangs on the server's first tool call rather than
     erroring, deterministically (~4 min timeout under 1.30.0). Dropping 1.x
     support (#291) means the version is checked here, at startup, instead of
@@ -1363,9 +1360,7 @@ POOL_PROBE_TIMEOUT = 180
 SERVE_TIMEOUT = 240
 
 
-def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
-    wide_repo, tmp_path, monkeypatch
-):
+def test_auto_build_reaches_the_pool_and_detaches_its_workers(wide_repo, tmp_path, monkeypatch):
     """The pin is gone: above PARALLEL_MIN_FILES the auto-build really forks
     out, and the pool it builds carries the stdio initializer.
 
@@ -1400,7 +1395,7 @@ def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
     assert "sym:widepkg/mod0.py::dispatch_0" in idx.nodes
 
 
-def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
+def test_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
     """The mechanism itself, in a child process whose stdio is a pipe.
 
     `_pool_stdio_probe.py` starts a pool with the exact kwargs `parse_all`
@@ -1446,7 +1441,7 @@ def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
 
 
 @pytest.mark.skipif(not HAS_ANY_MCP, reason="needs the mcp extra (either SDK major)")
-def test_iss90_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
+def test_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
     """the golden baseline, end to end: a real `serve()` over real pipes against a repo above
     PARALLEL_MIN_FILES answers its first tool call.
 
@@ -1645,7 +1640,7 @@ def test_r9_sane_string_arguments_are_left_alone(mini_index):
     assert seen["query"] == MINI_QUERY
 
 
-def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
+def test_mcp_open_index_detects_external_rebuild(tmp_path):
     """Issue 125: open_index detects when index was rebuilt externally and reloads."""
     import os
     import time
@@ -1680,7 +1675,7 @@ def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
     assert cache.get("test_key") is None
 
 
-def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
+def test_repo_neighbours_explores_dir_file_and_calls(mini_index):
     """Issue 124: repo_neighbours explores CONTAINS edges for dirs and files, and includes low-confidence calls."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -1705,7 +1700,7 @@ def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
 # ==========================================================================
 
 
-def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
+def test_concurrent_open_index_builds_the_index_exactly_once(
     mini_index, mini_repo, tmp_path, monkeypatch
 ):
     """Two simultaneous first calls must cost one build and share one Index.

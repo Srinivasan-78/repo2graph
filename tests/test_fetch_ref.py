@@ -132,13 +132,13 @@ REJECTED_DEGENERATE = ["", "main\x00", "\x00"]
 
 
 @pytest.mark.parametrize("ref", REJECTED + REJECTED_DEGENERATE)
-def test_iss237_parse_ref_rejects(ref):
+def test_parse_ref_rejects(ref):
     with pytest.raises(ValueError, match="not a valid git ref"):
         fetch.parse_ref(ref)
 
 
 @pytest.mark.parametrize("ref", REJECTED)
-def test_iss237_clone_rejects_before_any_subprocess(ref, tmp_path, monkeypatch, no_token):
+def test_clone_rejects_before_any_subprocess(ref, tmp_path, monkeypatch, no_token):
     """The acceptance condition: ValueError, and git is never spawned.
 
     See `_no_subprocess` for why that second half is a tripwire.
@@ -150,7 +150,7 @@ def test_iss237_clone_rejects_before_any_subprocess(ref, tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("ref", ["--upload-pack=/bin/false", "-x", "../main"])
-def test_iss237_clone_rejects_on_the_fresh_clone_path_too(ref, tmp_path, monkeypatch, no_token):
+def test_clone_rejects_on_the_fresh_clone_path_too(ref, tmp_path, monkeypatch, no_token):
     """No existing checkout: `git clone --branch` is option-safe, but still refuse."""
 
     _no_subprocess(monkeypatch)
@@ -158,7 +158,7 @@ def test_iss237_clone_rejects_on_the_fresh_clone_path_too(ref, tmp_path, monkeyp
         fetch.clone("owner/repo", tmp_path, ref=ref)
 
 
-def test_iss237_index_github_rejects(tmp_path, monkeypatch, no_token):
+def test_index_github_rejects(tmp_path, monkeypatch, no_token):
     """The CLI entry point inherits the check through clone()."""
 
     _no_subprocess(monkeypatch)
@@ -174,12 +174,12 @@ def test_iss237_index_github_rejects(tmp_path, monkeypatch, no_token):
 
 
 @pytest.mark.parametrize("ref", ACCEPTED)
-def test_iss237_parse_ref_accepts_ordinary_refs(ref):
+def test_parse_ref_accepts_ordinary_refs(ref):
     assert fetch.parse_ref(ref) == ref
 
 
 @pytest.mark.parametrize("ref", ACCEPTED)
-def test_iss237_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeypatch, no_token):
+def test_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeypatch, no_token):
     target = _existing_checkout(tmp_path)
     calls = _record_subprocess(monkeypatch)
     assert fetch.clone("owner/repo", tmp_path, ref=ref) == target
@@ -189,7 +189,7 @@ def test_iss237_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeyp
     ]
 
 
-def test_iss237_no_ref_is_unaffected(tmp_path, monkeypatch, no_token):
+def test_no_ref_is_unaffected(tmp_path, monkeypatch, no_token):
     """ref=None must stay a full no-op on the reuse path (no fetch, no checkout)."""
     target = _existing_checkout(tmp_path)
     calls = _record_subprocess(monkeypatch)
@@ -197,7 +197,7 @@ def test_iss237_no_ref_is_unaffected(tmp_path, monkeypatch, no_token):
     assert calls == []
 
 
-def test_iss237_fetch_gets_double_dash_and_checkout_does_not(tmp_path, monkeypatch, no_token):
+def test_fetch_gets_double_dash_and_checkout_does_not(tmp_path, monkeypatch, no_token):
     """`git fetch ... -- <ref>` is safe; `git checkout -- <ref>` means a pathspec.
 
     Pinned separately from the parametrized argv check because the asymmetry is
@@ -214,7 +214,7 @@ def test_iss237_fetch_gets_double_dash_and_checkout_does_not(tmp_path, monkeypat
     assert checkout_cmd[-1] == "feature/foo-bar"
 
 
-def test_iss237_fetch_head_retry_argv_unchanged(tmp_path, monkeypatch, no_token):
+def test_fetch_head_retry_argv_unchanged(tmp_path, monkeypatch, no_token):
     """The shallow-clone FETCH_HEAD fallback must survive the added `--`."""
     target = _existing_checkout(tmp_path)
     calls: list[list[str]] = []
@@ -256,7 +256,7 @@ def _git(*args, cwd=None):
 
 
 @pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
-def test_iss237_real_git_double_dash_semantics(tmp_path):
+def test_real_git_double_dash_semantics(tmp_path):
     """Why fetch gets `--` and checkout does not, proved against the real binary."""
     origin = tmp_path / "origin"
     origin.mkdir()

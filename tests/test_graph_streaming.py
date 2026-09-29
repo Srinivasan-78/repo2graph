@@ -58,7 +58,7 @@ def _straddling_source() -> bytes:
     return src
 
 
-def test_iss196_symbols_on_both_sides_of_a_straddling_character_survive(tmp_path):
+def test_symbols_on_both_sides_of_a_straddling_character_survive(tmp_path):
     repo = _repo(tmp_path, "big.py", _straddling_source())
     g = build(repo, config=BuildConfig(chunk_large_files=True, max_file_bytes=_LIMIT))
 
@@ -68,7 +68,7 @@ def test_iss196_symbols_on_both_sides_of_a_straddling_character_survive(tmp_path
     assert g.stats["chunk_slices_undecodable"] == 0
 
 
-def test_iss196_chunked_read_reports_the_same_digest_size_and_lines_as_a_whole_read(tmp_path):
+def test_chunked_read_reports_the_same_digest_size_and_lines_as_a_whole_read(tmp_path):
     """The digest and the line count used to come from a bytearray holding the
     entire file -- the one thing max_file_bytes exists to prevent. They are
     streamed now, and must still be the same numbers, both against the fixture
@@ -114,7 +114,7 @@ def _invalid_byte_source() -> bytes:
     return src
 
 
-def test_iss196_bytes_that_are_not_utf8_are_counted_and_cost_only_their_own_slice(tmp_path):
+def test_bytes_that_are_not_utf8_are_counted_and_cost_only_their_own_slice(tmp_path):
     repo = _repo(tmp_path, "big.py", _invalid_byte_source())
     g = build(repo, config=BuildConfig(chunk_large_files=True, max_file_bytes=_LIMIT))
 
@@ -165,7 +165,7 @@ def _fake_git(tmp_path: Path, args: list[str], monkeypatch):
     return started
 
 
-def test_iss236_the_byte_cap_stops_the_read_and_the_child_is_reaped(tmp_path, monkeypatch):
+def test_the_byte_cap_stops_the_read_and_the_child_is_reaped(tmp_path, monkeypatch):
     """The cap has to bind *during* the read. A child with far more to say than
     the cap allows must be cut off mid-write, killed and waited for -- not read
     to EOF and trimmed afterwards, which is what capture_output=True did."""
@@ -188,7 +188,7 @@ def test_iss236_the_byte_cap_stops_the_read_and_the_child_is_reaped(tmp_path, mo
     assert ("file:a.py", "file:b.py") in {(e["src"], e["dst"]) for e in g.edges}
 
 
-def test_iss236_a_timeout_is_still_a_silent_return(tmp_path, monkeypatch):
+def test_a_timeout_is_still_a_silent_return(tmp_path, monkeypatch):
     """`subprocess.run(timeout=...)` raised TimeoutExpired into a bare `return`;
     the streamed read enforces the same deadline itself and must behave the
     same way -- no exception, no edges, and no surviving child."""

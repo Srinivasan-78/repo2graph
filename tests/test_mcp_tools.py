@@ -123,7 +123,7 @@ def test_find_symbol_ambiguous_name_returns_every_candidate(mini_index):
 
 def test_find_symbol_limit_is_clamped_in_the_handler(mini_index, tmp_path):
     """Detector proof lives in the flood test below; this pins the ceiling
-    constant relationship the way test_ac28_ceiling_is_above_the_default does."""
+    constant relationship the way test_ceiling_is_above_the_default does."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_FIND_LIMIT <= mcp.MCP_MAX_FIND_LIMIT
 

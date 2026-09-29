@@ -18,9 +18,9 @@ Two kinds of surface:
   release, so `vN` is a promise about the major and nothing more).
 
 `paths` is an allowlist on purpose, never a glob. `benchmarks/results.json`
-and `examples/*/manifest.json` both record the version that
-*produced* some artifact -- history, not a claim about the current release --
-and a pattern loose enough to reach them would rewrite the past. For the same
+records the version that *produced* an artifact -- history, not a claim about
+the current release -- and a pattern loose enough to reach it would rewrite
+the past. For the same
 reason the pin pattern matches `==` only: `docs/cli.md`'s
 `repo2graph>=1.4,<2` illustrates the *form* of a range spec and must survive
 every bump unchanged.

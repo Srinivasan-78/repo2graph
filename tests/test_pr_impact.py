@@ -490,7 +490,7 @@ def test_analyze_diff_impact_disconnected_finding(sample_graph_index):
     assert any(f.path == "scripts/disconnected.py" for f in disconnected)
 
 
-def test_iss422_disconnected_rule_skips_files_the_graph_cannot_relate(sample_graph_index):
+def test_disconnected_rule_skips_files_the_graph_cannot_relate(sample_graph_index):
     """R2G-IMP-001 must not fire on a file that has no graph presence at all.
 
     `.github/workflows/ci.yml` has no symbols and no imports in any index ever
@@ -525,7 +525,7 @@ def test_iss422_disconnected_rule_skips_files_the_graph_cannot_relate(sample_gra
     assert flagged == set()
 
 
-def test_iss422_disconnected_rule_needs_two_relatable_files(sample_graph_index):
+def test_disconnected_rule_needs_two_relatable_files(sample_graph_index):
     """One source file plus any number of unrelatable ones is not an orphan diff.
 
     pkg/core.py is the only graph-relatable file in this diff, so there is
@@ -550,7 +550,7 @@ def test_iss422_disconnected_rule_needs_two_relatable_files(sample_graph_index):
     assert [f.rule_id for f in report.suspicious_findings if f.rule_id == "R2G-IMP-001"] == []
 
 
-def test_iss422_report_states_which_changed_files_the_index_is_missing(sample_graph_index):
+def test_report_states_which_changed_files_the_index_is_missing(sample_graph_index):
     """An index that predates the diff produces a silent wrong answer.
 
     Nothing can be said about a changed file the index has never seen -- no
@@ -586,7 +586,7 @@ def test_iss422_report_states_which_changed_files_the_index_is_missing(sample_gr
     assert report.guardrails["stale_index_notice"] in format_pr_comment(report)
 
 
-def test_iss422_no_stale_index_notice_when_the_index_covers_the_diff(sample_graph_index):
+def test_no_stale_index_notice_when_the_index_covers_the_diff(sample_graph_index):
     diff_text = (
         "diff --git a/pkg/core.py b/pkg/core.py\n"
         "--- a/pkg/core.py\n"
@@ -667,7 +667,7 @@ def blast_radius_index():
     return idx
 
 
-def test_iss422_blast_radius_rule_ignores_added_and_test_symbols(blast_radius_index):
+def test_blast_radius_rule_ignores_added_and_test_symbols(blast_radius_index):
     """R2G-IMP-003 is about what an edit puts at risk.
 
     An added symbol has no pre-existing dependents -- its callers arrived in the
@@ -948,7 +948,7 @@ def test_formatters():
     assert sarif_data["runs"][0]["results"][0]["ruleId"] == "R2G-IMP-002"
 
 
-def test_iss422_pr_comment_leads_with_the_upsert_marker():
+def test_pr_comment_leads_with_the_upsert_marker():
     """The CI job finds its own previous comment by this marker and edits it.
 
     Without the marker every push appended one more impact comment -- PR #422
@@ -961,7 +961,7 @@ def test_iss422_pr_comment_leads_with_the_upsert_marker():
     assert comment.split("\n")[1].startswith("### 📐 repo2graph Impact Analysis:")
 
 
-def test_iss422_json_reports_old_path_for_renames():
+def test_json_reports_old_path_for_renames():
     """`old_path` is in the FileDiff record and in PR_IMPACT.md's documented
     schema; it was the one field format_json dropped, so a rename rendered as an
     unrelated add."""
@@ -990,7 +990,7 @@ GOLDEN = {
 
 
 @pytest.mark.parametrize("name", sorted(GOLDEN))
-def test_iss422_formatter_output_matches_the_checked_in_fixtures(name):
+def test_formatter_output_matches_the_checked_in_fixtures(name):
     """The fixtures under tests/fixtures/impact/ must be what the formatters emit.
 
     They shipped describing a schema no formatter ever produced -- `analyzed_at`,
@@ -1013,7 +1013,7 @@ def regenerate_golden_fixtures() -> None:
         (FIXTURE_DIR / name).write_text(render(report), encoding="utf-8", newline="\n")
 
 
-def test_iss422_pr_comment_caps_the_public_api_list():
+def test_pr_comment_caps_the_public_api_list():
     """Every list in the PR comment is bounded: GitHub rejects a body over 65536
     characters outright, so one unbounded section makes the comment unpostable
     instead of merely long."""
@@ -1476,7 +1476,7 @@ def _workflow_text() -> str:
     return WORKFLOW_PATH.read_text(encoding="utf-8")
 
 
-def test_iss422_workflow_builds_the_index_on_head_not_on_the_base_ref():
+def test_workflow_builds_the_index_on_head_not_on_the_base_ref():
     """The analyzed index must come from the commit the diff's line numbers
     belong to.
 
@@ -1494,7 +1494,7 @@ def test_iss422_workflow_builds_the_index_on_head_not_on_the_base_ref():
     assert ".repo2graph-base" not in text
 
 
-def test_iss422_workflow_upserts_one_comment_using_the_module_marker():
+def test_workflow_upserts_one_comment_using_the_module_marker():
     """One comment per PR, edited in place. PR #422 collected three identical
     impact comments in four minutes because every run called `gh pr comment`.
 
@@ -1509,7 +1509,7 @@ def test_iss422_workflow_upserts_one_comment_using_the_module_marker():
     assert "gh pr comment" not in text
 
 
-def test_iss422_workflow_posts_as_prod_igy():
+def test_workflow_posts_as_prod_igy():
     """The impact comment is prod-igy's, not github-actions[bot]'s, and the
     minted token is scoped to what the comment step actually does rather than to
     the App installation's whole grant."""
@@ -1529,7 +1529,7 @@ def test_iss422_workflow_posts_as_prod_igy():
     assert requested == {"permission-pull-requests: write"}
 
 
-def test_iss422_app_key_is_never_minted_for_a_fork_pull_request():
+def test_app_key_is_never_minted_for_a_fork_pull_request():
     """This job runs `pip install .` from the PR head, so on a fork PR it has
     already executed contributor-authored build code by the time it would mint
     the App key. Both the token step and the comment step are gated on the PR
@@ -1558,7 +1558,7 @@ def test_iss422_app_key_is_never_minted_for_a_fork_pull_request():
             assert "env.SAME_REPO == 'true'" in step, step.split("\n")[0]
 
 
-def test_iss422_workflow_interpolates_no_expression_into_a_run_body():
+def test_workflow_interpolates_no_expression_into_a_run_body():
     """Issue #108's rule: a `${{ }}` inside `run:` is shell injection surface.
     Every value this job needs arrives through `env:`."""
     text = _workflow_text()
