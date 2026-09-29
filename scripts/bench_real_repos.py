@@ -248,16 +248,34 @@ def main() -> int:
         indexes[name] = Index(out)
 
     rows = []
+    structural_tasks_path = BENCH / "tasks_structural.json"
+    structural_tasks = (
+        json.loads(structural_tasks_path.read_text(encoding="utf8"))["tasks"]
+        if structural_tasks_path.exists()
+        else []
+    )
+    structural_rows = []
+
     for t in tasks:
         repo, idx, root = repos[t["repo"]], indexes[t["repo"]], roots[t["repo"]]
         for budget in budgets:
             full = idx.pack_context(t["query"], budget_tokens=budget, exclude_secrets=True)
+            cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+            )
             bm25 = idx.pack_context(
                 t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
             )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
                 ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
@@ -276,9 +294,47 @@ def main() -> int:
                     }
                 )
 
+    for t in structural_tasks:
+        repo, idx, root = repos[t["repo"]], indexes[t["repo"]], roots[t["repo"]]
+        for budget in budgets:
+            full = idx.pack_context(t["query"], budget_tokens=budget, exclude_secrets=True)
+            cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+            )
+            bm25 = idx.pack_context(
+                t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
+            )
+            rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
+            for method, lines, used in (
+                ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
+                ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
+                ("ripgrep", rg_lines, count_tokens(rg_text)),
+            ):
+                hit = found(t["evidence"], lines)
+                structural_rows.append(
+                    {
+                        "task": t["id"],
+                        "repo": t["repo"],
+                        "kind": t["kind"],
+                        "budget": budget,
+                        "method": method,
+                        "tokens_used": used,
+                        "found": sum(hit),
+                        "evidence": len(hit),
+                        "missed": [ev["symbol"] for ev, h in zip(t["evidence"], hit) if not h],
+                    }
+                )
+
     summary = []
     for budget in budgets:
-        for method in ("repo2graph", "repo2graph-bm25", "ripgrep"):
+        for method in ("repo2graph", "repo2graph-cite", "repo2graph-bm25", "ripgrep"):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
             summary.append(
                 {
@@ -293,22 +349,46 @@ def main() -> int:
                     "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
                 }
             )
+
+    structural_summary = []
+    if structural_rows:
+        for budget in budgets:
+            for method in ("repo2graph", "repo2graph-cite", "repo2graph-bm25", "ripgrep"):
+                sel = [
+                    r for r in structural_rows if r["budget"] == budget and r["method"] == method
+                ]
+                structural_summary.append(
+                    {
+                        "budget": budget,
+                        "method": method,
+                        "evidence_recall": round(
+                            sum(r["found"] for r in sel) / sum(r["evidence"] for r in sel), 3
+                        ),
+                        "tasks_fully_answered": sum(r["found"] == r["evidence"] for r in sel),
+                        "tasks_any_evidence": sum(r["found"] > 0 for r in sel),
+                        "tasks": len(sel),
+                        "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
+                    }
+                )
+
     provenance = source_commit()
+    out_data = {
+        "repo2graph_version": source_version(),
+        "repo2graph_commit": provenance["commit"],
+        "repo2graph_dirty": provenance["dirty"],
+        "summary": summary,
+        "rows": rows,
+    }
+    if structural_summary:
+        out_data["structural_summary"] = structural_summary
+        out_data["structural_rows"] = structural_rows
+
     args.out.write_text(
-        json.dumps(
-            {
-                "repo2graph_version": source_version(),
-                "repo2graph_commit": provenance["commit"],
-                "repo2graph_dirty": provenance["dirty"],
-                "summary": summary,
-                "rows": rows,
-            },
-            indent=1,
-        )
-        + "\n",
+        json.dumps(out_data, indent=1) + "\n",
         encoding="utf8",
         newline="\n",
     )
+    print("=== Lexical Benchmark (tasks.json, 35 tasks) ===")
     print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
     print("|---:|---|---:|---:|---:|---:|")
     for s in summary:
@@ -317,6 +397,17 @@ def main() -> int:
             f"{s['tasks_fully_answered']}/{s['tasks']} | {s['tasks_any_evidence']}/{s['tasks']} | "
             f"{s['mean_tokens_used']:,} |"
         )
+
+    if structural_summary:
+        print("\n=== Structural Benchmark (tasks_structural.json, 10 tasks) ===")
+        print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
+        print("|---:|---|---:|---:|---:|---:|")
+        for s in structural_summary:
+            print(
+                f"| {s['budget']:,} | {s['method']} | {s['evidence_recall']:.0%} | "
+                f"{s['tasks_fully_answered']}/{s['tasks']} | {s['tasks_any_evidence']}/{s['tasks']} | "
+                f"{s['mean_tokens_used']:,} |"
+            )
     return 0
 
 

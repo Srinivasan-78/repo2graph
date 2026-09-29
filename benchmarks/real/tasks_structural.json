@@ -1,0 +1,135 @@
+{
+  "_comment": "Tasks whose evidence provably spans cross-file dependency graph edges (e.g. caller in file A delegating to helper/callee in file B, or transitive dependency path). On single-file lexical queries grep has an advantage; on cross-file structural queries graph expansion provides positive advantage over BM25 alone.",
+  "tasks": [
+    {
+      "id": "struct-flask-01",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does Flask url_for delegate to when injecting default URL values",
+      "evidence": [
+        {
+          "path": "flask/sansio/app.py",
+          "symbol": "App.inject_url_defaults",
+          "lines": [911, 930]
+        }
+      ]
+    },
+    {
+      "id": "struct-flask-02",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what setup decorator or check protects Blueprint methods like record_once",
+      "evidence": [
+        {
+          "path": "flask/sansio/scaffold.py",
+          "symbol": "setupmethod",
+          "lines": [42, 49]
+        }
+      ]
+    },
+    {
+      "id": "struct-flask-03",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does App.make_config call to handle reading the debug environment flag",
+      "evidence": [
+        {
+          "path": "flask/helpers.py",
+          "symbol": "get_debug_flag",
+          "lines": [28, 33]
+        }
+      ]
+    },
+    {
+      "id": "struct-requests-01",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what helper function does HTTPAdapter.request_url call to strip fragments and auth from a URL",
+      "evidence": [
+        {
+          "path": "requests/utils.py",
+          "symbol": "urldefragauth",
+          "lines": [1054, 1068]
+        }
+      ]
+    },
+    {
+      "id": "struct-requests-02",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does PreparedRequest.prepare_auth call to extract credentials from the request URL",
+      "evidence": [
+        {
+          "path": "requests/utils.py",
+          "symbol": "get_auth_from_url",
+          "lines": [1008, 1021]
+        }
+      ]
+    },
+    {
+      "id": "struct-requests-03",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does Session.__init__ call to initialize default headers",
+      "evidence": [
+        {
+          "path": "requests/utils.py",
+          "symbol": "default_headers",
+          "lines": [890, 901]
+        }
+      ]
+    },
+    {
+      "id": "struct-fastapi-01",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what function generates the Swagger UI HTML page when configuring FastAPI docs",
+      "evidence": [
+        {
+          "path": "openapi/docs.py",
+          "symbol": "get_swagger_ui_html",
+          "lines": [26, 158]
+        }
+      ]
+    },
+    {
+      "id": "struct-fastapi-02",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what function generates the ReDoc HTML documentation page in FastAPI",
+      "evidence": [
+        {
+          "path": "openapi/docs.py",
+          "symbol": "get_redoc_html",
+          "lines": [161, 253]
+        }
+      ]
+    },
+    {
+      "id": "struct-hono-01",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what function does generateNonce call to encode the CSP nonce to base64",
+      "evidence": [
+        {
+          "path": "utils/encode.ts",
+          "symbol": "encodeBase64",
+          "lines": [15, 22]
+        }
+      ]
+    },
+    {
+      "id": "struct-hono-02",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what data structure class does buildMatcherFromPreprocessedRoutes build for route matching",
+      "evidence": [
+        {
+          "path": "router/reg-exp-router/trie.ts",
+          "symbol": "Trie",
+          "lines": [6, 74]
+        }
+      ]
+    }
+  ]
+}

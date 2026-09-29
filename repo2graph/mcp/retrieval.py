@@ -30,6 +30,7 @@ from .guardrails import (
     MCP_MAX_QUERY_CHARS,
     MCP_MAX_READ_CHARS,
     MCP_MAX_READ_CONTEXT,
+    MCP_MAX_SEARCH_NEIGHBOURS,
     MCP_NEIGHBOUR_LIMIT,
     MCP_READ_CONTEXT,
     _clamp,
@@ -47,7 +48,13 @@ def tool_repo_map(index: Index) -> str:
 
 
 def tool_repo_search(
-    index: Index, query: str, k: Any = 8, hops: Any = 1, budget_tokens: Any = None
+    index: Index,
+    query: str,
+    k: Any = 8,
+    hops: Any = 1,
+    budget_tokens: Any = None,
+    neighbours: Any = "full",
+    max_neighbours: Any = None,
 ) -> str:
     """Cited markdown for `query`, bounded by budget_tokens."""
     query = _str(query, MCP_MAX_QUERY_CHARS)
@@ -67,12 +74,22 @@ def tool_repo_search(
         budget = MCP_BUDGET_TOKENS
     budget = max(1, min(budget, MCP_MAX_BUDGET_TOKENS))
     room = max(1, budget - (len(note) + 3) // 4)
+    nbr_mode = _str(neighbours, 10).lower()
+    if nbr_mode not in ("full", "cite"):
+        nbr_mode = "full"
+    max_nbrs = (
+        _clamp(max_neighbours, 10, 0, MCP_MAX_SEARCH_NEIGHBOURS)
+        if max_neighbours is not None
+        else None
+    )
     pack = index.pack_context(
         query,
         k=_clamp(k, 8, 1, MCP_MAX_K),
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         budget_tokens=room,
         exclude_secrets=True,
+        neighbours=nbr_mode,
+        max_neighbours=max_nbrs,
     )
     text = pack["markdown"]
     if count_tokens(text) > room:

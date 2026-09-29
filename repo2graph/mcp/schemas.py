@@ -21,6 +21,7 @@ from .guardrails import (
     MCP_MAX_PATH_HOPS,
     MCP_MAX_PATHS,
     MCP_MAX_READ_CONTEXT,
+    MCP_MAX_SEARCH_NEIGHBOURS,
     MCP_NEIGHBOUR_LIMIT,
     MCP_PATH_HOPS,
     MCP_PATH_PATHS,
@@ -195,6 +196,21 @@ TOOL_SCHEMAS = {
                 "description": (
                     f"Maximum token ceiling for returned markdown pack (default {MCP_BUDGET_TOKENS}, "
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
+                ),
+            },
+            "neighbours": {
+                "type": "string",
+                "enum": ["full", "cite"],
+                "description": (
+                    "Neighbour rendering mode: 'full' (default) emits complete chunk text; "
+                    "'cite' emits one-line signature citations without chunk body."
+                ),
+            },
+            "max_neighbours": {
+                "type": "integer",
+                "description": (
+                    f"Maximum graph neighbour chunks to admit into context (default unbounded, "
+                    f"max {MCP_MAX_SEARCH_NEIGHBOURS})."
                 ),
             },
         },

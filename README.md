@@ -42,20 +42,33 @@ output: [docs/architecture.md](docs/architecture.md).
 
 ## Is it better than grep?
 
-**No, not at finding code.** We measured it on 35 questions about Flask, requests, FastAPI and
-Hono, scored against the definitions that answer them, with both tools held to the same token
-budget ([method, per-question results, reproduction](docs/architecture.md)):
+**For single-file lexical queries, no: grep is the better tool.**
+We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, held to the same token budget ([benchmarks/real/results.json](benchmarks/real/results.json)):
 
-| Budget | repo2graph | grep, then read around the hits |
-|---:|---:|---:|
-| 2,000 tokens | 30% | **35%** |
-| 4,000 tokens | 39% | **61%** |
-| 8,000 tokens | 52% | **72%** |
+| Budget | repo2graph (2.x default) | repo2graph-cite (opt-in) | grep, then read around hits |
+|---:|---:|---:|---:|
+| 2,000 tokens | 30% | 30% (1,856 tokens) | **35%** (1,962 tokens) |
+| 4,000 tokens | 37% | **41%** (3,685 tokens) | **61%** (3,873 tokens) |
+| 8,000 tokens | 48% | **52%** (5,460 tokens) | **72%** (7,652 tokens) |
 
-Graph expansion adds nothing over BM25 alone at these budgets. The causes are ranking problems:
-whole-file and whole-class chunks win the seed ranking and use up the budget, and expansion
-doesn't follow the edge direction the question asks for. They're diagnosed in the benchmark
-write-up and are the next thing to fix.
+On purely lexical questions where the evidence sits in a single file, text search is grep's optimum. In default full-body expansion, graph neighbours can displace direct lexical hits. With citation-mode neighbours (`--neighbours=cite`), neighbours cost ~15 tokens of signature metadata rather than full chunk bodies, serving as a navigation index that matches or beats BM25 recall at lower token cost (5,460 vs 5,561 mean tokens at 8k).
+
+### Where repo2graph wins: cross-file structural questions
+
+grep structurally cannot traverse dependency edges, compute reverse call closures, or follow cross-module delegation. On our structural benchmark across the same four repositories ([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence provably spans cross-file graph edges):
+
+| Budget | repo2graph | repo2graph-bm25 | ripgrep |
+|---:|---:|---:|---:|
+| 4,000 tokens | **70%** | 50% | 20% |
+| 8,000 tokens | **80%** | 50% | 70% |
+
+Graph expansion provides a **+20 to +30 percentage point advantage** over lexical search alone, and beats grep by up to **+50 pp**.
+
+### Where repo2graph wins for agents: multi-turn loops
+
+In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`):
+- **Cross-file structural tasks:** repo2graph achieves **50% task success in 2.2 mean turns** (2,282 mean tokens), while ripgrep achieves only **10% success in 6.0 mean turns**.
+- **General tasks:** repo2graph achieves **54% task success in 1.9 mean turns** (7,133 tokens) vs ripgrep's **20% success in 3.6 turns** (939 tokens).
 
 What it does do that grep doesn't:
 

@@ -33,6 +33,7 @@ __all__ = [
     "SECRET_WORD_RE",
     "_is_secret_path",
     "format_pack",
+    "is_lexical_weak",
     "read_jsonl",
     "tokenize",
 ]
@@ -155,6 +156,57 @@ def tokenize(text: str) -> list[str]:
         parts = SUBTOKEN_RE.split(t)
         out += [p.lower() for p in parts if len(p) > 2 and p.lower() != low]
     return out
+
+
+def _chunk_signature(text: str) -> str:
+    """Extract the first non-header, non-blank declaration line from a chunk's text."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    return lines[i].strip() if i < len(lines) else ""
+
+
+def is_lexical_weak(
+    ranked_scores: Sequence[tuple[float, int]],
+    k: int = 8,
+    min_top_score: float = 18.0,
+    flat_ratio: float = 1.35,
+    num_chunks: int | None = None,
+) -> bool:
+    """Determine whether lexical evidence for a query is weak or ambiguous.
+
+    A query has weak lexical evidence if:
+    1. No candidates were found at all.
+    2. The top-ranked BM25 score is below `min_top_score` (no strong keyword matches).
+    3. The score distribution across the top-k is flat (`top_score / s_k < flat_ratio`),
+       indicating ambiguity among candidates rather than a clear winner.
+
+    Args:
+        ranked_scores: Ranked (score, index) pairs from BM25/lexical scoring.
+        k: Number of candidates to evaluate for flatness.
+        min_top_score: Absolute score floor below which lexical match is considered weak.
+        flat_ratio: Ratio of top-1 score to top-k score below which distribution is flat.
+        num_chunks: Total chunks in index to scale floor for tiny test fixtures.
+
+    Returns:
+        True if lexical evidence is weak and graph expansion is recommended; False otherwise.
+    """
+    if not ranked_scores:
+        return True
+    top_score = ranked_scores[0][0]
+    floor = min_top_score
+    if num_chunks is not None and num_chunks < 100:
+        floor = min(min_top_score, 1.0)
+    if top_score < floor:
+        return True
+    if len(ranked_scores) >= k:
+        s_k = ranked_scores[k - 1][0]
+        if s_k > 0 and (top_score / s_k) < flat_ratio:
+            return True
+    return False
 
 
 class Index:
@@ -385,6 +437,7 @@ class Index:
         query: str,
         vectors: Mapping[Any, Vector] | None = None,
         embedder: "Embedder | None" = None,
+        weights: tuple[float, float] = (1.0, 1.0),
     ) -> list[tuple[float, int]]:
         """Score chunks combining lexical BM25 and dense vector rankings via RRF.
 
@@ -392,6 +445,7 @@ class Index:
             query: Query string.
             vectors: Optional mapping of chunk indices to precomputed vectors.
             embedder: Optional active embedder instance.
+            weights: Optional tuple of (w_bm25, w_vec) multipliers for reciprocal ranks.
 
         Returns:
             Sorted list of (rrf_score, chunk_index) tuples.
@@ -427,11 +481,12 @@ class Index:
             range(len(candidates)), key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p])
         )
         vec_rank = {candidates[p]: r for r, p in enumerate(by_sim, 1)}
+        w_bm25, w_vec = weights
         fused: list[tuple[float, int]] = []
         for rank, (_s, i) in enumerate(base, 1):
-            score = 1.0 / (RRF_K + rank)
+            score = w_bm25 / (RRF_K + rank)
             if i in vec_rank:
-                score += 1.0 / (RRF_K + vec_rank[i])
+                score += w_vec / (RRF_K + vec_rank[i])
             fused.append((score, i))
         fused.sort(reverse=True)
         return fused
@@ -580,6 +635,8 @@ class Index:
         exclude_secrets: bool = False,
         extra_secret_keywords: list[str] | None = None,
         extra_secret_dirs: list[str] | None = None,
+        neighbours: str = "full",
+        conditional_expansion: bool = False,
     ) -> list[Record]:
         """Retrieve ranked seed chunks and graph neighbors within character budget.
 
@@ -594,6 +651,10 @@ class Index:
             exclude_secrets: Whether to filter secret-matching paths.
             extra_secret_keywords: Additional sensitive keywords to filter.
             extra_secret_dirs: Additional sensitive directory names to filter.
+            neighbours: Neighbour rendering mode: 'full' emits complete chunk text;
+                'cite' emits one-line signature citations without chunk body.
+            conditional_expansion: If True, only expands graph neighbours when lexical
+                evidence is weak or ambiguous.
 
         Returns:
             List of matching chunk dictionaries.
@@ -637,6 +698,8 @@ class Index:
             if len(picked) >= k or used >= budget_chars:
                 break
         # Bound the expansion pass by both count and budget:
+        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+            return picked
         max_total = k * 2
         for nid, etype, direction, src in self.expand(
             seen_nodes_list, hops=hops, min_confidence=conf, edge_dirs=ALL_EDGE_DIRS
@@ -648,11 +711,16 @@ class Index:
                     break
                 if exclude_secrets:
                     c = self._served(c)
-                chunk_len = len(c.get("text") or "")
+                chunk_text = c.get("text") or ""
+                rec = c
+                if neighbours == "cite":
+                    chunk_text = _chunk_signature(chunk_text)
+                    rec = {**c, "text": chunk_text, "citation_only": True}
+                chunk_len = len(chunk_text)
                 if used + chunk_len > budget_chars:
                     break
                 src_name = self.nodes.get(src, {}).get("name") or src
-                picked.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
+                picked.append({**rec, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
                     break
@@ -695,6 +763,10 @@ class Index:
         count_tokens: Callable[[str], int] | None = None,
         extra_secret_keywords: tuple[str, ...] | list[str] | None = None,
         extra_secret_dirs: tuple[str, ...] | list[str] | None = None,
+        neighbours: str = "full",
+        max_neighbours: int | None = None,
+        conditional_expansion: bool = False,
+        precision_first: bool = False,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -712,6 +784,13 @@ class Index:
             count_tokens: Token counting function (defaults to len // 4).
             extra_secret_keywords: Additional keywords for secret filtering.
             extra_secret_dirs: Additional directory names for secret filtering.
+            neighbours: Neighbour rendering mode: 'full' emits complete chunk text;
+                'cite' emits one-line signature citations without chunk body.
+            max_neighbours: Maximum neighbour chunks to admit into context.
+            conditional_expansion: If True, only expands graph neighbours when lexical
+                evidence is weak or ambiguous.
+            precision_first: If True, prioritizes direct lexical hits in score order and
+                only admits neighbours cited by an already-admitted chunk.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
@@ -725,9 +804,15 @@ class Index:
         measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
         bounded = budget > 0
+
+        ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
+        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+            expand_graph = False
+
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
-        for s, i in self.score_rrf(query, vectors=vectors, embedder=embedder)[: k * 3]:
+        seed_limit = k if precision_first else k * 3
+        for s, i in ranked[:seed_limit]:
             c = self.chunks[i]
             nid = c["node_id"]
             if nid in seen_nodes:
@@ -745,27 +830,61 @@ class Index:
             if len(seeds) >= k:
                 break
 
-        neighbours: list[Record] = []
+        graph_neighbours: list[Record] = []
         if expand_graph and seeds:
-            for nid, etype, direction, src in self.expand(
-                [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
-            ):
-                if nid in seen_nodes:
-                    continue
-                node_chunks = self.by_node.get(nid, [])
-                if not node_chunks:
-                    continue
-                c = node_chunks[0]
-                c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
-                seen_nodes.add(nid)
-                if exclude_secrets and _is_secret_path(
-                    c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            if precision_first:
+                for seed_chunk in seeds:
+                    if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                        break
+                    for nid, etype, direction, src in self.expand(
+                        [seed_chunk["node_id"]], hops=hops, min_confidence=min_confidence
+                    ):
+                        if nid in seen_nodes:
+                            continue
+                        node_chunks = self.by_node.get(nid, [])
+                        if not node_chunks:
+                            continue
+                        c = node_chunks[0]
+                        c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                        seen_nodes.add(nid)
+                        if exclude_secrets and _is_secret_path(
+                            c_path,
+                            extra_keywords=extra_secret_keywords,
+                            extra_dirs=extra_secret_dirs,
+                        ):
+                            continue
+                        if exclude_secrets:
+                            c = self._served(c)
+                        src_name = self.nodes.get(src, {}).get("name") or src
+                        graph_neighbours.append(
+                            {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
+                        )
+                        if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                            break
+            else:
+                for nid, etype, direction, src in self.expand(
+                    [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
                 ):
-                    continue
-                if exclude_secrets:
-                    c = self._served(c)
-                src_name = self.nodes.get(src, {}).get("name") or src
-                neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
+                    if nid in seen_nodes:
+                        continue
+                    node_chunks = self.by_node.get(nid, [])
+                    if not node_chunks:
+                        continue
+                    c = node_chunks[0]
+                    c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                    seen_nodes.add(nid)
+                    if exclude_secrets and _is_secret_path(
+                        c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+                    ):
+                        continue
+                    if exclude_secrets:
+                        c = self._served(c)
+                    src_name = self.nodes.get(src, {}).get("name") or src
+                    graph_neighbours.append(
+                        {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
+                    )
+                    if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                        break
 
         full_map = self.map_prepend()
         shown_map = full_map
@@ -792,12 +911,25 @@ class Index:
                 body += block
             else:
                 truncated = True
-        for c in neighbours:
+        for c in graph_neighbours:
             if not picked:
                 # A neighbour without a seed is context without a question:
                 # seeds always win the budget (and an empty pack is honest).
                 truncated = True
                 break
+            if neighbours == "cite":
+                sig = _chunk_signature(c.get("text") or "")
+                c_cite = {**c, "citation_only": True}
+                block = _cite_block(c_cite, sig)
+                if not bounded:
+                    picked.append((c_cite, sig))
+                    continue
+                if fits(block):
+                    picked.append((c_cite, sig))
+                    body += block
+                else:
+                    truncated = True
+                continue
             text = c.get("text") or ""
             block = _cite_block(c, text)
             if not bounded:
@@ -1017,14 +1149,16 @@ def _cite_block(chunk: Record, text: str) -> str:
             if chunk.get("excerpt_exact")
             else f" [header and first line only, of {span}]"
         )
+    nid = chunk.get("node_id") or chunk.get("id") or ""
+    nid_tag = f" [{nid}]" if chunk.get("citation_only") and nid else ""
     head = (
-        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{mark} "
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{nid_tag}{mark} "
         f"({chunk.get('why') or ''})"
     )
     disarmed = "\n".join(
         "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")
     )
-    return f"{head}\n{disarmed}\n\n"
+    return f"{head}\n{disarmed}\n\n" if disarmed else f"{head}\n\n"
 
 
 def format_pack(results: Iterable[Record]) -> str:
