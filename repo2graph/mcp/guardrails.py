@@ -19,6 +19,7 @@ MCP_MAX_BUDGET_TOKENS = 12000
 # Neighbour limits.
 MCP_NEIGHBOUR_LIMIT = 20
 MCP_MAX_NEIGHBOURS = 50
+MCP_MAX_SEARCH_NEIGHBOURS = 50
 
 # Graph hop and candidate bounds.
 MCP_MAX_HOPS = 4

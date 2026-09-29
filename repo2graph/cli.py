@@ -485,6 +485,8 @@ def cmd_query(args):
         # caller opts in *now*: an index built with --include-secrets must not
         # hand them to every later plain query.
         exclude_secrets=not getattr(args, "include_secrets", False),
+        neighbours=getattr(args, "neighbours", "full"),
+        conditional_expansion=getattr(args, "conditional_expansion", False),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -667,6 +669,9 @@ def cmd_rag(args):
         budget_tokens=getattr(args, "budget_tokens", None),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        neighbours=getattr(args, "neighbours", "full"),
+        conditional_expansion=getattr(args, "conditional_expansion", False),
+        precision_first=getattr(args, "precision_first", False),
     )
     if args.answer:
         from .answer import stream_answer
@@ -1529,6 +1534,20 @@ def main(argv=None):
         default=False,
         help="deprecated no-op: secret-looking files are excluded by default",
     )
+    q.add_argument(
+        "--neighbours",
+        "--neighbors",
+        dest="neighbours",
+        choices=("full", "cite"),
+        default="full",
+        help="neighbour rendering mode: full (default) emits complete chunk text; cite emits one-line signature citations without chunk body",
+    )
+    q.add_argument(
+        "--conditional-expansion",
+        action="store_true",
+        default=False,
+        help="expand graph neighbours only when lexical evidence is weak or ambiguous",
+    )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
@@ -1617,6 +1636,26 @@ def main(argv=None):
         dest="extra_secret_dirs",
         metavar="DIR",
         help="additional directory name to exclude as secret path (repeatable)",
+    )
+    r.add_argument(
+        "--neighbours",
+        "--neighbors",
+        dest="neighbours",
+        choices=("full", "cite"),
+        default="full",
+        help="neighbour rendering mode: full (default) emits complete chunk text; cite emits one-line signature citations without chunk body",
+    )
+    r.add_argument(
+        "--conditional-expansion",
+        action="store_true",
+        default=False,
+        help="expand graph neighbours only when lexical evidence is weak or ambiguous",
+    )
+    r.add_argument(
+        "--precision-first",
+        action="store_true",
+        default=False,
+        help="prioritize direct lexical hits in score order and only admit neighbours cited by an already-admitted chunk",
     )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)

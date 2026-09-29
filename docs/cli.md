@@ -175,6 +175,8 @@ functions around each answer come along too.
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--neighbours`, `--neighbors` | `full` | Neighbour rendering mode: `full` (default) emits complete chunk text; `cite` emits one-line signature citations without chunk body. |
+| `--conditional-expansion` | off | Expand graph neighbours only when lexical evidence is weak or ambiguous. |
 | `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
 | `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
 
@@ -237,6 +239,9 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 | `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--neighbours`, `--neighbors` | `full` | Neighbour rendering mode: `full` (default) emits complete chunk text; `cite` emits one-line signature citations without chunk body. |
+| `--conditional-expansion` | off | Expand graph neighbours only when lexical evidence is weak or ambiguous. |
+| `--precision-first` | off | Prioritize direct lexical hits in score order and only admit neighbours cited by an already-admitted chunk. |
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
 | `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
