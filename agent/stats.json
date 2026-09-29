@@ -1,0 +1,136 @@
+{
+  "discovery": "git",
+  "skipped_gitignore": 25,
+  "skipped_binary": 12,
+  "skipped_too_large": 6,
+  "files": 325,
+  "edge:CONTAINS": 396,
+  "parsed": 160,
+  "parse_errors": 0,
+  "symbol:function": 2709,
+  "edge:DEFINES": 2939,
+  "edge:IMPORTS": 1194,
+  "imports_unresolved": 880,
+  "symbol:class": 198,
+  "imports_resolved": 898,
+  "symbol:method": 28,
+  "symbol:interface": 4,
+  "edge:CALLS_EXTERNAL": 6469,
+  "calls_external": 6469,
+  "edge:CALLS": 6740,
+  "calls_scoped": 4301,
+  "calls_ambiguous": 886,
+  "ambiguous_calls": 886,
+  "calls_untyped_receiver": 559,
+  "edge:INHERITS": 10,
+  "unresolved_bases": 33,
+  "calls_unique_global": 364,
+  "cochange_requested_commits": 500,
+  "cochange_sampled_commits": 294,
+  "cochange_min_pairs": 3,
+  "cochange_commits_skipped": 12,
+  "edge:CO_CHANGE": 404,
+  "entrypoints": 1747,
+  "nodes": 4008,
+  "edges": 18152,
+  "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
+  "redacted_secret_chunks": 73,
+  "top_hub_nodes": [
+    {
+      "node_id": "sym:repo2graph/answer.py::_writer.write_text",
+      "label": "_writer.write_text",
+      "in_degree": 245
+    },
+    {
+      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
+      "label": "ResultCache.get",
+      "in_degree": 218
+    },
+    {
+      "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
+      "label": "TaskManager.get",
+      "in_degree": 202
+    },
+    {
+      "node_id": "sym:tests/test_http_transport.py::Server.get",
+      "label": "Server.get",
+      "in_degree": 156
+    },
+    {
+      "node_id": "sym:repo2graph/query.py::Index",
+      "label": "Index",
+      "in_degree": 154
+    },
+    {
+      "node_id": "sym:repo2graph/graph.py::build",
+      "label": "build",
+      "in_degree": 87
+    },
+    {
+      "node_id": "sym:tests/test_audit.py::test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
+      "label": "test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
+      "in_degree": 85
+    },
+    {
+      "node_id": "sym:tests/test_mcp.py::mcp_module",
+      "label": "mcp_module",
+      "in_degree": 80
+    },
+    {
+      "node_id": "sym:tests/_mcp_pool_server.py::main",
+      "label": "main",
+      "in_degree": 77
+    },
+    {
+      "node_id": "sym:tests/_pool_stdio_probe.py::main",
+      "label": "main",
+      "in_degree": 77
+    }
+  ],
+  "languages": {
+    "python": 137,
+    "md": 68,
+    "json": 50,
+    "yml": 25,
+    "typescript": 13,
+    "tsx": 8,
+    "html": 5,
+    "toml": 3,
+    "javascript": 2,
+    "yaml": 2,
+    "txt": 2,
+    "cff": 1,
+    "sarif": 1,
+    "lock": 1
+  },
+  "has_vectors": false,
+  "index_schema_version": "2",
+  "built_at_commit": "ba559e8",
+  "co_change_hotspots": [
+    {
+      "file_a": "repo2graph/export.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 25
+    },
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 25
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/export.py",
+      "weight": 23
+    },
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "repo2graph/parse.py",
+      "weight": 21
+    },
+    {
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/graph.py",
+      "weight": 21
+    }
+  ]
+}
