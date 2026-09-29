@@ -345,14 +345,6 @@ def test_index_outside_repo_is_fresh_right_after_build(git_index, capsys):
     assert index_status(out, repo=other)["freshness"]["status"] == "stale"
 
 
-def test_doctor_on_index_outside_repo_is_not_stale(git_index):
-    from repo2graph.doctor import check_index_freshness
-
-    _repo, out = git_index
-    res = check_index_freshness(out)
-    assert res.status == "ok" and "up to date" in res.summary, (res.summary, res.details)
-
-
 # ---------------------------------------------------------------- item 4
 
 
@@ -486,15 +478,3 @@ def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):
         main(["embed", "-o", str(out), "--verify-rag"])
     report = json.loads(capsys.readouterr().out)
     assert report["rag_extra_installed"] in (True, False)
-
-
-def test_doctor_names_files_with_parse_errors(tmp_path, capsys):
-    from repo2graph.doctor import check_parsers
-
-    repo = _make_repo(tmp_path, git=False)
-    (repo / "broken.py").write_text("def broken(:\n    return ((\n", encoding="utf8")
-    main(["build", str(repo), "-o", str(repo / ".r2g")])
-    capsys.readouterr()
-    res = check_parsers(repo)
-    assert res.status in ("warn", "fail"), res
-    assert any("broken.py" in d for d in res.details), res.details

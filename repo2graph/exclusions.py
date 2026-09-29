@@ -223,9 +223,9 @@ SENSITIVE = ExclusionGroup(
     ),
     dir_parts=frozenset({"secrets", ".aws", ".ssh", ".gnupg"}),
     suffixes=(".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"),
-    # `repo2graph/secrets.py` already refuses these by default (and redacts
+    # `repo2graph/security.py` already refuses these by default (and redacts
     # matches inside files it does index). This group is a second, *glob*-shaped
-    # net for a tree that names its credentials something secrets.py does not
+    # net for a tree that names its credentials something security.py does not
     # recognise -- not a replacement for it. `--include-secrets` disables that
     # default; it does not disable this group.
     already_default=True,

@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from repo2graph import secrets
+from repo2graph import security
 from repo2graph.cli import main
-from repo2graph.secrets import (
+from repo2graph.security import (
     MAX_CONTAINER_ITEMS,
     _is_secret_path,
     redact_content,
@@ -444,7 +444,7 @@ def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
     """`sk-ant-...` must be typed as anthropic_key, not the looser openai_key.
 
     Both patterns match the same span; this is the ordering/dedup contract
-    documented next to CONTENT_SECRET_PATTERNS in secrets.py.
+    documented next to CONTENT_SECRET_PATTERNS in security.py.
     """
     secret = "sk-ant-" + "A" * 24
     redacted, count = redact_content(f'x = "{secret}"')
@@ -767,20 +767,20 @@ def test_a_complete_pem_block_spans_begin_through_end():
     """Offsets hand-derived: 31 + len("\nBODY\n") + 29 == 66."""
     text = BEGIN_PEM + "\nBODY\n" + END_PEM
     assert len(text) == 66
-    assert secrets._pem_spans(text) == [(0, 66)]
-    assert ("private_key", 0, 66) in secrets.scan_content_secrets(text)
+    assert security._pem_spans(text) == [(0, 66)]
+    assert ("private_key", 0, 66) in security.scan_content_secrets(text)
 
 
 def test_an_unterminated_pem_block_spans_only_its_header():
     """No END means the header alone, which is what the optional group gave."""
     text = BEGIN_PEM + "\nnot actually a key\n"
-    assert secrets._pem_spans(text) == [(0, 31)]
+    assert security._pem_spans(text) == [(0, 31)]
 
 
 def test_a_begin_nested_inside_a_block_is_not_reported_twice():
     """finditer never restarts inside a match it already made; nor does this."""
     text = BEGIN_PEM + "\n" + BEGIN_PEM + "\n" + END_PEM
-    spans = secrets._pem_spans(text)
+    spans = security._pem_spans(text)
     assert len(spans) == 1
     assert spans[0] == (0, len(text))
 
@@ -788,7 +788,7 @@ def test_a_begin_nested_inside_a_block_is_not_reported_twice():
 def test_two_separate_pem_blocks_pair_independently():
     one = BEGIN_PEM + "\nA\n" + END_PEM
     text = one + "\nfiller\n" + one
-    spans = secrets._pem_spans(text)
+    spans = security._pem_spans(text)
     assert spans == [(0, len(one)), (len(one) + 8, len(text))]
 
 
@@ -803,7 +803,7 @@ def test_repeated_begin_without_end_stays_linear():
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
     start = time.perf_counter()
-    findings = secrets.scan_content_secrets(text)
+    findings = security.scan_content_secrets(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 3.0, f"scan took {elapsed:.2f}s; the quadratic form is back"
@@ -838,7 +838,7 @@ def test_repeated_incomplete_begin_header_stays_linear():
     text = "-----BEGIN " * 40_000
 
     start = time.perf_counter()
-    findings = secrets.scan_content_secrets(text)
+    findings = security.scan_content_secrets(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 5.0, (
@@ -855,8 +855,8 @@ def test_repeated_incomplete_begin_header_stays_linear():
 def test_every_real_pem_label_is_still_matched(label):
     """Bounding the quantifier must not narrow what counts as a private key."""
     header = f"-----BEGIN {label}PRIVATE KEY-----"
-    assert secrets.PEM_BEGIN_RE.fullmatch(header), header
-    assert secrets.PEM_END_RE.fullmatch(header.replace("BEGIN", "END"))
+    assert security.PEM_BEGIN_RE.fullmatch(header), header
+    assert security.PEM_END_RE.fullmatch(header.replace("BEGIN", "END"))
 
 
 def test_redact_content_on_repeated_begin_stays_linear():
@@ -868,7 +868,7 @@ def test_redact_content_on_repeated_begin_stays_linear():
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
     start = time.perf_counter()
-    redacted, count = secrets.redact_content(text)
+    redacted, count = security.redact_content(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 3.0, f"redact took {elapsed:.2f}s"
@@ -941,7 +941,7 @@ def test_every_allowlisted_key_actually_matches_the_regex():
     It would silently suggest the name is dangerous when the general rule
     never flagged it, which is how an allowlist rots into a list of guesses.
     """
-    from repo2graph.secrets import NON_SECRET_KEYS, SECRET_KEY_RE
+    from repo2graph.security import NON_SECRET_KEYS, SECRET_KEY_RE
 
     for key in NON_SECRET_KEYS:
         assert SECRET_KEY_RE.search(key), f"{key!r} never needed allowlisting"

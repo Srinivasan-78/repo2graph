@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import pytest
 
-from repo2graph.secrets import _is_secret_path
+from repo2graph.security import _is_secret_path
 from repo2graph.integrity import validate_outdir
 from repo2graph.lock import BuildLock, LockTimeoutError, _is_pid_alive
 from repo2graph.mcp import _clamp, MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS

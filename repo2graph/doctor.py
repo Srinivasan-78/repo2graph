@@ -1,12 +1,16 @@
-"""System diagnostics and health checker for repo2graph.
+"""Environment diagnostics for `repo2graph doctor`.
 
 Inspects Python version, platform encoding, git CLI, tree-sitter grammars,
-and directory write permissions.
+directory write permissions, and whether an existing index's artifacts are
+intact.
+
+Index freshness is deliberately not checked here: `status.compute_freshness()`
+owns that answer and `repo2graph index-status` reports it, so keeping a second
+presentation of "is this stale" out of doctor avoids the two drifting apart.
 """
 
 from __future__ import annotations
 
-import json
 import locale
 import shutil
 import subprocess
@@ -192,35 +196,6 @@ def check_permissions(path: Path | str) -> CheckResult:
             shutil.rmtree(cleanup_root, ignore_errors=True)
 
 
-def _find_index_dir(path: Path | str) -> Path | None:
-    p = Path(path).resolve()
-    dot_r2g = p if p.name == ".r2g" else p / ".r2g"
-    if dot_r2g.is_dir():
-        agent_dir = dot_r2g / "agent" if (dot_r2g / "agent").is_dir() else dot_r2g
-        if (
-            (dot_r2g / "agent").is_dir()
-            or (agent_dir / "manifest.json").exists()
-            or (agent_dir / "chunks.jsonl").exists()
-        ):
-            return dot_r2g
-    if (p / "manifest.json").exists() or (p / "chunks.jsonl").exists():
-        return p
-    if (p / "agent" / "manifest.json").exists() or (p / "agent" / "chunks.jsonl").exists():
-        return p
-    return None
-
-
-def _repo_root_for(path: Path, idx_dir: Path | None) -> Path:
-    if idx_dir is None:
-        return path
-    if idx_dir == path:
-        from .status import stored_source_root
-
-        agent = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
-        return stored_source_root(agent) or path.parent
-    return path
-
-
 def check_artifact_integrity(path: Path | str) -> CheckResult:
     """Validate artifact integrity of an index directory if present."""
     p = Path(path).resolve()
@@ -266,157 +241,6 @@ def check_artifact_integrity(path: Path | str) -> CheckResult:
         )
 
 
-def check_index_freshness(path: Path | str) -> CheckResult:
-    """Check whether the index is up-to-date with repository source files."""
-    p = Path(path).resolve()
-    idx_dir = _find_index_dir(p)
-    if idx_dir is None:
-        return CheckResult(
-            name="Index Freshness",
-            status="ok",
-            summary="no index found (nothing to be stale)",
-            details=[f"Build one with: repo2graph build {p} -o {p}/.r2g"],
-        )
-
-    from .status import (
-        compute_freshness,
-        remote_freshness,
-        stored_remote_source,
-        stored_source_root,
-    )
-
-    agent = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
-    remote = (
-        stored_remote_source(agent) if idx_dir == p and stored_source_root(agent) is None else None
-    )
-    if remote:
-        fresh = remote_freshness(remote, agent, idx_dir)
-        return CheckResult(
-            name="Index Freshness",
-            status="ok",
-            summary="freshness cannot be checked for a remote build (see notes)",
-            details=[f"Index: {idx_dir}", f"Source: {remote}"]
-            + [note[0].upper() + note[1:] for note in fresh.notes],
-        )
-
-    repo = _repo_root_for(p, idx_dir)
-    fresh = compute_freshness(repo, idx_dir, agent)
-
-    details = [f"Index: {idx_dir}", f"Source tree: {repo}"]
-    for label, items in (
-        ("added", fresh.added),
-        ("removed", fresh.removed),
-        ("modified", fresh.modified),
-    ):
-        if items:
-            details.append(
-                f"{len(items)} {label}: " + ", ".join(items[:5]) + ("..." if len(items) > 5 else "")
-            )
-    details.extend(note[0].upper() + note[1:] for note in fresh.notes)
-
-    if fresh.status == "current":
-        return CheckResult(
-            name="Index Freshness",
-            status="ok",
-            summary="index is up to date with the source tree",
-            details=details,
-        )
-
-    if fresh.status == "unknown":
-        return CheckResult(
-            name="Index Freshness",
-            status="ok",
-            summary="freshness could not be established (see notes)",
-            details=details,
-        )
-
-    return CheckResult(
-        name="Index Freshness",
-        status="warn",
-        summary="index is out of date: " + ", ".join(fresh.reasons),
-        details=details,
-        remediation="repo2graph build --incremental",
-    )
-
-
-def check_parsers(path: Path | str) -> CheckResult:
-    """Check for source parse errors in the repository."""
-    target = Path(path).resolve()
-    errors: list[str] = []
-    if target.is_dir():
-        for py_file in target.glob("**/*.py"):
-            if ".r2g" in py_file.parts or ".git" in py_file.parts:
-                continue
-            try:
-                import ast
-
-                ast.parse(
-                    py_file.read_text(encoding="utf-8", errors="replace"), filename=str(py_file)
-                )
-            except SyntaxError as e:
-                errors.append(f"{py_file.name}: {e}")
-    if errors:
-        return CheckResult(
-            "Parser Health",
-            "warn",
-            f"{len(errors)} parse errors detected",
-            details=errors,
-            remediation="Install complete grammars: pip install tree-sitter-language-pack",
-        )
-    return CheckResult("Parser Health", "ok", "no syntax errors detected")
-
-
-def check_vectors(path: Path | str) -> CheckResult:
-    """Verify vector index metadata and chunk synchronisation."""
-    p = Path(path).resolve()
-    idx_dir = _find_index_dir(p) or p
-    agent_dir = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
-    vec_file = agent_dir / "vectors.npy"
-    meta_file = agent_dir / "vectors.meta.json"
-    chunks_file = agent_dir / "chunks.jsonl"
-
-    if not vec_file.exists() and not meta_file.exists():
-        return CheckResult("Dense Vector Integrity", "ok", "no dense vector index present")
-
-    if vec_file.exists() != meta_file.exists():
-        missing = "vectors.meta.json" if not meta_file.exists() else "vectors.npy"
-        return CheckResult(
-            "Dense Vector Integrity",
-            "warn",
-            "missing companion vector metadata or embedding file",
-            details=[f"Missing file: {missing}"],
-            remediation="Re-embed the index: repo2graph embed -o <out> --force",
-        )
-
-    try:
-        from .integrity import MAX_METADATA_BYTES, read_bounded
-
-        meta_raw = read_bounded(meta_file, MAX_METADATA_BYTES, what="vectors.meta.json")
-        meta = json.loads(meta_raw.decode("utf-8", "replace"))
-        expected_chunks = len(meta.get("chunk_ids", []))
-
-        line_count = 0
-        from .integrity import MAX_JSONL_LINE_BYTES
-
-        with open(chunks_file, "rb") as f:
-            for line in f:
-                if len(line) > MAX_JSONL_LINE_BYTES:
-                    raise ValueError(f"Line exceeds {MAX_JSONL_LINE_BYTES} bytes")
-                if line.strip():
-                    line_count += 1
-
-        if expected_chunks != line_count:
-            return CheckResult(
-                "Dense Vector Integrity",
-                "warn",
-                f"vectors out of sync with chunks (expected {expected_chunks}, found {line_count})",
-                remediation="Recompute embeddings with: repo2graph embed",
-            )
-        return CheckResult("Dense Vector Integrity", "ok", f"{line_count} vectors synchronized")
-    except Exception as exc:
-        return CheckResult("Dense Vector Integrity", "warn", f"vector check failed: {exc}")
-
-
 def run_doctor(path: str | Path = ".") -> DoctorReport:
     """Execute diagnostic checks against the specified environment and path."""
     target_path = Path(path).resolve()
@@ -427,5 +251,4 @@ def run_doctor(path: str | Path = ".") -> DoctorReport:
     report.checks.append(check_tree_sitter())
     report.checks.append(check_permissions(target_path))
     report.checks.append(check_artifact_integrity(target_path))
-    report.checks.append(check_index_freshness(target_path))
     return report

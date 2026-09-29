@@ -979,7 +979,7 @@ def analyze_diff_impact(
     # symbols a call meant -- it is a fact about this analysis, not a defect in
     # the calling code -- so filing it against the caller's line accuses a file
     # that has nothing to do with the diff. Changing `HTTPTransport.start`
-    # produced 64 such findings, naming `secrets.py::_pem_spans` (which calls
+    # produced 64 such findings, naming `security.py::_pem_spans` (which calls
     # `match.start()`), `graph.py::add_cochange` and every other `.start()` call
     # in the repo, because six symbols share that name and the resolver splits
     # 1/n across them. As code-scanning alerts those arrived as inline review

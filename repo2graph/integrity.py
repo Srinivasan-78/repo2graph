@@ -166,9 +166,9 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
 # how large the index legitimately is.
 MAX_JSONL_LINE_BYTES = 1 << 20  # 1 MiB
 
-# Total-bytes ceiling for the *verification* path only (integrity.verify_artifacts,
-# doctor.check_vectors): both read a received, untrusted index end to end and
-# can afford to be strict about it. query.Index deliberately does not apply
+# Total-bytes ceiling for the *verification* path only (verify_artifacts, which
+# doctor's artifact-integrity check calls): it reads a received, untrusted index
+# end to end and can afford to be strict about it. query.Index deliberately does not apply
 # this ceiling -- chunks.jsonl is the repository's own text and is
 # legitimately large on a big monorepo.
 MAX_JSONL_TOTAL_BYTES = 1 << 30  # 1 GiB

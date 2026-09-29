@@ -1,7 +1,6 @@
 """Tests for repo2graph doctor command and diagnostic probes."""
 
 import json
-import os
 from unittest.mock import patch
 
 import pytest
@@ -11,13 +10,10 @@ from repo2graph.doctor import (
     DoctorReport,
     check_artifact_integrity,
     check_git,
-    check_index_freshness,
-    check_parsers,
     check_permissions,
     check_platform_encoding,
     check_python,
     check_tree_sitter,
-    check_vectors,
     run_doctor,
 )
 
@@ -158,32 +154,6 @@ def test_doctor_artifact_integrity_still_catches_corrupt_dot_r2g(tmp_path):
     assert any("Missing" in d for d in res.details)
 
 
-def test_doctor_vector_checks(tmp_path):
-    """Verify vector presence, missing companions, and desync checks."""
-    agent_dir = tmp_path / ".r2g" / "agent"
-    agent_dir.mkdir(parents=True)
-
-    # 1. No vectors -> OK
-    res = check_vectors(tmp_path / ".r2g")
-    assert res.status == "ok"
-
-    # 2. Missing companion (vectors.npy without vectors.meta.json)
-    (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY\x01\x00")
-    res = check_vectors(tmp_path / ".r2g")
-    assert res.status == "warn"
-    assert "missing companion" in res.summary
-
-    # 3. Vector count desync with chunks.jsonl
-    (agent_dir / "vectors.meta.json").write_text(
-        json.dumps({"model_id": "test-model", "dim": 384, "chunk_ids": ["c1", "c2"]}),
-        encoding="utf-8",
-    )
-    (agent_dir / "chunks.jsonl").write_text('{"id": "c1", "text": "one"}\n', encoding="utf-8")
-    res = check_vectors(tmp_path / ".r2g")
-    assert res.status == "warn"
-    assert "out of sync" in res.summary
-
-
 def test_doctor_platform_encoding():
     res = check_platform_encoding()
     assert res.status == "ok"
@@ -220,73 +190,3 @@ def built_repo(tmp_path):
     )
     assert main(["build", str(src), "-o", str(src / ".r2g")]) == 0
     return src
-
-
-def test_doctor_freshness_is_ok_on_a_freshly_built_index(built_repo):
-    res = check_index_freshness(built_repo)
-    assert res.status == "ok", res.details
-    assert "up to date" in res.summary
-
-
-def test_doctor_freshness_detects_a_modified_file(built_repo):
-    manifest = built_repo / ".r2g" / "agent" / "manifest.json"
-    target = built_repo / "pkg" / "core.py"
-    target.write_text("TITLE = 'core module, now with different content'\n", encoding="utf-8")
-    cutoff = manifest.stat().st_mtime
-    os.utime(target, (cutoff + 10, cutoff + 10))
-
-    res = check_index_freshness(built_repo)
-    assert res.status == "warn"
-    assert "1 modified" in res.summary
-    assert any("pkg/core.py" in d for d in res.details)
-
-
-def test_doctor_freshness_ignores_a_file_that_was_only_touched(built_repo):
-    manifest = built_repo / ".r2g" / "agent" / "manifest.json"
-    cutoff = manifest.stat().st_mtime
-    for rel in ("pkg/core.py", "pkg/util.py"):
-        os.utime(built_repo / rel, (cutoff + 10, cutoff + 10))
-
-    res = check_index_freshness(built_repo)
-    assert res.status == "ok", res.details
-    assert "modified" not in res.summary
-
-
-def test_doctor_freshness_detects_added_and_removed_files(built_repo):
-    (built_repo / "pkg" / "extra.py").write_text(
-        "EXTRA = 'a brand new module that the index has never seen'\n", encoding="utf-8"
-    )
-    (built_repo / "pkg" / "util.py").unlink()
-
-    res = check_index_freshness(built_repo)
-    assert res.status == "warn"
-    assert "1 added" in res.summary
-    assert "1 removed" in res.summary
-
-
-def test_doctor_freshness_without_an_index_is_ok(tmp_path):
-    res = check_index_freshness(tmp_path)
-    assert res.status == "ok"
-    assert "no index found" in res.summary
-
-
-def test_doctor_parser_coverage_reports_a_clean_parse(built_repo):
-    res = check_parsers(built_repo)
-    assert res.status == "ok"
-    assert "no syntax errors" in res.summary
-
-
-def test_doctor_parser_coverage_warns_on_parse_errors(tmp_path):
-    src = tmp_path / "proj"
-    src.mkdir()
-    (src / "ok.py").write_text(
-        "GREETING = 'a valid module with enough residue'\n", encoding="utf-8"
-    )
-    (src / "broken.py").write_text(
-        "BANNER = 'this module does not parse'\n\ndef broken(:\n    return [[[\n", encoding="utf-8"
-    )
-    assert main(["build", str(src), "-o", str(src / ".r2g")]) == 0
-
-    res = check_parsers(src)
-    assert res.status in ("warn", "fail")
-    assert "parse error" in res.summary

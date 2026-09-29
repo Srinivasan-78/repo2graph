@@ -210,53 +210,6 @@ class TestJsonlBounds:
         main(["build", str(repo), "-o", str(out)])
         assert verify_artifacts(out).status == "valid"
 
-    def test_doctor_check_vectors_never_raises_on_oversized_chunks_jsonl(
-        self, tmp_path, monkeypatch
-    ):
-        """doctor.check_vectors's chunk-count sweep (bounded JSONL reads's third site) must
-        degrade to a CheckResult, never raise, when chunks.jsonl is hostile."""
-        import repo2graph.integrity as integrity_mod
-        from repo2graph.doctor import check_vectors
-
-        agent_dir = tmp_path / ".r2g" / "agent"
-        agent_dir.mkdir(parents=True)
-        (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY\x01\x00")
-        (agent_dir / "vectors.meta.json").write_text(
-            json.dumps({"model_id": "m", "dim": 4, "chunk_ids": ["c1"]}), encoding="utf8"
-        )
-        (agent_dir / "chunks.jsonl").write_text(
-            '{"id": "c1", "text": "' + ("q" * 300) + '"}\n', encoding="utf8"
-        )
-
-        monkeypatch.setattr(integrity_mod, "MAX_JSONL_LINE_BYTES", 64)
-        result = check_vectors(tmp_path / ".r2g")
-        # Must come back as a CheckResult with a "warn"/"fail"-shaped status,
-        # not propagate the ValueError.
-        assert result.status in ("warn", "fail")
-
-    def test_doctor_check_vectors_still_detects_desync_with_real_ceilings(self, tmp_path):
-        """Neutrality: the existing desync detection (test_doctor.py's
-        test_doctor_vector_checks) must survive switching the counting loop to
-        the bounded reader."""
-        from repo2graph.doctor import check_vectors
-
-        agent_dir = tmp_path / ".r2g" / "agent"
-        agent_dir.mkdir(parents=True)
-        (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY\x01\x00")
-        (agent_dir / "vectors.meta.json").write_text(
-            json.dumps({"model_id": "test-model", "dim": 384, "chunk_ids": ["c1", "c2"]}),
-            encoding="utf8",
-        )
-        (agent_dir / "chunks.jsonl").write_text('{"id": "c1", "text": "one"}\n', encoding="utf8")
-        result = check_vectors(tmp_path / ".r2g")
-        assert result.status == "warn"
-        assert "out of sync" in result.summary
-
-
-# ============================================================================
-# fit_lines linearity -- _fit_lines linearity, output unchanged
-# ============================================================================
-
 
 class TestFitLines:
     def test_fit_lines_default_measure_matches_hand_derived_prefix(self):
