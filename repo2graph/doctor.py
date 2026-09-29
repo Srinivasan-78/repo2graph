@@ -128,6 +128,7 @@ def check_git(path: Path | None = None) -> CheckResult:
             [git_bin, "--version"],
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
             timeout=5,
             check=True,
         )

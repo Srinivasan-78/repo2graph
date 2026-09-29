@@ -221,7 +221,7 @@ class _Types:
 def _install_fake_sdk(monkeypatch):
     """A stand-in `mcp` package exposing only the 2.x registration API.
 
-    ISS-407/#291: there used to be a `Server1x` here too, driven by a
+    legacy server cleanup/#291: there used to be a `Server1x` here too, driven by a
     `generation` parameter, because `serve()` branched on
     `hasattr(Server, "list_tools")` to speak either SDK generation. 1.x is no
     longer supported -- it deadlocks on the first tool call -- so that branch

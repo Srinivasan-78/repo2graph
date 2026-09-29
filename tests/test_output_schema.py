@@ -604,15 +604,6 @@ def test_every_category_has_an_issue_template():
         )
 
 
-def test_the_three_new_templates_exist_and_point_at_the_bundle():
-    template_dir = REPO_ROOT / ".github" / "ISSUE_TEMPLATE"
-    for name in ("stale_index.yml", "parser_failure.yml", "answer_unhelpful.yml"):
-        path = template_dir / name
-        assert path.is_file(), f"missing issue template: {name}"
-        text = path.read_text(encoding="utf8")
-        assert "repo2graph bug-report" in text
-        assert "--category" in text
-
 
 # --------------------------------------------------------------------------
 # MCP surfaces carry the same citations

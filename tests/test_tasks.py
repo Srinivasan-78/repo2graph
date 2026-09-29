@@ -141,7 +141,7 @@ def test_a_task_is_retrievable_by_id(tmp_path):
 
 
 def test_by_id_evicts_oldest_finished_tasks_past_the_cap(tmp_path, monkeypatch):
-    """ISS-150: `_by_id` must not grow without bound. A still-BUILDING task
+    """`_by_id` must not grow without bound. A still-BUILDING task
     must never be evicted; a caller polling an id that *was* evicted gets a
     clean None (the "unknown task" answer), not a crash."""
     monkeypatch.setattr(tasks_module, "MAX_TRACKED_TASKS", 5)
@@ -184,9 +184,8 @@ def test_by_id_evicts_oldest_finished_tasks_past_the_cap(tmp_path, monkeypatch):
 
 
 class RecordingLock:
-    """A drop-in for threading.Lock (which rejects attribute assignment,
-    ISS-109's test can't monkeypatch its bound methods) that counts how many
-    times it was actually held."""
+    """A drop-in for threading.Lock (which rejects attribute assignment)
+    that counts how many times it was actually held."""
 
     def __init__(self):
         self._real = threading.Lock()
@@ -207,7 +206,7 @@ class RecordingLock:
         self.release()
 
 
-# ISS-109: the terminal write must happen under `self._lock`, like every other
+# The terminal write must happen under `self._lock`, like every other
 # mutator in TaskManager. Both branches reach that write -- the success path sets
 # status/finished_at, the except branch also sets error -- so both are checked,
 # and the only thing that differs is which way the builder ends.

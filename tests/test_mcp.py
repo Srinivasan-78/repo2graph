@@ -1,8 +1,8 @@
-"""Change 2 -- the stdio MCP server. AC-26 .. AC-33.
+"""Change 2 -- the stdio MCP server. verification.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
 `repo2graph.mcp`'s three handlers are plain functions taking an `Index`, so
-AC-26..AC-31 need no SDK at all, and AC-33 blocks the import on purpose to
+tests need no SDK at all, and SDK absence guard blocks the import on purpose to
 assert the error message a user without the extra actually sees.
 """
 
@@ -94,12 +94,12 @@ def tokens(text: str) -> int:
 
 
 # ==========================================================================
-# AC-26 -- repo_map
+# the golden baseline6 -- repo_map
 # ==========================================================================
 
 
 def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
-    """AC-26: no reformatting, no truncation, no query argument."""
+    """Verify no reformatting, no truncation, no query argument."""
     mcp = mcp_module()
     idx = Index(mini_index)
     assert mcp.tool_repo_map(idx) == idx.map_prepend()
@@ -149,12 +149,12 @@ def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index
 
 
 # ==========================================================================
-# AC-27 / AC-28 -- repo_search and its hard budget ceiling
+# the golden baseline7 / the budget limit -- repo_search and its hard budget ceiling
 # ==========================================================================
 
 
 def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
-    """AC-27: at least one `### [cite: path:start-end]` header, and the result
+    """Verify at least one `### [cite: path:start-end]` header, and the result
     measures no more than MCP_BUDGET_TOKENS.
 
     `big_index` packs to well over the default budget when unbounded, so the
@@ -177,7 +177,7 @@ def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_i
 
 @pytest.mark.parametrize("budget", [10**9, 10**6, 100000])
 def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
-    """AC-28: the ceiling is enforced, not advisory."""
+    """Verify the ceiling is enforced, not advisory."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=budget)
@@ -191,7 +191,7 @@ def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9)])
 def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
-    """AC-28: no crash, no traceback, and still a bounded string."""
+    """Verify no crash, no traceback, and still a bounded string."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=budget)
@@ -200,13 +200,13 @@ def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budge
 
 
 def test_ac28_ceiling_is_above_the_default(big_index):
-    """AC-28 (guard): the two constants are ordered the way the plan says."""
+    """Verify the two constants are ordered the way the plan says."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_BUDGET_TOKENS <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
 def test_ac28_truncation_happens_on_a_line_boundary(big_index):
-    """AC-28: a clamped result is still parseable markdown -- no half line."""
+    """Verify a clamped result is still parseable markdown -- no half line."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=10**9)
@@ -218,12 +218,12 @@ def test_ac28_truncation_happens_on_a_line_boundary(big_index):
 
 
 # ==========================================================================
-# AC-29 -- secrets never leave through an agent tool
+# the secret filter rule -- secrets never leave through an agent tool
 # ==========================================================================
 
 
 def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
-    """AC-29: the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
+    """Verify the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
     still must not appear; the same query with exclude_secrets=False does
     return it, which is what makes this a real test."""
     mcp = mcp_module()
@@ -246,7 +246,7 @@ def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
 
 
 def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
-    """AC-29 (b): the other two tools must not become the leak instead."""
+    """Verify the other two tools must not become the leak instead."""
     mcp = mcp_module()
     idx = Index(mini_index)
     for text in (mcp.tool_repo_map(idx), mcp.tool_repo_neighbours(idx, "file:.env")):
@@ -255,12 +255,12 @@ def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
 
 
 # ==========================================================================
-# AC-30 -- repo_neighbours
+# repo_neighbours
 # ==========================================================================
 
 
 def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
-    """AC-30: route_request -> audit_event over CALLS out is in the fixture
+    """Verify route_request -> audit_event over CALLS out is in the fixture
     graph, so it must be named, with its edge type and its direction."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -278,7 +278,7 @@ def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_inde
 
 
 def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
-    """AC-30 (b): not found, not a traceback, and not a wall of text."""
+    """Verify not found, not a traceback, and not a wall of text."""
     mcp = mcp_module()
     idx = Index(mini_index)
     out = mcp.tool_repo_neighbours(idx, "sym:nowhere.py::nothing")
@@ -288,7 +288,7 @@ def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
 
 
 def test_ac30_neighbours_respects_its_limit(mini_index):
-    """AC-30 (c): an agent-facing tool must be bounded here too."""
+    """Verify an agent-facing tool must be bounded here too."""
     mcp = mcp_module()
     idx = Index(mini_index)
     short = mcp.tool_repo_neighbours(idx, SYM_ROUTE, limit=1)
@@ -297,12 +297,12 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 
 
 # ==========================================================================
-# AC-31 -- tool descriptions are context an agent pays for every session
+# tool descriptions are context an agent pays for every session
 # ==========================================================================
 
 
 def test_ac31_tool_descriptions_stay_under_budget():
-    """AC-31: the published tool set, capped under a combined character budget.
+    """Verify the published tool set, capped under a combined character budget.
 
     The character budget balances agent context overhead against Glama TDQS
     (Tool Definition Quality Standard) requirements. Tool descriptions are loaded
@@ -537,7 +537,7 @@ def test_iss292_repo_build_status_is_the_only_non_build_capable_tool():
 
 
 # ==========================================================================
-# AC-32 / AC-33 -- packaging and the console entry point
+# Packaging and the console entry point
 # ==========================================================================
 
 
@@ -564,7 +564,7 @@ def requirement_names(specs):
 
 
 def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
-    """AC-32: `mcp` extra + `repo2graph-mcp` entry point."""
+    """Verify `mcp` extra + `repo2graph-mcp` entry point."""
     data = load_pyproject()
     extras = data["project"]["optional-dependencies"]
     assert "mcp" in extras, sorted(extras)
@@ -575,7 +575,7 @@ def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
 
 
 def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
-    """AC-32: a bare `pip install repo2graph` brings in nothing new."""
+    """Verify a bare `pip install repo2graph` brings in nothing new."""
     data = load_pyproject()
     assert requirement_names(data["project"]["dependencies"]) == {
         "tree-sitter",
@@ -584,7 +584,7 @@ def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
 
 
 def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
-    """AC-33: a user without the extra gets an actionable message and a
+    """Verify a user without the extra gets an actionable message and a
     non-zero exit, never an ImportError traceback."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
@@ -596,7 +596,7 @@ def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeyp
 
 
 def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
-    """AC-33 (b): the guard lives at the import site, not only in main()."""
+    """Verify the guard lives at the import site, not only in main()."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
     with pytest.raises(SystemExit) as exc:
@@ -605,7 +605,7 @@ def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monke
 
 
 def test_ac33_open_index_caches_one_index_per_directory(mini_index):
-    """AC-33 (c): the server must not re-read the whole index per tool call."""
+    """Verify the server must not re-read the whole index per tool call."""
     mcp = mcp_module()
     first = mcp.open_index(mini_index)
     second = mcp.open_index(mini_index)
@@ -614,13 +614,13 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
 
 
 # ==========================================================================
-# AC-34 -- live stdio server round-trip
+# live stdio server round-trip
 # ==========================================================================
 
 
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
 def test_ac34_stdio_server_roundtrip(mini_index):
-    """AC-34: automated round-trip against the live stdio server."""
+    """Verify automated round-trip against the live stdio server."""
     proc = subprocess.Popen(
         [sys.executable, "-m", "repo2graph.mcp", "--out", str(mini_index)],
         stdin=subprocess.PIPE,
@@ -983,7 +983,7 @@ def test_iss407_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
 
 def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
     """R-8 (e): absent and unusable are different problems with different
-    instructions; the new branch must not swallow AC-33's."""
+    instructions; the new branch must not swallow SDK absence guard's."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
     with pytest.raises(SystemExit) as exc:
@@ -1007,7 +1007,7 @@ def test_r8_the_extra_is_bounded_below_the_unsupported_major():
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9), 1])
 def test_r10_a_floor_clamped_budget_explains_itself(big_index, budget):
-    """R-10 (a): AC-28 only requires "no crash"; an empty tool result reads to
+    """R-10 (a): the budget limit only requires "no crash"; an empty tool result reads to
     an agent exactly like "no such code", so say which it was."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -1325,7 +1325,7 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
         target, attr = mod, "run"
         run = lambda: mod._git_files(tmp_path)
     else:
-        # Popen, not run: since ISS-236 add_cochange streams the log so the byte
+        # Popen, not run: since log streaming add_cochange streams the log so the byte
         # cap can bind during the read. The stdin=DEVNULL requirement is the
         # same either way -- capture_output was never what redirected it.
         from repo2graph import graph as mod
@@ -1447,7 +1447,7 @@ def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
 
 @pytest.mark.skipif(not HAS_ANY_MCP, reason="needs the mcp extra (either SDK major)")
 def test_iss90_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
-    """AC-2, end to end: a real `serve()` over real pipes against a repo above
+    """the golden baseline, end to end: a real `serve()` over real pipes against a repo above
     PARALLEL_MIN_FILES answers its first tool call.
 
     The marker file is what makes this about the *parallel* path: the launcher

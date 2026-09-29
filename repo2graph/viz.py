@@ -157,7 +157,7 @@ def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
     )
-    # ISS-33: Single-pass replace prevents __R2G_DATA__ in repo title from expanding
+    # Single-pass replace prevents __R2G_DATA__ in repo title from expanding
     replacements = {
         "__R2G_DATA__": blob,
         "__R2G_TITLE__": html.escape(str(g.name)),

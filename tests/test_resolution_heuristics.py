@@ -104,12 +104,12 @@ def test_ambiguous_flag(repo):
     for e in edges:
         assert e.get("ambiguous") is True
     # Same-directory pair fires heuristics; both candidates stay, so this site
-    # still counts as one fan-out (ISS-206).
+    # still counts as one fan-out.
     assert g.stats["ambiguous_calls"] == 1
 
 
 def test_iss127_max_call_candidates_fan_out(tmp_path):
-    """Issue 127: call resolution fan-out respects max_call_candidates instead of hard-capping at 3."""
+    """Call resolution fan-out respects max_call_candidates instead of hard-capping at 3."""
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "caller.py").write_text("def run():\n    worker()\n")
@@ -137,7 +137,7 @@ def test_iss127_max_call_candidates_fan_out(tmp_path):
 
 
 def test_iss206_ambiguous_calls_stat_non_heuristic_fanout(tmp_path):
-    """ISS-206: a bare name in 2+ files, no import/same-file/same-dir boost.
+    """A bare name in 2+ files, no import/same-file/same-dir boost.
 
     Count once per call site that emits ambiguous=True CALLS edges, and
     persist the key through the normal stats.json / manifest dump.

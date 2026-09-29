@@ -3,9 +3,9 @@
 Both had the same shape of bug: a bound that was written down but not enforced
 where it was promised. `_chunk_and_parse` sliced a large file at raw byte
 offsets and threw away every slice that did not decode -- two of them per
-straddling multi-byte character (ISS-196) -- while still buffering the whole
+straddling multi-byte character  -- while still buffering the whole
 file for the digest. `add_cochange` capped `git log` output only after
-`capture_output=True` had already read it to EOF (ISS-236).
+`capture_output=True` had already read it to EOF .
 
 Everything here is derived from the fixture bytes by hand: byte offsets counted
 out in the test, sha256 taken with the stdlib, line counts from `count(b"\\n")`.
@@ -32,7 +32,7 @@ def _symbol_qualnames(g: Graph) -> set[str]:
     return {n["qualname"] for n in g.nodes.values() if n["type"] == "symbol"}
 
 
-# ---------- ISS-196: a character straddling a slice boundary ----------
+# ---------- slice boundary handling: a character straddling a slice boundary ----------
 # Small enough to reason about by hand; `chunk_large_files` makes discovery
 # yield the file anyway, and `_read_and_parse` chunks anything larger than this.
 _LIMIT = 300
@@ -124,7 +124,7 @@ def test_iss196_bytes_that_are_not_utf8_are_counted_and_cost_only_their_own_slic
     assert g.stats["files_with_undecodable_chunks"] == 1
 
 
-# ---------- ISS-236: the git-log read stops at the cap ----------
+# ---------- log streaming: the git-log read stops at the cap ----------
 # Written to disk and run with sys.executable: a fake `git` on PATH cannot work
 # on Windows, where CreateProcess only ever appends .exe when it searches PATH.
 _FAKE_GIT = """\

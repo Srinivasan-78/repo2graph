@@ -47,7 +47,7 @@ def test_cpp_parse_pass_2(mock_run):
     mock_run.side_effect = mock_run_impl
 
     pf = parse_source(source, "c", filepath="test.c")
-    # used_cpp records that the preprocessed parse was cleaner. ISS-126
+    # used_cpp records that the preprocessed parse was cleaner. cpp citation accuracy
     # stopped adopting that tree, so parse_errors may still be Pass 1's
     # count; the flag itself is unchanged.
     assert pf.used_cpp
@@ -56,7 +56,7 @@ def test_cpp_parse_pass_2(mock_run):
 
 @patch("subprocess.run")
 def test_cpp_parse_pass_2_non_ascii_output(mock_run):
-    # ISS-164: cpp's stdout can contain raw UTF-8 bytes (e.g. a Unicode string
+    # raw UTF-8 bytes handling: cpp's stdout can contain raw UTF-8 bytes (e.g. a Unicode string
     # literal or non-ASCII comment preserved by -P). Previously `subprocess.run`
     # was called with text=True, which decodes using the platform locale (cp1252
     # on Windows) and raises UnicodeDecodeError on bytes like b"\xc3\xa9" (an
@@ -144,7 +144,7 @@ def _require_working_cpp(path: Path) -> None:
     the Xcode toolchain), and the two spawns `parse_source` makes -- the
     `cpp --version` probe on a 5s timeout, then `cpp -w -P -undef` on a 10s one
     -- can each fail or time out on a loaded runner. Both failures are
-    swallowed into `used_cpp=False`, so the assertion below reported "ISS-126
+    swallowed into `used_cpp=False`, so the assertion below reported "cpp citation accuracy
     regressed" for an environment that simply could not preprocess. One macOS
     cell failed on a commit touching neither parse.py nor the test, while the
     other two Python versions on the same image passed, and a plain re-run went
@@ -174,7 +174,7 @@ def _require_working_cpp(path: Path) -> None:
 
 
 def test_iss126_cpp_fallback_line_numbers_match_original(tmp_path):
-    """ISS-126: used_cpp=True must still cite the on-disk file, not cpp -P rows."""
+    """Verify used_cpp=True must still cite the on-disk file, not cpp -P rows."""
     path = tmp_path / "macro.c"
     path.write_text(_ISS126_MACRO_C, encoding="utf8")
     _require_working_cpp(path)

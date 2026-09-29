@@ -1,4 +1,4 @@
-"""ISS-237: `--ref` is validated before it can be interpolated into a git argv.
+"""Verify `--ref` is validated before it can be interpolated into a git argv.
 
 `parse_spec` already refuses option-like owner/repo components; `ref` had no
 equivalent check and reached git as a bare argv element in `git fetch ... origin
@@ -86,7 +86,7 @@ def no_token(monkeypatch):
 
 
 def _existing_checkout(tmp_path):
-    """dest/<repo>/.git, so clone() takes the ISS-21 'reuse the checkout' branch."""
+    """dest/<repo>/.git, so clone() takes the reuse checkout 'reuse the checkout' branch."""
     target = tmp_path / "repo"
     (target / ".git").mkdir(parents=True)
     return target

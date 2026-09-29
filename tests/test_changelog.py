@@ -60,7 +60,7 @@ def test_changelog_only_written_for_human_facing_builds(tmp_path):
 
 
 def test_jsonl_rebuild_does_not_load_previous_state(tmp_path, monkeypatch):
-    """ISS-205: a jsonl-only rebuild must not snapshot the previous graph.
+    """Verify a jsonl-only rebuild must not snapshot the previous graph.
 
     `previous_state` reads whole `agent/nodes.jsonl` and `agent/edges.jsonl`
     into lists of dicts. That cost is paid only when CHANGELOG.md will be
@@ -86,7 +86,7 @@ def test_jsonl_rebuild_does_not_load_previous_state(tmp_path, monkeypatch):
 
 
 def test_overview_rebuild_still_snapshots_and_diffs(tmp_path, monkeypatch):
-    """ISS-205: an overview rebuild still reads the previous graph and diffs it.
+    """Verify an overview rebuild still reads the previous graph and diffs it.
 
     The snapshot must happen before dump_all overwrites the on-disk jsonl.
     """

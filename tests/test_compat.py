@@ -1,4 +1,4 @@
-"""The backward-compatibility contract: AC-1 .. AC-9, plus AC-34 / AC-35.
+"""The backward-compatibility contract for query, RAG, CLI, and index state surfaces.
 
 These are characterization tests. The golden files under `tests/golden/` were
 captured from the baseline commit ff0e3ca (the tree this run started from), by
@@ -14,8 +14,6 @@ implementation broke something it promised not to touch.
 Score fields in query_json.json / rag_json.json / pack_context.json were
 refreshed for #142 (corpus BM25 avgdl). Ranking and pack membership are
 unchanged; do not treat that refresh as a license to regen other goldens.
-
-Every test names the acceptance criterion it encodes as `# AC-n`.
 """
 
 import argparse
@@ -46,8 +44,8 @@ from repo2graph.query import Index, read_jsonl
 REGEN = os.environ.get("R2G_REGEN_GOLDEN") == "1"
 
 # The four optional dependencies that a bare `pip install repo2graph` does not
-# bring in. Importing any of them from a core module breaks the promise the
-# whole plan is built on, so AC-5/6/7 assert on sys.modules out-of-process.
+# bring in. Importing any of them from a core module breaks the zero-dependency
+# promise, so these tests assert on sys.modules out-of-process.
 OPTIONAL_MODULES = ("numpy", "sentence_transformers", "torch", "mcp")
 
 
@@ -67,7 +65,7 @@ def _subprocess_modules(import_stmt: str, watched=OPTIONAL_MODULES):
 
 
 # ==========================================================================
-# AC-1 / AC-2 / AC-9 -- the byte-for-byte characterization goldens
+# Byte-for-byte query, RAG, and pack_context characterization goldens
 # ==========================================================================
 
 
@@ -77,7 +75,7 @@ def _capture(capsys, argv):
 
 
 def test_ac1_query_output_is_byte_identical_to_baseline(mini_index, capsys):
-    """AC-1: `repo2graph query` on a vector-less index is unchanged."""
+    """Verify repo2graph query on a vector-less index is unchanged from baseline."""
     text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index)])
     assert "vectors.npy" not in {p.name for p in mini_index.rglob("*")}
     if REGEN:
@@ -86,7 +84,7 @@ def test_ac1_query_output_is_byte_identical_to_baseline(mini_index, capsys):
 
 
 def test_ac1_query_json_output_is_byte_identical_to_baseline(mini_index, capsys):
-    """AC-1: the same for `query --format json` (the machine-readable form)."""
+    """Verify query --format json produces byte-identical output to baseline."""
     text = _capture(capsys, ["query", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     if REGEN:
         write_golden_text("query_json.json", text)
@@ -94,7 +92,7 @@ def test_ac1_query_json_output_is_byte_identical_to_baseline(mini_index, capsys)
 
 
 def test_ac2_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
-    """AC-2 (a): `repo2graph rag` markdown on a vector-less index is unchanged."""
+    """Verify repo2graph rag markdown on a vector-less index is unchanged from baseline."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index)])
     if REGEN:
         write_golden_text("rag_markdown.md", text)
@@ -102,8 +100,7 @@ def test_ac2_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
 
 
 def test_ac2_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
-    """AC-2 (b): the JSON form gains exactly `tokens_used` and `tokens_budget`
-    and changes the value of nothing else."""
+    """Verify JSON form gains exactly tokens_used and tokens_budget without changing other fields."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
     if REGEN:
@@ -118,8 +115,7 @@ def test_ac2_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
 
 
 def test_ac9_pack_context_without_vectors_matches_the_baseline(mini_index):
-    """AC-9: markdown, chunks, seeds, neighbors and truncated are unchanged
-    when no vectors.npy exists and no embedder is supplied."""
+    """Verify markdown, chunks, seeds, neighbors and truncated are unchanged when no vectors exist."""
     idx = Index(mini_index)
     keys = ("markdown", "chunks", "seeds", "neighbors", "truncated")
     got = {
@@ -133,7 +129,7 @@ def test_ac9_pack_context_without_vectors_matches_the_baseline(mini_index):
 
 
 def test_ac3_score_rrf_without_vectors_is_exactly_score(mini_index):
-    """AC-3: list equality (order and values), not set equality."""
+    """Verify list equality (order and values) between score and score_rrf without vectors."""
     idx = Index(mini_index)
     for query in (MINI_QUERY, "audit event journal", "no such token anywhere"):
         base = idx.score(query)
@@ -143,7 +139,7 @@ def test_ac3_score_rrf_without_vectors_is_exactly_score(mini_index):
 
 
 # ==========================================================================
-# AC-4 -- the CLI surface, enumerated from argparse rather than from prose
+# CLI surface and argument definitions from argparse
 # ==========================================================================
 
 
@@ -196,7 +192,7 @@ def _cli_inventory(monkeypatch) -> dict:
 
 
 def test_ac4_every_baseline_subcommand_and_flag_survives(monkeypatch):
-    """AC-4: every baseline subcommand still parses and still accepts every
+    """Verify every baseline subcommand still parses and still accepts every
     flag it accepted, with the same default, type, nargs and choices. New
     subcommands and new flags are allowed; removals and changes are not."""
     inventory = _cli_inventory(monkeypatch)
@@ -214,38 +210,36 @@ def test_ac4_every_baseline_subcommand_and_flag_survives(monkeypatch):
 
 
 def test_ac4_baseline_subcommands_are_all_present(monkeypatch):
-    """AC-4: the named set, spelled out, so a silently dropped alias is loud."""
+    """Verify expected baseline subcommands are all present."""
     inventory = _cli_inventory(monkeypatch)
     expected = {"build", "github", "gh", "query", "rag", "map", "stats", "version"}
     assert expected <= set(inventory), expected - set(inventory)
 
 
 # ==========================================================================
-# AC-5 / AC-6 / AC-7 -- the zero-dependency import contract
+# Zero-dependency import contract for core modules
 # ==========================================================================
 
 
-# AC-5/6/7: importing any of these must not drag an optional extra in. Each row
+# Importing any of these core modules must not drag an optional extra in. Each row
 # is a fresh subprocess that imports one module and prints anything watched that
 # got imported, so the body is the same three lines every time and only the
-# import line differs. The acceptance criterion each row belongs to is in its id,
-# because that is what a failure needs to name.
+# import line differs.
 @pytest.mark.parametrize(
     "statement, watched",
     [
-        pytest.param("import repo2graph.query", None, id="ac5-query"),
+        pytest.param("import repo2graph.query", None, id="query-imports"),
         # embed legitimately knows about the rag extra's names, so it is watched
         # for those three only -- `mcp` is not a dependency of embedding.
         pytest.param(
             "import repo2graph.embed",
             ("numpy", "sentence_transformers", "torch"),
-            id="ac6-embed",
+            id="embed-imports",
         ),
         # Only serve() may touch the SDK, so the module has to import bare.
-        pytest.param("import repo2graph.mcp", None, id="ac7-mcp"),
-        # AC-5 corollary: `repo2graph query` goes through cli, so the entry
-        # point must stay as clean as the module it calls.
-        pytest.param("import repo2graph.cli", None, id="ac5-cli-entry-point"),
+        pytest.param("import repo2graph.mcp", None, id="mcp-imports"),
+        # repo2graph query goes through cli, so the entry point must stay clean.
+        pytest.param("import repo2graph.cli", None, id="cli-entry-point-imports"),
     ],
 )
 def test_importing_a_module_pulls_in_no_optional_dependency(statement, watched):
@@ -256,7 +250,7 @@ def test_importing_a_module_pulls_in_no_optional_dependency(statement, watched):
 
 
 # ==========================================================================
-# AC-8 -- action.yml inputs and outputs
+# action.yml inputs and outputs contract
 # ==========================================================================
 
 ACTION_YML = REPO_ROOT / "action.yml"
@@ -283,7 +277,7 @@ def parse_action_block(text: str, block: str) -> dict:
     """
     out, current = {}, None
     inside = False
-    for line in text.split("\n"):  # never splitlines(): see AGENTS.md
+    for line in text.split("\n"):  # preserve trailing newlines and line alignment
         if line.rstrip() == f"{block}:":
             inside = True
             continue
@@ -305,7 +299,7 @@ def parse_action_block(text: str, block: str) -> dict:
 
 
 def test_ac8_hand_parser_agrees_with_pyyaml():
-    """AC-8 (guard): the hand parser is not quietly wrong."""
+    """Verify hand parser agrees with PyYAML."""
     yaml = pytest.importorskip("yaml", reason="PyYAML is not a test dependency")
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         text = fh.read()
@@ -324,9 +318,7 @@ def test_ac8_hand_parser_agrees_with_pyyaml():
 
 
 def test_ac8_action_inputs_and_outputs_keep_their_baseline_contract():
-    """AC-8: every baseline input keeps its default and every baseline output
-    keeps its `value` expression; any newly added input is optional and has a
-    default, so an existing workflow that omits it behaves as it did."""
+    """Verify every baseline input keeps its default and baseline output keeps its value."""
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         text = fh.read()
     inputs = parse_action_block(text, "inputs")
@@ -356,7 +348,7 @@ def test_ac8_action_inputs_and_outputs_keep_their_baseline_contract():
 
 
 def test_ac8_new_action_inputs_default_to_baseline_behaviour():
-    """AC-8: the three inputs this run may add must default to "off"."""
+    """Verify new action inputs default to baseline behaviour."""
     with open(ACTION_YML, encoding="utf8", newline="\n") as fh:
         inputs = parse_action_block(fh.read(), "inputs")
     off_defaults = {
@@ -418,7 +410,7 @@ def test_action_parse_policy_values_are_values_the_cli_accepts():
 
 
 # ==========================================================================
-# AC-34 / AC-35 -- per-file content hashes in index.state.json
+# Per-file content hashes in index.state.json
 # ==========================================================================
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -430,8 +422,7 @@ def _state(outdir: Path) -> dict:
 
 
 def test_ac34_build_writes_index_state_with_a_hash_per_file_node(mini_index):
-    """AC-34: `files` keys are exactly the readable `file:` node paths and the
-    values are 64-char lowercase hex digests."""
+    """Verify files keys match indexed file paths and values are 64-char hex digests."""
     state = _state(mini_index)
     assert isinstance(state.get("files"), dict), state
     nodes = read_jsonl(artifact_path(mini_index, "nodes.jsonl"))
@@ -442,7 +433,7 @@ def test_ac34_build_writes_index_state_with_a_hash_per_file_node(mini_index):
 
 
 def test_ac34_state_hash_is_the_sha256_of_the_file_bytes(mini_repo, mini_index):
-    """AC-34: the digest is reproducible by hand from the file on disk."""
+    """Verify file digest is reproducible by hand from disk contents."""
     state = _state(mini_index)
     rel = "pkg/gateway.py"
     expected = hashlib.sha256((mini_repo / rel).read_bytes()).hexdigest()
@@ -450,8 +441,7 @@ def test_ac34_state_hash_is_the_sha256_of_the_file_bytes(mini_repo, mini_index):
 
 
 def test_ac35_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
-    """AC-35: a rebuild after a one-file edit leaves every other entry
-    byte-identical."""
+    """Verify rebuilding after a one-file edit leaves every other entry unchanged."""
     out = build_mini_index(mini_repo, tmp_path / "state_idx")
     before = _state(out)["files"]
 
@@ -857,10 +847,8 @@ def test_iss204_the_version_input_defaults_to_blank():
 
 
 def test_iss204_the_install_step_gates_on_the_version_input():
-    """#204 (e): a source-level guard on the shape of the gate, so the file
-    test cannot come back as the *first* branch. `-n`/`-z` on the input is
-    also the form GitHub expressions and bash agree on for every casing
-    (AGENTS.md), which is why no `inputs.version ==` gate is needed."""
+    """Verify source-level guard on the install step gate so the file test
+    is not the first branch, and -n/-z casing behavior is respected."""
     body = _run_body(
         _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Install repo2graph")
     )
@@ -870,7 +858,7 @@ def test_iss204_the_install_step_gates_on_the_version_input():
 
 
 def test_iss108_examples_workflow_routes_inputs_through_env():
-    """Issue 108: examples.yml must route ${{ inputs.repo }} via env:, not direct run: interpolation."""
+    """Verify examples.yml routes ${{ inputs.repo }} via env:, not direct run: interpolation."""
     workflow_path = REPO_ROOT / ".github" / "workflows" / "examples.yml"
     assert workflow_path.exists()
     content = workflow_path.read_text(encoding="utf8")
@@ -882,7 +870,7 @@ def test_iss108_examples_workflow_routes_inputs_through_env():
 
 
 def test_iss137_generate_examples_split_rule(tmp_path):
-    """Issue 137: generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
+    """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
     import gzip
     import importlib.util
 
@@ -905,7 +893,7 @@ def test_iss137_generate_examples_split_rule(tmp_path):
 
 
 def test_iss139_commit_release_api_timeout(monkeypatch):
-    """Issue 139: api() in commit_release_via_api.py must pass timeout to urlopen."""
+    """Verify api() in commit_release_via_api.py passes timeout to urlopen."""
     import importlib.util
     import io
 
@@ -1001,7 +989,7 @@ def _run_commit_release(mod, monkeypatch, *, branch_exists, file_path="release.t
 
 
 def test_iss146_commit_release_api_path_posix(monkeypatch):
-    """Issue 146: commit_release_via_api.py must normalize Windows paths."""
+    """Verify commit_release_via_api.py normalizes Windows paths."""
     mod = _load_commit_release_module()
     _, graphql_calls = _run_commit_release(
         mod, monkeypatch, branch_exists=False, file_path="dist\\sub\\release.txt"
@@ -1132,21 +1120,8 @@ def test_commit_release_graphql_raises_on_error_payload():
 
 
 # ==========================================================================
-# Issue #240: every subprocess in the package must close its stdin
+# Subprocess stdin closure verification
 # ==========================================================================
-#
-# `capture_output` redirects the child's stdout and stderr only, so a child
-# spawned without `stdin=` inherits ours. Under `repo2graph-mcp` on stdio that
-# handle is the client's JSON-RPC pipe: the child blocks reading it until its
-# timeout fires, and while it holds the pipe it can swallow frames meant for
-# us (the reasoning is spelled out at parse.py's _git_files). Every call site
-# followed the rule except the two `cpp` invocations in parse.py.
-#
-# This is a source-level invariant rather than a behavioural one -- the two
-# cpp calls were latent, not actively breaking, and a runtime test can only
-# reach the sites it happens to exercise. Walking the AST of the whole package
-# means the *next* call site added cannot skip it either, the same way the
-# action.yml checks above pin a gate no Python test can see.
 
 
 def _subprocess_spawn_calls(path: Path):
@@ -1172,8 +1147,7 @@ def _subprocess_spawn_calls(path: Path):
 
 
 def test_iss240_every_subprocess_spawn_in_the_package_closes_stdin():
-    """#240: no `subprocess.run`/`Popen`/`call` in repo2graph/ may inherit our
-    stdin. Anything new that does fails here, naming the file and line."""
+    """Verify no subprocess.run/Popen/call in repo2graph/ inherits standard input."""
     package = REPO_ROOT / "repo2graph"
     offenders = []
     total = 0

@@ -155,12 +155,9 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
 
 
 # Ceilings for the JSONL artifacts (nodes/edges/chunks.jsonl), which read_bounded
-# does not cover -- they are streamed line by line, not read whole. ISS-408:
-# #405 bounded the metadata files (manifest.json, vectors.meta.json/.npy) above
-# but explicitly left these open, because a single `for line in fh` reads until
-# a newline -- a file with none is a single allocation the size of the file,
-# the same shape MAX_ANSWER_BYTES / answer._BoundedLines bounds for a provider
-# response with no newline.
+# does not cover -- they are streamed line by line, not read whole.
+# Bounding metadata files leaves line streaming open to unbounded memory
+# allocations if a file contains no newlines.
 #
 # A legitimate chunk's text is capped at chunks.MAX_CHARS (4000 characters,
 # well under 64 KiB even at UTF-8's worst-case 4 bytes/char) before it is ever
@@ -173,11 +170,7 @@ MAX_JSONL_LINE_BYTES = 1 << 20  # 1 MiB
 # doctor.check_vectors): both read a received, untrusted index end to end and
 # can afford to be strict about it. query.Index deliberately does not apply
 # this ceiling -- chunks.jsonl is the repository's own text and is
-# legitimately large on a big monorepo. For scale: this repo's own `examples/`
-# tree's largest node list (`examples/linux/nodes.jsonl.gz`, 136k records)
-# decompresses to ~47 MB, and chunks.jsonl -- which carries full chunk text on
-# top of the same per-record metadata -- runs larger still. 1 GiB is
-# comfortably above that while still bounding a hostile file.
+# legitimately large on a big monorepo.
 MAX_JSONL_TOTAL_BYTES = 1 << 30  # 1 GiB
 
 # Block size for the framing reader below. Matches answer.READ_BLOCK's role:
@@ -191,11 +184,9 @@ def _iter_raw_lines(fh: IO[bytes], max_line_bytes: int, what: str = "input") -> 
 
     `for raw in fh` cannot implement a per-line ceiling: it reads until it finds
     a newline, so by the time the caller can measure the line, a file containing
-    no newline at all has *already* been allocated whole -- which is the first of
-    the two attack shapes ISS-408 names, not a case the measurement catches. The
+    no newline at all has *already* been allocated whole. The
     check has to happen while reading, not after, so the read is blocked and the
-    partial line is measured between blocks. This is the same construction
-    answer._BoundedLines uses over a provider response body, for the same reason.
+    partial line is measured between blocks.
 
     Peak memory is therefore `max_line_bytes + JSONL_READ_BLOCK`, not the file
     size. Lines are yielded *with* their trailing newline so a caller summing
@@ -512,8 +503,8 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
                     ).hexdigest()
         except ValueError as exc:
             # Malformed JSON, an oversized line, or the total-bytes ceiling --
-            # same failure class, same "corrupt" answer, never an exception
-            # escaping into doctor (ISS-408).
+            # same failure class, same "corrupt" answer, never an unhandled
+            # exception escaping to callers.
             report.status = "corrupt"
             report.errors.append(f"chunks.jsonl: {exc}")
         except OSError as exc:

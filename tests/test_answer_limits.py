@@ -185,7 +185,7 @@ def test_iss241_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsy
 
     stdout now carries the answer *and* the "Confidence and limitations"
     segment, which is answer content -- a reader piping `rag --answer` to a
-    file wants the caveats in that file. The ISS-241 property this test
+    file wants the caveats in that file. The answer limit property property this test
     exists for is narrower and unchanged: the *provider stream truncation
     warning* is a tool diagnostic, so it goes to stderr and never pollutes
     the answer on stdout.

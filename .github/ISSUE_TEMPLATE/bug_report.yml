@@ -22,6 +22,22 @@ body:
       required: true
 
   - type: dropdown
+    id: category
+    attributes:
+      label: Issue category
+      description: >
+        If you generated a diagnostic bundle with `repo2graph bug-report --category <cat>`, select the matching category.
+      options:
+        - incorrect-relationship
+        - missing-relationship
+        - stale-index
+        - parser-failure
+        - answer-unhelpful
+        - other
+    validations:
+      required: false
+
+  - type: dropdown
     id: python-version
     attributes:
       label: Python version

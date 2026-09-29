@@ -36,7 +36,7 @@ MAX_REPORTED_PROGRESS = 99
 # A build that has produced no estimate yet still reports something non-zero,
 # so a client can tell "starting" from "stuck".
 MIN_REPORTED_PROGRESS = 1
-# Upper bound on how many tasks TaskManager._by_id retains (ISS-150). Beyond
+# Upper bound on how many tasks TaskManager._by_id retains. Beyond
 # this, the oldest *finished* tasks are evicted first; a task still BUILDING
 # is never evicted, so an in-flight build always stays pollable. A caller
 # that polls an evicted id gets the same clean "unknown task" answer as one
@@ -161,8 +161,8 @@ class TaskManager:
         return task
 
     def _evict_locked(self) -> None:
-        """Drop the oldest finished tasks once `_by_id` exceeds
-        MAX_TRACKED_TASKS (ISS-150). Caller must hold self._lock.
+        """Drop the oldest finished tasks once `_by_id` exceeds MAX_TRACKED_TASKS.
+        Caller must hold self._lock.
 
         A task still BUILDING is skipped rather than evicted -- an in-flight
         build must always remain pollable -- so if enough builds are running
@@ -197,7 +197,7 @@ class TaskManager:
             # leaving it reporting "building" until the process dies.
             # This runs on the build's background thread; every other mutator
             # in this class holds self._lock, so the same three assignments do
-            # here (ISS-109) rather than racing a concurrent get()/for_dir().
+            # here rather than racing a concurrent get()/for_dir().
             with self._lock:
                 task.error = f"{type(exc).__name__}: {exc}"
                 task.status = FAILED

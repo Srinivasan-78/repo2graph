@@ -38,7 +38,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 #   * MINI_QUERY hits pkg/gateway.py::route_request lexically; pkg/audit.py::
 #     audit_event is reachable from it only over the CALLS edge.
 #   * SECRET_QUERY is engineered so BM25 ranks the `.env` chunk FIRST while
-#     still matching the two code chunks -- that is what makes AC-29 a real
+#     still matching the two code chunks -- that is what makes the secret filter rule a real
 #     test rather than a tautology.
 # --------------------------------------------------------------------------
 
@@ -123,7 +123,7 @@ def mini_index(mini_repo, tmp_path):
 
 # --------------------------------------------------------------------------
 # A deliberately oversized repo, so that an unbounded pack really does blow
-# past the MCP ceiling. Without it, AC-27/28 would pass on a pack that was
+# past the MCP ceiling. Without it, the tests would pass on a pack that was
 # never near the limit and would not notice a ceiling that is not enforced.
 # --------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
-"""Tests for ISS-408 (bounded JSONL reads), ISS-345 (_fit_lines linearity),
-and ISS-378 (single-character identifier retrieval).
+"""Tests for bounded JSONL reads (bounded JSONL reads), fit_lines linearity (_fit_lines linearity),
+and single-character identifier retrieval (single-character identifier retrieval).
 
 Per AGENTS.md: assertions use hand-derived literal values, never values
 recomputed by the code under test.
@@ -24,7 +24,7 @@ def write_simple_repo(root: Path) -> Path:
 
 
 # ============================================================================
-# ISS-408 -- bounded JSONL reads
+# bounded JSONL reads -- bounded JSONL reads
 # ============================================================================
 
 
@@ -42,7 +42,7 @@ class TestJsonlBounds:
             query_mod.read_jsonl(p)
 
     def test_read_jsonl_bounds_the_allocation_not_just_the_report(self, monkeypatch):
-        """ISS-408's first attack shape is a file with no newline in it at all.
+        """bounded JSONL reads's first attack shape is a file with no newline in it at all.
 
         The sibling test above only proves a ValueError is *reported*, which a
         `for raw in fh` loop does too -- after reading the whole file into one
@@ -213,7 +213,7 @@ class TestJsonlBounds:
     def test_doctor_check_vectors_never_raises_on_oversized_chunks_jsonl(
         self, tmp_path, monkeypatch
     ):
-        """doctor.check_vectors's chunk-count sweep (ISS-408's third site) must
+        """doctor.check_vectors's chunk-count sweep (bounded JSONL reads's third site) must
         degrade to a CheckResult, never raise, when chunks.jsonl is hostile."""
         import repo2graph.integrity as integrity_mod
         from repo2graph.doctor import check_vectors
@@ -254,7 +254,7 @@ class TestJsonlBounds:
 
 
 # ============================================================================
-# ISS-345 -- _fit_lines linearity, output unchanged
+# fit_lines linearity -- _fit_lines linearity, output unchanged
 # ============================================================================
 
 
@@ -297,7 +297,7 @@ class TestFitLines:
         assert _fit_lines(text, 3, count_tokens) == "wxyz\nwxyz\nwxyz"
 
     def test_fit_lines_is_linear_not_quadratic(self):
-        """Detector for ISS-345. The old implementation called `measure` once
+        """Detector for fit_lines linearity. The old implementation called `measure` once
         per line either way -- the quadratic cost was in the *string building*,
         which no call counter can see -- so this has to be a wall-clock test.
 
@@ -333,7 +333,7 @@ class TestFitLines:
 
 
 # ============================================================================
-# ISS-378 -- single-character identifiers are indexed and retrievable
+# single-character identifier retrieval -- single-character identifiers are indexed and retrievable
 # ============================================================================
 
 

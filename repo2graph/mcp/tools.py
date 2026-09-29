@@ -1434,10 +1434,19 @@ def dispatch(
             "no index is open, so this tool cannot answer. Use "
             "repo_build_status to check whether one is still being built."
         )
+
+    import sys
+    _mod = sys.modules.get("repo2graph.mcp")
+    _map = getattr(_mod, "tool_repo_map", tool_repo_map) if _mod else tool_repo_map
+    _search = getattr(_mod, "tool_repo_search", tool_repo_search) if _mod else tool_repo_search
+    _neighbours = getattr(_mod, "tool_repo_neighbours", tool_repo_neighbours) if _mod else tool_repo_neighbours
+    _impact = getattr(_mod, "tool_repo_impact", tool_repo_impact) if _mod else tool_repo_impact
+    _find = getattr(_mod, "tool_repo_find_symbol", tool_repo_find_symbol) if _mod else tool_repo_find_symbol
+
     if name == "repo_map":
-        result = tool_repo_map(index)
+        result = _map(index)
     elif name == "repo_search":
-        result = tool_repo_search(
+        result = _search(
             index,
             str(args.get("query") or ""),
             k=args.get("k", 8),
@@ -1445,14 +1454,14 @@ def dispatch(
             budget_tokens=args.get("budget_tokens"),
         )
     elif name == "repo_neighbours":
-        result = tool_repo_neighbours(
+        result = _neighbours(
             index,
             str(args.get("node_id") or ""),
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
         )
     elif name == "repo_impact":
-        result = tool_repo_impact(
+        result = _impact(
             index,
             base=str(args.get("base") or "main"),
             head=str(args.get("head") or "") or None,
@@ -1461,7 +1470,7 @@ def dispatch(
             format=str(args.get("format") or "markdown"),
         )
     elif name == "repo_find_symbol":
-        result = tool_repo_find_symbol(
+        result = _find(
             index,
             str(args.get("name") or ""),
             kind=str(args.get("kind") or ""),
