@@ -17,6 +17,7 @@ Empirical measurement across 35 benchmark tasks on real repos (benchmarks/real/t
 """
 
 from pathlib import Path
+from unittest.mock import Mock
 from repo2graph.query import Index
 
 
@@ -48,17 +49,15 @@ def test_rrf_unweighted_default_matches_exact_formula(tmp_path: Path):
     # Candidate 0 has vector [1.0, 0.0], candidate 1 has vector [0.0, 1.0]
     vectors = {0: [1.0, 0.0], 1: [0.0, 1.0]}
 
-    class DummyEmbedder:
-        def encode(self, texts):
-            # Query vector aligned with candidate 1 ([0.0, 1.0])
-            return [[0.0, 1.0]]
+    embedder = Mock()
+    embedder.encode.return_value = [[0.0, 1.0]]
 
     # Query "first" matches chunk 0 in BM25 (rank 1), chunk 1 (rank 2).
     # Dense vector aligns with chunk 1 (dense rank 1), chunk 0 (dense rank 2).
     # With unweighted RRF:
     # chunk 0: 1/(60+1) + 1/(60+2) = 1/61 + 1/62 = 0.01639344 + 0.01612903 = 0.03252247
     # chunk 1: 1/(60+2) + 1/(60+1) = 1/62 + 1/61 = 0.03252247
-    fused = idx.score_rrf("common keyword", vectors=vectors, embedder=DummyEmbedder())
+    fused = idx.score_rrf("common keyword", vectors=vectors, embedder=embedder)
     assert len(fused) == 2
     # Verify exact hand-calculated score for K=60, rank1=1, rank2=2:
     expected_score = 1.0 / (60 + 1) + 1.0 / (60 + 2)
@@ -71,9 +70,8 @@ def test_rrf_weighted_formula_applies_multipliers(tmp_path: Path):
     idx = _build_test_index(tmp_path)
     vectors = {0: [1.0, 0.0], 1: [0.0, 1.0]}
 
-    class DummyEmbedder:
-        def encode(self, texts):
-            return [[0.0, 1.0]]
+    embedder = Mock()
+    embedder.encode.return_value = [[0.0, 1.0]]
 
     # With BM25 weight 2.0 and Dense weight 0.5:
     # chunk 0 (BM25 rank 1, Dense rank 2):
@@ -87,7 +85,7 @@ def test_rrf_weighted_formula_applies_multipliers(tmp_path: Path):
     fused = idx.score_rrf(
         "common keyword",
         vectors=vectors,
-        embedder=DummyEmbedder(),
+        embedder=embedder,
         weights=(2.0, 0.5),
     )
     assert len(fused) == 2
