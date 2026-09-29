@@ -6,12 +6,12 @@ Thanks for helping out.
 
 | | |
 |---|---|
-| Looking for something to work on | **[../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** — seven tasks with acceptance criteria and code pointers |
+| Looking for something to work on | **[Good first issues](#good-first-issues)** below |
 | Need to find your way around the code | **[docs/architecture.md](../docs/architecture.md)** — module map, dependency direction, where a change of each kind goes |
-| Adding a language | **[../.github/CONTRIBUTING.md](CONTRIBUTING.md)** |
+| Adding a language | **[Adding a language](#adding-a-language)** below |
 | About to edit `query.py`, `chunks.py`, `graph.py` or `parse.py` | **[Architecture & OS Compatibility Invariants](#architecture--os-compatibility-invariants)** below |
-| Wondering how issues get labelled | **[docs/CONTRIBUTING.md](CONTRIBUTING.md)** |
-| Want to ask rather than file | **[../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** |
+| Wondering how issues get labelled | **[Issue triage](#issue-triage)** below |
+| Want to ask rather than file | **[Where to ask what](#where-to-ask-what)** below |
 
 ## Local setup
 
@@ -84,7 +84,7 @@ is strict-checked by default.
    (`Added` / `Changed` / `Fixed` / `Security` / `Removed`).
 
 `main` is the release branch. Feature and fix branches merge into `develop`; `develop` is promoted
-to `main` as a single PR when a release is cut (see [docs/CONTRIBUTING.md](CONTRIBUTING.md)). A
+to `main` as a single PR when a release is cut (see [Releasing](#releasing)). A
 PR opened against `main` will be asked to retarget, which is a wasted round trip for you.
 
 When you open a PR, the `prod-igy` bot inspects your branch against its base, applies type/size/area
@@ -95,7 +95,7 @@ conflicts, the bot comments with rebase instructions so the CI result stays mean
 
 | Gate | Command |
 |---|---|
-| Tests, 9-cell matrix (3 OSes × 3 Python versions) | `pytest` |
+| Tests, 12-cell matrix (3 OSes × 4 Python versions) | `pytest` |
 | Lint | `ruff check .` |
 | **Formatting — separate gate** | `ruff format --check .` |
 | Types | `mypy repo2graph/` |
@@ -114,14 +114,16 @@ conflicts, the bot comments with rebase instructions so the CI result stays mean
 
 ## Good first issues
 
-**[../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** has seven, each with a file and line
-to start from, acceptance criteria, and the specific thing that makes it trickier than it looks —
-because every one of them has one. They range from a one-regex fix to a small refactor that has to
-break an import cycle.
+Issues labelled
+[`good first issue`](https://github.com/Srinivasan-78/repo2graph/labels/good%20first%20issue)
+carry a file and line to start from and acceptance criteria in the issue body.
 
-For anything larger, **[docs/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** records deliberately deferred work
-with the reason for each deferral — which usually changes how you would approach it.
-How issues are classified and labelled is in **[docs/CONTRIBUTING.md](CONTRIBUTING.md)**.
+This section used to duplicate that list in the repository, which is how it came to advertise seven
+tasks that had all since been closed. The label is the one copy that cannot go stale.
+
+For anything larger, the [Backlog](#backlog) records deliberately deferred work with the reason for
+each deferral — which usually changes how you would approach it. How issues are classified and
+labelled is under [Issue triage](#issue-triage).
 
 ## Real-world examples and benchmarks
 
@@ -142,7 +144,7 @@ full pipeline. Two things worth knowing before touching either directory:
   function copies files individually instead of copying the build directory wholesale.
 
 Adding a new example repository is data-only — see
-[docs/architecture.md#adding-a-repository](../docs/architecture.md#adding-a-repository) — and does not need
+[examples/README.md](../examples/README.md) — and does not need
 a new Python branch in the generator.
 
 ## Registry and Quality Score
@@ -550,7 +552,7 @@ def test_build_lua_calls_edge(tmp_path):
 ```
 
 Assert **literal node-id tuples**, hand-derived from the fixture source. Never assert against a
-value recomputed by the code under test — see [the invariants](CONTRIBUTING.md#architecture--os-compatibility-invariants), "Tests must pin values, not compare the
+value recomputed by the code under test — see [the invariants](#architecture--os-compatibility-invariants), "Tests must pin values, not compare the
 implementation to itself". A test that asserts `len(calls) > 0` passes with the wrong edges.
 
 **The enforced one:** `tests/test_doc_consistency.py::test_languages_documented` asserts that
@@ -615,7 +617,7 @@ asking a question first. Concretely, three things:
 
 A fourth, specific to this repository:
 
-4. **Check it against [[the invariants](CONTRIBUTING.md#architecture--os-compatibility-invariants)](CONTRIBUTING.md) first.** Several documented invariants look like
+4. **Check it against [the invariants](#architecture--os-compatibility-invariants) first.** Several documented invariants look like
    bugs and are not. The two budget models in `query.py` are deliberately different and must not be
    unified; `splitlines()` is banned in favour of `split("\n")` for a reason that recurs; the
    40-character `file_residual` threshold in `chunks.py:185` is intended; call resolution is
@@ -681,8 +683,8 @@ All five, not three of five:
 5. **It does not need the whole pipeline in your head.** Changing `TOKEN_RE` qualifies; changing
    how chunks are cut does not, because chunk boundaries interact with citation offsets.
 
-Current starter tasks with full acceptance criteria and code pointers:
-**[../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)**.
+Current starter tasks carry their acceptance criteria and code pointers in the issue body:
+**[`good first issue`](https://github.com/Srinivasan-78/repo2graph/labels/good%20first%20issue)**.
 
 ---
 
@@ -837,16 +839,15 @@ The three existing categories still carry GitHub's defaults, which say nothing a
 - **The most common Support answer is index staleness.** The index is a snapshot and nothing
   watches the filesystem — an edited file keeps being described by the old graph until a rebuild.
   It is worth checking first, every time. See
-  [../architecture.md#stale-indexes](../docs/architecture.md#stale-indexes).
+  [docs/architecture.md#staleness](../docs/architecture.md#staleness).
 
 ---
 
 ### Contributing
 
-Setup, tests, and the PR flow: **[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)**.
-Starter tasks with acceptance criteria and code pointers:
-**[../.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)**.
-How issues are classified: **[docs/CONTRIBUTING.md](CONTRIBUTING.md)**.
+Setup, tests, and the PR flow: [Local setup](#local-setup) and [Submitting a PR](#submitting-a-pr).
+Starter tasks: [`good first issue`](https://github.com/Srinivasan-78/repo2graph/labels/good%20first%20issue).
+How issues are classified: [Issue triage](#issue-triage).
 
 
 ## Releasing
@@ -929,7 +930,7 @@ repo owner (or an org member with the right role) in a browser.
 Two long-lived branches:
 
 - **`develop`** — where feature and fix PRs land. This is the base contributors target; see
-  [.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md).
+  [Submitting a PR](#submitting-a-pr).
 - **`main`** — the release branch. Only ever updated by a **promotion PR** with `develop` as the
   head branch, or by the release bump itself.
 

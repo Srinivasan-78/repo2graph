@@ -78,6 +78,7 @@ class _LockedAppender:
         self.fsync = fsync
         self._lock = threading.Lock()
         self._fh: TextIO | None = None
+        self._write_failed = False
         try:
             parent = os.path.dirname(os.path.abspath(self.path))
             if parent:
@@ -103,8 +104,23 @@ class _LockedAppender:
                 fh.flush()
                 if self.fsync:
                     os.fsync(fh.fileno())
-            except Exception:
-                return
+            except Exception as exc:
+                # A sink that stops accepting writes mid-run -- disk full, a
+                # revoked permission, a dropped network share -- was previously
+                # as silent as a working one, which is the wrong failure mode for
+                # the component whose whole job is leaving a record. Reported
+                # once: the next call would fail identically, and a per-call
+                # warning would bury the stderr copy of the records themselves.
+                self._fh = None
+                if not self._write_failed:
+                    self._write_failed = True
+                    emit(
+                        "audit_sink_write_failed",
+                        level="warning",
+                        path=self.path,
+                        error=f"{type(exc).__name__}: {exc}",
+                        detail="audit records go to stderr only from here on",
+                    )
 
     def close(self) -> None:
         fh, self._fh = self._fh, None

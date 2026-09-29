@@ -94,4 +94,4 @@ python scripts/generate_examples.py --repo django
 
 This clones `https://github.com/django/django` at `main` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [../../README.md](../../README.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

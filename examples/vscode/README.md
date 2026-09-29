@@ -14,7 +14,7 @@ Commit `a11ec079d98444803ad16ce48bf7ccc4ecafca7d` on `main`, analyzed 2026-09-22
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [../../architecture.md](../../docs/architecture.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [what it can't do](../../README.md#what-it-cant-do).
 
 **Indexed paths:**
 - `src/vs/**`
@@ -98,4 +98,4 @@ python scripts/generate_examples.py --repo vscode
 
 This clones `https://github.com/microsoft/vscode` at `main` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [../../README.md](../../README.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

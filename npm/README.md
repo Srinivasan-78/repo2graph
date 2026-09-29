@@ -46,7 +46,7 @@ npx -y repo2graph-mcp /path/to/project
    package never installs a Python toolchain behind your back.
 
 Every argument after `repo2graph-mcp` on the command line is forwarded verbatim to whichever
-launcher it resolves to — `/path/to/project`, `--out`, `--http-port`, `--auth-token`, all of it. See
+launcher it resolves to — `/path/to/project`, `--out`, `--async-build`, `--cache-size`, all of it. See
 [`docs/mcp.md`](../docs/mcp.md) for the full flag reference.
 
 ## What this does not do

@@ -402,9 +402,15 @@ def _help_long_flags(argv: list[str]) -> set[str]:
     return flags - {"--help"}
 
 
-def test_cli_doc_tables_cover_every_flag_of_build_query_and_impact():
-    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md."""
-    for command in ("build", "query", "impact"):
+def test_cli_doc_tables_cover_every_flag_of_the_retrieval_commands():
+    """`build --max-call-candidates` and `--max-nodes` were in --help, not docs/cli.md.
+
+    `rag` was added to this list after its table was found to be missing
+    `--secret-policy`, `--secret-keyword` and `--secret-dir`: the three commands
+    originally covered here were the ones that had drifted once, and `rag` then
+    drifted silently because nothing checked it.
+    """
+    for command in ("build", "query", "rag", "impact"):
         section = _cli_doc_section(command)
         missing = sorted(
             f

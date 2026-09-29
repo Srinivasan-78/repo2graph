@@ -19,14 +19,14 @@ If the advisory flow is unavailable to you, email
 | **Supported versions** | The latest release on PyPI only. Please confirm the issue reproduces there. |
 | **Disclosure** | Coordinated. A fix ships first, then the advisory is published with credit unless you ask otherwise. |
 
-**Useful in a report:** the version, the surface (CLI / MCP stdio / MCP HTTP / GitHub Action /
+**Useful in a report:** the version, the surface (CLI / MCP stdio / GitHub Action /
 Python API), whether the attacker is assumed to control the repository being indexed, an index
 being loaded, or the network, and a reproduction. The first two of those three attacker positions
 are in scope and have prior advisories — see "Further reading".
 
 **In scope:** anything that reads an untrusted repository or an untrusted index
-(`GHSA-6wrx-c2rg-mvm9` established that an index is untrusted input), the HTTP MCP transport and
-its authentication, secret exclusion and redaction, and the generated `graph.html`.
+(`GHSA-6wrx-c2rg-mvm9` established that an index is untrusted input), secret exclusion and
+redaction, and the generated `graph.html`.
 
 **Not a vulnerability, though still worth reporting as a bug:** a missing graph edge, an ambiguous
 `CALLS` edge at `confidence = 1/n`, or a stale index — all three are documented behaviour in
@@ -57,8 +57,9 @@ If you never pass `--answer`, this code path is not reachable.
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**. Of its six tools, the four that
-can return repository content — `repo_map`, `repo_search`, `repo_neighbours`, `repo_impact` —
+The **MCP server goes further and makes this unconditional**. Of its ten tools, the eight that
+can return repository content — `repo_map`, `repo_search`, `repo_neighbours`,
+`repo_find_symbol`, `repo_read`, `repo_path_between`, `repo_impact` and `repo_blast_radius` —
 exclude secrets always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
 `repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
 directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
@@ -129,22 +130,21 @@ or a released package, independent of anything the tool does at runtime:
   than hard-blocking the merge button — read it as a reviewable signal, not a gate, and use the
   `gh api` command above to see what actually gates today.
 
-## Further reading
+## Container deployment
 
-- [docs/SECURITY.md](SECURITY.md) — **start here**: assets, trust boundaries, what
-  an attacker could try against each surface, what stops it, and what is explicitly out of scope.
-  Every open security gap is named there with its issue number rather than left implied.
-- [../.github/SECURITY.md](../.github/SECURITY.md) — copy-paste hardened
-  configurations: exclusion patterns, an offline build, stdio and HTTP MCP, CI, and how to
-  forbid `rag --answer` in a shared environment.
-- [docs/SECURITY.md](../.github/SECURITY.md) — the most recent whole-repository security
-  pass, with a prioritized findings list and `file:line` evidence for every claim.
-- [../.github/SECURITY.md](../.github/SECURITY.md) — exactly what leaves the machine, what is written where,
-  what is logged, and how to delete all of it.
-- [docs/SECURITY.md](../.github/SECURITY.md) — the data-handling audit
-  behind that page: every outbound path and every write location, enumerated from the code.
-- [../.github/SECURITY.md](../.github/SECURITY.md) — container hardening, network
-  scoping, and package-pinning guidance for a shared or regulated deployment.
+The published image (`Dockerfile`) is built for a read-only, non-root run:
+
+- Runs as UID/GID `10000:10000`, created in the image; nothing in it needs root.
+- `PYTHONDONTWRITEBYTECODE=1`, so a read-only root filesystem does not break the interpreter.
+- Ships `git`, because discovery prefers `git ls-files` and falls back to `os.walk`, which does not
+  honour `.gitignore` — without git the image would index a different file set than every other way
+  of running the same build.
+- Sets `safe.directory=*` through `GIT_CONFIG_*` environment variables rather than a config file:
+  the documented run mounts a host checkout at `/repo`, git refuses a tree owned by another UID
+  with "detected dubious ownership", and `--read-only` leaves no writable `HOME` for a config file.
+  Scoped to an image whose only job is reading the one repository mounted into it.
+
+The image never calls an LLM and never opens a listening socket.
 
 ---
 

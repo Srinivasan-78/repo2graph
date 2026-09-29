@@ -800,12 +800,11 @@ Full list: [architecture.md](architecture.md).
 #### See also
 
 - [Cursor](#cursor) — the same server, different config file
-- [docs/mcp.md](mcp.md) — the tool reference and per-platform config paths
 - [docs/architecture.md](architecture.md) — what `confidence` and `evidence` mean
 
 ### Cursor
 
-The second-supported client. Same server, same six tools, same output — the
+The second-supported client. Same server, same ten tools, same output — the
 differences are the config file, the scope model, and how Cursor decides to call
 a tool.
 
@@ -930,7 +929,7 @@ not claim to beat an embedding index at fuzzy recall.
 
 #### Troubleshooting
 
-Everything in the [Claude Code troubleshooting table](mcp.md#troubleshooting)
+Everything in the [Claude Code troubleshooting table](#troubleshooting)
 applies. Cursor-specific:
 
 | Symptom | Cause | Fix |
@@ -947,5 +946,4 @@ stdin; press Ctrl-C.
 #### See also
 
 - [Claude Code](#claude-code) — the tool reference and the starter questions
-- [docs/mcp.md](mcp.md) — per-platform config paths, including Claude Desktop and Windsurf
 - [docs/architecture.md](architecture.md) — what the citations and confidence values mean

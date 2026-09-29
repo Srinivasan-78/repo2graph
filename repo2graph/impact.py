@@ -1074,7 +1074,10 @@ def analyze_diff_impact(
         ),
         "confidence_tiers": {
             "high": "Direct AST call resolution (confidence = 1.0)",
-            "plausible": "Transitive reachability or ambiguous symbol names (confidence < 0.8)",
+            "plausible": (
+                "Transitive reachability or ambiguous symbol names "
+                f"(confidence < {AMBIGUOUS_CALL_CONFIDENCE:.2f})"
+            ),
             "import_only": "Module-level import dependency without explicit symbol call site",
         },
     }

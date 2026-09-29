@@ -55,7 +55,7 @@ can run further commands against `<dir>/.r2g`.
 Each answer prints its citation table — `path:start-end`, the symbol, and
 *why* the block is in the pack (`seed`, or the edge that reached it) —
 followed by the head of the first cited block. The five questions themselves
-are listed in [the quickstart](architecture.md#the-five-starter-questions).
+are listed in [the README](../README.md#five-questions-to-start-with).
 
 ## `build` — make the map
 
@@ -81,7 +81,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
-| `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/architecture.md](architecture.md#controlling-what-gets-indexed)**. |
+| `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/architecture.md](architecture.md#what-gets-excluded-and-by-which-layer)**. |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
@@ -237,6 +237,9 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 | `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
+| `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
+| `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
+| `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
 
 `--format json` gives you `markdown` plus `chunks`, `seeds`, `neighbors`,
 `truncated`, `budget_chars`, `used_chars`, `tokens_budget`, `tokens_used` and
@@ -450,7 +453,7 @@ can tell two entries apart without learning what they are.
 The commit sha *is* included: it makes a wrong edge reproducible against a
 public repo and reveals nothing a private repo's own history does not.
 
-Full contents and the reasoning: **[docs/architecture.md](architecture.md#feedback-and-the-bug-report-bundle)**.
+Full contents and the reasoning: **[below](#bug-report--a-bundle-that-is-safe-to-paste-into-a-public-issue)**.
 
 ## `doctor` — diagnose the environment and artifacts
 
@@ -604,7 +607,7 @@ Computes the architectural blast radius of a working branch or PR against a base
 | `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
 | `--write <path>` | none | Write output to target file path. |
 
-Full architecture, schema details, and GitHub Actions recipes are in [cli.md](cli.md).
+Full architecture, schema details, and GitHub Actions recipes are in [docs/architecture.md](architecture.md).
 
 
 ## `completion` — shell tab completion

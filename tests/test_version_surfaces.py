@@ -106,6 +106,34 @@ def test_every_surface_path_exists():
     assert not missing, missing
 
 
+def test_precommit_hook_fires_for_every_surface_it_guards():
+    """The `version-consistency` hook's `files:` regex must match every path in
+    the surface table.
+
+    The regex is maintained by hand next to a comment claiming it mirrors
+    `version_surfaces.SURFACES`, and it had drifted both ways: it still named
+    four deleted docs, and it had never been updated for `npm/package.json`,
+    `CITATION.cff` or `docs/cli.md`, so a commit touching only those bumped a
+    version the local hook never checked. CI runs `check_version.py`
+    unconditionally, so this was a local-hook gap rather than a missed gate --
+    which is exactly why nothing caught it.
+    """
+    import re
+
+    import yaml
+
+    config = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hooks = [h for repo in config["repos"] for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "version-consistency")
+    pattern = re.compile(hook["files"].strip())
+
+    unmatched = [p for p in vs.bumped_paths() if not pattern.match(p)]
+    assert not unmatched, (
+        f"the version-consistency hook does not fire for {unmatched}; "
+        "add them to its `files:` regex in .pre-commit-config.yaml"
+    )
+
+
 # --------------------------------------------------------------------------
 # What a bump must NOT touch
 # --------------------------------------------------------------------------

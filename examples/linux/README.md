@@ -14,7 +14,7 @@ The full kernel tree is architecture-specific code times every supported CPU fam
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [../../architecture.md](../../docs/architecture.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [what it can't do](../../README.md#what-it-cant-do).
 
 **Indexed paths:**
 - `kernel/**`
@@ -99,4 +99,4 @@ python scripts/generate_examples.py --repo linux
 
 This clones `https://github.com/torvalds/linux` at `master` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [../../README.md](../../README.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import __version__
+from ..audit import timer as audit_timer
 from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .guardrails import INDEX_DIRNAME
 from .tools import (
@@ -164,24 +165,98 @@ class ToolCallFailed(Exception):
 
 
 def run_tool(
-    index_dir, repo, name: str, arguments: dict[str, Any] | None, cache=None, tasks=None
+    index_dir,
+    repo,
+    name: str,
+    arguments: dict[str, Any] | None,
+    cache=None,
+    tasks=None,
+    audit=None,
 ) -> str:
-    """Execute a single stdio tool call: ensure index exists, then dispatch."""
+    """Execute a single stdio tool call: ensure index exists, then dispatch.
+
+    Args:
+        index_dir: Directory holding the index to answer from.
+        repo: Repository to auto-build from, or None to require an existing index.
+        name: Tool name the caller asked for.
+        arguments: The caller's arguments, sanitized downstream before logging.
+        cache: Optional result cache.
+        tasks: Optional background build registry.
+        audit: Optional `AuditLogger`; one record is written per call when given.
+
+    Returns:
+        The tool's rendered text, or a `ToolError` when the call failed.
+    """
     name = name or ""
-    if name == "repo_build_status":
-        return dispatch(None, name, arguments or {}, cache=cache, tasks=tasks)
-    if name not in TOOL_DESCRIPTIONS:
-        return dispatch(None, name, arguments or {}, cache=cache, tasks=tasks)
+    args = arguments or {}
+    with audit_timer() as elapsed:
+        try:
+            text = _dispatch_tool(index_dir, repo, name, args, cache, tasks)
+        except SystemExit as exc:
+            # open_index() exits the process when it finds no index and has no
+            # repo to build one from. That is right for the startup preflight
+            # and for a direct call, but this is the per-request path: an index
+            # deleted while the server runs would take the whole server down
+            # and the client would see a closed pipe rather than an error. One
+            # bad request has to cost one failed tool call, like every other
+            # failure here.
+            text = ToolError(str(exc) or "the index is no longer available")
+            _audit(audit, name, args, elapsed, text=text, error=exc)
+            return text
+        except Exception as exc:
+            # The record has to survive a failing tool, and it is the only
+            # place the failure is reported when stderr is the sole sink.
+            _audit(audit, name, args, elapsed, error=exc)
+            raise
+    _audit(audit, name, args, elapsed, text=text)
+    return text
+
+
+def _dispatch_tool(index_dir, repo, name: str, args: dict[str, Any], cache, tasks) -> str:
+    if name == "repo_build_status" or name not in TOOL_DESCRIPTIONS:
+        return dispatch(None, name, args, cache=cache, tasks=tasks)
     index, pending = open_index_or_task(index_dir, repo, cache, tasks)
     if pending is not None:
         return pending
-    return dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
+    return dispatch(index, name, args, cache=cache, tasks=tasks)
+
+
+def _audit(audit, name: str, args: dict[str, Any], elapsed, text=None, error=None) -> None:
+    """Write one audit record, never letting the logger break the tool call."""
+    if audit is None:
+        return
+    try:
+        audit.record(
+            name,
+            args,
+            outcome="error" if error is not None else "success",
+            duration_ms=elapsed.ms,
+            result_tokens=len(text) // 4 if isinstance(text, str) else 0,
+            error=f"{type(error).__name__}: {error}" if error is not None else None,
+        )
+    except Exception:
+        # An unwritable sink must not turn a working tool call into a failure;
+        # AuditLogger.record already sanitizes and degrades internally, so
+        # reaching here means the sink itself is gone.
+        pass
 
 
 def serve(
-    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None
+    out: str | Path,
+    repo: str | Path | None = None,
+    cache: ResultCache | None = None,
+    tasks=None,
+    audit=None,
 ) -> None:
-    """Run stdio MCP server over JSON-RPC."""
+    """Run stdio MCP server over JSON-RPC.
+
+    Args:
+        out: Index directory to answer from.
+        repo: Repository to auto-build from, or None to require an existing index.
+        cache: Optional result cache.
+        tasks: Optional background build registry.
+        audit: Optional `AuditLogger`; one record per tool call when given.
+    """
     mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
@@ -197,7 +272,7 @@ def serve(
     async def call_tool_handler(ctx, params):
         name = params.name
         arguments = params.arguments
-        return run_tool(index_dir, repo, name, arguments, cache=cache, tasks=tasks)
+        return run_tool(index_dir, repo, name, arguments, cache=cache, tasks=tasks, audit=audit)
 
     server_cls: Any = Server
 
@@ -330,7 +405,7 @@ def main(argv=None) -> int:
 
     try:
         serve_fn = getattr(sys.modules.get("repo2graph.mcp"), "serve", serve)
-        serve_fn(index_dir, build_from, cache=cache, tasks=tasks)
+        serve_fn(index_dir, build_from, cache=cache, tasks=tasks, audit=audit)
     finally:
         audit.close()
     return 0

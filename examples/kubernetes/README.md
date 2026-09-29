@@ -14,7 +14,7 @@ Kubernetes' full tree is on the order of hundreds of thousands of files once ven
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [../../architecture.md](../../docs/architecture.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [what it can't do](../../README.md#what-it-cant-do).
 
 **Indexed paths:**
 - `cmd/kube-controller-manager/**`
@@ -101,4 +101,4 @@ python scripts/generate_examples.py --repo kubernetes
 
 This clones `https://github.com/kubernetes/kubernetes` at `master` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [../../README.md](../../README.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

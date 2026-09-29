@@ -152,17 +152,30 @@ rather than going quietly stale:
 
 ### Provenance recorded in the manifest
 
-`manifest.json` carries where the index came from, and `repo2graph index-status --json` prints it
-verbatim — so these are a public surface, not internal bookkeeping:
+`manifest.json` records where the index came from. Two top-level keys carry it:
+
+| Key | Contents |
+|---|---|
+| `source_revision` | an object describing the local checkout the build ran against (below) |
+| `source_remote` | set instead of a local root when the build came from `repo2graph github` |
+
+The fields inside `source_revision` are written by `integrity.get_source_provenance()`, and each is
+present only when git could answer for it — a non-git tree gets an empty object, and a repository
+with no diverged base branch gets no `merge_base`:
 
 | Field | Meaning |
 |---|---|
-| `source_revision` | the commit the build ran at |
-| `base_branch` | the branch the working tree was compared against, when one applies |
+| `commit`, `short_commit` | the revision the build ran at |
+| `branch` | the checked-out branch, omitted on a detached `HEAD` |
+| `tag` | the tag pointing at this commit, when there is one |
+| `dirty`, `dirty_files` | whether the tree had uncommitted edits, and how many files |
+| `base_branch` | the branch the working tree was compared against |
 | `merge_base` | the merge base between `HEAD` and `base_branch` |
-| `dirty_files` | files modified but not committed at build time |
 | `commits_ahead_of_base` | how far `HEAD` had moved past `merge_base` |
-| `source_remote` | set instead of a local root when the build came from `repo2graph github` |
+| `remote_url` | the origin URL, with any credentials stripped |
+
+`repo2graph index-status --json` reports the same facts but reshapes them into its own `source`
+section rather than printing the manifest verbatim.
 
 ### What gets excluded, and by which layer
 
@@ -212,7 +225,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 |---|---:|---|
 | `cli.py` | 1,985 | Argument parsing and every subcommand. The widest module by fan-out. |
 | `impact.py` | 1,435 | PR and diff blast-radius analysis. |
-| `mcp/` | 1,524 | The MCP server, split by concern — see below. |
+| `mcp/` | 2,421 | The MCP server, split by concern — see below. |
 | `answer.py` | 521 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 364 | `explain edge` / `node` / `retrieval`. |
 

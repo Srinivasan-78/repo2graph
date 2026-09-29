@@ -135,7 +135,7 @@ rates for each limitation: [architecture.md](docs/architecture.md).
 The 2.x CLI, MCP tools and output schema follow semver: breaking changes wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
 unconditionally ([privacy](.github/SECURITY.md), [threat model](.github/SECURITY.md),
 [security policy](.github/SECURITY.md)). A Docker image for read-only, non-root deployments is
-described in [.github/SECURITY.md](.github/SECURITY.md).
+described in [.github/SECURITY.md](.github/SECURITY.md#container-deployment).
 
 ## Contributing
 

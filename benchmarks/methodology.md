@@ -8,7 +8,7 @@ were produced, and what would have to match for you to reproduce them exactly.
 - **Repository revision.** Every result is pinned to the exact commit SHA `scripts/generate_examples.py`
   checked out, recorded in both `results.json` and that repository's `examples/<id>/metadata.json`.
   Re-running against the same `ref` (usually `main`/`master`) later will check out a *different*,
-  newer commit — see [../README.md#staleness](../README.md#staleness).
+  newer commit — see [docs/architecture.md](../docs/architecture.md#staleness).
 - **repo2graph version.** Recorded per result (`repo2graph_version`, from `repo2graph.__version__`
   at generation time).
 - **Scope.** For the four scoped repositories, the exact `include`/`exclude`/`max_files` parameters

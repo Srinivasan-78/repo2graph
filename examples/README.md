@@ -23,7 +23,7 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 "Full repository" means no `--include`/`--exclude` narrowing — every file `repo2graph` would index
 on a plain `repo2graph build`. "Scoped" means only the listed subtrees were cloned and indexed; see
 each repository's own README.md, "Why this scope," for the reasoning, and
-[../architecture.md](../docs/architecture.md#extreme-scale) for why the other four are not indexed
+[what it can't do](../README.md#what-it-cant-do) for why the other four are not indexed
 whole. Django is the pipeline's full-repository baseline precisely because it is the one repository
 in this set small enough for that comparison to mean something.
 
@@ -99,4 +99,4 @@ Add an entry to [`repositories.yaml`](repositories.yaml) — repository URL, ref
 paragraph, and 3-5 architecture-relevant example queries — then run
 `python scripts/generate_examples.py --repo <id>` and commit the result. No new Python code is
 needed for a well-behaved repository; the framework is data-driven by design (see
-[docs/architecture.md](../docs/architecture.md#adding-a-repository)).
+[examples/repositories.yaml](repositories.yaml)).
