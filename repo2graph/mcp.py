@@ -2148,17 +2148,15 @@ def get_tools(types_module=None, auto_build: bool = False):
 
     Args:
         types_module: `mcp.types`, or a stand-in for testing.
-        auto_build: Whether *this server instance* can build a missing index
+        auto_build: Whether this server instance can build a missing index
             on a tool call -- i.e. it was started with a repo to build from
-            and auto-build was not disabled (stdio: `repo is not None`;
-            HTTP: additionally gated on `--allow-auto-build`, off by
-            default, #265). When True, every tool in `BUILD_CAPABLE_TOOLS`
-            gets `TOOL_ANNOTATIONS_AUTO_BUILD` instead of the read-only set
-            (#292): a client inspecting annotations must not be told a tool
-            is read-only when its first call may parse the whole repository,
-            run git, and write `.r2g/**` to disk. `repo_build_status`
-            always keeps the read-only set -- it is the one tool that never
-            triggers a build (see `BUILD_CAPABLE_TOOLS`).
+            and auto-build was not disabled (`repo is not None`). When True,
+            every tool in `BUILD_CAPABLE_TOOLS` gets `TOOL_ANNOTATIONS_AUTO_BUILD`
+            instead of the read-only set: a client inspecting annotations must
+            not be told a tool is read-only when its first call may parse the
+            whole repository, run git, and write `.r2g/**` to disk.
+            `repo_build_status` always keeps the read-only set -- it is the one
+            tool that never triggers a build.
     """
     if types_module is None:
         try:
@@ -2344,12 +2342,6 @@ def main(argv=None):
         help="never build: exit unless the index already exists",
     )
     p.add_argument(
-        "--allow-auto-build",
-        action="store_true",
-        default=False,
-        help="allow automatic building of missing index in HTTP mode (default: disabled in HTTP mode)",
-    )
-    p.add_argument(
         "--async-build",
         action="store_true",
         help="build a missing index on a background thread and "
@@ -2374,280 +2366,6 @@ def main(argv=None):
         help=f"seconds a cached result is served before it is "
         f"recomputed (default: {DEFAULT_TTL:g})",
     )
-    _add_auth_args(p)
-    args = p.parse_args(argv)
-    index_dir, repo = resolve_paths(args.repo, args.out)
-    cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
-
-    # --well-known-port is the spelling the discovery spec uses; it and
-    # --http-port name the same HTTP transport, since serving the metadata
-    # document from a second server would be two ports for one job.
-    if args.http_port is None and args.well_known_port is not None:
-        args.http_port = args.well_known_port
-
-    is_http = args.http_port is not None or args.auth_cimd or args.http_only
-    if is_http:
-        # HTTP mode: auto-build is disabled by default to prevent read-only
-        # network tool calls from triggering parser execution, file writes,
-        # or git interactions without explicit authorization (#265).
-        build_from = repo if (args.allow_auto_build and not args.no_auto_build) else None
-    else:
-        # stdio mode: preserve auto-build by default for local developer workflows.
-        build_from = None if args.no_auto_build else repo
-
-    # --http-only names what to leave out, not what to serve, so on its own it
-    # asks for no transport at all. It used to be tested *inside* the block that
-    # builds the HTTP transport, which meant that with no --http-port the block
-    # never ran, the flag was never read, and execution fell through to the
-    # stdio serve() -- the exact transport the flag says to omit, with no
-    # diagnostic. Refusing here beats silently doing the opposite: the operator
-    # asked for HTTP and there is no port to put it on.
-    if args.http_only and args.http_port is None and not args.auth_cimd:
-        raise SystemExit(
-            "error: --http-only needs --http-port. It suppresses the stdio "
-            "transport, so without a port there would be nothing left to serve "
-            "on. Add --http-port PORT (or --well-known-port/--auth-cimd)."
-        )
-
-    from .audit import AuditConfig, AuditLogger
-
-    audit = AuditLogger(
-        AuditConfig(
-            level=args.audit_log_level,
-            path=args.audit_log,
-            fsync=args.audit_log_fsync,
-        )
-    )
-
-    tasks = None
-    if args.async_build:
-        from .tasks import TaskManager
-
-        tasks = TaskManager()
-
-    auth_config = _auth_config(args)
-    transport = None
-    # One `try`/`finally` over both exit paths. The --http-only branch used to
-    # carry its own `finally: transport.stop()` and then `return 0`, which
-    # jumped clean over the `audit.close()` that only the serve() teardown had
-    # -- leaking the audit file descriptor on the one path that runs for days.
-    # A single teardown cannot be skipped by adding another early return.
-    try:
-        if args.http_port is not None or args.auth_cimd:
-            from .http_server import HTTPTransport
-
-            transport = HTTPTransport(
-                index_dir,
-                build_from,
-                host=args.http_host,
-                port=args.http_port if args.http_port is not None else 8719,
-                auth_config=auth_config,
-                audit=audit,
-                cache=cache,
-                publish_cimd=args.auth_cimd,
-                tasks=tasks,
-                allow_hosts=_parse_allow_hosts(args.http_allow_hosts),
-                insecure_transport_ack=args.http_insecure_ok,
-                trust_proxy=args.trust_proxy,
-                trusted_proxies=_parse_allow_hosts(args.trusted_proxies),
-                rate_limit_config=_rate_limit_config(args),
-            )
-            transport.start()
-            if args.http_only:
-                # No stdio peer: block on the HTTP thread instead of returning,
-                # which would tear the daemon thread down on the way out.
-                try:
-                    thread = transport._thread
-                    if thread is not None:
-                        thread.join()
-                except KeyboardInterrupt:
-                    pass
-                return 0
-        elif auth_config.enabled:
-            # Credentials with nowhere to be presented. Refusing beats starting
-            # a server the operator believes is protected and is not: stdio has
-            # no headers, so every one of these flags would be inert.
-            raise SystemExit(
-                "error: --auth-token/--auth-oidc-issuer need a transport that "
-                "carries headers. stdio has none, so the credential could never be "
-                "checked. Add --http-port to serve over HTTP as well."
-            )
-
-        serve(index_dir, build_from, cache=cache, tasks=tasks)
-    finally:
-        if transport is not None:
-            transport.stop()
-        audit.close()
-    return 0
-
-
-def _add_auth_args(p) -> None:
-    """Register the HTTP-transport, authentication and audit flags."""
-    http = p.add_argument_group(
-        "http transport",
-        "Serve MCP over HTTP as well as stdio. Required for authentication: "
-        "stdio carries no headers, so a bearer token has nowhere to travel.",
-    )
-    http.add_argument(
-        "--http-port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help="serve JSON-RPC on this port in addition to stdio (default: off)",
-    )
-    http.add_argument(
-        "--http-host",
-        default="127.0.0.1",
-        metavar="HOST",
-        help="bind address for --http-port. Binding beyond "
-        "loopback without authentication is refused "
-        "(default: 127.0.0.1)",
-    )
-    http.add_argument(
-        "--http-only",
-        action="store_true",
-        help="serve HTTP only, without the stdio transport (default: off)",
-    )
-    http.add_argument(
-        "--well-known-port",
-        type=int,
-        default=None,
-        metavar="PORT",
-        help="alias for --http-port; the discovery documents are "
-        "served by the same HTTP transport (default: off)",
-    )
-    http.add_argument(
-        "--http-allow-hosts",
-        default=None,
-        metavar="HOST[,HOST...]",
-        help="comma-separated extra hostnames accepted in the Host/Origin "
-        "headers on POST /mcp, for a deliberate non-loopback deployment "
-        "(e.g. behind a reverse proxy). Loopback and --http-host are always "
-        "accepted; everything else is refused with 403 (default: none)",
-    )
-    http.add_argument(
-        "--http-insecure-ok",
-        action="store_true",
-        help="acknowledge that this server does not terminate TLS (#267): "
-        "silences the startup warning emitted when --http-host is "
-        "non-loopback with authentication configured. Pass this only when a "
-        "TLS-terminating reverse proxy already sits in front -- otherwise "
-        "bearer/OIDC credentials travel in clear text (default: off, "
-        "warning is emitted but the server still starts)",
-    )
-    http.add_argument(
-        "--trust-proxy",
-        action="store_true",
-        help="honour X-Forwarded-For for rate-limit client identity (#267), "
-        "but only from a peer also named in --trusted-proxies -- both must "
-        "hold, and neither ever affects authentication. (default: off, "
-        "the header is ignored regardless of --trusted-proxies)",
-    )
-    http.add_argument(
-        "--trusted-proxies",
-        default=None,
-        metavar="HOST[,HOST...]",
-        help="comma-separated peer addresses allowed to set X-Forwarded-For "
-        "when --trust-proxy is also set; a peer not listed here has the "
-        "header ignored even then (default: none)",
-    )
-
-    rate = p.add_argument_group(
-        "rate limiting",
-        "#264 -- per-client and server-wide ceilings for the HTTP transport. "
-        "Each flag is optional; passing none keeps RateLimitConfig()'s own "
-        "defaults (shown below, http_server.py) and the feature active. "
-        "Rate limiting itself is always on for HTTP; there is no flag to "
-        "disable it, only to retune it.",
-    )
-    rate.add_argument(
-        "--rate-limit-requests",
-        type=int,
-        default=None,
-        metavar="N",
-        help="requests one client identity may make per --rate-limit-window "
-        "before being throttled (default: 300)",
-    )
-    rate.add_argument(
-        "--rate-limit-window",
-        type=float,
-        default=None,
-        metavar="SECONDS",
-        help="width of the rate-limit sliding window (default: 60)",
-    )
-    rate.add_argument(
-        "--max-concurrent-requests",
-        type=int,
-        default=None,
-        metavar="N",
-        help="server-wide in-flight tool calls admitted at once (default: 64)",
-    )
-    rate.add_argument(
-        "--max-queue-size",
-        type=int,
-        default=None,
-        metavar="N",
-        help="requests allowed to wait for a concurrency slot once "
-        "--max-concurrent-requests is saturated, before being refused "
-        "immediately as overloaded (default: 128)",
-    )
-    rate.add_argument(
-        "--max-concurrent-builds",
-        type=int,
-        default=None,
-        metavar="N",
-        help="server-wide concurrent auto-builds (open_index calls that may "
-        "build) admitted at once (default: 4)",
-    )
-    rate.add_argument(
-        "--max-response-bytes",
-        type=int,
-        default=None,
-        metavar="N",
-        help="a JSON-RPC success response larger than this is replaced with "
-        "a bounded error rather than sent (default: 8388608, 8 MiB)",
-    )
-
-    auth = p.add_argument_group("authentication")
-    auth.add_argument(
-        "--auth-token",
-        default=None,
-        metavar="TOKEN",
-        help="require `Authorization: Bearer <TOKEN>` on every "
-        "HTTP tool call (default: no authentication). Prefer the "
-        "R2G_AUTH_TOKEN environment variable: this flag's value is visible "
-        "to other local users via ps/procfs. --auth-token wins when both "
-        "are set",
-    )
-    auth.add_argument(
-        "--auth-oidc-issuer",
-        default=None,
-        metavar="URL",
-        help="validate bearer tokens as JWTs against this OIDC "
-        "issuer's JWKS, enforcing iss, aud and exp "
-        "(default: off)",
-    )
-    auth.add_argument(
-        "--auth-audience",
-        default=None,
-        metavar="AUD",
-        help="expected `aud` claim for --auth-oidc-issuer tokens "
-        "(default: the claim is not checked)",
-    )
-    auth.add_argument(
-        "--auth-jwks-ttl",
-        type=float,
-        default=300.0,
-        metavar="SECONDS",
-        help="seconds a fetched JWKS is trusted before refetch (default: 300)",
-    )
-    auth.add_argument(
-        "--auth-cimd",
-        action="store_true",
-        help="publish an RFC 7591 client metadata document at "
-        "/.well-known/oauth-client-metadata (default: off)",
-    )
-
     log = p.add_argument_group("audit logging")
     log.add_argument(
         "--audit-log",
@@ -2668,66 +2386,32 @@ def _add_auth_args(p) -> None:
         "already carries every record, so this only hardens the file copy "
         "against a crash)",
     )
+    args = p.parse_args(argv)
+    index_dir, repo = resolve_paths(args.repo, args.out)
+    cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
+    build_from = None if args.no_auto_build else repo
 
+    from .audit import AuditConfig, AuditLogger
 
-def _auth_config(args):
-    """Build an AuthConfig from parsed arguments.
-
-    The token may come from `--auth-token` or the `R2G_AUTH_TOKEN`
-    environment variable -- the same shape as the `GH_TOKEN`/`GITHUB_TOKEN`
-    fallback in `fetch.py`. The flag wins when both are set, so it stays
-    usable for interactive/CI convenience; the env var exists so the token
-    need not appear in argv (and therefore in `ps`/`/proc`) at all.
-    """
-    from .auth import AuthConfig
-
-    return AuthConfig(
-        token=args.auth_token or os.environ.get("R2G_AUTH_TOKEN"),
-        oidc_issuer=args.auth_oidc_issuer,
-        audience=args.auth_audience,
-        jwks_ttl=args.auth_jwks_ttl,
+    audit = AuditLogger(
+        AuditConfig(
+            level=args.audit_log_level,
+            path=args.audit_log,
+            fsync=args.audit_log_fsync,
+        )
     )
 
+    tasks = None
+    if args.async_build:
+        from .tasks import TaskManager
 
-def _parse_allow_hosts(value: str | None) -> list[str]:
-    """Split `--http-allow-hosts` (also reused for `--trusted-proxies`) into a
-    list of bare hostnames."""
-    if not value:
-        return []
-    return [item.strip() for item in value.split(",") if item.strip()]
+        tasks = TaskManager()
 
-
-# #264: every one of these flags is optional, and each maps 1:1 onto a
-# `RateLimitConfig` field of the same shape (`http_server.py`). Building the
-# config only when at least one was actually passed -- rather than always
-# constructing one from `args` -- means an operator who names none of them
-# gets `RateLimitConfig()`'s own defaults from `HTTPTransport.__init__`
-# (`rate_limit_config or RateLimitConfig()`), not a second, silently
-# drifting copy of those defaults duplicated here.
-_RATE_LIMIT_FLAGS = (
-    ("rate_limit_requests", "requests_per_window"),
-    ("rate_limit_window", "window_seconds"),
-    ("max_concurrent_requests", "max_concurrent_requests"),
-    ("max_queue_size", "max_queue_size"),
-    ("max_concurrent_builds", "max_concurrent_builds"),
-    ("max_response_bytes", "max_response_bytes"),
-)
-
-
-def _rate_limit_config(args):
-    """A `RateLimitConfig` from whichever `--rate-limit-*`/`--max-*` flags
-    were passed, or None when none were -- so `HTTPTransport` falls back to
-    its own default."""
-    given = {
-        field: getattr(args, attr)
-        for attr, field in _RATE_LIMIT_FLAGS
-        if getattr(args, attr) is not None
-    }
-    if not given:
-        return None
-    from .http_server import RateLimitConfig
-
-    return RateLimitConfig(**given)
+    try:
+        serve(index_dir, build_from, cache=cache, tasks=tasks)
+    finally:
+        audit.close()
+    return 0
 
 
 if __name__ == "__main__":

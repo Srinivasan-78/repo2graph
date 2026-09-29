@@ -1880,16 +1880,6 @@ def test_empty_secret_keyword_does_not_match_all():
     assert not _is_secret_path("normal.py", extra_keywords=["  "])
 
 
-def test_sanitize_header_value_strips_crlf():
-    """_sanitize_header_value must strip CR, LF, and NUL from header values."""
-    from repo2graph.http_server import _sanitize_header_value
-
-    assert _sanitize_header_value("clean") == "clean"
-    assert _sanitize_header_value("evil\r\nX-Injected: yes") == "evilX-Injected: yes"
-    assert _sanitize_header_value("evil\0byte") == "evilbyte"
-    assert _sanitize_header_value("\r\n\0") == ""
-    # No mutation on safe values
-    assert _sanitize_header_value("Authorization, Content-Type") == "Authorization, Content-Type"
 
 
 # ==========================================================================

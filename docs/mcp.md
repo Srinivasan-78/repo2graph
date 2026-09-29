@@ -181,50 +181,9 @@ runtime argument — see [`server.json`](../server.json).
 | --- | --- | --- |
 | `-o`, `--out` | `<repo>/.r2g` | Index directory to serve. |
 | `--no-auto-build` | off | Never build. Exit at startup unless the index already exists. |
-| `--allow-auto-build` | off | Allow auto-building a missing index on tool calls in HTTP mode. (In HTTP mode, auto-build is disabled by default to prevent read-only network tool requests from initiating background builds without explicit authorization). |
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
-
-> **Auto-build in stdio vs HTTP mode:** In local stdio mode, a missing index is automatically built on the first tool call for developer convenience. In HTTP mode, auto-build is disabled by default — tool calls against an unindexed directory return a 503 error with build instructions unless `--allow-auto-build` is explicitly enabled.
-
-**HTTP transport** — stdio carries no headers, so authentication requires this.
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--http-port` | off | Serve JSON-RPC on this port in addition to stdio. |
-| `--http-host` | `127.0.0.1` | Bind address. Binding beyond loopback with no authentication is **refused at startup**, not merely discouraged. |
-| `--http-only` | off | Serve HTTP without the stdio transport. |
-| `--well-known-port` | off | Alias for `--http-port`; the discovery documents are served by the same transport. |
-| `--http-allow-hosts` | none | Extra hostnames accepted in the `Host`/`Origin` headers on `POST /mcp`, for a deliberate deployment behind a reverse proxy. Loopback and `--http-host` are always accepted; anything else is refused with 403. |
-| `--http-insecure-ok` | off | Acknowledge that this server does not terminate TLS (#267) and silence the startup warning emitted when `--http-host` is non-loopback with authentication configured. Pass only when a TLS-terminating reverse proxy already sits in front. |
-| `--trust-proxy` | off | Honour `X-Forwarded-For` for rate-limit client identity (#267), but only from a peer also named in `--trusted-proxies` — both must hold. Never affects authentication. |
-| `--trusted-proxies` | none | Comma-separated peer addresses allowed to set `X-Forwarded-For` when `--trust-proxy` is also set. |
-
-**Rate limiting** — #264. Always on for HTTP; these flags retune it, none disable it.
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--rate-limit-requests` | `300` | Requests one client identity may make per `--rate-limit-window` before being throttled. |
-| `--rate-limit-window` | `60` | Width of the rate-limit sliding window, in seconds. |
-| `--max-concurrent-requests` | `64` | Server-wide in-flight tool calls admitted at once. |
-| `--max-queue-size` | `128` | Requests allowed to wait for a concurrency slot once `--max-concurrent-requests` is saturated, before being refused immediately as overloaded. |
-| `--max-concurrent-builds` | `4` | Server-wide concurrent auto-builds (index opens that may trigger a build) admitted at once. |
-| `--max-response-bytes` | `8388608` (8 MiB) | A JSON-RPC success response larger than this is replaced with a bounded error rather than sent. |
-
-Naming none of these keeps `RateLimitConfig()`'s own defaults from
-`http_server.py`; naming one does not require naming the rest — the others
-still default.
-
-**Authentication**
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--auth-token` | no auth | Require `Authorization: Bearer <TOKEN>` on every HTTP tool call. Prefer the `R2G_AUTH_TOKEN` environment variable — this flag's value is visible to other local users through `ps`/procfs. The flag wins when both are set. |
-| `--auth-oidc-issuer` | off | Validate bearer tokens as JWTs against this OIDC issuer's JWKS, enforcing `iss`, `aud` and `exp`. |
-| `--auth-audience` | unchecked | Expected `aud` claim for `--auth-oidc-issuer` tokens. |
-| `--auth-jwks-ttl` | `300` | Seconds a fetched JWKS is trusted before refetch. |
-| `--auth-cimd` | off | Publish an RFC 7591 client metadata document at `/.well-known/oauth-client-metadata`. |
 
 **Audit logging**
 
@@ -265,9 +224,9 @@ the one answer guaranteed to be out of date.
 MCP's `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` are
 answered once, in `tools/list`, for the server's whole lifetime — there is no
 per-call variant. So they can only be as honest as *this server instance*
-allows, and that differs by mode:
+allows:
 
-- **An already-built index, any transport, or `--no-auto-build`.** No tool
+- **An already-built index or `--no-auto-build`.** No tool
   call can write anything. Every tool is genuinely read-only, and the stdio
   server (`get_tools(auto_build=False)`, the default) says so.
 - **stdio with a repo to build from, auto-build not disabled.** The first
@@ -278,16 +237,6 @@ allows, and that differs by mode:
   None)` to `get_tools()`, so a server started this way reports
   `readOnlyHint: false` for those tools, not the same flat annotation an
   already-indexed server sends.
-- **HTTP.** Auto-build defaults to **off** regardless of this flag (#265):
-  `main()` only sets `build_from` from `--allow-auto-build`, and without it
-  a missing index is a plain error, not a build. An HTTP deployment that has
-  not opted into `--allow-auto-build` is in the first, fully-read-only case
-  above. One residual gap: `http_server.py`'s own `tools/list` handler
-  builds its response from the flat `TOOL_ANNOTATIONS` constant directly
-  rather than calling `get_tools(auto_build=...)`, so an operator who *does*
-  pass `--allow-auto-build` for HTTP currently gets the same
-  always-read-only annotations regardless — this doc and `--allow-auto-build`
-  itself are the prominent disclosure of that side effect in the meantime.
 
 ### Argument bounds
 
