@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_simple_repo
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
 
@@ -21,16 +22,6 @@ from repo2graph.export import path as artifact_path
 # ============================================================================
 # helpers
 # ============================================================================
-
-
-def write_simple_repo(root: Path) -> Path:
-    """A minimal one-file repo so `build` can index it quickly."""
-    repo = root / "src"
-    repo.mkdir()
-    (repo / "app.py").write_text(
-        "CONSTANT = 42\n\ndef hello():\n    return CONSTANT\n", encoding="utf8", newline="\n"
-    )
-    return repo
 
 
 def build_index(repo: Path, out: Path, extra_args=()) -> int:
@@ -154,15 +145,23 @@ class TestBuildLock:
         lock.release()
         assert not lock._acquired
 
-    def test_context_manager(self, tmp_path):
+    def test_context_manager_holds_the_lock_then_releases_it(self, tmp_path):
+        """The lock file exists for the duration of the block and not after.
+
+        The previous assertion was `lock_file.exists() or True`, which is True
+        whatever the lock does. The file is a *sibling* of the target, not a
+        child -- `.idx.r2glock` next to `idx/` -- which is what that dead
+        assertion was reaching for.
+        """
         from repo2graph.lock import BuildLock
 
         lock_file = tmp_path / ".idx.r2glock"
-        with BuildLock(tmp_path / "idx"):
-            # Lock file is created while held
-            assert lock_file.exists() or True  # sibling file, not in idx itself
-        # After release, lock file is gone
-        # (may not exist if acquire never created it yet -- test that no exception raised)
+        assert not lock_file.exists()
+        with BuildLock(tmp_path / "idx") as lock:
+            assert lock_file.exists(), sorted(p.name for p in tmp_path.iterdir())
+            assert lock._acquired
+        assert not lock_file.exists(), "the lock file outlived the block"
+        assert not lock._acquired
 
     def test_lock_metadata_written(self, tmp_path):
         from repo2graph.lock import BuildLock

@@ -1872,9 +1872,15 @@ def build(
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
-    g.stats["parse_errors_summary"] = (
-        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    # `stats` is a Counter so the 18 `stats[k] += 1` sites get a 0 default, and
+    # this is the one entry that holds prose rather than a count. Retyping it as
+    # `dict[str, Any]` would take that default away from every one of them, so
+    # the narrower suppression is the cheaper trade.
+    parse_errors_summary = (
+        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  "
+        f"({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"
     )
+    g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
 
 

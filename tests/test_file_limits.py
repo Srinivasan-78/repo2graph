@@ -19,30 +19,39 @@ def test_max_file_mb_validator():
         _max_file_mb("abc")
 
 
-def test_file_limits(tmp_path):
-    # create files
+def test_the_documented_default_size_ceiling():
+    """The 1.5 MB default is a documented number, so it is pinned as a literal
+    rather than re-read from the config that would move with it."""
+    from repo2graph.parse import MAX_BYTES
+
+    assert MAX_BYTES == 1_500_000
+    assert BuildConfig().max_file_bytes == 1_500_000
+
+
+def test_a_file_over_the_size_ceiling_is_skipped_unless_chunking_is_on(tmp_path):
+    """Over the ceiling the file gets no node; `chunk_large_files` rescues it.
+
+    Run against a small `max_file_bytes` rather than the 1.5 MB default: the
+    branch is a single `st.st_size > config.max_file_bytes` comparison, identical
+    at any threshold, and the default version wrote 3 MB to disk and built the
+    graph twice for 5.7s -- the slowest test in the suite by 5x. The default
+    itself is pinned by the test above.
+    """
     repo = tmp_path / "repo"
     repo.mkdir()
+    limit = 2_000
 
-    under_limit_file = repo / "under_limit.py"
-    over_limit_file = repo / "over_limit.py"
+    under = b"a = 1\n" * 300  # 1,800 bytes
+    over = b"b = 2\n" * 400  # 2,400 bytes
+    assert len(under) < limit < len(over), (len(under), len(over))
+    (repo / "under_limit.py").write_bytes(under)
+    (repo / "over_limit.py").write_bytes(over)
 
-    under_content = b"a = 1\n" * (1_499_900 // 6)
-    under_content += b"x" * (1_499_900 - len(under_content))
-    under_limit_file.write_bytes(under_content)
-
-    over_content = b"b = 2\n" * (1_500_100 // 6)
-    over_content += b"y" * (1_500_100 - len(over_content))
-    over_limit_file.write_bytes(over_content)
-
-    # default config
-    g = build(repo)
+    g = build(repo, config=BuildConfig(max_file_bytes=limit))
     assert "file:under_limit.py" in g.nodes
     assert "file:over_limit.py" not in g.nodes
 
-    # chunk large files config
-    config = BuildConfig(chunk_large_files=True)
-    g2 = build(repo, config=config)
+    g2 = build(repo, config=BuildConfig(max_file_bytes=limit, chunk_large_files=True))
     assert "file:under_limit.py" in g2.nodes
     assert "file:over_limit.py" in g2.nodes
     assert g2.nodes["file:over_limit.py"].get("chunked") is True

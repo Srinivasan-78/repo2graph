@@ -262,9 +262,18 @@ def test_dispatch_serves_a_repeat_from_the_cache(mini_index, monkeypatch):
     assert cache.stats()["hits"] == 1
 
 
-def test_dispatch_without_a_cache_still_works(mini_index):
+def test_dispatch_without_a_cache_still_returns_a_real_repo_map(mini_index):
+    """No cache means every call recomputes, and still answers.
+
+    Comparing two calls to each other only proved determinism: it passed for any
+    deterministic value, including an empty string. The map's own content is
+    pinned instead.
+    """
     index = mcp.open_index(mini_index)
-    assert mcp.dispatch(index, "repo_map", {}) == mcp.dispatch(index, "repo_map", {})
+    first = mcp.dispatch(index, "repo_map", {})
+    assert "# Repo map:" in first, first[:200]
+    assert "pkg/gateway.py" in first, first[:400]
+    assert first == mcp.dispatch(index, "repo_map", {})
 
 
 def test_a_different_query_is_not_served_from_the_cache(mini_index):

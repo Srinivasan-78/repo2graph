@@ -741,16 +741,13 @@ def sanitize_value(
         if SECRET_KEY_RE.search(key or "") and (key or "").lower() not in NON_SECRET_KEYS:
             return redact(text, f"key:{key}")
 
-        # Check URL
         if "://" in text and ("?" in text or "@" in text):
             text = sanitize_url(text)
 
-        # Check credential shape
         shape = _looks_like_a_secret(text)
         if shape:
             return redact(text, shape)
 
-        # Check path
         if ("/" in text or "\\" in text) and _is_secret_path(text):
             return f"[redacted:secret_path fp={_fingerprint(text)}]"
 

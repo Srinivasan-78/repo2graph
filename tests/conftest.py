@@ -111,6 +111,21 @@ def build_mini_index(repo: Path, out: Path) -> Path:
     return Path(out)
 
 
+def write_simple_repo(root: Path) -> Path:
+    """A minimal one-file repo so `build` can index it quickly.
+
+    Smaller than `write_mini_repo`: a single module with one symbol, for tests
+    about paths, locks and bounds that need *an* index rather than a graph with
+    interesting shape. It lived in two test files byte-for-byte identically.
+    """
+    repo = Path(root) / "src"
+    repo.mkdir()
+    (repo / "app.py").write_text(
+        "CONSTANT = 42\n\ndef hello():\n    return CONSTANT\n", encoding="utf8", newline="\n"
+    )
+    return repo
+
+
 @pytest.fixture
 def mini_repo(tmp_path):
     return write_mini_repo(tmp_path)

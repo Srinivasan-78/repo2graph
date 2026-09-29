@@ -25,6 +25,7 @@ import time
 import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable
 
 # Rough parse rate used to estimate a build's duration, in files per second.
@@ -130,7 +131,7 @@ class TaskManager:
         # one (a joined in-flight build returns the existing task early).
         self._by_id: "OrderedDict[str, BuildTask]" = OrderedDict()
 
-    def start(self, repo: Any, out: Any) -> BuildTask:
+    def start(self, repo: str | Path, out: str | Path) -> BuildTask:
         """Begin (or join) a background build for `out`.
 
         Args:
@@ -178,13 +179,13 @@ class TaskManager:
                 continue
             del self._by_id[task_id]
 
-    def _estimate(self, repo: Any) -> float:
+    def _estimate(self, repo: str | Path) -> float:
         try:
             return max(1.0, float(self._estimator(repo)))
         except Exception:
             return 1.0
 
-    def _run(self, task: BuildTask, repo: Any, out: Any) -> None:
+    def _run(self, task: BuildTask, repo: str | Path, out: str | Path) -> None:
         if self._estimator is _default_estimator:
             est = self._estimate(repo)
             with self._lock:
@@ -215,18 +216,13 @@ class TaskManager:
         with self._lock:
             return self._by_id.get(task_id)
 
-    def for_dir(self, out: Any) -> BuildTask | None:
+    def for_dir(self, out: str | Path) -> BuildTask | None:
         """The most recent task for this index directory, or None."""
         with self._lock:
             return self._by_dir.get(str(out))
 
-    def forget(self, out: Any) -> None:
-        """Drop the task recorded for `out`, so a later failure can be retried."""
-        with self._lock:
-            self._by_dir.pop(str(out), None)
 
-
-def _default_estimator(repo: Any) -> float:
+def _default_estimator(repo: str | Path) -> float:
     """Guess a build's duration from how many files discovery finds.
 
     Discovery is cheap next to parsing -- it is a `git ls-files` or one walk --
@@ -241,16 +237,15 @@ def _default_estimator(repo: Any) -> float:
     try:
         from .parse import discover
 
-        count = sum(1 for _ in discover(repo))
+        count = sum(1 for _ in discover(Path(repo)))
     except Exception:
         return 1.0
     return max(1.0, count / FILES_PER_SECOND)
 
 
-def _default_builder(repo: Any, out: Any) -> None:
+def _default_builder(repo: str | Path, out: str | Path) -> None:
     """Build an index the same way the synchronous path does."""
     from .mcp.tools import _build_index
-    from pathlib import Path
 
     _build_index(Path(repo), Path(out))
 

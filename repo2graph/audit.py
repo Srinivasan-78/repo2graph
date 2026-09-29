@@ -1,9 +1,7 @@
 """One JSON line per tool call: who asked what, when, and how it went.
 
 Written to stderr, never stdout. On the stdio transport stdout *is* the JSON-RPC
-stream and a single stray line ends the session; on the HTTP transport stdout is
-still where a human piping the process expects its output. stderr is the only
-channel that is safe in both.
+stream, and a single stray line ends the session.
 
 The awkward requirement here is redaction, and it cuts against the point of an
 audit log. An audit trail that records nothing useful is theatre, but one that
@@ -19,7 +17,7 @@ resolve it:
   length and a short hash, so two occurrences of the same secret are visibly
   the same secret without the log containing either of them.
 
-`exclude_secrets` path patterns are reused from `query._is_secret_path`, so a
+`exclude_secrets` path patterns are reused from `security._is_secret_path`, so a
 path the retrieval layer refuses to return is also a path this layer refuses to
 log -- one definition, not two that drift.
 """
@@ -198,8 +196,9 @@ class AuditLogger:
         Args:
             tool: Tool name the caller asked for.
             params: The caller's arguments; sanitized before they are written.
-            identity: `sub` claim under OIDC, else "bearer" or "anonymous".
-            outcome: "success", "auth_rejected" or "error".
+            identity: Who made the call. The stdio server has no authentication
+                step, so this is "anonymous" unless a caller supplies its own label.
+            outcome: "success" or "error".
             duration_ms: Wall time the call took, in whole milliseconds.
             result_tokens: Size of the result handed back, in tokens.
             error: Message when `outcome` is "error", else None.
@@ -220,12 +219,11 @@ class AuditLogger:
             duration, tokens = 0, 0
         record: dict[str, Any]
         # Sanitisation is inside the try, not just the dump. Every input to it
-        # is caller-controlled, and this method is called from places that have
-        # no `except` of their own -- http_server._reject runs on an auth
-        # failure, outside any guard, so anything raising here takes the
-        # handler thread down with no response at all. Broad on purpose: the
-        # contract is that an awkward argument costs the record's contents,
-        # never the record and never the request.
+        # is caller-controlled and this runs on the per-request path, so anything
+        # raising here would cost the tool call its answer rather than just its
+        # audit record. Broad on purpose: the contract is that an awkward
+        # argument costs the record's contents, never the record and never the
+        # request.
         try:
             record = {
                 "ts": ts,

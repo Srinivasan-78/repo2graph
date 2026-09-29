@@ -14,7 +14,6 @@ def explain_edge(outdir: Path, src: str, dst: str) -> dict[str, Any]:
     dst_node = idx.nodes.get(dst)
 
     matching_edges = []
-    # Check both directions
     for e in idx.edges:
         if (e.get("src") == src and e.get("dst") == dst) or (
             e.get("src") == dst and e.get("dst") == src

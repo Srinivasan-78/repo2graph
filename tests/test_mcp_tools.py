@@ -641,3 +641,51 @@ def test_no_new_tool_ever_leaks_the_env_secret(mini_index):
     for out in outs:
         assert "abc123deadbeef" not in str(out)
         assert "zzz999notreal" not in str(out)
+
+
+def test_path_between_paths_limit_is_clamped_in_the_handler(tmp_path, monkeypatch):
+    """`max_paths` above MCP_MAX_PATHS must not widen the traversal.
+
+    Nothing exercised this clamp, so deleting it would have let a caller ask for
+    an unbounded number of paths. Asserted where the value is consumed --
+    `_reconstruct`'s `cap` -- rather than by counting returned paths: the
+    bidirectional search reconstructs through one meeting node, so how many
+    paths a fixture yields is a property of the graph shape, not of the ceiling.
+    """
+    from repo2graph.mcp import traversal
+
+    mcp = mcp_module()
+    repo = tmp_path / "src"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf8", newline="\n")
+    (pkg / "chain.py").write_text(
+        "MODULE_NOTE = 'a two-hop chain from entry to target'\n\n\n"
+        "def target():\n    return MODULE_NOTE\n\n\n"
+        "def bridge():\n    return target()\n\n\n"
+        "def entry():\n    return bridge()\n",
+        encoding="utf8",
+        newline="\n",
+    )
+    out_dir = build_mini_index(repo, tmp_path / "idx")
+    idx = Index(out_dir)
+    entry, target = "sym:pkg/chain.py::entry", "sym:pkg/chain.py::target"
+    assert entry in idx.nodes and target in idx.nodes, sorted(idx.nodes)[:20]
+
+    caps: list[int] = []
+    real = traversal._reconstruct
+
+    def spy(parents, node, root, cap):
+        caps.append(cap)
+        return real(parents, node, root, cap)
+
+    monkeypatch.setattr(traversal, "_reconstruct", spy)
+
+    mcp.tool_repo_path_between(idx, entry, target, max_paths=999)
+    assert caps, "the traversal never reconstructed a path"
+    # The handler passes paths_limit * 4 down, so a clamped limit shows as 4x it.
+    assert max(caps) == mcp.MCP_MAX_PATHS * 4, caps
+
+    caps.clear()
+    mcp.tool_repo_path_between(idx, entry, target, max_paths=3)
+    assert max(caps) == 3 * 4, caps

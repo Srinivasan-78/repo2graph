@@ -476,10 +476,16 @@ def test_retrieve_still_finds_seeds_and_graph_neighbours(rag_out):
 
 
 def test_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, capsys):
-    """Verify positional order preserved; `query` output still == format_pack."""
-    import inspect
+    """Verify positional order preserved, and `query` prints the cited pack.
 
-    from repo2graph.query import format_pack
+    The output half used to assert `printed == format_pack(Index(out).retrieve(
+    ...))` -- the implementation against itself, so any traversal change moved
+    both sides together and stayed green. `test_retrieve_keeps_every_edge_direction`
+    below documents a real regression that slipped through exactly that
+    assertion. The literals here are hand-derived from `rag_repo`'s fixed
+    synthetic source, so a dropped edge direction or a mangled cite header fails.
+    """
+    import inspect
 
     params = list(inspect.signature(Index.retrieve).parameters)
     assert params[:5] == ["self", "query", "k", "hops", "budget_chars"], params
@@ -497,11 +503,24 @@ def test_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, capsys):
 
     main(["query", ABLATION_QUERY, "-o", str(rag_out), "-k", "3"])
     printed = capsys.readouterr().out
-    assert (
-        printed
-        == format_pack(Index(rag_out).retrieve(ABLATION_QUERY, k=3, hops=1, budget_chars=24000))
-        + "\n"
-    )
+
+    # The lexical seed, then one neighbour per edge direction the query is
+    # supposed to follow out of it. Each is a literal cite header from the
+    # fixture, not a value recomputed by retrieve().
+    for cite in (
+        "--- pkg/session.py::authenticate [lexical]",
+        "--- pkg/session.py::pkg/session.py [DEFINES in of authenticate]",
+        "--- pkg/config.py::normalize_provider [CALLS out of authenticate]",
+        "--- pkg/tokens.py::verify_token [CALLS out of authenticate]",
+    ):
+        assert cite in printed, (cite, printed[:400])
+
+    # The body arrives with its citation, not as a bare snippet.
+    assert "# file: pkg/session.py" in printed
+    assert "# function: authenticate  (lines 6-9, python)" in printed
+    assert "def authenticate(user):" in printed
+    # The decoy file scores below the seeds and must not be packed at k=3.
+    assert "pkg/decoy.py" not in printed, printed[:400]
 
 
 def test_retrieve_keeps_every_edge_direction(dirs_out):
@@ -1119,8 +1138,13 @@ def test_gemini_request_model_path_and_key_header():
     assert "models/models" not in url2
 
 
-def test_writer_lookup_error_fallback():
-    """S-12: _writer stream fallback survives unknown encoding."""
+def test_writer_falls_back_to_utf8_on_an_unknown_stream_encoding():
+    """An unknown codec must not abort the answer, and must still emit the text.
+
+    `_writer` catches LookupError and re-encodes through utf8. This asserted
+    only that the call did not raise, so a fallback that silently dropped the
+    chunk would have passed.
+    """
     import repo2graph.answer as answer
 
     class MockStream:
@@ -1134,8 +1158,11 @@ def test_writer_lookup_error_fallback():
         def flush(self):
             pass
 
-    write = answer._writer(MockStream())
+    stream = MockStream()
+    write = answer._writer(stream)
     write("café")
+
+    assert stream.buf == ["café"], stream.buf
 
 
 def test_stream_answer_empty_or_error_body(monkeypatch):

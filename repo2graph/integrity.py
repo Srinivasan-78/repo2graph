@@ -16,7 +16,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Iterator
+from typing import IO, Any, Iterator, Sequence
 
 from .security import sanitize_url
 
@@ -306,24 +306,46 @@ def _is_own_transient(porcelain_line: str) -> bool:
     return name.endswith(".r2glock") or ".staging." in name
 
 
+def run_git(root: str | Path, args: Sequence[str], *, timeout: float = 10.0) -> str | None:
+    """Run a read-only git command in `root` and return its stdout.
+
+    The decoding rules are the ones every git call in this package has to follow:
+    bytes out and an explicit `surrogateescape` decode, never `text=True`, because
+    a cp1252 console raises `UnicodeDecodeError` on a non-ASCII path -- sometimes
+    inside the error handler. `core.quotepath=false` keeps such a path verbatim
+    rather than escaped, and `stdin` is closed so a misconfigured credential
+    helper cannot block the build waiting for input.
+
+    Args:
+        root: Repository directory to run in.
+        args: Git arguments after the repository options, e.g. `["rev-parse", "HEAD"]`.
+        timeout: Seconds to wait before giving up.
+
+    Returns:
+        Stripped stdout, or None when git is missing, the directory is not a
+        checkout, the command failed, or it timed out.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.quotepath=false", "-C", str(root), *args],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf8", "surrogateescape").strip() or None
+
+
 def get_source_provenance(root: str | Path) -> dict[str, Any]:
     """Capture Git provenance metadata safely for the repository at `root`."""
     root_path = Path(root)
     provenance: dict[str, Any] = {}
 
     def _run_git(args: list[str]) -> str | None:
-        try:
-            res = subprocess.run(
-                ["git", "-c", "core.quotepath=false", "-C", str(root_path), *args],
-                capture_output=True,
-                stdin=subprocess.DEVNULL,
-                timeout=5,
-            )
-            if res.returncode == 0:
-                return res.stdout.decode("utf8", "surrogateescape").strip()
-        except Exception:
-            pass
-        return None
+        return run_git(root_path, args, timeout=5)
 
     commit = _run_git(["rev-parse", "HEAD"])
     if not commit:
@@ -426,7 +448,6 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
     report.schema_version = manifest.get("schema_version")
     report.source_revision = manifest.get("source_revision") or {}
 
-    # Check format compatibility
     fmt = manifest.get("format")
     if fmt and not str(fmt).startswith("repo2graph/"):
         report.status = "incompatible"
@@ -436,14 +457,12 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
     # 2. Verify files and checksums
     checksums = manifest.get("checksums") or {}
 
-    # Check existence of critical files
     for req in ("nodes.jsonl", "edges.jsonl", "chunks.jsonl"):
         p = agent_dir / req
         if not p.exists():
             report.status = "partial"
             report.errors.append(f"Missing critical artifact: {req}")
 
-    # Check checksums for all declared files
     for rel_path, expected_hash in checksums.items():
         # These keys are untrusted input. A manifest travels with the index it
         # describes, and this project actively encourages consuming indexes

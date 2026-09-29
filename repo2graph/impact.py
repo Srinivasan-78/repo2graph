@@ -853,7 +853,6 @@ def analyze_diff_impact(
     if len(relatable_paths) > 1:
         for fpath in relatable_paths:
             fid = f"file:{fpath}"
-            # Check if this file has ANY edge connecting it to another changed file
             connected = False
             for neighbor_id, _, _, _ in index.adj.get(fid, []):
                 n_node = index.nodes.get(neighbor_id)

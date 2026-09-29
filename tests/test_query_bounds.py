@@ -10,17 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_simple_repo
 from repo2graph.cli import main
-
-
-def write_simple_repo(root: Path) -> Path:
-    """A minimal one-file repo so `build` can index it quickly."""
-    repo = root / "src"
-    repo.mkdir()
-    (repo / "app.py").write_text(
-        "CONSTANT = 42\n\ndef hello():\n    return CONSTANT\n", encoding="utf8", newline="\n"
-    )
-    return repo
 
 
 # ============================================================================

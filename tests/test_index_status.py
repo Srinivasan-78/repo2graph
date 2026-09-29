@@ -668,3 +668,28 @@ def test_action_never_ships_local_json():
     action = (Path(__file__).resolve().parents[1] / "action.yml").read_text(encoding="utf-8")
     assert "!${{ inputs.out }}/local.json" in action
     assert 'rm -f "$tmp/local.json"' in action
+
+
+def test_the_reported_path_lists_are_capped_but_the_counts_are_not():
+    """`index-status --json` is a public surface, and a 4,000-entry list is not
+    a report. The lists are capped at MAX_LISTED_PATHS; the counts beside them
+    stay exact, which is what tells a reader the list was cut.
+    """
+    from repo2graph.status import MAX_LISTED_PATHS, Freshness
+
+    assert MAX_LISTED_PATHS == 10
+
+    fresh = Freshness(
+        status="stale",
+        added=[f"a{i}.py" for i in range(14)],
+        removed=[f"r{i}.py" for i in range(11)],
+        modified=[f"m{i}.py" for i in range(10)],
+    )
+    report = fresh.to_dict()
+
+    assert len(report["added"]) == MAX_LISTED_PATHS
+    assert report["added"][0] == "a0.py" and report["added"][-1] == "a9.py"
+    assert len(report["removed"]) == MAX_LISTED_PATHS
+    assert len(report["modified"]) == MAX_LISTED_PATHS  # exactly at the cap, uncut
+
+    assert report["counts"] == {"added": 14, "removed": 11, "modified": 10}

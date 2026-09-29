@@ -1609,19 +1609,38 @@ def test_r9_dispatch_caps_query_too(mini_index):
     assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS
 
 
-def test_r9_an_absurdly_long_node_id_does_not_raise(mini_index):
+def test_an_absurdly_long_node_id_is_clamped_before_it_reaches_the_error(mini_index):
+    """The ceiling has to bind, not merely fail to crash.
+
+    `_str` clamps by slicing, so a 10 MB id produces a `str` and a "node not
+    found" either way -- asserting only those two things passed with the clamp
+    deleted. The refusal echoes the id it looked up, so the clamped length is
+    observable in the output.
+    """
     mcp = mcp_module()
     idx = Index(mini_index)
     huge = "sym:" + "z" * 10_000_000
     out = mcp.dispatch(idx, "repo_neighbours", {"node_id": huge})
-    assert isinstance(out, str) and "node not found" in out
+    assert "node not found" in out
+    echoed = out.split("node not found: ", 1)[1].split("'")[1]
+    assert len(echoed) == mcp.MCP_MAX_NODE_ID_CHARS, len(echoed)
 
 
-def test_r9_an_absurdly_long_task_id_does_not_raise():
+def test_an_absurdly_long_task_id_is_clamped_before_it_reaches_the_error():
+    """Same ceiling, same reasoning, on the task-id path.
+
+    A real (empty) TaskManager is needed to reach the branch that echoes the id:
+    with `tasks=None` the server answers "builds synchronously" and never looks
+    at the id at all, which is why the previous `isinstance(out, str)` assertion
+    could not see the clamp.
+    """
+    from repo2graph.tasks import TaskManager
+
     mcp = mcp_module()
     huge = "t" * 10_000_000
-    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge})
-    assert isinstance(out, str)
+    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge}, tasks=TaskManager())
+    echoed = out.split("no build task with id ", 1)[1].split("'")[1]
+    assert len(echoed) == mcp.MCP_MAX_TASK_ID_CHARS, len(echoed)
 
 
 def test_r9_sane_string_arguments_are_left_alone(mini_index):

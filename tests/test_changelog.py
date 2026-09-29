@@ -193,3 +193,26 @@ def test_changelog_registered_in_manifest(tmp_path, capsys):
     captured = capsys.readouterr()
     report = json.loads(captured.out)
     assert "human/CHANGELOG.md" in report["written"]
+
+
+def test_a_section_longer_than_max_items_is_truncated_with_a_count():
+    """The "... and N more" line is the only signal that a section was cut.
+
+    Nothing exercised the ceiling, so a changelog that silently dropped
+    everything past the 50th item would have read as a complete one.
+    """
+    from repo2graph.changelog import MAX_ITEMS, _section
+
+    assert MAX_ITEMS == 50
+
+    lines = [f"- item {i}" for i in range(63)]
+    out = _section(lines, 63)
+    assert len(out) == MAX_ITEMS + 1
+    assert out[:2] == ["- item 0", "- item 1"]
+    assert out[MAX_ITEMS - 1] == "- item 49"
+    assert out[-1] == "... and 13 more"
+
+    # Exactly at the ceiling nothing is cut and no marker is added.
+    exact = _section(lines[:MAX_ITEMS], MAX_ITEMS)
+    assert len(exact) == MAX_ITEMS
+    assert not any("and" in line and "more" in line for line in exact)

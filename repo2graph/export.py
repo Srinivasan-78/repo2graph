@@ -6,7 +6,6 @@ import os
 import random
 import re
 import shutil
-import subprocess
 import threading
 import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
@@ -622,28 +621,10 @@ def _git_short_sha(root: Path | str) -> str | None:
     Returns:
         Short commit SHA string, or None.
     """
-    try:
-        out = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.quotepath=false",
-                "-C",
-                str(root),
-                "rev-parse",
-                "--short",
-                "HEAD",
-            ],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    sha = out.stdout.decode("utf8", "surrogateescape").split("\n")[0].strip()
-    return sha or None
+    from .integrity import run_git
+
+    sha = run_git(root, ["rev-parse", "--short", "HEAD"])
+    return sha.split("\n")[0].strip() or None if sha else None
 
 
 _SKIP_STAT_LABELS = (

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,20 +82,9 @@ class Freshness:
 
 def _git_head(repo: Path) -> str | None:
     """The tree's current HEAD sha, or None when `repo` is not a git checkout."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True,
-            timeout=10,
-            stdin=subprocess.DEVNULL,
-        )
-    except Exception:
-        return None
-    if proc.returncode != 0:
-        return None
-    # Never text=True on git output: a cp1252 console decodes a non-ASCII
-    # path with UnicodeDecodeError, sometimes inside the handler. See CONTRIBUTING.md.
-    return proc.stdout.decode("utf8", "surrogateescape").strip() or None
+    from .integrity import run_git
+
+    return run_git(repo, ["rev-parse", "HEAD"])
 
 
 def _read_json(path: Path) -> dict[str, Any]:
