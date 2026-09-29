@@ -199,6 +199,24 @@ class _Types:
         def __init__(self, name, arguments):
             self.name, self.arguments = name, arguments
 
+    class ToolAnnotations:
+        def __init__(self, **fields):
+            for key, value in fields.items():
+                setattr(self, key, value)
+
+    class Tool:
+        # Declared at class level on purpose: `get_tools` decides whether this
+        # SDK supports annotations with `hasattr(tool_cls, "annotations")`, and
+        # an attribute only ever set in __init__ is invisible to that check --
+        # the tools would come back silently unannotated.
+        annotations = None
+
+        def __init__(self, name, description=None, inputSchema=None, annotations=None):
+            self.name = name
+            self.description = description
+            self.inputSchema = inputSchema
+            self.annotations = annotations
+
 
 def _install_fake_sdk(monkeypatch):
     """A stand-in `mcp` package exposing only the 2.x registration API.
@@ -235,7 +253,7 @@ def _install_fake_sdk(monkeypatch):
             return False
 
     types_mod = pytypes.ModuleType("mcp.types")
-    for attr in ("TextContent", "CallToolResult", "ListToolsResult"):
+    for attr in ("TextContent", "CallToolResult", "ListToolsResult", "Tool", "ToolAnnotations"):
         setattr(types_mod, attr, getattr(_Types, attr))
     root = pytypes.ModuleType("mcp")
     root.types = types_mod  # type: ignore[attr-defined]
@@ -251,6 +269,46 @@ def _install_fake_sdk(monkeypatch):
     ):
         monkeypatch.setitem(sys.modules, name, mod)
     return captured
+
+
+def test_serve_list_tools_handler_reports_every_tool_and_honest_annotations(git_index, monkeypatch):
+    """The registered list handler is what a real client reads the tool set
+    and its annotations from, so it is the path #292's honesty has to hold on.
+
+    `_install_fake_sdk` captured this callback but nothing ever invoked it,
+    which is why the impact analysis flagged `serve.list_tools_handler` as a
+    public API with no test caller -- correctly.
+    """
+    import asyncio
+
+    _repo, out = git_index
+
+    # No repo to build from: this server can only read an index that exists.
+    captured = _install_fake_sdk(monkeypatch)
+    mcp_mod.serve(out)
+    tools = asyncio.run(captured["list"](None, None)).tools
+    names = [t.name for t in tools]
+    assert set(names) == set(mcp_mod.TOOL_DESCRIPTIONS)
+    assert len(names) == len(set(names)), f"a tool is registered twice: {names}"
+    assert all(_ann(t, "read_only_hint", "readOnlyHint") is True for t in tools)
+
+    # Given a repo, the first call to any tool but repo_build_status may build.
+    captured = _install_fake_sdk(monkeypatch)
+    mcp_mod.serve(out, repo=_repo)
+    by_name = {t.name: t for t in asyncio.run(captured["list"](None, None)).tools}
+    assert _ann(by_name["repo_search"], "read_only_hint", "readOnlyHint") is False
+    assert _ann(by_name["repo_build_status"], "read_only_hint", "readOnlyHint") is True
+
+
+def _ann(tool, *names):
+    """One annotation off a Tool, tolerating either SDK's field naming."""
+    annotations = getattr(tool, "annotations", None)
+    for name in names:
+        if hasattr(annotations, name):
+            return getattr(annotations, name)
+        if isinstance(annotations, dict) and name in annotations:
+            return annotations[name]
+    raise AssertionError(f"no annotation named any of {names} on {tool.name}")
 
 
 def test_serve_flags_tool_errors_as_is_error(git_index, monkeypatch):
