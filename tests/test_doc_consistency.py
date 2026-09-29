@@ -480,9 +480,15 @@ def test_integration_guides_quote_the_real_mcp_bounds():
             "the guide publishes these ceilings as a contract with the reader"
         )
 
-    # "The six tools" is a heading in that guide; every tool must appear under it.
-    assert len(TOOL_DESCRIPTIONS) == 6, (
-        f"claude-code.md says 'The six tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    # "The ten tools" is a heading in that guide; every tool must appear under
+    # it. The count is spelled out in prose, so it cannot be derived from
+    # TOOL_DESCRIPTIONS here -- that would compare the docs to nothing and pass
+    # for any number. Bump both together when a tool is added.
+    assert len(TOOL_DESCRIPTIONS) == 10, (
+        f"claude-code.md says 'The ten tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    )
+    assert "The ten tools" in text, (
+        "docs/integrations/claude-code.md's tool-list heading no longer states the count"
     )
     for tool in TOOL_DESCRIPTIONS:
         assert tool in text, f"MCP tool '{tool}' is missing from docs/integrations/claude-code.md"

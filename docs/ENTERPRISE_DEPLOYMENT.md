@@ -40,6 +40,51 @@ Two supported shapes, both real:
    remember to set. Put a TLS-terminating reverse proxy in front for anything crossing a network
    boundary; the built-in HTTP server does not terminate TLS itself.
 
+   **The server does not know whether a reverse proxy is actually there.** Binding to a
+   non-loopback address with authentication configured is allowed to start (refusing it would
+   break the exact reverse-proxy shape this page recommends), but `HTTPTransport` emits a
+   high-visibility startup warning — a plain-text banner on stderr plus a structured
+   `http_transport_no_tls_termination` event — every time it does, unless the operator passes
+   `insecure_transport_ack=True` as their explicit acknowledgement that TLS termination is already
+   handled upstream. A bearer or OIDC credential sent to a bind with no TLS in front of it travels
+   in clear text to anyone who can observe the network between the caller and this process.
+
+## Rate limiting, concurrency quotas and the trusted-proxy allowlist
+
+`HTTPTransport` enforces four independent ceilings by default (`RateLimitConfig` in
+`http_server.py`), so a shared deployment cannot be starved by one caller or one burst:
+
+- **Per-client rate limit** — a sliding window (`requests_per_window` / `window_seconds`) keyed on
+  the *verified* identity: the OIDC `sub` claim when one exists, a fixed bucket for the shared
+  static bearer token (it names no one in particular, so it cannot be split further), or the
+  caller's network address when no auth is configured. A caller over the limit gets `429` with a
+  `Retry-After` header and JSON-RPC error code `-32000`.
+- **Global concurrent-request limit** (`max_concurrent_requests`) plus a **bounded wait queue**
+  (`max_queue_size`, `queue_wait_seconds`) — a request arriving once every slot is busy waits up to
+  `queue_wait_seconds` for one to free, and is refused with `503` (`Retry-After`, JSON-RPC error
+  code `-32001`) rather than queued without limit if the queue itself is already full.
+- **Index build concurrency limit** (`max_concurrent_builds`) — a separate, non-blocking gate
+  specifically around the code path that may trigger an auto-build, independent of the general
+  concurrency slot above. Several callers hitting an unbuilt index at once cannot each start their
+  own build; the first proceeds, the rest are told to retry.
+- **Response size limit** (`max_response_bytes`) — a tool result larger than this is replaced with
+  a bounded error rather than sent, independent of whatever budget `repo2graph query`'s own
+  `pack_context` already applied.
+
+Every rate-limit or overload event is recorded in the audit log and emitted as a structured
+`rate_limited` event, keyed on the same client identity described above — never on the token or
+claims themselves, so the record is safe to ship to a SIEM.
+
+**Forwarded headers are ignored by default.** `X-Forwarded-For` — the header a reverse proxy sets
+to carry the original caller's address — is never consulted unless *both* `trust_proxy` is enabled
+*and* the directly-connecting peer is itself in the `trusted_proxies` allowlist. Enabling
+`trust_proxy` without also naming which peers may set the header would let any direct, untrusted
+caller claim to be someone else purely by sending it. Neither setting ever affects
+*authentication* — the Authorization header is the only credential this server ever reads; forwarded
+headers only change which network identity a rate-limit bucket is keyed on. If you run behind a
+reverse proxy and want per-real-caller rate limiting rather than one bucket for the whole proxy,
+enable `trust_proxy` and list the proxy's address (or addresses, for a pool) in `trusted_proxies`.
+
 ## Container hardening
 
 If you run `repo2graph-mcp` in a container (recommended for the HTTP-shared shape), you can build the official `Dockerfile` provided in this repository, which is already configured for these requirements:
@@ -118,6 +163,18 @@ exact dependency graph that was reviewed — mirror that discipline in your own 
 `repo2graph` itself, and let your SCA tool (see `docs/SECURITY-AUDIT.md`'s CI/CD findings — this
 repo's own `dependency-audit.yml` runs `pip-audit --strict`) gate upgrades rather than floating on
 whatever the latest release happens to be.
+
+## Protocol version and transport honesty
+
+`initialize` advertises `protocolVersion: "2024-11-05"`. That is a deliberate statement about what
+this transport actually implements, not the newest revision available: plain JSON-RPC
+request/response over `POST /mcp`, `Content-Length` framing only (chunked bodies are refused),
+`HTTP/1.0` with the connection closed after every response, and no session concept. It is **not**
+Streamable HTTP (the `2025-06-18`/`2025-03-26` transport, which adds a `GET` SSE stream,
+`Mcp-Session-Id`, and `Last-Event-ID` resumability) — a client that specifically requires that
+transport should not connect expecting it to work. If your client negotiates protocol versions and
+insists on a newer one, use the stdio transport instead, which goes through the `mcp` SDK and
+negotiates independently of this HTTP server's own advertised value.
 
 ## What this does not do
 

@@ -171,8 +171,12 @@ def rsa_verify(n: int, e: int, signature: bytes, message: bytes, hash_name: str)
     # n == 0, and a negative n makes `pow(...).to_bytes(...)` raise
     # OverflowError (the result carries n's sign). Both must fail closed as a
     # plain verification failure, never propagate as an unhandled exception.
-    MIN_RSA_BITS = 2048
-    MAX_RSA_EXPONENT_BITS = 64
+    # MIN_RSA_BITS/MAX_RSA_EXPONENT_BITS are the module-level constants
+    # (#367): a modulus below 2048 bits is not strong enough to mean
+    # anything, and an unbounded exponent is a CPU sink reachable once per
+    # request on the decode_jwt path -- both fail closed the same way a bad
+    # signature would, never as a distinct AuthError a caller could use to
+    # tell "weak key" apart from "forged signature".
     if n <= 0 or e <= 0:
         return False
     if n.bit_length() < MIN_RSA_BITS or e.bit_length() > MAX_RSA_EXPONENT_BITS:

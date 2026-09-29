@@ -29,11 +29,32 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 
 def _has_mcp():
-    try:
-        import mcp  # noqa: F401
-        from mcp.server import Server
+    """A real, currently-*supported* SDK is importable.
 
-        return hasattr(Server, "list_tools") and hasattr(Server, "call_tool")
+    #407/#291 dropped mcp 1.x: `serve()` now speaks only the 2.x registration
+    API (`on_list_tools=`/`on_call_tool=`), so a test that drives a live
+    subprocess needs mcp>=2.0. This used to check
+    `hasattr(Server, "list_tools")`, which is true only for the *unsupported*
+    1.x generation -- so on any environment with the (now required) 2.x SDK
+    installed, every test gated on it silently skipped forever. Detector:
+    reverting this to the old hasattr check makes
+    test_stdio_roundtrip_against_a_repo_with_no_index and
+    test_ac34_stdio_server_roundtrip skip again against this repo's own
+    installed SDK.
+    """
+    try:
+        import mcp
+        from mcp.server import Server  # noqa: F401
+        from mcp.server.stdio import stdio_server  # noqa: F401
+
+        # Not `mcp_module()`: that helper is defined further down this file,
+        # after this module-level call runs at import time -- a `NameError`
+        # here was swallowed by the broad `except Exception` below and every
+        # gated test skipped regardless of what was installed.
+        from repo2graph.mcp import _sdk_major, _sdk_version
+
+        major = _sdk_major(_sdk_version(mcp))
+        return major is None or major >= 2
     except Exception:
         return False
 
@@ -42,11 +63,11 @@ HAS_REAL_MCP = _has_mcp()
 
 
 def _has_any_mcp():
-    """An SDK `serve()` can actually drive, on either major.
+    """Any `mcp` SDK is importable at all, supported or not.
 
-    `_has_mcp` above is narrower on purpose -- the tests it gates are written
-    against the 1.x decorator API. `serve()` itself handles both, so a test
-    that only drives it over the wire must not be skipped on a 2.x install.
+    Only `test_iss90_...parallel_path` uses this -- it exercises `serve()`'s
+    own real behaviour (including refusing an unsupported SDK), so it must
+    run whenever *some* SDK is installed, not only a supported one.
     """
     try:
         from mcp.server import Server  # noqa: F401
@@ -83,6 +104,48 @@ def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
     idx = Index(mini_index)
     assert mcp.tool_repo_map(idx) == idx.map_prepend()
     assert idx.map_prepend().strip(), "the fixture produced an empty map"
+
+
+def test_iss383_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_index):
+    """#383: an index whose tree has not moved reports no staleness note --
+    the check must not become a false positive on every call."""
+    mcp = mcp_module()
+    idx = mcp.open_index(mini_index, repo=mini_repo)
+    assert "index may be stale" not in mcp.tool_repo_map(idx)
+
+
+def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
+    """#383: `_index_mtime`/`open_index`'s reload check both compare the index
+    against itself at an earlier moment -- neither ever looks at the source
+    tree, so a long-running server answered from a stale graph indefinitely
+    and every `[cite: path:start-end]` anchor was then confidently wrong.
+    `tool_repo_map` must surface the mismatch using the per-file sha256
+    `index.state.json` already records (`status.compute_freshness`), not stay
+    silent forever.
+
+    Detector: reverting `tool_repo_map` to `index.map_prepend()` (its
+    pre-#383 body) makes this fail while
+    test_iss383_repo_map_is_silent_when_the_tree_is_unchanged keeps passing.
+    """
+    import os
+    import time
+
+    mcp = mcp_module()
+    idx = mcp.open_index(mini_index, repo=mini_repo)
+
+    gateway = mini_repo / "pkg" / "gateway.py"
+    gateway.write_text(gateway.read_text(encoding="utf8") + "\n# changed after the build\n")
+    # index.state.json's hashing is mtime-gated against manifest.json's own
+    # mtime (status.compute_freshness): force the edit to look unambiguously
+    # newer than a build that may have finished in the same filesystem tick.
+    future = time.time() + 5
+    os.utime(gateway, (future, future))
+
+    stale_map = mcp.tool_repo_map(idx)
+    assert "index may be stale" in stale_map
+    assert "repo2graph build" in stale_map
+    # The map itself is still appended verbatim after the note.
+    assert idx.map_prepend() in stale_map
 
 
 # ==========================================================================
@@ -239,13 +302,21 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 
 
 def test_ac31_tool_descriptions_stay_under_budget():
-    """AC-31: the published tool set, capped under 2500 characters (~500 tokens).
+    """AC-31: the published tool set, capped under a combined character budget.
 
     The character budget balances agent context overhead against Glama TDQS
     (Tool Definition Quality Standard) requirements. Tool descriptions are loaded
     into every agent's context every turn, so they must stay tightly bounded;
     however, they must also provide explicit usage guidance, sibling disambiguation,
     and safety disclosures.
+
+    Round 1 of MCP hardening added four tools (repo_find_symbol, repo_read,
+    repo_path_between, repo_blast_radius) to the original six, each of which
+    needs its own sibling cross-references and when/when-not guidance to pass
+    the tests below -- so the combined budget below is deliberately raised
+    from the original 3000 (six tools) to 6000 (ten tools, actual total is
+    ~5590 as of this writing): the per-tool [100, 800] cap is unchanged and
+    is what actually keeps any *one* description honest.
     """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {
@@ -253,6 +324,10 @@ def test_ac31_tool_descriptions_stay_under_budget():
         "repo_search",
         "repo_neighbours",
         "repo_impact",
+        "repo_find_symbol",
+        "repo_read",
+        "repo_path_between",
+        "repo_blast_radius",
         "repo_cache_stats",
         "repo_build_status",
     }
@@ -262,7 +337,7 @@ def test_ac31_tool_descriptions_stay_under_budget():
             f"{name} length {len(text)} out of expected [100, 800] range"
         )
     total = sum(len(d) for d in mcp.TOOL_DESCRIPTIONS.values())
-    assert total <= 3000, f"Combined tool descriptions ({total} chars) exceed 3000-char budget"
+    assert total <= 6000, f"Combined tool descriptions ({total} chars) exceed 6000-char budget"
 
 
 test_ac31_tool_descriptions_stay_under_600_chars = test_ac31_tool_descriptions_stay_under_budget
@@ -281,6 +356,10 @@ def test_tool_descriptions_contain_usage_guidance_and_siblings():
         "repo_search": {"repo_map", "repo_neighbours"},
         "repo_neighbours": {"repo_search", "repo_map"},
         "repo_impact": {"repo_search"},
+        "repo_find_symbol": {"repo_search", "repo_map"},
+        "repo_read": {"repo_search", "repo_neighbours"},
+        "repo_path_between": {"repo_neighbours", "repo_search"},
+        "repo_blast_radius": {"repo_impact", "repo_search"},
         "repo_cache_stats": {"repo_map", "repo_search"},
         "repo_build_status": {"repo_search", "repo_map"},
     }
@@ -326,6 +405,10 @@ def test_tool_schemas_have_informative_parameter_descriptions():
         "repo_search": ["query"],
         "repo_neighbours": ["node_id"],
         "repo_impact": [],
+        "repo_find_symbol": ["name"],
+        "repo_read": ["path"],
+        "repo_path_between": ["from_id", "to_id"],
+        "repo_blast_radius": ["node_id"],
         "repo_cache_stats": [],
         "repo_build_status": ["task_id"],
     }
@@ -368,7 +451,27 @@ def test_tool_annotations_constant_defined():
     assert mcp.TOOL_ANNOTATIONS.get("idempotentHint") is True
 
 
-@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+def _field(obj, *names):
+    """The first of `names` found on `obj`, as an attribute or a dict key.
+
+    The installed SDK's pydantic models expose fields under their snake_case
+    Python name (`input_schema`, `read_only_hint`); the wire/constructor
+    spelling stays camelCase (`inputSchema`, `readOnlyHint`) as an alias. A
+    fake `Tool`/`ToolAnnotations` built by this file's own stand-ins (or an
+    older SDK) may only have the camelCase one, and `TOOL_ANNOTATIONS` itself
+    is a plain dict keyed camelCase -- so a real test here has to accept
+    either rather than assume one SDK generation's naming.
+    """
+    for name in names:
+        if isinstance(obj, dict):
+            if name in obj:
+                return obj[name]
+        elif hasattr(obj, name):
+            return getattr(obj, name)
+    return None
+
+
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
 def test_list_tools_returns_quality_annotations():
     """When running with the MCP SDK, get_tools() returns tools decorated
     with quality annotations (readOnlyHint=True, destructiveHint=False, idempotentHint=True).
@@ -380,15 +483,57 @@ def test_list_tools_returns_quality_annotations():
     for tool in tools:
         assert tool.name in mcp.TOOL_DESCRIPTIONS
         assert tool.description == mcp.TOOL_DESCRIPTIONS[tool.name]
-        assert tool.inputSchema == mcp.TOOL_SCHEMAS[tool.name]
-        assert getattr(tool, "annotations", None) is not None, (
-            f"Tool {tool.name} missing annotations"
-        )
-        ann = tool.annotations
-        read_only = getattr(ann, "readOnlyHint", None) or (
-            ann.get("readOnlyHint") if isinstance(ann, dict) else None
-        )
+        schema = _field(tool, "input_schema", "inputSchema")
+        assert schema == mcp.TOOL_SCHEMAS[tool.name]
+        ann = getattr(tool, "annotations", None)
+        assert ann is not None, f"Tool {tool.name} missing annotations"
+        read_only = _field(ann, "read_only_hint", "readOnlyHint")
         assert read_only is True, f"{tool.name} readOnlyHint must be True"
+
+
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
+def test_iss292_annotations_are_honest_about_auto_build():
+    """#292: a client inspecting annotations must not be told a tool is
+    read-only when its first call, on a server that can auto-build, may
+    parse the whole repository, run git, and write `.r2g/**` to disk.
+
+    `get_tools(auto_build=False)` -- an already-indexed server, or one
+    started with `--no-auto-build` -- keeps every tool read-only: that
+    annotation is true in that mode. `get_tools(auto_build=True)` -- stdio
+    with a repo to build from and auto-build not disabled -- must mark every
+    build-capable tool `readOnlyHint=False`, except `repo_build_status`,
+    which `run_tool` special-cases before it would ever trigger a build.
+    """
+    mcp = mcp_module()
+
+    honest = {t.name: t for t in mcp.get_tools(auto_build=False)}
+    building = {t.name: t for t in mcp.get_tools(auto_build=True)}
+    assert set(honest) == set(building) == set(mcp.TOOL_DESCRIPTIONS)
+
+    for name in mcp.TOOL_DESCRIPTIONS:
+        still_read_only = _field(honest[name].annotations, "read_only_hint", "readOnlyHint")
+        assert still_read_only is True, name
+
+        maybe_building = _field(building[name].annotations, "read_only_hint", "readOnlyHint")
+        if name in mcp.BUILD_CAPABLE_TOOLS:
+            assert maybe_building is False, (
+                f"{name} can trigger an auto-build via open_index_or_task and "
+                f"must not claim readOnlyHint=True"
+            )
+        else:
+            assert maybe_building is True, (
+                f"{name} never triggers a build (run_tool special-cases it) "
+                f"and should stay read-only even when auto-build is enabled"
+            )
+
+
+def test_iss292_repo_build_status_is_the_only_non_build_capable_tool():
+    """Pins BUILD_CAPABLE_TOOLS against `run_tool`'s own special case, so a
+    future tool added to TOOL_DESCRIPTIONS without updating the annotation
+    set fails loudly here rather than silently miscategorising a new tool.
+    """
+    mcp = mcp_module()
+    assert mcp.BUILD_CAPABLE_TOOLS == frozenset(mcp.TOOL_DESCRIPTIONS) - {"repo_build_status"}
 
 
 # ==========================================================================
@@ -473,7 +618,7 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
 # ==========================================================================
 
 
-@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
 def test_ac34_stdio_server_roundtrip(mini_index):
     """AC-34: automated round-trip against the live stdio server."""
     proc = subprocess.Popen(
@@ -806,15 +951,34 @@ def test_r8_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatc
     _fake_sdk(monkeypatch, decorators=False, with_server_module=False)
     with pytest.raises(SystemExit) as exc:
         mcp._require_sdk()
-    assert "mcp>=1.0,<3.0" in str(exc.value), str(exc.value)
+    assert mcp.SDK_SPEC in str(exc.value), str(exc.value)
 
 
 def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
     """R-8 (d): the guard must not become a blanket refusal -- an SDK that
-    does carry the API serve() needs is accepted."""
+    does carry the API serve() needs, and is 2.x or newer, is accepted."""
     mcp = mcp_module()
-    fake = _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    fake = _fake_sdk(monkeypatch, decorators=True, version="2.2.0")
     assert mcp._require_sdk() is fake
+
+
+def test_iss407_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
+    """#407: mcp 1.x hangs on the server's first tool call rather than
+    erroring, deterministically (~4 min timeout under 1.30.0). Dropping 1.x
+    support (#291) means the version is checked here, at startup, instead of
+    only the API surface -- so the failure is a sentence, not a hang.
+
+    Detector: before the fix, `_require_sdk()` only checked
+    `hasattr(Server, "list_tools")`, which mcp 1.x satisfies, so this SDK
+    passed the guard and `serve()` drove the (hanging) 1.x branch.
+    """
+    mcp = mcp_module()
+    _fake_sdk(monkeypatch, decorators=True, version="1.30.0")
+    with pytest.raises(SystemExit) as exc:
+        mcp._require_sdk()
+    assert "1.30.0" in str(exc.value)
+    assert mcp.SDK_SPEC in str(exc.value)
+    assert "#407" in str(exc.value)
 
 
 def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
@@ -906,7 +1070,7 @@ def test_serve_preflight_checks_index(monkeypatch, tmp_path):
     not a second one.
     """
     mcp = mcp_module()
-    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    _fake_sdk(monkeypatch, decorators=True, version="2.2.0")
     missing = tmp_path / "missing_idx"
     with pytest.raises(SystemExit) as exc:
         mcp.serve(missing)
@@ -1000,7 +1164,7 @@ def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path, monkeypa
 
     mcp = mcp_module()
     mcp._INDEXES.clear()
-    _fake_sdk(monkeypatch, decorators=True, version="1.9.0")
+    _fake_sdk(monkeypatch, decorators=True, version="2.2.0")
     monkeypatch.setattr(
         mcp, "_build_index", lambda *a, **k: pytest.fail("built during the handshake")
     )
@@ -1069,7 +1233,7 @@ def test_no_auto_build_flag_turns_the_repo_off(mini_repo, monkeypatch):
     assert seen["repo"] == Path(mini_repo)
 
 
-@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] with 1.x Server API")
+@pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
 def test_stdio_roundtrip_against_a_repo_with_no_index(mini_repo):
     """The onboarding journey, end to end: add the server, ask, get an answer.
 
@@ -1767,6 +1931,138 @@ def test_http_auto_build_disabled_by_default(mini_repo, monkeypatch):
     # Explicit --allow-auto-build: repo is passed
     assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--allow-auto-build"]) == 0
     assert seen_repos[-1] == mini_repo
+
+
+# ==========================================================================
+# Task 3 -- CLI wiring for http_server.py's #264/#267 flags
+# ==========================================================================
+
+
+def _fake_http_transport(monkeypatch, mini_repo):
+    """Patch http_server.HTTPTransport with a recorder, and serve() to fail
+    loudly if it is ever reached -- the shape every Task-3 test below shares.
+    """
+    mcp = mcp_module()
+    from repo2graph import http_server as http_mod
+
+    calls: list[dict] = []
+
+    class FakeTransport:
+        _thread = None
+
+        def __init__(self, index_dir, repo=None, **kw):
+            calls.append(kw)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
+    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
+    return mcp, calls
+
+
+def test_iss267_http_insecure_ok_reaches_the_transport(mini_repo, monkeypatch):
+    """--http-insecure-ok -> HTTPTransport(insecure_transport_ack=True)."""
+    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert calls[-1]["insecure_transport_ack"] is False
+
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--http-insecure-ok"]) == 0
+    assert calls[-1]["insecure_transport_ack"] is True
+
+
+def test_iss267_trust_proxy_and_trusted_proxies_reach_the_transport(mini_repo, monkeypatch):
+    """--trust-proxy/--trusted-proxies -> HTTPTransport(trust_proxy=, trusted_proxies=[...])."""
+    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert calls[-1]["trust_proxy"] is False
+    assert calls[-1]["trusted_proxies"] == []
+
+    assert (
+        mcp.main(
+            [
+                str(mini_repo),
+                "--http-port",
+                "0",
+                "--http-only",
+                "--trust-proxy",
+                "--trusted-proxies",
+                "10.0.0.1, 10.0.0.2",
+            ]
+        )
+        == 0
+    )
+    assert calls[-1]["trust_proxy"] is True
+    assert calls[-1]["trusted_proxies"] == ["10.0.0.1", "10.0.0.2"]
+
+
+def test_iss264_no_rate_limit_flags_leaves_the_default_config(mini_repo, monkeypatch):
+    """Naming none of the --rate-limit-*/--max-* flags must not fabricate a
+    RateLimitConfig -- HTTPTransport's own default (RateLimitConfig()) is
+    what applies, not a second copy of its field defaults duplicated in
+    mcp.py that could silently drift from it."""
+    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
+    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
+    assert calls[-1]["rate_limit_config"] is None
+
+
+def test_iss264_rate_limit_flags_reach_the_transport(mini_repo, monkeypatch):
+    """Each --rate-limit-*/--max-* flag lands on the RateLimitConfig field of
+    the same shape passed to HTTPTransport."""
+    from repo2graph.http_server import RateLimitConfig
+
+    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
+    assert (
+        mcp.main(
+            [
+                str(mini_repo),
+                "--http-port",
+                "0",
+                "--http-only",
+                "--rate-limit-requests",
+                "10",
+                "--rate-limit-window",
+                "30",
+                "--max-concurrent-requests",
+                "5",
+                "--max-queue-size",
+                "6",
+                "--max-concurrent-builds",
+                "2",
+                "--max-response-bytes",
+                "1024",
+            ]
+        )
+        == 0
+    )
+    cfg = calls[-1]["rate_limit_config"]
+    assert isinstance(cfg, RateLimitConfig)
+    assert cfg.requests_per_window == 10
+    assert cfg.window_seconds == 30
+    assert cfg.max_concurrent_requests == 5
+    assert cfg.max_queue_size == 6
+    assert cfg.max_concurrent_builds == 2
+    assert cfg.max_response_bytes == 1024
+
+
+def test_iss264_one_rate_limit_flag_still_builds_a_config(mini_repo, monkeypatch):
+    """Passing just one flag must not require naming all six -- the untouched
+    fields keep RateLimitConfig()'s own defaults."""
+    from repo2graph.http_server import RateLimitConfig
+
+    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
+    assert (
+        mcp.main(
+            [str(mini_repo), "--http-port", "0", "--http-only", "--max-response-bytes", "2048"]
+        )
+        == 0
+    )
+    cfg = calls[-1]["rate_limit_config"]
+    assert cfg.max_response_bytes == 2048
+    assert cfg.requests_per_window == RateLimitConfig().requests_per_window
 
 
 # ==========================================================================

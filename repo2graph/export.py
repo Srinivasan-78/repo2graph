@@ -21,7 +21,15 @@ from typing import IO, TYPE_CHECKING, Any
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
 from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
-from .viz import MAX_NODES, NODE_COLORS, OTHER_COLOR, node_label, write_html
+from .viz import (
+    EDGE_TYPES,
+    MAX_NODES,
+    NODE_COLORS,
+    NODE_TYPES,
+    OTHER_COLOR,
+    node_label,
+    write_html,
+)
 
 if TYPE_CHECKING:
     # Type-only: `graph` imports the tree-sitter stack, and this module is the
@@ -712,24 +720,10 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
         fh.write("\n".join(out) + "\n")
 
 
-NODE_TYPES = {
-    "repo": "the repository itself; one per index",
-    "dir": "a directory",
-    "file": "a source, doc or config file",
-    "symbol": "a function, method, class, struct, trait, interface, type or module",
-    "module": "an import target that is not a file in this repo",
-    "external": "a call target that could not be resolved in this repo (stdlib or third-party)",
-}
-
-EDGE_TYPES = {
-    "CONTAINS": "repo -> dir -> file",
-    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
-    "IMPORTS": "file -> file (internal: true) or file -> module",
-    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
-    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
-    "INHERITS": "symbol -> base class or interface",
-    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
-}
+# NODE_TYPES / EDGE_TYPES (issue #349): one definition, in viz.py -- see the
+# comment there for why that's the direction that avoids a circular import --
+# imported above so both this module's manifest.json and viz.py's own legend
+# panel describe the same six node types and seven edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
 # and docs/OUTPUT_SCHEMA.md. Written into manifest.json so a consumer reading

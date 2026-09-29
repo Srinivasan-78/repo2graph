@@ -36,26 +36,32 @@ LABEL_CHARS = 15
 HIDDEN_NODE_TYPES = ["external"]
 HIDDEN_EDGE_TYPES = ["CALLS_EXTERNAL"]
 
-# One-line legend copy for the map's collapsible legend panel. Duplicated here
-# rather than imported from `export.NODE_TYPES`/`export.EDGE_TYPES`: export.py
-# already imports from this module (`from .viz import ... write_html`), so an
-# import the other way would be a cycle. Keep both wordings in sync by hand.
-NODE_TYPE_DESC = {
-    "repo": "the repository itself",
+# Node/edge type descriptions for the map's legend panel and (via export.py's
+# import of these names) manifest.json's node_types/edge_types.
+#
+# Issue #349: these used to be defined twice -- once here, worded for the
+# legend, once in export.py, worded for manifest.json -- and the two copies
+# had already drifted (punctuation, phrasing, markdown). export.py imports
+# from this module already (`from .viz import ... write_html`), so this is
+# the one direction that does not create a cycle: define them here, once, and
+# let export.py import them rather than keep its own copy.
+NODE_TYPES = {
+    "repo": "the repository itself; one per index",
     "dir": "a directory",
     "file": "a source, doc or config file",
-    "symbol": "a function, method, class or other named symbol",
+    "symbol": "a function, method, class, struct, trait, interface, type or module",
     "module": "an import target that is not a file in this repo",
-    "external": "a call target that could not be resolved in this repo",
+    "external": "a call target that could not be resolved in this repo (stdlib or third-party)",
 }
-EDGE_TYPE_DESC = {
-    "CONTAINS": "repo -> dir -> file structure",
-    "DEFINES": "file -> symbol, or symbol -> symbol nested inside it",
-    "IMPORTS": "file -> file (internal) or file -> module",
-    "CALLS": "symbol -> symbol call within this repo",
-    "CALLS_EXTERNAL": "symbol -> external, a call that resolved to nothing in-repo",
+
+EDGE_TYPES = {
+    "CONTAINS": "repo -> dir -> file",
+    "DEFINES": "file -> symbol, and symbol -> symbol nested inside it",
+    "IMPORTS": "file -> file (internal: true) or file -> module",
+    "CALLS": "symbol -> symbol in this repo; carries count and confidence",
+    "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
     "INHERITS": "symbol -> base class or interface",
-    "CO_CHANGE": "file <-> file, edited together in git history",
+    "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
 }
 
 
@@ -127,8 +133,8 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
         "nodes": out_nodes,
         "edges": [{"s": index[e["src"]], "t": index[e["dst"]], "type": e["type"]} for e in edges],
         "colors": {**NODE_COLORS, "_": OTHER_COLOR},
-        "nodeDesc": NODE_TYPE_DESC,
-        "edgeDesc": EDGE_TYPE_DESC,
+        "nodeDesc": NODE_TYPES,
+        "edgeDesc": EDGE_TYPES,
         "hidden": {"nodes": HIDDEN_NODE_TYPES, "edges": HIDDEN_EDGE_TYPES},
         "nodeTypes": sorted(Counter(n["type"] for n in out_nodes).items()),
         "edgeTypes": sorted(Counter(e["type"] for e in edges).items()),
