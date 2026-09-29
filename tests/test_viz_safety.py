@@ -272,3 +272,12 @@ def test_search_focus_and_legend_ui_are_present(tmp_path):
         "CO_CHANGE",
     ):
         assert edge_type in html
+
+
+def test_content_security_policy_is_present(tmp_path):
+    """graph.html must restrict resource loading and script execution via CSP."""
+    html = render(tmp_path, "test_repo")
+    assert (
+        "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:\">"
+        in html
+    )

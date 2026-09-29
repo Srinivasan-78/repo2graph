@@ -70,9 +70,10 @@ class Server:
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
-    def get(self, path):
+    def get(self, path, headers=None):
+        request = urllib.request.Request(self.url(path), headers=headers or {})
         try:
-            with urllib.request.urlopen(self.url(path), timeout=10) as response:
+            with urllib.request.urlopen(request, timeout=10) as response:
                 return response.status, json.loads(response.read())
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
@@ -523,6 +524,72 @@ def test_a_rejected_host_never_reaches_the_tool(make_server):
     status, _ = server.rpc("initialize", headers={"Host": "evil.example.com"})
     assert status == 403
     assert server.audit_lines() == []
+
+
+def test_get_metadata_with_disallowed_host_is_refused(make_server):
+    """GET /.well-known/mcp-server-metadata with Host: evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Host": "evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Host header not allowed"
+
+
+def test_get_metadata_with_disallowed_origin_is_refused(make_server):
+    """GET /.well-known/mcp-server-metadata with Origin: https://evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Origin": "https://evil.example.com"}
+    )
+    assert status == 403
+    assert body["error"]["message"] == "Origin not allowed"
+
+
+def test_get_metadata_with_standard_host_and_no_origin_succeeds(make_server):
+    """GET /.well-known/mcp-server-metadata with standard Host: 127.0.0.1:<port> and no Origin returns 200."""
+    server = make_server()
+    status, body = server.get(
+        "/.well-known/mcp-server-metadata", headers={"Host": f"127.0.0.1:{server.port}"}
+    )
+    assert status == 200
+    assert body["name"] == "repo2graph"
+
+
+def test_head_metadata_with_disallowed_host_is_refused(make_server):
+    """HEAD /.well-known/mcp-server-metadata with Host: evil.example.com returns 403."""
+    server = make_server()
+    req = urllib.request.Request(
+        server.url("/.well-known/mcp-server-metadata"),
+        method="HEAD",
+        headers={"Host": "evil.example.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc_info.value.code == 403
+    assert len(exc_info.value.read()) == 0
+
+
+def test_head_metadata_with_disallowed_origin_is_refused(make_server):
+    """HEAD /.well-known/mcp-server-metadata with Origin: https://evil.example.com returns 403."""
+    server = make_server()
+    req = urllib.request.Request(
+        server.url("/.well-known/mcp-server-metadata"),
+        method="HEAD",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc_info.value.code == 403
+    assert len(exc_info.value.read()) == 0
+
+
+def test_get_healthz_with_disallowed_host_is_refused(make_server):
+    """GET /healthz with Host: evil.example.com returns 403."""
+    server = make_server()
+    status, body = server.get("/healthz", headers={"Host": "evil.example.com"})
+    assert status == 403
+    assert body["error"]["message"] == "Host header not allowed"
 
 
 def test_an_oversized_body_is_refused(make_server):

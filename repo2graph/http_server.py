@@ -26,7 +26,7 @@ Defaults are chosen so that turning this on is not itself the vulnerability:
 * **`.well-known` documents are public, tool calls are not.** Discovery that
   requires the credential it describes how to obtain is useless, so those two
   paths skip auth -- and therefore disclose nothing but the server's shape.
-* **`Host`/`Origin` are checked on every `POST`.** Loopback-with-no-auth is
+* **`Host`/`Origin` are checked on every request.** Loopback-with-no-auth is
   exactly the configuration a page open in a browser on the same machine can
   reach via `fetch()`/XHR -- including via DNS rebinding, where a public
   hostname resolves to 127.0.0.1. Only loopback Host values (plus the bind
@@ -65,10 +65,9 @@ LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
 
 # Bare hostnames (no port, no brackets) accepted in the Host/Origin headers by
 # default. A browser page -- including one that DNS-rebinds a public hostname
-# to 127.0.0.1 -- can only reach this server over POST if the Host/Origin it
-# sends matches something here or in the deployment's explicit
-# --http-allow-hosts allowlist; anything else is refused before the body is
-# even read.
+# to 127.0.0.1 -- can only reach this server if the Host/Origin it sends matches
+# something here or in the deployment's explicit --http-allow-hosts allowlist;
+# anything else is refused before the body is even read.
 DEFAULT_ALLOWED_HOSTNAMES = frozenset({"127.0.0.1", "::1", "localhost"})
 
 # ------------- header value sanitisation (ISS-84 / CodeQL alerts 8,9) --------
@@ -337,7 +336,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, _sanitize_header_value(value))
             self.end_headers()
-            if send_body:
+            if send_body and self.command != "HEAD":
                 self.wfile.write(body)
         except (ConnectionError, OSError):
             return
@@ -411,6 +410,19 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         except (TimeoutError, ConnectionError, OSError):
             pass
 
+    def _origin_ok(self, drain: bool = True) -> bool:
+        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
+            if drain:
+                self._drain_body()
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
+            return False
+        if not _origin_header_allowed(self.headers.get("Origin"), self.allowed_hostnames):
+            if drain:
+                self._drain_body()
+            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
+            return False
+        return True
+
     # ------------------------------------------------------------- routes --
 
     def do_HEAD(self) -> None:
@@ -422,15 +434,9 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         # DNS-rebinding: validate Host before doing anything, same as do_POST.
         # A preflight does not normally carry a body, but if one did the refusal
         # would race the close exactly as it does there -- see `_drain_body`.
-        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
-            self._drain_body()
-            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
+        if not self._origin_ok(drain=True):
             return
         origin = self.headers.get("Origin")
-        if not _origin_header_allowed(origin, self.allowed_hostnames):
-            self._drain_body()
-            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
-            return
         self.send_response(204)
         if origin:
             self.send_header(
@@ -454,6 +460,8 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self, send_body: bool = True) -> None:
         """Serve the unauthenticated discovery documents, and nothing else."""
+        if not self._origin_ok(drain=False):
+            return
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path == WELL_KNOWN_METADATA.rstrip("/"):
             present = bool(self.open_index_fn and self._index_present())
@@ -497,21 +505,11 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         """Handle one JSON-RPC request on /mcp."""
+        if not self._origin_ok(drain=True):
+            return
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if path not in ("/mcp", "/"):
             self._send_json(404, {"error": f"no such path: {path}"})
-            return
-        # DNS-rebinding shape: a page open in a browser on this machine (or one
-        # that has rebound a public hostname to 127.0.0.1) can drive this
-        # server with ordinary fetch()/XHR unless Host and Origin are checked
-        # *before* anything else runs. Fail closed on anything unrecognised.
-        if not _host_header_allowed(self.headers.get("Host"), self.allowed_hostnames):
-            self._drain_body()
-            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Host header not allowed"))
-            return
-        if not _origin_header_allowed(self.headers.get("Origin"), self.allowed_hostnames):
-            self._drain_body()
-            self._send_json(FORBIDDEN, _rpc_error(None, INVALID_REQUEST, "Origin not allowed"))
             return
         try:
             raw = self._read_body()
@@ -750,8 +748,8 @@ def make_handler(
         publish_cimd: Whether `/.well-known/oauth-client-metadata` is served.
         opener: JSON fetcher for OIDC discovery, injected by tests.
         tasks: A `TaskManager` when builds run in the background, else None.
-        allowed_hostnames: Bare hostnames accepted in Host/Origin headers on
-            `POST`; defaults to `DEFAULT_ALLOWED_HOSTNAMES` (loopback only).
+        allowed_hostnames: Bare hostnames accepted in Host/Origin headers;
+            defaults to `DEFAULT_ALLOWED_HOSTNAMES` (loopback only).
 
     Returns:
         A `MCPRequestHandler` subclass ready to hand to `ThreadingHTTPServer`.
@@ -826,8 +824,8 @@ class HTTPTransport:
         cache: A `ResultCache`, or None.
         publish_cimd: Whether to serve the client metadata document.
         opener: JSON fetcher for OIDC discovery, injected by tests.
-        allow_hosts: Extra bare hostnames to accept in Host/Origin headers on
-            `POST`, beyond the loopback default and `host` itself -- for a
+        allow_hosts: Extra bare hostnames to accept in Host/Origin headers,
+            beyond the loopback default and `host` itself -- for a
             deliberate non-loopback deployment (e.g. behind a reverse proxy
             that rewrites Host to a public domain name). Everything else is
             refused with 403, even when `host` is itself non-loopback.
