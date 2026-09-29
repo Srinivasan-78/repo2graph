@@ -1884,3 +1884,91 @@ def test_tool_call_failed_exception():
     err = mcp.ToolCallFailed("something went wrong")
     assert isinstance(err, Exception)
     assert str(err) == "something went wrong"
+
+
+# --------------------------------------------------------------------------
+# Audit logging reaches the tool-call path
+# --------------------------------------------------------------------------
+
+
+def test_run_tool_writes_one_audit_record_per_call(mini_index, tmp_path):
+    """The --audit-log flags have to produce records, not just be accepted.
+
+    `serve()` built an `AuditLogger`, closed it, and never handed it to the
+    tool-call path, so `record()` was unreachable in production while its own
+    583 lines of tests passed. An operator pointing --audit-log at a file got an
+    empty file. Nothing covered serve() -> record(), which is why it survived.
+    """
+    import json
+
+    from repo2graph.audit import AuditConfig, AuditLogger
+    from repo2graph.mcp.server import run_tool
+
+    log_path = tmp_path / "audit.jsonl"
+    audit = AuditLogger(AuditConfig(level="all", path=str(log_path)))
+    try:
+        out = run_tool(mini_index, None, "repo_map", {}, audit=audit)
+    finally:
+        audit.close()
+
+    assert "# Repo map:" in out, out[:200]
+    lines = [ln for ln in log_path.read_text(encoding="utf-8").split("\n") if ln.strip()]
+    assert len(lines) == 1, lines
+    record = json.loads(lines[0])
+    assert record["event"] == "tool_call"
+    assert record["tool"] == "repo_map"
+    assert record["outcome"] == "success"
+    assert record["duration_ms"] >= 1
+    assert "error" not in record or record["error"] is None
+
+
+def test_an_audit_record_is_written_when_the_tool_fails(mini_index, tmp_path):
+    """A failure is the case an audit trail exists for, so it must be recorded.
+
+    `errors` level keeps only non-success outcomes, which makes this the exact
+    configuration an operator would run in and the one that must not be silent.
+    """
+    import json
+
+    from repo2graph.audit import AuditConfig, AuditLogger
+    from repo2graph.mcp.server import run_tool
+
+    log_path = tmp_path / "audit.jsonl"
+    audit = AuditLogger(AuditConfig(level="errors", path=str(log_path)))
+    try:
+        # No index at this path and no repo to build one from: open_index exits,
+        # which run_tool turns into a ToolError rather than killing the server.
+        out = run_tool(tmp_path / "absent", None, "repo_map", {}, audit=audit)
+    finally:
+        audit.close()
+
+    assert "no repo2graph index found" in out
+    record = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert record["tool"] == "repo_map"
+    assert record["outcome"] == "error"
+    assert "SystemExit" in record["error"]
+
+
+def test_a_missing_index_mid_session_costs_one_call_not_the_server(tmp_path):
+    """One bad request must not take the stdio server down.
+
+    `open_index` raises SystemExit when it has no index and no repo, which is
+    right for the startup preflight and for a direct call. On the per-request
+    path it meant an index deleted while the server ran killed the process and
+    the client saw a closed pipe instead of an error. SystemExit is a
+    BaseException, so an ordinary `except Exception` around the handler does not
+    hold it -- this pins the conversion explicitly.
+    """
+    from repo2graph.mcp.server import ToolError, run_tool
+
+    out = run_tool(tmp_path / "gone", None, "repo_map", {})
+    assert isinstance(out, ToolError)
+    assert "no repo2graph index found" in out
+
+
+def test_audit_logging_is_off_by_default(mini_index):
+    """No logger means no record and no cost -- the default stays silent."""
+    from repo2graph.mcp.server import run_tool
+
+    out = run_tool(mini_index, None, "repo_map", {}, audit=None)
+    assert "# Repo map:" in out
