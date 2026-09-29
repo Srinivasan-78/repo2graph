@@ -1,6 +1,6 @@
 """MCP package providing tool definitions, stdio server, and guardrails."""
 
-from .guardrails import (
+from .guardrails import (  # noqa: F401
     AUTO_BUILD_FORMATS,
     BUDGET_DEFAULTED,
     DEFAULT_PATH_EDGE_TYPES,
@@ -37,7 +37,7 @@ from .guardrails import (
     _scrub_paths,
     _str,
 )
-from .server import (
+from .server import (  # noqa: F401
     MISSING_SDK,
     SDK_SPEC,
     ServerWrapper,
@@ -53,7 +53,7 @@ from .server import (
     serve,
     server,
 )
-from .tools import (
+from .tools import (  # noqa: F401
     BUILD_CAPABLE_TOOLS,
     TOOL_ANNOTATIONS,
     TOOL_ANNOTATIONS_AUTO_BUILD,

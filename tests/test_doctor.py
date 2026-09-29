@@ -8,7 +8,6 @@ import pytest
 
 from repo2graph.cli import main
 from repo2graph.doctor import (
-    CheckResult,
     DoctorReport,
     check_artifact_integrity,
     check_git,

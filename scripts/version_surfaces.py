@@ -157,7 +157,6 @@ SURFACES: tuple[Surface, ...] = (
 )
 
 
-
 def read(path: str) -> str:
     """File text, or "" when the file is absent."""
     p = ROOT / path

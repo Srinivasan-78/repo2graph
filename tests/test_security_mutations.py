@@ -7,10 +7,8 @@ Verifies that security checks cannot be bypassed or inverted across:
 - Build lock acquisition and active process PID validation
 """
 
-import json
 import os
 from pathlib import Path
-import time
 import pytest
 
 from repo2graph.secrets import _is_secret_path

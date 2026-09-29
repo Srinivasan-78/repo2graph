@@ -295,7 +295,7 @@ def compressed_form(text: str) -> tuple[list[str], list[str]]:
 
 
 # ==========================================================================
-# Adjacency / init  
+# Adjacency / init
 # ==========================================================================
 
 
@@ -340,7 +340,7 @@ def test_ac3_manifest_is_loaded_and_unparseable_degrades(rag_out):
 
 
 # ==========================================================================
-# Expansion / confidence  
+# Expansion / confidence
 # ==========================================================================
 
 
@@ -391,7 +391,7 @@ def test_ac7_default_edge_directions(rag_index):
 
 
 # ==========================================================================
-# Scoring  
+# Scoring
 # ==========================================================================
 
 
@@ -463,7 +463,7 @@ def test_ac11_score_rrf_with_a_stub_embedder(rag_index):
 
 
 # ==========================================================================
-# Backward compatibility  
+# Backward compatibility
 # ==========================================================================
 
 
@@ -538,7 +538,7 @@ def test_ac13_retrieve_keeps_every_edge_direction(dirs_out):
 
 
 # ==========================================================================
-# pack_context  
+# pack_context
 # ==========================================================================
 
 
@@ -658,7 +658,7 @@ def test_ac21_ablation_graph_expansion_finds_what_lexical_misses(rag_index):
 
 
 # ==========================================================================
-# CLI  
+# CLI
 # ==========================================================================
 
 
@@ -817,7 +817,7 @@ def test_ac27_existing_subcommands_are_untouched(rag_repo, tmp_path, capsys):
 
 
 # ==========================================================================
-# answer.py  
+# answer.py
 # ==========================================================================
 
 PACK = {
@@ -1447,7 +1447,7 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
 
 
 # ==========================================================================
-# Docs / packaging / repo rules  
+# Docs / packaging / repo rules
 # ==========================================================================
 
 
@@ -1878,8 +1878,6 @@ def test_empty_secret_keyword_does_not_match_all():
     assert _is_secret_path("config_private.json", extra_keywords=["private"])
     # Whitespace-only keyword is also filtered out
     assert not _is_secret_path("normal.py", extra_keywords=["  "])
-
-
 
 
 # ==========================================================================

@@ -249,7 +249,7 @@ def _default_estimator(repo: Any) -> float:
 
 def _default_builder(repo: Any, out: Any) -> None:
     """Build an index the same way the synchronous path does."""
-    from .mcp import _build_index
+    from .mcp.tools import _build_index
     from pathlib import Path
 
     _build_index(Path(repo), Path(out))

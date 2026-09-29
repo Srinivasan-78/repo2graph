@@ -11,7 +11,6 @@ Prevents drift between code and documentation:
 
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import yaml
@@ -195,8 +194,6 @@ def test_npm_launcher_version_matches_pyproject():
     assert bin_path.is_file(), f"npm package.json's bin entry points at a missing file: {bin_path}"
 
 
-
-
 def test_starter_questions_match_the_docs_verbatim():
     """The five starter prompts are authored once, in repo2graph/demo.py.
 
@@ -269,7 +266,6 @@ def test_indexing_doc_names_determinism_tests_that_exist():
             f"INDEXING.md names '{test_name}', which exists in neither "
             "tests/test_determinism.py nor tests/test_index_status.py"
         )
-
 
 
 def test_git_metadata_fields_are_documented():

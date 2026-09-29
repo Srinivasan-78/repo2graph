@@ -479,7 +479,9 @@ def _build_index(repo: Path, out: Path) -> None:
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 
 
-def open_index(out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None) -> Index:
+def open_index(
+    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None
+) -> Index:
     """Open or build an index for `out`, reusing instances across calls."""
     out_path = Path(out)
     key = str(out_path.resolve())
@@ -521,7 +523,9 @@ def open_index(out: str | Path, repo: str | Path | None = None, cache: ResultCac
         return index
 
 
-def open_index_or_task(out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None):
+def open_index_or_task(
+    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None
+):
     """Open index or launch a background build task if asynchronous builds are enabled."""
     from ..tasks import BUILDING, BUILDING_MESSAGE, FAILED, FAILED_MESSAGE
 
@@ -1436,12 +1440,21 @@ def dispatch(
         )
 
     import sys
+
     _mod = sys.modules.get("repo2graph.mcp")
     _map = getattr(_mod, "tool_repo_map", tool_repo_map) if _mod else tool_repo_map
     _search = getattr(_mod, "tool_repo_search", tool_repo_search) if _mod else tool_repo_search
-    _neighbours = getattr(_mod, "tool_repo_neighbours", tool_repo_neighbours) if _mod else tool_repo_neighbours
+    _neighbours = (
+        getattr(_mod, "tool_repo_neighbours", tool_repo_neighbours)
+        if _mod
+        else tool_repo_neighbours
+    )
     _impact = getattr(_mod, "tool_repo_impact", tool_repo_impact) if _mod else tool_repo_impact
-    _find = getattr(_mod, "tool_repo_find_symbol", tool_repo_find_symbol) if _mod else tool_repo_find_symbol
+    _find = (
+        getattr(_mod, "tool_repo_find_symbol", tool_repo_find_symbol)
+        if _mod
+        else tool_repo_find_symbol
+    )
 
     if name == "repo_map":
         result = _map(index)
@@ -1505,6 +1518,6 @@ def dispatch(
     else:
         return ToolError(f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}.")
 
-    if key is not None and not isinstance(result, ToolError):
+    if key is not None and cache is not None and not isinstance(result, ToolError):
         cache.put(key, result)
     return result

@@ -12,11 +12,9 @@ is as useless as one that redacts nothing.
 import io
 import json
 import os
-import sys
 
 import pytest
 
-from repo2graph import audit as audit_mod
 from repo2graph.audit import (
     MAX_SANITIZE_DEPTH,
     AuditConfig,

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import locale
-import os
 import shutil
 import subprocess
 import sys
@@ -147,6 +146,7 @@ def check_tree_sitter() -> CheckResult:
     """Check tree-sitter grammars and parser availability."""
     try:
         from .parse import LANG_CFG
+
         available = list(LANG_CFG.keys())
         return CheckResult(
             "Tree-sitter Grammars",
@@ -215,6 +215,7 @@ def _repo_root_for(path: Path, idx_dir: Path | None) -> Path:
         return path
     if idx_dir == path:
         from .status import stored_source_root
+
         agent = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
         return stored_source_root(agent) or path.parent
     return path
@@ -244,6 +245,7 @@ def check_artifact_integrity(path: Path | str) -> CheckResult:
         )
     try:
         from .integrity import verify_artifacts
+
         result = verify_artifacts(target_idx)
         if result.status != "valid":
             return CheckResult(
@@ -285,9 +287,7 @@ def check_index_freshness(path: Path | str) -> CheckResult:
 
     agent = idx_dir / "agent" if (idx_dir / "agent").exists() else idx_dir
     remote = (
-        stored_remote_source(agent)
-        if idx_dir == p and stored_source_root(agent) is None
-        else None
+        stored_remote_source(agent) if idx_dir == p and stored_source_root(agent) is None else None
     )
     if remote:
         fresh = remote_freshness(remote, agent, idx_dir)
@@ -349,7 +349,10 @@ def check_parsers(path: Path | str) -> CheckResult:
                 continue
             try:
                 import ast
-                ast.parse(py_file.read_text(encoding="utf-8", errors="replace"), filename=str(py_file))
+
+                ast.parse(
+                    py_file.read_text(encoding="utf-8", errors="replace"), filename=str(py_file)
+                )
             except SyntaxError as e:
                 errors.append(f"{py_file.name}: {e}")
     if errors:
@@ -387,12 +390,14 @@ def check_vectors(path: Path | str) -> CheckResult:
 
     try:
         from .integrity import MAX_METADATA_BYTES, read_bounded
+
         meta_raw = read_bounded(meta_file, MAX_METADATA_BYTES, what="vectors.meta.json")
         meta = json.loads(meta_raw.decode("utf-8", "replace"))
         expected_chunks = len(meta.get("chunk_ids", []))
 
         line_count = 0
         from .integrity import MAX_JSONL_LINE_BYTES
+
         with open(chunks_file, "rb") as f:
             for line in f:
                 if len(line) > MAX_JSONL_LINE_BYTES:

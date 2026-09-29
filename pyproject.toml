@@ -148,7 +148,7 @@ follow_imports = "silent"
 module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
     "repo2graph.embed", "repo2graph.fetch",
-    "repo2graph.graph", "repo2graph.mcp", "repo2graph.parse",
+    "repo2graph.graph", "repo2graph.mcp", "repo2graph.mcp.*", "repo2graph.parse",
     "repo2graph.viz",
 ]
 disallow_untyped_defs = false

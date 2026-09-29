@@ -9,8 +9,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.benchmark_runner import (  # noqa: E402
-    CORPUS_DIR,
-    TASKS_FILE,
     estimate_tokens,
     evaluate_evidence_presence,
     execute_benchmarks,

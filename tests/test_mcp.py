@@ -1574,8 +1574,6 @@ def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
     )
 
 
-
-
 # ==========================================================================
 # R-9: string arguments (query, node_id, task_id) had no length ceiling.
 # Every numeric MCP argument was clamped in the handler, but a model can hand
@@ -1768,9 +1766,6 @@ def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
     assert not failures, failures
     assert len(builds) == 1, f"_build_index ran {len(builds)} times, expected 1"
     assert results[0] is results[1], "each caller loaded its own Index of the same directory"
-
-
-
 
 
 # ==========================================================================

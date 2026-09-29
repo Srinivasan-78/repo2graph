@@ -13,7 +13,6 @@ from .. import __version__
 from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .guardrails import INDEX_DIRNAME
 from .tools import (
-    BUILD_CAPABLE_TOOLS,
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
     ToolError,
@@ -164,7 +163,9 @@ class ToolCallFailed(Exception):
     """Carries a ToolError message to the transport layer."""
 
 
-def run_tool(index_dir, repo, name: str, arguments: dict[str, Any] | None, cache=None, tasks=None) -> str:
+def run_tool(
+    index_dir, repo, name: str, arguments: dict[str, Any] | None, cache=None, tasks=None
+) -> str:
     """Execute a single stdio tool call: ensure index exists, then dispatch."""
     name = name or ""
     if name == "repo_build_status":
@@ -177,7 +178,9 @@ def run_tool(index_dir, repo, name: str, arguments: dict[str, Any] | None, cache
     return dispatch(index, name, arguments or {}, cache=cache, tasks=tasks)
 
 
-def serve(out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None) -> None:
+def serve(
+    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None
+) -> None:
     """Run stdio MCP server over JSON-RPC."""
     mcp = _require_sdk()
     index_dir = Path(out)
