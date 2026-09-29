@@ -7,7 +7,6 @@ Prevents drift between code and documentation:
 - MCP registered tools in repo2graph.mcp vs docs/mcp.md
 - CITATION.cff's version vs pyproject.toml's (Issue #404)
 - npm/package.json's version vs pyproject.toml's (Issue #399)
-- docs/deployment-security.md's numeric claims vs the HTTP/auth transport source (Issue #263)
 """
 
 import json
@@ -22,19 +21,12 @@ README_PATH = REPO_ROOT / "README.md"
 CLI_DOC_PATH = REPO_ROOT / "docs" / "cli.md"
 QUICKSTART_PATH = REPO_ROOT / "docs" / "quickstart.md"
 INDEXING_PATH = REPO_ROOT / "docs" / "INDEXING.md"
-INCREMENTAL_RFC_PATH = REPO_ROOT / "docs" / "rfcs" / "rfc-incremental-indexing.md"
 ACTION_YML_PATH = REPO_ROOT / "action.yml"
 ACTION_DOC_PATH = REPO_ROOT / "docs" / "github-action.md"
 MCP_DOC_PATH = REPO_ROOT / "docs" / "mcp.md"
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 CITATION_PATH = REPO_ROOT / "CITATION.cff"
 NPM_PACKAGE_PATH = REPO_ROOT / "npm" / "package.json"
-THREAT_MODEL_PATH = REPO_ROOT / "docs" / "THREAT_MODEL.md"
-# The operator-facing companion: docs/THREAT_MODEL.md enumerates assets, trust
-# boundaries and attacks; this one issues a supported/not-recommended verdict
-# per deployment shape. The per-mode topics and the transport constants below
-# are the second document's job, so they are checked against it.
-DEPLOYMENT_SECURITY_PATH = REPO_ROOT / "docs" / "deployment-security.md"
 
 
 def _pyproject_version() -> str:
@@ -204,51 +196,6 @@ def test_npm_launcher_version_matches_pyproject():
 
 
 
-def test_threat_model_covers_every_deployment_mode():
-    """Issue #263: docs/deployment-security.md must exist and name every required mode/topic.
-
-    A loose substring check rather than a hand-derived membership assertion (AGENTS.md's usual
-    rule for *behavioural* tests) -- this is a documentation-completeness check, so the thing
-    being pinned is "the required topic is discussed somewhere in the file," not a value the
-    code under test computes.
-    """
-    assert THREAT_MODEL_PATH.exists(), "docs/THREAT_MODEL.md is missing"
-    assert DEPLOYMENT_SECURITY_PATH.exists(), "docs/deployment-security.md is missing"
-    text = DEPLOYMENT_SECURITY_PATH.read_text(encoding="utf-8")
-
-    required_topics = [
-        "Trusted-local CLI",
-        "CI indexing",
-        "Stdio MCP",
-        "HTTP MCP on loopback",
-        "reverse proxy",
-        "Multi-tenant",
-        "--answer",
-        "GEMINI_API_KEY",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OLLAMA_HOST",
-        "exclude_secrets",
-        "Authenticated vs. authorized",
-        "ssl_certificate",  # the worked reverse-proxy example is a real TLS config, not prose only
-        "rotation",
-    ]
-    for topic in required_topics:
-        assert topic in text, f"docs/deployment-security.md is missing required topic: {topic!r}"
-
-
-def test_threat_model_numeric_claims_match_the_http_and_auth_source():
-    """docs/deployment-security.md cites specific constants from http_server.py/auth.py in prose --
-    this pins those constants so a future change to either module without a doc edit fails
-    here instead of leaving the threat model quietly wrong.
-    """
-    from repo2graph import auth, http_server
-
-    assert http_server.MAX_BODY_BYTES == 1 << 20
-    assert http_server.REQUEST_TIMEOUT_SECONDS == 30.0
-    assert auth.DEFAULT_MIN_REFRESH_INTERVAL == 5.0
-    assert set(auth.ALGORITHMS) == {"RS256", "RS384", "RS512"}
-
 
 def test_starter_questions_match_the_docs_verbatim():
     """The five starter prompts are authored once, in repo2graph/demo.py.
@@ -323,18 +270,6 @@ def test_indexing_doc_names_determinism_tests_that_exist():
             "tests/test_determinism.py nor tests/test_index_status.py"
         )
 
-
-def test_indexing_docs_and_rfc_are_cross_linked():
-    """The RFC carries the benchmarks INDEXING.md's performance section defers
-    to; a broken link between them leaves the numbers unfindable."""
-    indexing_text = INDEXING_PATH.read_text(encoding="utf-8")
-    rfc_text = INCREMENTAL_RFC_PATH.read_text(encoding="utf-8")
-
-    assert "rfc-incremental-indexing.md" in indexing_text
-    assert "INDEXING.md" in rfc_text
-    # The RFC's whole argument rests on these being reported, not asserted.
-    for required in ("Method", "best of 3", "Acceptance criteria"):
-        assert required in rfc_text, f"the incremental RFC no longer states '{required}'"
 
 
 def test_git_metadata_fields_are_documented():

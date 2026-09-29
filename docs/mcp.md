@@ -9,12 +9,8 @@ It is an *additional* surface, not a replacement: every tool is a thin call into
 `repo2graph.query.Index`, the same object the CLI and the GitHub Action use, over
 the same artifacts.
 
-> **Before exposing the HTTP transport**, read
-> [docs/THREAT_MODEL.md §3.5](THREAT_MODEL.md#35-the-http-mcp-surface) — it names what the server
-> defends against, what it does not yet (TLS enforcement, rate limiting), and why the intended
-> shape is a loopback bind behind a reverse proxy. The hardened invocations are in
-> [docs/secure-configuration.md](secure-configuration.md). Stdio mode, the default, has no
-> listening socket and none of this applies to it.
+> **Note**: Stdio mode is the primary transport for local AI developer tooling.
+> Stdio mode has no listening socket.
 
 > **Note**: `repo2graph-mcp` needs the `mcp` SDK (`mcp>=2.0,<3.0`), which ships as
 > an optional extra: `pip install "repo2graph[mcp]"`. The CLI, the Action and the
@@ -237,11 +233,6 @@ still default.
 | `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
 | `--audit-log-level` | `all` | `none`, `errors` or `all` — which tool calls produce a record. |
 | `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
-
-`--auth-oidc-issuer` is the only one of these that makes a network call, and only
-to that one issuer's JWKS endpoint. Container hardening, TLS termination and the
-deployment checklist that goes with the HTTP shape:
-[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md).
 
 ## Tools
 

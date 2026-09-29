@@ -5,13 +5,9 @@ reason. This is the closest thing the project has to a roadmap, and the place to
 look for a first contribution: an item here has already been scoped and argued
 for, so picking one up starts from a decision rather than a blank page.
 
-## Deferred by the 2026-09-17 enterprise-hardening audit
+## Deferred Engineering Items
 
-Full detail, evidence and severity reasoning: `docs/SECURITY-AUDIT.md`. Two genuine gaps found by
-that audit were fixed directly (audit-log `error`-field redaction, MCP string-argument length
-caps, a fork-PR secret-exposure guard on a review workflow since removed); these are the rest, deliberately
-not fixed in that pass because each needs its own scoped, reviewed change rather than a drive-by
-edit alongside a security audit.
+Items identified during earlier security and architecture reviews that were intentionally deferred to scoped follow-up tasks:
 
 | Item | Size | Why deferred |
 |---|---|---|
@@ -19,10 +15,10 @@ edit alongside a security audit.
 | **No per-file tree-sitter parse timeout** | M | `MAX_BYTES` bounds file size, not parse time. `tree_sitter.Parser.set_timeout_micros` support varies across grammar bindings in `tree-sitter-language-pack`; a wrong per-language timeout risks truncated parses on legitimately large generated files with no fixture to prove the value is well-calibrated. |
 | **No independent byte-size cap on `git log --name-only` cochange output** *(Shipped)* | XS | `graph.py` now has `MAX_COCHANGE_BYTES` (10 MB) and streams the pipe through `_read_capped`, so `add_cochange` bounds output bytes independently of `MAX_COCHANGE_COMMITS`/`COCHANGE_TIMEOUT`. |
 | **Secret-path denylist (`query.py` `SECRET_KEYWORDS`/`SECRET_DIR_NAMES`) is not user-configurable** | S | Solid and independent of `.gitignore`, but a hardcoded `frozenset` — an org with nonstandard secret-file naming can't extend it without a code change. Needs a CLI flag / config file design, not a quick patch. |
-| **HTTP transport returns `str(exc)` verbatim to the client** *(Shipped)* | S | The generic-`Exception` handlers already sent a fixed "Internal server error" message; the one remaining leak was the `SystemExit` branch in `_call_tool` (`http_server.py`, was line 617), which echoed `open_index`'s exit message — including the on-disk index path — straight to the caller. Now sends a fixed "Index unavailable"; the real message still reaches the (redacted) audit log via `error=str(exc)`. |
+| **HTTP transport returns `str(exc)` verbatim to the client** *(Shipped)* | S | Handled by fixed error responses. |
 | **No enforced cap on total graph nodes/edges/files** | M | `graph.py`'s `max_files` is opt-in, defaults unbounded. `Graph.nodes`/`edges` are fully in-memory with no size guard, unlike the already-streamed chunk emission path. |
 | **No explicit `attestations:` flag on the PyPI publish step** *(Shipped)* | XS | `publish.yml`'s `pypa/gh-action-pypi-publish` step now passes `attestations: true` explicitly. |
-| **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: requires local code execution on the same host to exploit (a stronger position than repo2graph could additionally defend against), and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. See `docs/SECURITY-AUDIT.md` P3.1. |
+| **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: requires local code execution on the same host to exploit, and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. |
 | **No benchmark above 3,000 files** | L | `docs/PERFORMANCE.md` has real measurements at 90 and 3,000 files; nothing was run at 50k/100k+ in this pass (time budget). Overlaps the pre-existing BACKLOG item below, "a fixture above `PARALLEL_MIN_FILES`." |
 
 Note: the SBOM, byte-cap, and attestations rows above were already shipped by the time of a

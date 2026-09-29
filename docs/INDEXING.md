@@ -37,7 +37,7 @@ Two properties of the middle of that chain matter more than they look:
 - **Resolution is global, not per-file.** The name index, CALLS confidences,
   INHERITS and reach are computed over the *whole* symbol set every build,
   including an incremental one. This is why `--incremental` is exact rather
-  than approximate — see [the RFC](rfcs/rfc-incremental-indexing.md).
+  than approximate.
 
 `dump_all` stages every artifact in a sibling directory and renames it into
 place on success, so an interrupted build leaves the previous index intact
@@ -340,11 +340,9 @@ the report says so. `index-status` is meant to be cheap enough to run from a
 prompt, and an index is routinely consumed from elsewhere, so its size is not
 this process's to trust.
 
-## Performance
+### Performance
 
-Measured on this repository. The figures and the method live in one place
-so they cannot drift apart:
-**[rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md)**.
+Measured on this repository. For controlled numbers, see [PERFORMANCE.md](PERFORMANCE.md).
 
 What dominates, in order:
 
@@ -376,10 +374,9 @@ entirely at the default `0`.
 
 ## See also
 
-- [rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md) — benchmarks and
-  the proposal for what incremental indexing should become
 - [LANGUAGE_SUPPORT.md](language-support.md) — language scorecard generator, parse quality, symbol and edge extraction rates across 17 grammars
 - [retrieval-benchmark.md](retrieval-benchmark.md) — retrieval quality on four real repositories, repo2graph vs grep at equal token budgets
 - [cli.md](cli.md) — every flag
 - [limitations.md](limitations.md) — what the graph does not model
 - [quickstart.md](quickstart.md) — two minutes from install to a cited answer
+

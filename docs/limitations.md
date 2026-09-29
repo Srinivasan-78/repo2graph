@@ -23,7 +23,7 @@ This page is the long version, with the measurements behind each item.
   before it existed, and is the raw name-match fan-out.
 - **No arrow does not prove no call.** Dynamic dispatch — a string-keyed lookup, a plugin registry,
   `getattr`-style dispatch, a virtual call resolved only at runtime — is invisible to a reader that
-  never executes anything. See the empirical failure mode in **[regression-suite.md](regression-suite.md#known-failure-cases-it-pins)** (string-keyed plugin registry) and our mitigation design in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
+  never executes anything. See the empirical failure mode in **[regression-suite.md](regression-suite.md#known-failure-cases-it-pins)** (string-keyed plugin registry).
 - **Dependency injection resolves to the declaration, not the implementation.** A DI container —
   Spring's `@Autowired`, .NET's `IServiceCollection`, a NestJS provider, a hand-rolled registry —
   binds an interface to a concrete class at startup. The call site only ever names the interface's
@@ -42,7 +42,7 @@ This page is the long version, with the measurements behind each item.
   resolvable by `repo2graph query` (see [examples/django](../examples/django/)) works because
   routes are declared as literal `path(...)` calls tree-sitter can see; a framework that builds
   equivalent routing purely from runtime metaprogramming would not be. Framework-aware relationship
-  extraction for Express, FastAPI, and Spring is planned in **[docs/rfcs/rfc-framework-relationship-graph.md](rfcs/rfc-framework-relationship-graph.md)**.
+  extraction for Express, FastAPI, and Spring is planned for future releases.
 
 ## What parsing five real repositories actually showed
 

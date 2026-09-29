@@ -195,8 +195,6 @@ When indexing private remote repositories via `repo`:
   ```
 - Use fine-grained Personal Access Tokens (PATs) scoped to **read-only contents** on the specific target repository.
 
-For the detailed threat model, permission matrix, and full security guide, see [docs/ACTION_SECURITY.md](ACTION_SECURITY.md).
-
 ## Keep a fresh map next to your own code
 
 `.github/workflows/self-index.yml` is the copy this project runs on itself, on

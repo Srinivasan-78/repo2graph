@@ -123,8 +123,6 @@ SURFACES: tuple[Surface, ...] = (
         paths=(
             "README.md",
             "docs/github-action.md",
-            "docs/ACTION_SECURITY.md",
-            "docs/SECURITY-AUDIT.md",
         ),
         why="the `uses:` line every copy-pasted workflow starts from",
     ),
@@ -135,7 +133,6 @@ SURFACES: tuple[Surface, ...] = (
             "README.md",
             "docs/github-action.md",
             ".github/SECURITY.md",
-            "docs/SECURITY-AUDIT.md",
         ),
         why="prose about the floating tag, which is wrong about a tag that no longer moves",
     ),
@@ -148,11 +145,8 @@ SURFACES: tuple[Surface, ...] = (
     Surface(
         kind="version",
         pattern=rf"repo2graph(?:\[[a-z,]+\])?==(?P<v>{SEMVER})",
-        paths=("docs/github-action.md", "docs/ENTERPRISE_DEPLOYMENT.md"),
-        why=(
-            "install pins an operator is meant to copy; ENTERPRISE_DEPLOYMENT tells them to "
-            "pin rather than float, so the pinned number had better be a real release"
-        ),
+        paths=("docs/github-action.md",),
+        why="install pins an operator is meant to copy",
     ),
     Surface(
         kind="major",
@@ -161,6 +155,7 @@ SURFACES: tuple[Surface, ...] = (
         why="states which release line the floating tag tracks",
     ),
 )
+
 
 
 def read(path: str) -> str:

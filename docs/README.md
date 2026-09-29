@@ -101,58 +101,22 @@ the reproduction command documented:
   fixture and this project's own self-hosted graph.
 - **[benchmarks/](../benchmarks/)** — the machine-readable `results.json` (scale corpus) and `results_v2.json` / `tasks.json` (evaluation corpus), plus reproduction runners.
 
-## Security and privacy
+## Security and configuration
 
-- **[.github/SECURITY.md](../.github/SECURITY.md)** — the policy and how to report a vulnerability
-  privately.
-- **[docs/THREAT_MODEL.md](THREAT_MODEL.md)** — assets, trust boundaries, what an attacker could
-  try against each surface, what stops it, and what is explicitly out of scope. Every open security
-  gap is named with its issue number.
-- **[docs/deployment-security.md](deployment-security.md)** — a trust boundary and a
-  supported/not-recommended verdict for each of the six deployment shapes (trusted-local CLI
-  through multi-tenant HTTP), plus a worked hardened reverse-proxy example, token/OIDC rotation,
-  and artifact retention.
-- **[docs/PRIVACY.md](PRIVACY.md)** — whether source ever leaves the machine (one path does, three
-  others open a connection carrying none of it), what is written where — including the three
-  locations outside `-o` — what is logged, and how to delete all of it.
-- **[docs/secure-configuration.md](secure-configuration.md)** — copy-paste configurations:
-  exclusion patterns worth adding, a provably offline build, stdio and HTTP MCP, CI, and how to
-  forbid `rag --answer` in a shared environment.
-- **[docs/privacy-audit-2026-09-25.md](privacy-audit-2026-09-25.md)** — the data-handling audit:
-  every outbound path and every write location enumerated from the code, with what the pass
-  corrected.
-- **[docs/ACTION_SECURITY.md](ACTION_SECURITY.md)** — the GitHub Action's own guardrails:
-  permission hardening, the threat model for a workflow that runs on untrusted input, and what
-  the Action deliberately does not expose (`--answer` among them).
-- **[docs/SECURITY-AUDIT.md](SECURITY-AUDIT.md)** — the most recent whole-repository security audit.
-- **[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md)** — running the CLI, Action or MCP
-  server inside an organization.
+- **[.github/SECURITY.md](../.github/SECURITY.md)** — the security policy and reporting instructions.
+- **[docs/secure-configuration.md](secure-configuration.md)** — secure configuration recommendations and exclusion patterns.
 
 ## Development
 
-- **[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** — setup, the three CI gates, the branch
-  model, and the test house style reviewers hold you to.
-- **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** — the module map for people changing the code: what
-  each module owns, which way dependencies run, the two import cycles, and where a change of each
-  kind goes.
-- **[docs/parser-development.md](parser-development.md)** — adding a language, end to end:
-  `LANG_CFG`, `EXT_LANG`, inheritance clauses, import resolution, the two tests, the six docs that
-  a test will fail without.
-- **[docs/good-first-issues.md](good-first-issues.md)** — seven starter tasks, each with a code
-  pointer, acceptance criteria, and the catch that makes it harder than it looks.
-- **[LANGUAGE_SUPPORT.md](language-support.md)** — strategic language support, parser failure analysis, priority tiers (TypeScript, Python, JVM, Go), and ecosystem relationship opportunities.
-- **[Language RFCs](rfcs/rfc-framework-relationship-graph.md)** — proposals for ecosystem relationship expansion, deep TypeScript, deep Python, and JVM vs Go support.
+- **[.github/CONTRIBUTING.md](../.github/CONTRIBUTING.md)** — setup, tests, guidelines, and Architecture & OS Compatibility Invariants.
+- **[docs/ARCHITECTURE.md](ARCHITECTURE.md)** — the module map for contributors: responsibilities, dependency structure, and architecture.
+- **[docs/parser-development.md](parser-development.md)** — adding a language: grammar configurations, tests, and documentation.
+- **[docs/good-first-issues.md](good-first-issues.md)** — starter tasks with code pointers and acceptance criteria.
+- **[LANGUAGE_SUPPORT.md](language-support.md)** — language support tiers and parser analysis.
 - **[Roadmap Issues](ROADMAP_LANGUAGE_ISSUES.md)** — prioritized tracking issues for language and ecosystem features.
-- **[AGENTS.md](../AGENTS.md)** — repo-specific rules that override default behavior (encoding,
-  text slicing, budget models) — read before editing source under `repo2graph/`.
-- **[docs/publishing.md](publishing.md)** — the branch model, the pre-release checklist, and how a
-  release ships to PyPI, the MCP Registry and the Marketplace.
-- **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher: what it is, its
-  fallback order, and the release story that pairs it with the PyPI release.
-- **[docs/rfcs/rfc-incremental-indexing.md](rfcs/rfc-incremental-indexing.md)** — where an incremental
-  rebuild actually spends its time, measured, and the proposal that follows from it. The
-  conclusion is not the intuitive one.
-- **[docs/BACKLOG.md](BACKLOG.md)** — known gaps, deliberately-not-done items, and why.
+- **[docs/publishing.md](publishing.md)** — release process, pre-release checklists, and deployment destinations.
+- **[npm/README.md](../npm/README.md)** — the `npx`-installable MCP launcher.
+- **[docs/BACKLOG.md](BACKLOG.md)** — deferred improvements, technical debt tracking, and roadmap items.
 
 ## Community and governance
 

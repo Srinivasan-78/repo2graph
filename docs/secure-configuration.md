@@ -3,9 +3,7 @@
 Copy-paste configurations for the cases that come up, with the reasoning attached. Everything here
 is verified against the flags the CLI actually accepts.
 
-Background: [PRIVACY.md](PRIVACY.md) (what happens to your data),
-[THREAT_MODEL.md](THREAT_MODEL.md) (what an attacker could try),
-[.github/SECURITY.md](../.github/SECURITY.md) (the policy and how to report).
+Background: [.github/SECURITY.md](../.github/SECURITY.md) (the security policy and reporting instructions).
 
 > **There is no config file.** repo2graph reads none — not `pyproject.toml`, not `.r2grc`, not an
 > env var for options ([#391](https://github.com/Srinivasan-78/repo2graph/issues/391) tracks
@@ -204,10 +202,6 @@ To serve a pre-built index and refuse to build anything:
 
 ## 5. MCP: HTTP
 
-**Read [THREAT_MODEL.md §3.5](THREAT_MODEL.md#35-the-http-mcp-surface) before exposing this.** TLS
-enforcement, rate limiting and a few auth hardening items are open issues. The deployment shape
-below is not a workaround for that — it is the shape the server is designed for.
-
 ### Loopback plus a reverse proxy — the recommended shape
 
 ```bash
@@ -287,8 +281,7 @@ Three things that are true of the Action specifically:
 - **`commit-branch:` force-pushes a browsable graph to a branch.** On a public repository, that
   publishes the index. Fine for open source; think twice otherwise.
 
-Full inputs and the private-repo token flow: [github-action.md](github-action.md). Workflow-level
-hardening: [ACTION_SECURITY.md](ACTION_SECURITY.md).
+Full inputs and the private-repo token flow: [github-action.md](github-action.md).
 
 ---
 

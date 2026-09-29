@@ -77,8 +77,7 @@ pass:
   `CALLS` candidates per call site, which costs more than a repository of the same size with unique
   names. Nothing in this audit measured that effect at scale.
 - **Memory was not profiled.** No `tracemalloc`/RSS-ceiling measurement was taken at any repo size.
-  Given `Graph.nodes`/`edges` are plain in-memory Python dicts/lists (see
-  `docs/SECURITY-AUDIT.md`, P3.5), memory scales with node/edge count with no built-in ceiling —
+  Given `Graph.nodes`/`edges` are in-memory Python dicts/lists, memory scales with node/edge count —
   what that means in absolute megabytes at 100k+ files is unmeasured.
 
 **Do not claim, from this document, that repo2graph is validated at 50k+ files.** It has not been
