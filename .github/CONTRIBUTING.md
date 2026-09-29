@@ -175,10 +175,9 @@ Four fields drift most easily, so check each one after a release:
 | `repository.id` | the numeric GitHub repo id, which does *not* change on rename |
 
 Tool names, descriptions and input schemas are **not** carried in the registry
-entry; a client reads those from `tools/list`, or from
-`/.well-known/mcp-server-metadata` when the server runs with `--http-port`.
-Both are generated from `TOOL_DESCRIPTIONS`/`TOOL_SCHEMAS` in
-`repo2graph/mcp.py`, so there is one definition and nothing to keep in sync.
+entry; a client reads those from `tools/list`. They are generated from
+`TOOL_DESCRIPTIONS`/`TOOL_SCHEMAS` in `repo2graph/mcp/schemas.py`, so there is
+one definition and nothing to keep in sync.
 
 Licence, homepage and author live in `pyproject.toml` (`license`,
 `project.urls.Homepage`, `authors`) and reach PyPI from there.

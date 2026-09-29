@@ -74,7 +74,7 @@ relevant if you're running it where an untrusted caller can pick the arguments.
   index all live in a `.r2g` directory next to your code. There's no account, no upload step, and
   no telemetry to opt out of, because none exists.
 - **The MCP server never calls an LLM itself.** It serves graph data — file/function/call
-  structure and cited source snippets — over stdio (or `--http-port`, if you enable it). Whatever
+  structure and cited source snippets — over stdio. Whatever
   client you point at it (Claude Code, Claude Desktop, Cursor) makes its own model calls under its
   own data policy; repo2graph doesn't add a second one.
 - **Zero-dependency by design where it matters.** Degree counting, graph layout, and GraphML/Cypher
