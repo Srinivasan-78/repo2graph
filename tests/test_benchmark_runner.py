@@ -132,3 +132,13 @@ def test_bench_real_repos_records_the_repo2graph_commit():
     prov = bench.source_commit()
     assert prov["commit"] and re.fullmatch(r"[0-9a-f]{40}", prov["commit"])
     assert isinstance(prov["dirty"], bool)
+
+
+def test_bench_real_repos_main_help():
+    import pytest
+
+    from scripts import bench_real_repos as bench
+
+    with pytest.raises(SystemExit) as exc_info:
+        bench.main(["--help"])
+    assert exc_info.value.code == 0

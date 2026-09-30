@@ -39,7 +39,7 @@ from scripts.bench_real_repos import (  # noqa: E402
 BENCH = ROOT / "benchmarks" / "real"
 
 
-def ripgrep_windows(
+def _ripgrep_windows(
     rg_cmd: list[str], root: Path, query: str, language: str
 ) -> list[tuple[str, int, int]]:
     """Return ranked window spans (path, lo, hi) from ripgrep hits."""
@@ -75,7 +75,7 @@ def ripgrep_windows(
     return out
 
 
-def simulate_agent_loop(
+def _simulate_agent_loop(
     tasks: list[dict],
     repos: dict[str, dict],
     indexes: dict[str, Index],
@@ -102,7 +102,7 @@ def simulate_agent_loop(
 
             file_cache: dict[str, list[str]] = {}
 
-            def read_span(path: str, start: int, end: int) -> tuple[str, dict[str, set[int]]]:
+            def _read_span(path: str, start: int, end: int) -> tuple[str, dict[str, set[int]]]:
                 if path not in file_cache:
                     raw = (root / path).read_text(encoding="utf8", errors="replace")
                     file_cache[path] = [ln.rstrip("\r") for ln in raw.split("\n")]
@@ -142,7 +142,7 @@ def simulate_agent_loop(
                     task_solved = True
                     for ev in t["evidence"]:
                         s, e = ev["lines"]
-                        txt, _ = read_span(ev["path"], s, e)
+                        txt, _ = _read_span(ev["path"], s, e)
                         task_ev_tok += count_tokens(txt)
                 else:
                     # Multi-turn: agent inspects citations and reads referenced symbols
@@ -157,7 +157,7 @@ def simulate_agent_loop(
                         if task_turns >= max_turns:
                             break
                         task_turns += 1
-                        txt, lines = read_span(path, s, e)
+                        txt, lines = _read_span(path, s, e)
                         toks = count_tokens(txt)
                         task_tokens += toks
                         task_read_tok += toks
@@ -166,19 +166,19 @@ def simulate_agent_loop(
                         if all(found(t["evidence"], accumulated_lines)):
                             task_solved = True
                             for ev in t["evidence"]:
-                                ev_txt, _ = read_span(ev["path"], ev["lines"][0], ev["lines"][1])
+                                ev_txt, _ = _read_span(ev["path"], ev["lines"][0], ev["lines"][1])
                                 task_ev_tok += count_tokens(ev_txt)
                             break
             else:
                 # Ripgrep loop: run rg, inspect match windows
-                windows = ripgrep_windows(rg_cmd, root, t["query"], repo["language"])
+                windows = _ripgrep_windows(rg_cmd, root, t["query"], repo["language"])
                 task_turns += 1
                 task_tokens += 150  # Search command response overhead
                 task_read_tok += 150
 
                 for path, lo, hi in windows[: max_turns - 1]:
                     task_turns += 1
-                    txt, lines = read_span(path, lo, hi)
+                    txt, lines = _read_span(path, lo, hi)
                     toks = count_tokens(txt)
                     task_tokens += toks
                     task_read_tok += toks
@@ -187,7 +187,7 @@ def simulate_agent_loop(
                     if all(found(t["evidence"], accumulated_lines)):
                         task_solved = True
                         for ev in t["evidence"]:
-                            ev_txt, _ = read_span(ev["path"], ev["lines"][0], ev["lines"][1])
+                            ev_txt, _ = _read_span(ev["path"], ev["lines"][0], ev["lines"][1])
                             task_ev_tok += count_tokens(ev_txt)
                         break
 
@@ -253,7 +253,7 @@ def main() -> int:
                 raise SystemExit(f"{name}: repo2graph build failed")
         indexes[name] = Index(out)
 
-    results = simulate_agent_loop(tasks, repos, indexes, roots, rg_cmd, max_turns=args.max_turns)
+    results = _simulate_agent_loop(tasks, repos, indexes, roots, rg_cmd, max_turns=args.max_turns)
 
     args.out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf8")
 

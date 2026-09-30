@@ -266,21 +266,21 @@ def serve(
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent
 
-    async def list_tools_handler(*args, **kwargs):
+    async def _list_tools_handler(*args, **kwargs):
         return get_tools(mcp.types, auto_build=(repo is not None))
 
-    async def call_tool_handler(ctx, params):
+    async def _call_tool_handler(ctx, params):
         name = params.name
         arguments = params.arguments
         return run_tool(index_dir, repo, name, arguments, cache=cache, tasks=tasks, audit=audit)
 
     server_cls: Any = Server
 
-    async def list_tools_2x(ctx, params):
-        return mcp.types.ListToolsResult(tools=await list_tools_handler())
+    async def _list_tools_2x(ctx, params):
+        return mcp.types.ListToolsResult(tools=await _list_tools_handler())
 
-    async def call_tool_2x(ctx, params):
-        text = await call_tool_handler(ctx, params)
+    async def _call_tool_2x(ctx, params):
+        text = await _call_tool_handler(ctx, params)
         return mcp.types.CallToolResult(
             content=[TextContent(type="text", text=text)],
             isError=isinstance(text, ToolError),
@@ -290,8 +290,8 @@ def serve(
         mcp_server = server_cls(
             server.name,
             version=server.version,
-            on_list_tools=list_tools_2x,
-            on_call_tool=call_tool_2x,
+            on_list_tools=_list_tools_2x,
+            on_call_tool=_call_tool_2x,
         )
     except TypeError:
         mcp_server = server_cls(server.name, version=server.version)

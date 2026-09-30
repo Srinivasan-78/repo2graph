@@ -371,7 +371,7 @@ def execute_benchmarks(
     return summary
 
 
-def print_summary_table(summary: BenchmarkSuiteSummary):
+def _print_summary_table(summary: BenchmarkSuiteSummary):
     """Print markdown formatted summary table."""
     print("\n=== BENCHMARK WORKFLOW COMPARISON ===")
     print(
@@ -406,7 +406,7 @@ def main() -> int:
     args = parser.parse_args()
 
     summary = execute_benchmarks()
-    print_summary_table(summary)
+    _print_summary_table(summary)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

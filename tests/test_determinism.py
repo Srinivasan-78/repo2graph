@@ -413,10 +413,12 @@ def test_exclude_group_help_prints_every_group_and_exits_zero(capsys):
         main(["build", ".", "-o", "unused", "--exclude-group", "help"])
     assert exc.value.code == 0
     out = capsys.readouterr().out
-    from repo2graph.exclusions import GROUP_NAMES
+    from repo2graph.exclusions import GROUP_NAMES, describe
 
+    desc = describe()
     for name in GROUP_NAMES:
         assert name in out
+        assert name in desc
     assert "--exclude-group" in out
 
 

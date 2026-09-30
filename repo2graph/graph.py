@@ -85,6 +85,9 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
         "join", "split", "strip", "lstrip", "rstrip", "replace", "format",
         "startswith", "endswith", "startsWith", "endsWith", "lower", "upper",
         "trim", "encode", "decode", "toString", "toLowerCase", "toUpperCase",
+        # I/O, streams, regex, concurrency
+        "read", "write", "close", "flush", "start", "stop", "end",
+        "group", "groups", "seek", "tell", "poll", "terminate", "kill",
         # promises / objects
         "then", "catch", "finally", "equals", "hashCode",
         # JVM / Kotlin / Swift collections and strings
@@ -101,7 +104,8 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
         "Enqueue", "Dequeue", "CopyTo", "ToString", "Equals", "GetHashCode",
         "Split", "Join", "Trim", "Replace", "StartsWith", "EndsWith", "ToLower",
         "ToUpper", "Substring", "Format", "Wait", "ContinueWith",
-        "ConfigureAwait", "GetAwaiter",
+        "ConfigureAwait", "GetAwaiter", "Read", "Write", "Close", "Flush",
+        "Start", "Stop",
     }
 )  # fmt: skip
 UNTYPED_RECEIVER_CONFIDENCE = 0.2
@@ -390,7 +394,7 @@ def resolve_import(
         else:
             base = target.replace(".", "/")
             cands = [f"{base}.py", f"{base}/__init__.py"]
-            cands += [str(src_dir / c) for c in list(cands)]
+            cands += [(src_dir / c).as_posix() for c in list(cands)]
             # also try src/ and package-rooted layouts
             cands += [f"src/{c}" for c in [f"{base}.py", f"{base}/__init__.py"]]
             tail = base.split("/")[-1]
@@ -402,8 +406,12 @@ def resolve_import(
             # only after every submodule-file candidate above.
             if "/" in base:
                 parent = base.rsplit("/", 1)[0]
-                cands.append(f"{parent}.py")
-                cands.append(f"{parent}/__init__.py")
+                parent_cands = [f"{parent}.py", f"{parent}/__init__.py"]
+                cands += parent_cands
+                cands += [(src_dir / c).as_posix() for c in parent_cands]
+                cands += [f"src/{c}" for c in parent_cands]
+                parent_tail = parent.split("/")[-1]
+                cands += [p for p in by_name.get(f"{parent_tail}.py", []) if "/" in p][:1]
     elif lang in ("javascript", "typescript", "tsx"):
         if target.startswith("."):
             base = Path(src_dir, target).as_posix()

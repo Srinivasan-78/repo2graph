@@ -228,7 +228,7 @@ def _n(x) -> str:
     return f"{x:,}" if isinstance(x, int) else str(x)
 
 
-def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
+def _write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
     lang_table = "\n".join(f"- {lang}" for lang in entry["language_focus"])
     query_list = "\n".join(f"- {q}" for q in entry["queries"])
     scope_note = (
@@ -424,7 +424,7 @@ def generate_one(entry: dict, results: dict) -> dict:
         (repo_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2) + "\n", encoding="utf8", newline="\n"
         )
-        write_readme(entry, meta, repo_dir)
+        _write_readme(entry, meta, repo_dir)
 
         problems = validate_example(repo_dir, meta, workdir)
         if problems:
