@@ -228,7 +228,7 @@ def _n(x) -> str:
     return f"{x:,}" if isinstance(x, int) else str(x)
 
 
-def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
+def _write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
     lang_table = "\n".join(f"- {lang}" for lang in entry["language_focus"])
     query_list = "\n".join(f"- {q}" for q in entry["queries"])
     scope_note = (
@@ -350,7 +350,7 @@ different numbers — see [docs/architecture.md](../../docs/architecture.md#3-in
     (repo_dir / "README.md").write_text(readme, encoding="utf8", newline="\n")
 
 
-def generate_one(entry: dict, results: dict) -> dict:
+def _generate_one(entry: dict, results: dict) -> dict:
     repo_id = entry["id"]
     print(f"[{repo_id}] cloning {entry['url']}@{entry['ref']} ...", file=sys.stderr)
     workdir = Path(tempfile.mkdtemp(prefix=f"r2g-example-{repo_id}-"))
@@ -424,7 +424,7 @@ def generate_one(entry: dict, results: dict) -> dict:
         (repo_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2) + "\n", encoding="utf8", newline="\n"
         )
-        write_readme(entry, meta, repo_dir)
+        _write_readme(entry, meta, repo_dir)
 
         problems = validate_example(repo_dir, meta, workdir)
         if problems:
@@ -469,7 +469,7 @@ def main() -> int:
 
     results_by_id = {}
     for entry in selected:
-        generate_one(entry, results_by_id)
+        _generate_one(entry, results_by_id)
 
     results_path = Path(args.results)
     results_path.parent.mkdir(parents=True, exist_ok=True)

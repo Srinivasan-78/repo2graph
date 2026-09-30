@@ -467,6 +467,7 @@ def is_test_path(path: str) -> bool:
 def is_public_symbol(node: dict[str, Any]) -> bool:
     """Determine whether a symbol is part of the package or module's public surface."""
     name = node.get("name", "")
+    qualname = str(node.get("qualname") or name)
     path = node.get("path", "")
     lang = node.get("lang", "")
     vis = node.get("visibility")
@@ -476,27 +477,28 @@ def is_public_symbol(node: dict[str, Any]) -> bool:
     if vis in ("public", "exported"):
         return True
 
-    if is_test_path(path):
+    norm_path = path.replace("\\", "/")
+    if norm_path.startswith(".github/") or is_test_path(norm_path):
         return False
 
     # Python conventions: leading underscore (including __dunder__) is not public API
-    if lang == "python" or path.endswith(".py"):
-        if name.startswith("_"):
+    if lang == "python" or norm_path.endswith(".py"):
+        if name.startswith("_") or qualname.startswith("_"):
             return False
         return True
 
     # Go conventions: uppercase first rune is exported
-    if lang == "go" or path.endswith(".go"):
+    if lang == "go" or norm_path.endswith(".go"):
         return bool(name and name[0].isupper())
 
     # TypeScript / JavaScript conventions
-    if lang in ("typescript", "javascript", "tsx") or path.endswith((".ts", ".js", ".tsx")):
-        if name.startswith("_"):
+    if lang in ("typescript", "javascript", "tsx") or norm_path.endswith((".ts", ".js", ".tsx")):
+        if name.startswith("_") or qualname.startswith("_"):
             return False
         return True
 
     # Java / Kotlin / default conventions
-    if name.startswith("_"):
+    if name.startswith("_") or qualname.startswith("_"):
         return False
     return True
 
@@ -1002,6 +1004,8 @@ def analyze_diff_impact(
         changed = changed_by_id.get(sym_id)
         if changed is None:
             continue
+        if changed.change_type == "added" or is_test_path(changed.path) or not changed.is_public:
+            continue
         low = [c for c in callers if c.confidence < AMBIGUOUS_CALL_CONFIDENCE]
         if not low:
             continue
@@ -1087,7 +1091,11 @@ def analyze_diff_impact(
     # resolves against the wrong lines. That is a silent wrong answer, not an
     # error, so the report states its own coverage instead of implying none of
     # this happened. Build the index on the head commit being analyzed.
-    unindexed = sorted(p for p in changed_file_paths if f"file:{p}" not in index.nodes)
+    unindexed = sorted(
+        p
+        for p in changed_file_paths
+        if file_diffs[p].status != "deleted" and f"file:{p}" not in index.nodes
+    )
     guardrails["index_coverage"] = {
         "changed_files": len(changed_file_paths),
         "files_absent_from_index": unindexed,

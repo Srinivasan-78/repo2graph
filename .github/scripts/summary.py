@@ -73,7 +73,7 @@ def read_jsonl(path: str):
             yield obj
 
 
-def git_short_sha(cwd: Path) -> str | None:
+def _git_short_sha(cwd: Path) -> str | None:
     """Best-effort `git rev-parse --short HEAD`. None on any failure -- not a
     git checkout, git missing, a timeout, or a non-zero exit.
 
@@ -297,7 +297,7 @@ def render(args) -> str:
     files_n, functions_n, classes_n, edges_n = counts_from_stats(stats, stats_ok)
     languages = languages_from_nodes(args.nodes)
     chunks_n = chunk_count(args.nodes)
-    sha = git_short_sha(Path.cwd())
+    sha = _git_short_sha(Path.cwd())
 
     out = ["## repo2graph — index summary", ""]
     out.append("| Metric         | Value  |")

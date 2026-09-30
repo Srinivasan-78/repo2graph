@@ -25,7 +25,7 @@ from repo2graph import export
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
 from repo2graph.export import paths as artifact_paths
-from repo2graph.query import Index, tokenize
+from repo2graph.query import Index, format_pack, tokenize
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -521,6 +521,31 @@ def test_retrieve_signature_and_cmd_query_output_are_unchanged(rag_out, capsys):
     assert "def authenticate(user):" in printed
     # The decoy file scores below the seeds and must not be packed at k=3.
     assert "pkg/decoy.py" not in printed, printed[:400]
+
+
+def test_format_pack_renders_delimited_sections():
+    """format_pack renders retrieval records as '--- path::qual [why]\ntext' sections."""
+    records = [
+        {
+            "path": "pkg/session.py",
+            "qualname": "authenticate",
+            "why": "lexical",
+            "text": "def authenticate(user):\n    return True",
+        },
+        {
+            "path": "pkg/config.py",
+            "qualname": "normalize_provider",
+            "why": "CALLS out of authenticate",
+            "text": "def normalize_provider():\n    pass",
+        },
+    ]
+    expected = (
+        "--- pkg/session.py::authenticate [lexical]\n"
+        "def authenticate(user):\n    return True\n\n"
+        "--- pkg/config.py::normalize_provider [CALLS out of authenticate]\n"
+        "def normalize_provider():\n    pass"
+    )
+    assert format_pack(records) == expected
 
 
 def test_retrieve_keeps_every_edge_direction(dirs_out):

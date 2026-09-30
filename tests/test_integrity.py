@@ -708,3 +708,32 @@ class TestCLIFlags:
             ["build", str(repo), "-o", str(out), "--formats", "jsonl", "--lock-timeout", "30"]
         )
         assert rc == 0
+
+
+# ============================================================================
+# run_git — safe git command execution
+# ============================================================================
+
+
+class TestRunGit:
+    def test_run_git_success(self):
+        from repo2graph.integrity import run_git
+
+        repo_root = Path(__file__).resolve().parents[1]
+        out = run_git(repo_root, ["rev-parse", "--is-inside-work-tree"])
+        assert out == "true"
+
+    def test_run_git_non_git_dir_returns_none(self, tmp_path):
+        from repo2graph.integrity import run_git
+
+        non_repo = tmp_path / "not_a_repo"
+        non_repo.mkdir()
+        out = run_git(non_repo, ["status"])
+        assert out is None
+
+    def test_run_git_invalid_command_returns_none(self):
+        from repo2graph.integrity import run_git
+
+        repo_root = Path(__file__).resolve().parents[1]
+        out = run_git(repo_root, ["non-existent-subcommand-12345"])
+        assert out is None

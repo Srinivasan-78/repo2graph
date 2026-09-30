@@ -219,13 +219,13 @@ def found(evidence: list[dict], lines: dict[str, set[int]]) -> list[bool]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cache", type=Path, default=Path(tempfile.gettempdir()) / "r2g-bench-real")
     ap.add_argument("--budgets", default="2000,4000,8000")
     ap.add_argument("--out", type=Path, default=BENCH / "results.json")
     ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
     if shutil.which(rg[0]) is None:
         raise SystemExit("ripgrep (rg) is required for the baseline")
