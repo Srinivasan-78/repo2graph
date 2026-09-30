@@ -16,7 +16,7 @@ Measures:
 Usage:
     python scripts/benchmark_runner.py
     python scripts/benchmark_runner.py --ci
-    python scripts/benchmark_runner.py --output benchmarks/results_v2.json
+    python scripts/benchmark_runner.py --output benchmarks/results_local.json
 """
 
 from __future__ import annotations

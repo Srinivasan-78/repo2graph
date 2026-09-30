@@ -3393,8 +3393,12 @@ def test_is_secret_path():
     assert not _is_secret_path("")
 
 
-def test_pack_context_exclude_secrets(tmp_path):
-    """S-6: pack_context(exclude_secrets=True) skips sensitive paths from seeds and neighbours."""
+def test_pack_context_exclude_secrets_without_vectors(tmp_path):
+    """S-6: pack_context(exclude_secrets=True) skips sensitive paths from seeds and neighbours.
+
+    Hand-built index, no vectors, so this is the plain BM25 path. The fused
+    counterpart is `test_rag.py::test_pack_context_exclude_secrets_on_a_built_index`.
+    """
     out = tmp_path / "idx"
     agent = out / "agent"
     agent.mkdir(parents=True)

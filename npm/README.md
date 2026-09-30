@@ -73,8 +73,8 @@ checks.
 Publishing is a manual `npm publish --provenance` from this directory today (`publishConfig` in
 `package.json` already requests provenance attestations, matching the `attestations: true` this
 repository's PyPI publish step already sets — see
-[`docs/CONTRIBUTING.md`](../.github/CONTRIBUTING.md)); wiring it into the same `publish.yml` tag-triggered
-job that ships the PyPI release is tracked as follow-up work rather than done in this change, so
+[`.github/CONTRIBUTING.md`](../.github/CONTRIBUTING.md)); wiring it into the same `publish.yml` run
+that ships the PyPI release is tracked as follow-up work rather than done in this change, so
 that a bad npm publish cannot block or partially complete the PyPI release it is meant to pair with.
 
 ## Local development

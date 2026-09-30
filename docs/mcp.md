@@ -580,7 +580,7 @@ changed.
 ### Claude Code
 
 The first-supported client. Everything here is verified against Claude Code's
-`claude mcp` command and the stdio server in `repo2graph/mcp.py`.
+`claude mcp` command and the stdio server in `repo2graph/mcp/`.
 
 - [Install](#install)
 - [Verify it worked](#verify-it-worked)

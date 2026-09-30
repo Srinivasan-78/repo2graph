@@ -2,7 +2,7 @@
 repo_blast_radius.
 
 #387 named its tool `repo_impact`; that name is already the PR/diff-impact
-tool `repo2graph/mcp.py` shipped earlier, so the reverse-reachability tool
+tool `repo2graph/mcp/` shipped earlier, so the reverse-reachability tool
 below ships as `repo_blast_radius` instead (see its docstring and
 `docs/mcp.md`).
 

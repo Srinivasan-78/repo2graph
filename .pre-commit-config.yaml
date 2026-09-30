@@ -14,8 +14,27 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # The exclusions below are all the same rule: these files are *data*, not
+      # hand-maintained source, so their trailing bytes are meaningful and a
+      # whitespace hook rewriting them is a bug, not tidying.
+      #
+      # - `tests/golden/` is compared byte-for-byte against real program output
+      #   (`test_rag_markdown_is_byte_identical_to_baseline`,
+      #   `test_no_vectors_matches_the_baseline_golden`). A
+      #   `pre-commit run --all-files` used to strip two trailing newlines from
+      #   `rag_markdown.md` and fail both tests on a tree nobody had edited.
+      #   Regenerate with `R2G_REGEN_GOLDEN=1 pytest`, never by hand.
+      # - `examples/*/overview.md` is generated: `export.write_overview` writes
+      #   `"\n".join(out)` with no trailing newline, so adding one dirties five
+      #   files on every run and the next `generate_examples.py` reverts it.
+      # - `benchmarks/corpus/` is parser *input* for the regression gate. Its
+      #   bytes decide node and edge counts, and `chunks.py`'s 40-character
+      #   `file_residual` floor makes trailing content load-bearing at the
+      #   margin, so the corpus does not get silently reflowed.
       - id: end-of-file-fixer
+        exclude: ^(tests/golden/|benchmarks/corpus/|examples/[^/]+/overview\.md$)
       - id: trailing-whitespace
+        exclude: ^(tests/golden/|benchmarks/corpus/)
       - id: check-yaml
       - id: check-json
       - id: check-toml
@@ -24,6 +43,7 @@ repos:
       # someone diffs a file they never edited.
       - id: mixed-line-ending
         args: [--fix=lf]
+        exclude: ^tests/golden/
       - id: check-merge-conflict
 
   - repo: local
@@ -45,7 +65,7 @@ repos:
         # Strict, and green, on the modules that are annotated. The legacy
         # modules carry the remaining annotation debt; a hook that is red on
         # every commit gets disabled within a week, so they are relaxed in
-        # pyproject and the debt is tracked in docs/CONTRIBUTING.md instead of pretended away.
+        # pyproject and the debt is tracked in .github/CONTRIBUTING.md instead of pretended away.
         #
         # The scope lives in pyproject's [[tool.mypy.overrides]] and nowhere
         # else. This used to restate it as a regex of six module names, which

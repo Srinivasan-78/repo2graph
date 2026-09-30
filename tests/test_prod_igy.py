@@ -72,7 +72,7 @@ def test_prod_igy_script_exists_and_exports():
     assert "module.exports.detectType = detectType;" in content
     assert "module.exports.detectAreas = detectAreas;" in content
     assert "module.exports.extractIssues = extractIssues;" in content
-    assert "module.exports.checkAgentsRules = checkAgentsRules;" in content
+    assert "module.exports.checkRepositoryInvariants = checkRepositoryInvariants;" in content
     assert "module.exports.formatBotComment = formatBotComment;" in content
     assert "module.exports.escapeMdRef = escapeMdRef;" in content
     assert "module.exports.isTrustedCommenter = isTrustedCommenter;" in content
@@ -204,10 +204,10 @@ def test_prod_igy_detect_areas_patterns():
     assert match, "detectAreas function not found"
     body = match.group(1)
 
-    assert "repo2graph/walker.py" in body and "'area/walker'" in body
+    assert "repo2graph/parse.py" in body and "'area/walker'" in body
     assert "repo2graph/graph.py" in body and "'area/graph'" in body
     assert "repo2graph/query.py" in body and "'area/query'" in body
-    assert "repo2graph/mcp.py" in body and "'area/mcp'" in body
+    assert "repo2graph/mcp/" in body and "'area/mcp'" in body
     assert "server.json" in body and "'area/mcp'" in body
     assert "repo2graph/cli.py" in body and "'area/cli'" in body
     assert "repo2graph/embed.py" in body and "'area/embed'" in body
@@ -215,6 +215,24 @@ def test_prod_igy_detect_areas_patterns():
     assert ".github/workflows/" in body and "'area/workflows'" in body
     assert "tests/" in body and "'area/tests'" in body
     assert "docs/" in body and "'area/docs'" in body
+
+
+def test_prod_igy_area_patterns_name_paths_that_exist():
+    """Every `repo2graph/...` path prod-igy matches on must still be in the tree.
+
+    `area/walker` pointed at `repo2graph/walker.py` and `area/mcp` at
+    `repo2graph/mcp.py` long after the first was deleted (8ef6d006) and the
+    second became a package (c8c20bdb), so neither label could ever be applied
+    again and nothing failed. The assertions above pinned the stale strings,
+    which is what let it sit. This checks the paths against the filesystem
+    instead, so the next rename fails here rather than going quiet in CI.
+    """
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+    repo_root = SCRIPT_PATH.parent.parent.parent
+    referenced = set(re.findall(r"'(repo2graph/[A-Za-z0-9_/.]+)'", content))
+    assert referenced, "no repo2graph paths found in prod-igy.js"
+    missing = sorted(p for p in referenced if not (repo_root / p).exists())
+    assert not missing, f"prod-igy.js matches on paths that no longer exist: {missing}"
 
 
 def test_prod_igy_issue_extraction_regex():
@@ -234,15 +252,23 @@ def test_prod_igy_issue_extraction_regex():
     assert sorted(found) == ["105", "200", "42"]
 
 
-def test_prod_igy_agents_rules_guidance():
-    """Verify AGENTS.md rule strings in checkAgentsRules."""
+def test_prod_igy_invariant_guidance_cites_contributing():
+    """Verify the invariant rule strings in checkRepositoryInvariants.
+
+    The rules used to cite `AGENTS.md`, which was removed in 58c1f833 when the
+    technical invariants moved into CONTRIBUTING.md. Every citation must name a
+    file that is actually in the repository, or the checklist prod-igy posts on
+    every PR points a contributor at nothing.
+    """
     content = "\n".join(_read_lines(SCRIPT_PATH))
-    assert "Text Slicing (`AGENTS.md`)" in content
+    assert "AGENTS.md" not in content, "AGENTS.md no longer exists; cite CONTRIBUTING.md"
+    assert "Text Slicing (`CONTRIBUTING.md` 1)" in content
     assert "splitlines()" in content
-    assert "Windows Git Subprocess Output" in content
+    assert "Windows Git Subprocess Output (`CONTRIBUTING.md` 2)" in content
     assert "surrogateescape" in content
-    assert "Two Budget Models (`AGENTS.md`)" in content
-    assert "Caller-Hostile MCP Arguments (`AGENTS.md`)" in content
+    assert "Two Budget Models (`CONTRIBUTING.md` 4)" in content
+    assert "Traversal Direction (`CONTRIBUTING.md` 5)" in content
+    assert "Caller-Hostile MCP Arguments (`CONTRIBUTING.md` 7)" in content
     assert "Truthiness Seam in `action.yml`" in content
     assert "Examples (`CONTRIBUTING.md`)" in content
     assert "Lockfile Sync (`uv.lock`)" in content
@@ -795,17 +821,17 @@ def test_summary_step_does_exactly_two_things():
 def test_summary_step_is_not_shown_the_codebase():
     """It sees one diff. It is not given repository rules or any other file.
 
-    Feeding AGENTS.md (or any repo content) to the model is what turns a
+    Feeding CONTRIBUTING.md (or any repo content) to the model is what turns a
     description into a review, which is the thing this bot deliberately does
     not do. The rule checklist in the comment stays where it was: derived from
-    changed paths by `checkAgentsRules`, with no model involved.
+    changed paths by `checkRepositoryInvariants`, with no model involved.
     """
     content = "\n".join(_read_lines(SCRIPT_PATH))
 
     start = content.index("async function runAiEnrichment(")
     call = content[start : content.index("\n// git check-ref-format", start)]
     assert "readFileSync" not in call, "the summary step must not read files"
-    assert "agentsRules" not in content, "AGENTS.md must not reach the model"
+    assert "invariantRules" not in content, "repository rules must not reach the model"
     assert "tools:" not in call, "the summary step must not declare tools"
 
     prompt = content[
@@ -818,8 +844,8 @@ def test_summary_step_is_not_shown_the_codebase():
     assert "Do not review the change" in prompt
 
     # The deterministic checklist is untouched and still path-derived.
-    assert "function checkAgentsRules(changedFiles)" in content
-    assert "const guidance = checkAgentsRules(changedFiles);" in content
+    assert "function checkRepositoryInvariants(changedFiles)" in content
+    assert "const guidance = checkRepositoryInvariants(changedFiles);" in content
 
 
 def test_check_results_come_from_the_api_not_the_model():

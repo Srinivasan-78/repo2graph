@@ -876,6 +876,14 @@ def _classify_receiver(
     lang: str = "",
     static: bool = False,
 ) -> str:
+    """Classify what a call is made on: "none", "self" or "other".
+
+    "none" is a bare call (`helper()`), "self" is a call on the calling object
+    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
+    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
+    drops the receiver, so without this `graph.build` cannot tell `self.get()`
+    from `some_dict.get()`.
+    """
     if not head:
         return "none"
     if head in _SELF_RECEIVERS or head in self_names or head.startswith("super("):
@@ -903,18 +911,6 @@ def _receiver_fields(
     if static:
         out["receiver_static"] = True
     return out
-
-
-def _receiver_kind(src: bytes, node) -> str:
-    """Classify what a call is made on: "none", "self" or "other".
-
-    "none" is a bare call (`helper()`), "self" is a call on the calling object
-    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
-    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
-    drops the receiver, so without this `graph.build` cannot tell
-    `self.get()` from `some_dict.get()`.
-    """
-    return _classify_receiver(_receiver_of(src, node)[0])
 
 
 def _go_receiver_name(src: bytes, node) -> str | None:

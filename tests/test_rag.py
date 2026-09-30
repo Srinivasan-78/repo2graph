@@ -1370,8 +1370,14 @@ def test_rag_provider_selection_and_missing_env(monkeypatch):
     assert spec["value"] == "sk-ant-test"
 
 
-def test_pack_context_exclude_secrets(rag_index):
-    """S-6: pack_context(exclude_secrets=True) excludes secret paths from chunks and markdown."""
+def test_pack_context_exclude_secrets_on_a_built_index(rag_index):
+    """S-6: pack_context(exclude_secrets=True) excludes secret paths from chunks and markdown.
+
+    The no-vectors counterpart is
+    `test_repo2graph.py::test_pack_context_exclude_secrets_without_vectors`: the
+    exclusion has to hold on both the fused and the plain BM25 path, and the two
+    reach `pack_context` through different scoring code.
+    """
     auth_chunk = [c for c in rag_index.chunks if c.get("name") == "authenticate"][0]
     auth_chunk["path"] = ".env"
     norm_chunk = [c for c in rag_index.chunks if c.get("name") == "normalize_provider"][0]
