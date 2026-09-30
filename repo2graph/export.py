@@ -6,7 +6,6 @@ import os
 import random
 import re
 import shutil
-import subprocess
 import threading
 import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
@@ -50,11 +49,18 @@ Size = tuple[float, float]
 
 @contextmanager
 def atomic_write(path: Path, mode: str = "w", **open_kw: Any) -> Iterator[IO[Any]]:
-    """Write via a sibling temp file renamed onto `path` only on a clean exit.
+    """Context manager for writing files via a temporary sibling file.
 
-    A crash, exception or Ctrl-C mid-write then leaves the previous artifact (or
-    none) intact rather than a truncated file that `query`/`map` would choke on.
-    The temp file is in the target's own directory, so os.replace is atomic.
+    Atomically renames the temporary file to target path upon clean exit,
+    preventing partially written or corrupt files on error.
+
+    Args:
+        path: Target file path.
+        mode: File open mode ('w', 'wb', etc.).
+        **open_kw: Additional keyword arguments passed to open().
+
+    Yields:
+        Open file handle for writing.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -135,11 +141,17 @@ def _flat(d: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
-    """Stream `rows` to `path` as JSONL; return how many were written.
+    """Stream rows to path as JSONL.
 
-    newline="\n" (ISS-28) + atomic: a crash mid-write must not leave a truncated
-    last line that read_jsonl's json.loads then dies on. Streaming means `rows`
-    may be a generator (build_chunks) that is never fully materialised.
+    Ensures LF newlines across platforms and atomic file replacement
+    so crashes mid-write do not produce truncated lines.
+
+    Args:
+        path: Target file path.
+        rows: Iterable of serializable records to write.
+
+    Returns:
+        Number of rows written.
     """
     n = 0
     with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
@@ -162,7 +174,7 @@ GRAPHML_NS = "http://graphml.graphdrawing.org/xmlns"
 NODE_HEIGHT = 26.0
 CHAR_WIDTH = 7.0
 # GraphML label length is not set here: _graphml_label delegates to
-# viz.node_label, which trims to viz.LABEL_CHARS (ISS-29).
+# viz.node_label, which trims to viz.LABEL_CHARS.
 
 
 _NEIGHBOR_CELLS = ((1, 0), (1, 1), (0, 1), (-1, 1))
@@ -348,10 +360,14 @@ def _separate(
 def _xml_safe(text: str) -> str:
     """Drop characters that are not legal in XML 1.0.
 
-    A C0 control char (\x0b, \x0c, \x00) sitting in a docstring or signature
-    is written verbatim by ElementTree and then makes the file unparseable by
-    any conforming reader (ISS-27). Legal set: tab, LF, CR, >=0x20 minus the
-    surrogate block, up to 0x10FFFF, excluding 0xFFFE/0xFFFF.
+    Filters out C0 control characters that would make XML unparseable.
+    Permitted characters: tab, LF, CR, and legal Unicode ranges up to 0x10FFFF.
+
+    Args:
+        text: Input string.
+
+    Returns:
+        Sanitized XML-safe string.
     """
     return "".join(
         c
@@ -364,6 +380,12 @@ def _xml_safe(text: str) -> str:
 
 
 def write_graphml(g: "Graph", path: Path) -> None:
+    """Export graph structure and node coordinates to GraphML format.
+
+    Args:
+        g: Graph instance to export.
+        path: Target file path for GraphML output.
+    """
     degree = Counter(e["src"] for e in g.edges) + Counter(e["dst"] for e in g.edges)
     labels = {nid: node_label(n) for nid, n in g.nodes.items()}
     sizes = {nid: _node_size(labels[nid], degree.get(nid, 0)) for nid in g.nodes}
@@ -408,7 +430,7 @@ def write_graphml(g: "Graph", path: Path) -> None:
             )
         return ident
 
-    # SH-4: apply _xml_safe to graph, node and edge id/source/target attributes
+    # Apply _xml_safe to graph, node and edge id/source/target attributes
     graph = ET.Element(
         f"{{{GRAPHML_NS}}}graph", {"id": _xml_safe(str(g.name)), "edgedefault": "directed"}
     )
@@ -507,6 +529,12 @@ def _cy_label(value: str) -> str:
 
 
 def write_cypher(g: "Graph", path: Path) -> None:
+    """Export graph nodes and edges as Cypher statements for Neo4j.
+
+    Args:
+        g: Graph instance to export.
+        path: Target file path for Cypher script.
+    """
     lines = ["CREATE CONSTRAINT r2g_id IF NOT EXISTS FOR (n:R2G) REQUIRE n.id IS UNIQUE;"]
     for nid, n in g.nodes.items():
         lab = _cy_label(n["type"].capitalize())
@@ -524,7 +552,7 @@ def write_cypher(g: "Graph", path: Path) -> None:
             f"MATCH (a:R2G {{id: {_cy(e['src'])}}}), (b:R2G {{id: {_cy(e['dst'])}}}) "
             f"MERGE (a)-[:{rel_type}{pstr}]->(b);"
         )
-    # newline="\n" on every artifact writer (ISS-28): a Windows rebuild must
+    # newline="\n" on every artifact writer: a Windows rebuild must
     # produce the same bytes as a Linux CI run, or the commit-branch push is all
     # CRLF churn. atomic_write: no half-written file for a reader.
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
@@ -532,7 +560,13 @@ def write_cypher(g: "Graph", path: Path) -> None:
 
 
 def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
-    """Human/LLM-readable repo map: top directories, hub files, entry points."""
+    """Write human/LLM-readable repo map highlighting hub files and entry points.
+
+    Args:
+        g: Graph instance containing parsed nodes and edges.
+        path: File path for overview markdown output.
+        top: Maximum number of hub files and symbols to list.
+    """
     indeg: Counter[str] = Counter()
     outdeg: Counter[str] = Counter()
     for e in g.edges:
@@ -576,36 +610,21 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
 
 
 def _git_short_sha(root: Path | str) -> str | None:
-    """The short commit `root` was built at, or None outside a git repo.
+    """Get the short git commit SHA at the repository root.
 
-    Same subprocess pattern as graph.add_cochange / walker._git_files (see
-    AGENTS.md): quotepath=false, bytes decoded with surrogateescape (never
-    text=True -- a Windows cp1252 locale raises UnicodeDecodeError on any
-    non-ASCII byte), stdin closed, bounded timeout. Any failure -- not a repo,
-    no git on PATH, a slow filesystem -- just omits the "Built at" row.
+    Executes git rev-parse with safe subprocess decoding and bounded timeout.
+    Returns None if not in a git repo or if git is unavailable.
+
+    Args:
+        root: Root path of the repository.
+
+    Returns:
+        Short commit SHA string, or None.
     """
-    try:
-        out = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.quotepath=false",
-                "-C",
-                str(root),
-                "rev-parse",
-                "--short",
-                "HEAD",
-            ],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if out.returncode != 0:
-        return None
-    sha = out.stdout.decode("utf8", "surrogateescape").split("\n")[0].strip()
-    return sha or None
+    from .integrity import run_git
+
+    sha = run_git(root, ["rev-parse", "--short", "HEAD"])
+    return sha.split("\n")[0].strip() or None if sha else None
 
 
 _SKIP_STAT_LABELS = (
@@ -619,12 +638,15 @@ _SKIP_STAT_LABELS = (
 
 
 def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
-    """Structured, scannable repo map for `human/overview.md`.
+    """Write structured markdown repo overview for human inspection.
 
-    Unlike `write_overview` (still the agent/overview.md prose, unchanged),
-    this reads edge-type and symbol-kind counts straight out of `g.stats`
-    rather than rescanning `g.nodes`/`g.edges`, per the repo convention that
-    `g.stats` is the single source of truth for those counts.
+    Reads edge-type and symbol-kind counts directly from graph stats
+    for consistent reporting.
+
+    Args:
+        g: Graph instance containing parsed nodes, edges, and statistics.
+        path: File path for human overview markdown output.
+        top: Maximum number of top-connected files to display.
     """
     files = [n for n in g.nodes.values() if n["type"] == "file"]
     langs = Counter(n.get("lang") for n in files)
@@ -726,7 +748,7 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
 # panel describe the same six node types and seven edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
-# and docs/OUTPUT_SCHEMA.md. Written into manifest.json so a consumer reading
+# and docs/architecture.md. Written into manifest.json so a consumer reading
 # an index does not have to find the source to learn what the fields mean.
 EDGE_FIELDS = {
     "type": "the relationship; one of the edge_types above",
@@ -739,7 +761,7 @@ EDGE_FIELDS = {
         "P(dst is the correct target | the relationship at `evidence` exists), 0..1. "
         "Not a probability that the relationship exists: that is what `evidence` is for. "
         "An ambiguous name matching n candidates yields n edges at 1/n each. "
-        "Never encodes dynamic dispatch -- see call_kind and docs/limitations.md"
+        "Never encodes dynamic dispatch -- see call_kind and docs/architecture.md"
     ),
     "evidence": (
         "{path, line} where the relationship is written, 1-based, or null when there is "
@@ -866,12 +888,13 @@ def _fanout(text: str, max_call_candidates: int) -> str:
 def write_manifest(
     g: Any, path: Path, written: list[str], *, checksums: dict[str, Any] | None = None
 ) -> None:
-    """Describe the agent-facing output so a reader needs no other docs.
+    """Write manifest.json describing index metadata, schemas, and statistics.
 
-    `g` is `Any`, not `Graph`, on purpose: every read below is a defaulted
-    `getattr`, and the contract this function has always offered -- see the
-    `max_call_candidates` note -- is that anything quacking like a Graph is
-    accepted. Narrowing the annotation would document a promise it does not make.
+    Args:
+        g: Graph instance or duck-typed object carrying nodes and stats.
+        path: Target file path for the manifest.
+        written: List of relative artifact paths generated during export.
+        checksums: Optional mapping of relative artifact paths to SHA-256 hashes.
     """
     # Imported here, not at module scope, for the same reason PARSE_CACHE_FORMAT
     # is below: export is the lower layer of the two and query.py imports it.
@@ -1259,15 +1282,15 @@ _LOCAL_GITIGNORE = (
 
 
 def write_local(g: Any, index_root: Path) -> None:
-    """Write LOCAL_FILE (the absolute source root) plus a `.gitignore` for it.
+    """Write machine-local build metadata and ignore file to index root.
 
-    `index-status` and `doctor <index>` read the root so an `-o` outside the
-    repo is not mistaken for "the index's parent is the source tree". A remote
-    build has no surviving tree, so it records none.
+    Args:
+        g: Graph instance or object with root/source_remote attributes.
+        index_root: Destination root directory of the index.
     """
     root = getattr(g, "root", None)
     local = {
-        "note": "machine-local; do not commit or ship (see docs/PRIVACY.md)",
+        "note": "machine-local; do not commit or ship",
         "source_root": (
             str(Path(root).resolve()) if root and not getattr(g, "source_remote", None) else None
         ),
@@ -1300,12 +1323,20 @@ def dump_all(
     formats: set[str],
     viz_nodes: int = MAX_NODES,
 ) -> tuple[list[str], int]:
-    """Write the requested artifacts. `chunks` is an iterable of chunk dicts (a
-    build_chunks generator) or None. Returns (written_paths, chunk_count).
+    """Write all requested index artifacts to the output directory.
 
-    Artifacts are staged in a sibling directory and atomically swapped into
-    outdir on success; a failed or interrupted build never leaves a partial
-    index behind.
+    Artifacts are staged in a temporary sibling directory and atomically
+    swapped into outdir on completion.
+
+    Args:
+        g: Graph instance containing nodes, edges, and build statistics.
+        chunks: Optional iterable of code chunks to export.
+        outdir: Output directory path.
+        formats: Set of format strings to write ('jsonl', 'graphml', 'cypher', 'overview', 'html').
+        viz_nodes: Maximum number of nodes to include in HTML visualization.
+
+    Returns:
+        Tuple of (list of written artifact relative paths, count of chunks written).
     """
     outdir = Path(outdir).resolve()
     if outdir.exists() and not outdir.is_dir():

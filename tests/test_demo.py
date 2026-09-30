@@ -4,7 +4,7 @@ The assertions here are hand-derived from the fixture source in
 `repo2graph/demo.py` -- never from a value the code under test computed. A
 test that compared the demo's output to `Index(...).pack_context(...)` would
 move with any traversal change and stay green straight through a regression
-that made every starter prompt return nothing (AGENTS.md, "Tests must pin
+that made every starter prompt return nothing (CONTRIBUTING.md, "Tests must pin
 values, not compare the implementation to itself").
 """
 
@@ -55,7 +55,7 @@ def test_every_fixture_module_carries_a_file_chunk(demo_index):
     module-level constant, which is exactly how the residue rule gets broken
     by someone tidying up.
 
-    See AGENTS.md, "A file with little residue emits no file-level chunk".
+    See CONTRIBUTING.md, "A file with little residue emits no file-level chunk".
     """
     _root, out, _stats = demo_index
     chunks = _records(out / "agent" / "chunks.jsonl")
@@ -147,7 +147,7 @@ def test_each_starter_question_cites_the_file_that_answers_it(demo_index, q_inde
     """The quickstart promises these five prompts work. This is that promise.
 
     Set membership on paths only -- no score, no rank, no ordering, which all
-    drift with any scoring tweak (AGENTS.md).
+    drift with any scoring tweak (CONTRIBUTING.md).
     """
     from repo2graph.demo import DEMO_BUDGET_CHARS, DEMO_HOPS, DEMO_K
     from repo2graph.query import Index

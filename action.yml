@@ -165,7 +165,7 @@ runs:
       # that publish.yml produces, which `pip install -e <checkout>` bypassed.
       #
       # Non-emptiness is the one test GitHub expressions and bash agree on for
-      # every casing (AGENTS.md), so this needs no `inputs.version ==` gate and
+      # every casing (CONTRIBUTING.md), so this needs no `inputs.version ==` gate and
       # no case-folding. The default is blank on purpose: a workflow that never
       # sets `version` installs the checkout it is pinned to, exactly as every
       # run did before, so nothing that works today changes.
@@ -375,7 +375,7 @@ runs:
       with:
         name: ${{ inputs.artifact-name }}
         # local.json holds the runner's absolute checkout path: machine-local,
-        # never shipped (docs/PRIVACY.md).
+        # never shipped (.github/SECURITY.md).
         path: |
           ${{ inputs.out }}
           !${{ inputs.out }}/local.json

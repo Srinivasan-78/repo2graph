@@ -11,7 +11,7 @@ Closes #<!-- issue number, if any -->
 - [ ] `pytest` passes locally
 - [ ] `mypy` passes on any module this PR adds or touches under `repo2graph/` that's covered
       by `[[tool.mypy.overrides]]` in `pyproject.toml` (new modules are strict by default)
-- [ ] Docs updated (`README.md`, `docs/`, or `AGENTS.md`) if this changes user-facing behavior
+- [ ] Docs updated (`architecture.md`, `docs/`, or [the invariants](CONTRIBUTING.md#architecture--os-compatibility-invariants)) if this changes user-facing behavior
       or a non-obvious repo convention
-- [ ] If this touches `query.py`, `chunks.py`, `graph.py`, or `walker.py`: read the relevant
-      section of [AGENTS.md](../AGENTS.md) — each has a documented footgun
+- [ ] If this touches `query.py`, `chunks.py`, `graph.py`, or `parse.py`: read the relevant
+      section of [the invariants](CONTRIBUTING.md#architecture--os-compatibility-invariants) — each has a documented footgun

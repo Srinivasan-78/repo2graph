@@ -14,7 +14,7 @@ Commit `a11ec079d98444803ad16ce48bf7ccc4ecafca7d` on `main`, analyzed 2026-09-22
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [what it can't do](../../README.md#what-it-cant-do).
 
 **Indexed paths:**
 - `src/vs/**`
@@ -87,7 +87,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[../../architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 82,225 out of 450,921 total CALLS edges.
 
 ## Reproduce
@@ -98,4 +98,4 @@ python scripts/generate_examples.py --repo vscode
 
 This clones `https://github.com/microsoft/vscode` at `main` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

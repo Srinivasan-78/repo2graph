@@ -65,7 +65,7 @@ def _git_init(src):
 
 
 def test_report_carries_every_promised_field(built):
-    """docs/INDEXING.md promises nine things. This is that list."""
+    """docs/architecture.md promises nine things. This is that list."""
     src, out = built
     report = index_status(out)
 
@@ -318,14 +318,16 @@ def test_freshness_respects_the_scan_bound(built, monkeypatch):
     assert any("scan bound" in note for note in fresh.notes)
 
 
-def test_doctor_and_index_status_never_disagree(built):
-    """Two implementations of "is this stale" drift until they contradict
-    each other in front of a user. There is one, and this pins that."""
-    from repo2graph.doctor import check_index_freshness
+def test_index_status_is_the_only_staleness_implementation(built):
+    """Two implementations of "is this stale" drift until they contradict each
+    other in front of a user. `index-status` owns the answer; `doctor` must not
+    grow a second one, so this pins both halves: index-status still detects a
+    stale tree, and doctor reports no freshness check at all.
+    """
+    from repo2graph import doctor
 
     src, out = built
     assert index_status(out)["freshness"]["status"] == "current"
-    assert check_index_freshness(src).status == "ok"
 
     manifest = out / "agent" / "manifest.json"
     target = src / "pkg" / "util.py"
@@ -334,9 +336,12 @@ def test_doctor_and_index_status_never_disagree(built):
     os.utime(target, (cutoff + 10, cutoff + 10))
 
     assert index_status(out)["freshness"]["status"] == "stale"
-    doctor_result = check_index_freshness(src)
-    assert doctor_result.status == "warn"
-    assert "1 modified" in doctor_result.summary
+
+    # No freshness probe in doctor, under any name, and no re-export of the
+    # status helpers that would let one reappear.
+    assert not [n for n in dir(doctor) if "fresh" in n.lower() or "stale" in n.lower()]
+    names = {c.name for c in doctor.run_doctor(src).checks}
+    assert not [n for n in names if "fresh" in n.lower() or "stale" in n.lower()], names
 
 
 # --------------------------------------------------------------------------
@@ -623,7 +628,6 @@ def test_github_build_is_reported_as_remote_not_stale(tmp_path, monkeypatch, cap
     import shutil
 
     from repo2graph import fetch
-    from repo2graph.doctor import run_doctor
 
     fixture = tmp_path / "fixture"
     fixture.mkdir()
@@ -656,11 +660,6 @@ def test_github_build_is_reported_as_remote_not_stale(tmp_path, monkeypatch, cap
     assert "[STALE]" not in text and "repo2graph build" not in text
     assert "repo2graph github owner/repo" in text
 
-    check = next(c for c in run_doctor(out).checks if c.name == "Index Freshness")
-    assert check.status == "ok"
-    assert "remote" in check.summary
-    assert any("repo2graph github owner/repo" in d for d in check.details)
-
 
 def test_action_never_ships_local_json():
     """The Action's upload and branch push both drop the machine-local file."""
@@ -669,3 +668,28 @@ def test_action_never_ships_local_json():
     action = (Path(__file__).resolve().parents[1] / "action.yml").read_text(encoding="utf-8")
     assert "!${{ inputs.out }}/local.json" in action
     assert 'rm -f "$tmp/local.json"' in action
+
+
+def test_the_reported_path_lists_are_capped_but_the_counts_are_not():
+    """`index-status --json` is a public surface, and a 4,000-entry list is not
+    a report. The lists are capped at MAX_LISTED_PATHS; the counts beside them
+    stay exact, which is what tells a reader the list was cut.
+    """
+    from repo2graph.status import MAX_LISTED_PATHS, Freshness
+
+    assert MAX_LISTED_PATHS == 10
+
+    fresh = Freshness(
+        status="stale",
+        added=[f"a{i}.py" for i in range(14)],
+        removed=[f"r{i}.py" for i in range(11)],
+        modified=[f"m{i}.py" for i in range(10)],
+    )
+    report = fresh.to_dict()
+
+    assert len(report["added"]) == MAX_LISTED_PATHS
+    assert report["added"][0] == "a0.py" and report["added"][-1] == "a9.py"
+    assert len(report["removed"]) == MAX_LISTED_PATHS
+    assert len(report["modified"]) == MAX_LISTED_PATHS  # exactly at the cap, uncut
+
+    assert report["counts"] == {"added": 14, "removed": 11, "modified": 10}

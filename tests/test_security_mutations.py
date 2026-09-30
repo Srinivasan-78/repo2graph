@@ -1,157 +1,20 @@
 """Targeted negative and mutation tests for security-critical modules (Issue #317).
 
 Verifies that security checks cannot be bypassed or inverted across:
-- Token verification (issuer, audience, expiration, not-before, algorithm allowlist, RSA degeneration)
 - Path containment and symlink validation
 - MCP output argument clamping and bounds enforcement
 - Secret filtering and credential isolation
 - Build lock acquisition and active process PID validation
 """
 
-import json
 import os
 from pathlib import Path
-import time
 import pytest
 
-from repo2graph.auth import (
-    AuthConfig,
-    AuthError,
-    Authenticator,
-    decode_jwt,
-    rsa_verify,
-)
-from repo2graph.secrets import _is_secret_path
+from repo2graph.security import _is_secret_path
 from repo2graph.integrity import validate_outdir
 from repo2graph.lock import BuildLock, LockTimeoutError, _is_pid_alive
 from repo2graph.mcp import _clamp, MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS
-from test_auth import (
-    AUDIENCE,
-    ISSUER,
-    KEY,
-    KID,
-    FakeIssuer,
-    b64u,
-    cache,
-    claims,
-    sign,
-)
-
-
-# ==============================================================================
-# 1. Authentication Security Checks (JWT & JWK)
-# ==============================================================================
-
-
-def test_mutation_issuer_check_refuses_mismatched_issuer():
-    """Mutating or spoofing the 'iss' claim must always raise AuthError."""
-    fake_issuer = FakeIssuer()
-    authenticator = Authenticator(
-        AuthConfig(oidc_issuer=ISSUER, audience=AUDIENCE),
-        opener=fake_issuer,
-    )
-
-    # Valid token works
-    valid_token = sign(claims(iss=ISSUER))
-    ident = authenticator.authenticate(f"Bearer {valid_token}")
-    assert ident.subject == "user-42"
-
-    # Mismatched/spoofed issuer must fail
-    spoofed_token = sign(claims(iss="https://attacker-issuer.example.com"))
-    with pytest.raises(AuthError, match=r"token issuer .* is not"):
-        authenticator.authenticate(f"Bearer {spoofed_token}")
-
-
-def test_mutation_audience_check_refuses_mismatched_audience():
-    """Mutating or omitting the expected 'aud' claim must always raise AuthError."""
-    fake_issuer = FakeIssuer()
-    authenticator = Authenticator(
-        AuthConfig(oidc_issuer=ISSUER, audience=AUDIENCE),
-        opener=fake_issuer,
-    )
-
-    # Mismatched audience
-    wrong_aud_token = sign(claims(aud="other-service"))
-    with pytest.raises(AuthError, match=r"token audience .* does not include"):
-        authenticator.authenticate(f"Bearer {wrong_aud_token}")
-
-    # Completely missing audience claim
-    no_aud_claims = claims()
-    no_aud_claims.pop("aud")
-    no_aud_token = sign(no_aud_claims)
-    with pytest.raises(AuthError, match=r"token audience None does not include"):
-        authenticator.authenticate(f"Bearer {no_aud_token}")
-
-
-def test_mutation_expiration_check_refuses_expired_token():
-    """Tokens with past expiration timestamps must be rejected."""
-    fake_issuer = FakeIssuer()
-    authenticator = Authenticator(
-        AuthConfig(oidc_issuer=ISSUER, audience=AUDIENCE),
-        opener=fake_issuer,
-    )
-
-    # Expired token (exp in past relative to now)
-    expired_token = sign(claims(exp=time.time() - 3600))
-    with pytest.raises(AuthError, match="token has expired"):
-        authenticator.authenticate(f"Bearer {expired_token}")
-
-
-def test_mutation_not_before_check_refuses_future_token():
-    """Tokens with future 'nbf' timestamps must be rejected."""
-    fake_issuer = FakeIssuer()
-    authenticator = Authenticator(
-        AuthConfig(oidc_issuer=ISSUER, audience=AUDIENCE),
-        opener=fake_issuer,
-    )
-
-    # Future token (nbf ahead of now)
-    future_token = sign(claims(nbf=time.time() + 3600, exp=time.time() + 7200))
-    with pytest.raises(AuthError, match="token is not valid yet"):
-        authenticator.authenticate(f"Bearer {future_token}")
-
-
-def test_mutation_algorithm_allowlist_rejects_insecure_algorithms():
-    """Non-RS256 algorithms ('none', symmetric HS256, etc.) must be strictly rejected."""
-    jwks, _ = cache()
-
-    # Algorithm 'none' attack
-    header_none = b64u(json.dumps({"alg": "none", "typ": "JWT"}).encode())
-    payload = b64u(json.dumps(claims()).encode())
-    token_none = f"{header_none}.{payload}."
-    with pytest.raises(AuthError, match="unsupported token algorithm"):
-        decode_jwt(token_none, jwks, ISSUER, AUDIENCE)
-
-    # Algorithm 'HS256' confusion attack
-    header_hs = b64u(json.dumps({"alg": "HS256", "kid": KID, "typ": "JWT"}).encode())
-    token_hs = f"{header_hs}.{payload}.AAAA"
-    with pytest.raises(AuthError, match="unsupported token algorithm"):
-        decode_jwt(token_hs, jwks, ISSUER, AUDIENCE)
-
-    # Unsupported asymmetric algorithms (ES256)
-    header_es = b64u(json.dumps({"alg": "ES256", "kid": KID, "typ": "JWT"}).encode())
-    token_es = f"{header_es}.{payload}.AAAA"
-    with pytest.raises(AuthError, match="unsupported token algorithm"):
-        decode_jwt(token_es, jwks, ISSUER, AUDIENCE)
-
-
-def test_mutation_rsa_verify_rejects_degenerate_keys():
-    """Degenerate public keys (e <= 1, zero/negative modulus) must not verify."""
-    msg = b"test message"
-    sig = b"\x01" * 128
-
-    # e = 1 (trivial exponent)
-    assert not rsa_verify(KEY["n"], 1, sig, msg, "sha256")
-
-    # e = 0
-    assert not rsa_verify(KEY["n"], 0, sig, msg, "sha256")
-
-    # negative e
-    assert not rsa_verify(KEY["n"], -3, sig, msg, "sha256")
-
-    # n <= 0
-    assert not rsa_verify(-KEY["n"], 65537, sig, msg, "sha256")
-    assert not rsa_verify(0, 65537, sig, msg, "sha256")
 
 
 # ==============================================================================

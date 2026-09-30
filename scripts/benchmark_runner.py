@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark and Regression Corpus Runner for repo2graph.
 
-Executes 25 reproducible repository-understanding tasks across 5 archetype
-repositories, comparing:
+Executes every task in `benchmarks/tasks.json` against the repositories in
+`benchmarks/corpus/`, comparing:
 1. repo2graph (GraphRAG packing & retrieval)
 2. Lexical search (ripgrep / grep simulation)
 3. Baseline coding-agent multi-hop search
@@ -16,7 +16,7 @@ Measures:
 Usage:
     python scripts/benchmark_runner.py
     python scripts/benchmark_runner.py --ci
-    python scripts/benchmark_runner.py --output benchmarks/results_v2.json
+    python scripts/benchmark_runner.py --output benchmarks/results_local.json
 """
 
 from __future__ import annotations
@@ -308,8 +308,17 @@ def execute_benchmarks(
         repo_root = corpus_path / repo_name
 
         if not idx or not repo_root.exists():
-            print(f"Skipping {task_id}: repo {repo_name} not available")
-            continue
+            # Silently dropping the task used to shrink the regression gate
+            # without failing it: three corpora were removed and the suite went
+            # on reporting a pass over the 10 tasks that were left, while still
+            # printing the original count. A task naming a repository the corpus
+            # does not have is stale data, and stale data is what the gate is for.
+            raise SystemExit(
+                f"{task_id} names repository {repo_name!r}, which is not in "
+                f"{corpus_path}. Add the repository or remove the task from "
+                f"benchmarks/tasks.json -- a task that cannot run must not be "
+                f"counted as one that passed."
+            )
 
         r2g_res = run_repo2graph_workflow(idx, query, evidence_locs)
         rg_res = run_ripgrep_workflow(repo_root, query, evidence_locs)
@@ -362,11 +371,12 @@ def execute_benchmarks(
     return summary
 
 
-def print_summary_table(summary: BenchmarkSuiteSummary):
+def _print_summary_table(summary: BenchmarkSuiteSummary):
     """Print markdown formatted summary table."""
     print("\n=== BENCHMARK WORKFLOW COMPARISON ===")
     print(
-        f"Evaluated on {summary.total_tasks} reproducible tasks across 5 archetype repositories\n"
+        f"Evaluated on {summary.total_tasks} reproducible tasks across "
+        f"{len(summary.repo_stats)} archetype repositories\n"
     )
     print(
         "| Workflow | Tasks Correct | Accuracy Rate | Citation Accuracy | Mean Latency | Mean Tokens |"
@@ -396,7 +406,7 @@ def main() -> int:
     args = parser.parse_args()
 
     summary = execute_benchmarks()
-    print_summary_table(summary)
+    _print_summary_table(summary)
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

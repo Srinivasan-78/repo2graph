@@ -135,10 +135,10 @@ def emit(
     record: dict[str, Any] = {"ts": timestamp(), "level": level, "event": event}
     if fields:
         try:
-            from .secrets import sanitize_value
+            from . import security
 
             for k, v in fields.items():
-                record[k] = sanitize_value(str(k), v)
+                record[k] = security.sanitize_value(str(k), v)
         except Exception:
             # Fail closed: if the sanitiser itself breaks, the raw values are
             # exactly what must not reach stderr. Keep the keys so the event

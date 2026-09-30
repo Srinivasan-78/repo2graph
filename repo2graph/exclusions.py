@@ -152,7 +152,7 @@ BUILD = ExclusionGroup(
     # at the repository root this group is close to a no-op. It earns its keep
     # in a monorepo: DEFAULT_SKIP_DIRS matches a path *segment* anywhere, which
     # also means a legitimate source package literally named `build/` is
-    # already invisible -- see docs/INDEXING.md.
+    # already invisible -- see docs/architecture.md.
     already_default=True,
     representative=(
         "dist/main.js",
@@ -223,9 +223,9 @@ SENSITIVE = ExclusionGroup(
     ),
     dir_parts=frozenset({"secrets", ".aws", ".ssh", ".gnupg"}),
     suffixes=(".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"),
-    # `repo2graph/secrets.py` already refuses these by default (and redacts
+    # `repo2graph/security.py` already refuses these by default (and redacts
     # matches inside files it does index). This group is a second, *glob*-shaped
-    # net for a tree that names its credentials something secrets.py does not
+    # net for a tree that names its credentials something security.py does not
     # recognise -- not a replacement for it. `--include-secrets` disables that
     # default; it does not disable this group.
     already_default=True,
@@ -307,5 +307,5 @@ def describe() -> str:
     lines.append("")
     lines.append("  all           every group above")
     lines.append("")
-    lines.append("Repeatable, and composable with --exclude. See docs/INDEXING.md.")
+    lines.append("Repeatable, and composable with --exclude. See docs/architecture.md.")
     return "\n".join(lines)

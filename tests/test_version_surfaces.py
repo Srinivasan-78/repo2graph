@@ -7,7 +7,7 @@ Action consumer is told to put in `uses:`, and the `repo2graph==X.Y.Z` pin
 examples -- so after 2.0.0 shipped, the README still said `@v1` and described it
 as following "every 1.x release", pointing users at a dead release line.
 
-Per AGENTS.md, values here are hand-derived from the repo's own files, never
+Per CONTRIBUTING.md, values here are hand-derived from the repo's own files, never
 recomputed by the code under test: the expected version comes from
 `pyproject.toml` read directly, and the things that must *not* move are literal
 strings.
@@ -106,6 +106,34 @@ def test_every_surface_path_exists():
     assert not missing, missing
 
 
+def test_precommit_hook_fires_for_every_surface_it_guards():
+    """The `version-consistency` hook's `files:` regex must match every path in
+    the surface table.
+
+    The regex is maintained by hand next to a comment claiming it mirrors
+    `version_surfaces.SURFACES`, and it had drifted both ways: it still named
+    four deleted docs, and it had never been updated for `npm/package.json`,
+    `CITATION.cff` or `docs/cli.md`, so a commit touching only those bumped a
+    version the local hook never checked. CI runs `check_version.py`
+    unconditionally, so this was a local-hook gap rather than a missed gate --
+    which is exactly why nothing caught it.
+    """
+    import re
+
+    import yaml
+
+    config = yaml.safe_load((REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    hooks = [h for repo in config["repos"] for h in repo["hooks"]]
+    hook = next(h for h in hooks if h["id"] == "version-consistency")
+    pattern = re.compile(hook["files"].strip())
+
+    unmatched = [p for p in vs.bumped_paths() if not pattern.match(p)]
+    assert not unmatched, (
+        f"the version-consistency hook does not fire for {unmatched}; "
+        "add them to its `files:` regex in .pre-commit-config.yaml"
+    )
+
+
 # --------------------------------------------------------------------------
 # What a bump must NOT touch
 # --------------------------------------------------------------------------
@@ -120,15 +148,14 @@ MUST_SURVIVE = (
     # test_bump_moves_every_surface_to_the_new_version could not see it, since
     # both lines would agree on the new value.
     ("CITATION.cff", "cff-version: 1.2.0"),
-    ("docs/github-action.md", "repo2graph>=1.4,<2"),
-    ("docs/github-action.md", "actions/checkout@v4"),
+    ("docs/cli.md", "repo2graph>=1.4,<2"),
+    ("docs/cli.md", "actions/checkout@v4"),
     ("README.md", "actions/checkout@v4"),
-    ("docs/ACTION_SECURITY.md", "actions/checkout@v4"),
 )
 
 # Files that record which version produced an artifact. Not surfaces, and a
 # bump that edited them would falsify a measurement.
-HISTORICAL = ("benchmarks/results.json", "examples/django/manifest.json")
+HISTORICAL = ("benchmarks/results.json",)
 
 
 @pytest.mark.parametrize("path,literal", MUST_SURVIVE)
@@ -164,7 +191,7 @@ def test_bump_rewrites_the_documented_major_tag(tmp_path):
     assert "Srinivasan-78/repo2graph@v9" in rewritten["README.md"]
     assert "`@v9` follows every 9.x release" in rewritten["README.md"]
     assert "`@v9.9.9`" in rewritten["README.md"]
-    assert 'repo2graph[mcp]==9.9.9"' in rewritten["docs/ENTERPRISE_DEPLOYMENT.md"]
+    assert "repo2graph==9.9.9" in rewritten["docs/cli.md"]
 
 
 def _rewrite_in_sandbox(tmp_path: Path, version: str) -> dict[str, str]:

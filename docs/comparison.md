@@ -14,7 +14,7 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
 
 | Tool | How it understands code | What a query returns | Setup | Where it beats repo2graph |
 |---|---|---|---|---|
-| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s built-in search** | No index. The agent runs Glob / Grep / Read on demand. | Whatever files and line ranges the agent chooses to read | None | Always fresh, zero setup, and the model picks its own search terms. On our [real-repo benchmark](retrieval-benchmark.md) a *mechanical* grep-then-read loop already finds more of the answer than repo2graph at 4k+ tokens. |
+| **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)'s built-in search** | No index. The agent runs Glob / Grep / Read on demand. | Whatever files and line ranges the agent chooses to read | None | Always fresh, zero setup, and the model picks its own search terms. On our [real-repo benchmark](../benchmarks/real/README.md) a *mechanical* grep-then-read loop already finds more of the answer than repo2graph at 4k+ tokens on lexical questions. |
 | **[Cursor](https://cursor.com/docs) codebase indexing** | Chunks embedded and stored by Cursor's service, synced incrementally | Nearest-neighbour chunks inside the Cursor agent | Automatic, inside Cursor | Handles vocabulary mismatch well; nothing to install. Only available inside Cursor, and code chunks leave the machine for embedding. |
 | **[Serena](https://github.com/oraios/serena)** | Language servers (LSP) for 40+ languages, or a JetBrains backend | Symbols, type-aware references, and symbol-level **edits** (rename, replace body) over MCP | `uv` + a language server per language | **Precision.** References come from a real type checker, not name matching, and it can edit. If you want your agent to find *every* caller of a method correctly, use Serena. |
 | **[Aider](https://aider.chat/docs/repomap.html)'s repo map** | tree-sitter + graph ranking of files by dependency | Signatures of the most relevant symbols repo-wide, ~1k tokens by default (`--map-tokens`) | Built into Aider | A compact whole-repo overview in very few tokens. Part of Aider's own workflow, not a separate service. |
@@ -26,8 +26,9 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
 **Where repo2graph is actually different**, and only where:
 
 - **The token ceiling is enforced, not advisory.** The whole returned pack is measured, clamped
-  and re-measured before it leaves the MCP server (`repo2graph/mcp.py`). An agent cannot flood its
-  own context through this tool.
+  and re-measured before it leaves the MCP server (`MCP_MAX_BUDGET_TOKENS = 12000` in
+  `repo2graph/mcp/guardrails.py`, clamped in the handler). An agent cannot flood its own context
+  through this tool.
 - **Every block carries a citation**, so a wrong answer shows you where it went wrong.
 - **It runs headless in CI.** The GitHub Action and `repo2graph impact` report a PR's blast radius
   (callers, importers, subclasses, and the files git history says usually change with it) with
@@ -36,10 +37,14 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
 - **Zero-infrastructure.** No graph database, no language server, no embedding service, no
   network call on the default path.
 
-**Where it is not different:** retrieval quality. On code it did not write, repo2graph's
-cited packs currently find *less* of the answer than grep at the same budget
-([numbers and diagnosis](retrieval-benchmark.md)). If raw recall is what you need today, a good
-agent with grep (or Serena, for exact references) is the better choice.
+**Where it is not different:** retrieval quality on lexical questions. On code it did not write,
+repo2graph's cited packs find *less* of the answer than grep at the same budget — 30/41/52%
+against 35/61/72% at 2k/4k/8k tokens
+([numbers and diagnosis](../benchmarks/real/README.md)). Graph expansion earns its keep on
+cross-file structural questions, where it reaches 70% at 4,000 tokens against grep's 20%, but
+that advantage is 0 pp at 2,000 tokens and 10 pp at 8,000, and it is measured over 10 tasks. If
+raw recall on ordinary questions is what you need today, a good agent with grep (or Serena, for
+exact references) is the better choice.
 
 ## The axis that matters: what comes back from a query
 
@@ -85,11 +90,12 @@ how this system hangs together, including the design docs", it is the better too
 path-between-two-concepts queries repo2graph has no equivalent for.
 
 **Where repo2graph wins:** it is a retrieval layer, not a map. The budget is enforced on the whole
-rendered pack rather than advisory (`MCP_MAX_BUDGET_TOKENS = 12000` in `repo2graph/mcp.py`, clamped
-in the handler and re-measured before returning), `CO_CHANGE` adds a signal no AST can produce, and
-the entire path — build, query, pack, MCP — makes zero network calls with no account anywhere. The
-one exception, `rag --answer`, is opt-in, names its provider and hostname on stderr before sending
-a byte, and drops secret-ish paths from the pack.
+rendered pack rather than advisory (`MCP_MAX_BUDGET_TOKENS = 12000` in
+`repo2graph/mcp/guardrails.py`, clamped in the handler and re-measured before returning),
+`CO_CHANGE` adds a signal no AST can produce, and the entire path — build, query, pack, MCP —
+makes zero network calls with no account anywhere. The one exception, `rag --answer`, is opt-in,
+names its provider and hostname on stderr before sending a byte, and drops secret-ish paths from
+the pack.
 
 ## repo2graph vs the Obsidian Code Graph plugin
 
@@ -106,8 +112,10 @@ install the plugin — the two do not compete for the same slot.
 
 ## repo2graph vs plain grep or an embeddings index
 
-This is what most agents do today. What follows is the design reasoning. Whether it pays off in practice is measured, not argued, in
-[retrieval-benchmark.md](retrieval-benchmark.md), and right now grep wins more often than it loses.
+This is what most agents do today. What follows is the design reasoning. Whether it pays off in
+practice is measured, not argued, in
+[the retrieval benchmark](../benchmarks/real/README.md) — and on lexical questions grep wins more
+often than it loses.
 
 - **grep** is exact and structureless. It finds the token, not the relationship: it cannot tell you
   who calls this function, and a match inside a comment ranks identically to the definition. When
@@ -121,8 +129,9 @@ repo2graph uses BM25 for the seeds — exact, cheap, no model — and then spend
 on *graph neighbours of the seeds* rather than on more text that merely resembles the query. Dense
 vectors are available (`repo2graph embed`) and fuse with the lexical score, but they are optional:
 the query path is stdlib-only by design, so a machine that only queries a shipped index does not
-need numpy (`repo2graph/embed.py`). In the current benchmark this expansion does not improve
-recall over BM25 alone.
+need numpy (`repo2graph/embed.py`). On the lexical benchmark this expansion does not improve
+recall over BM25 alone; on the structural benchmark it adds 20 to 30 points over BM25 at 4k and
+8k tokens.
 
 ## When repo2graph is the wrong choice
 
@@ -131,7 +140,8 @@ recall over BM25 alone.
   five candidates at `confidence = 1/n`. If you need the real call graph of a large C++ or Java
   system, use a compiler-backed tool.
 - **Your codebase is mostly dynamic dispatch, reflection or codegen.** A parser cannot see those
-  edges, and absence of an edge is not proof of absence of a call (`docs/limitations.md`).
+  edges, and absence of an edge is not proof of absence of a call. The
+  [synthetic regression suite](../benchmarks/corpus/README.md) pins the specific cases.
 - **You need every reference to a symbol, exactly.** Use a language-server tool such as
   [Serena](https://github.com/oraios/serena).
 - **You want the graph itself as the deliverable** — communities, layout, path queries between
@@ -142,7 +152,8 @@ recall over BM25 alone.
 ## Reproducing any of this
 
 Retrieval-quality numbers come from `benchmarks/real/results.json`
-([retrieval-benchmark.md](retrieval-benchmark.md), `scripts/bench_real_repos.py`). Build-scale
-numbers come from `benchmarks/results.json`, generated against five pinned public repositories;
-`docs/benchmarks.md` has the methodology and `examples/README.md` the exact reproduction command
-per repository. Nothing on this page is estimated: where a figure is not measured, it is not given.
+([method and diagnosis](../benchmarks/real/README.md), `scripts/bench_real_repos.py`).
+Build-scale numbers come from `benchmarks/results.json`, generated against five pinned public
+repositories; [`benchmarks/methodology.md`](../benchmarks/methodology.md) has the methodology and
+[`examples/README.md`](../examples/README.md) the exact reproduction command per repository.
+Nothing on this page is estimated: where a figure is not measured, it is not given.

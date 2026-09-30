@@ -189,7 +189,7 @@ def _validate_ref(ref: str) -> str:
 #: drift apart. All three neutralise a *user's* `~/.gitconfig`, which would
 #: otherwise reshape output this module parses with fixed patterns:
 #:
-#: - `core.quotepath=false` -- the AGENTS.md rule: a non-ASCII path must come
+#: - `core.quotepath=false` -- the CONTRIBUTING.md rule: a non-ASCII path must come
 #:   back raw, not as `"caf\303\251.py"`, which matches no path in the index.
 #: - `diff.noprefix=false` -- with it on, git emits `diff --git f.py f.py`.
 #: - `diff.mnemonicPrefix=false` -- with it on, `diff --git c/f.py w/f.py`.
@@ -210,7 +210,7 @@ _GIT_CONFIG = (
 def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
     """Parse a unified diff into structured FileDiff objects.
 
-    Uses src.split("\\n") according to AGENTS.md text slicing rules.
+    Uses src.split("\\n") according to CONTRIBUTING.md text slicing rules.
     Extracts 1-indexed added/modified line numbers in new file coordinates.
     """
     files: dict[str, FileDiff] = {}
@@ -344,7 +344,7 @@ def parse_unified_diff(diff_text: str) -> dict[str, FileDiff]:
 def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = None) -> str:
     """Retrieve raw unified diff using git subprocess.
 
-    Adheres strictly to AGENTS.md:
+    Adheres strictly to CONTRIBUTING.md:
     - `-c core.quotepath=false`
     - `-c diff.noprefix=false -c diff.mnemonicPrefix=false`, because
       `DIFF_GIT_RE` hard-requires the `a/`...` b/` prefixes. Both are ordinary
@@ -467,6 +467,7 @@ def is_test_path(path: str) -> bool:
 def is_public_symbol(node: dict[str, Any]) -> bool:
     """Determine whether a symbol is part of the package or module's public surface."""
     name = node.get("name", "")
+    qualname = str(node.get("qualname") or name)
     path = node.get("path", "")
     lang = node.get("lang", "")
     vis = node.get("visibility")
@@ -476,27 +477,28 @@ def is_public_symbol(node: dict[str, Any]) -> bool:
     if vis in ("public", "exported"):
         return True
 
-    if is_test_path(path):
+    norm_path = path.replace("\\", "/")
+    if norm_path.startswith(".github/") or is_test_path(norm_path):
         return False
 
     # Python conventions: leading underscore (including __dunder__) is not public API
-    if lang == "python" or path.endswith(".py"):
-        if name.startswith("_"):
+    if lang == "python" or norm_path.endswith(".py"):
+        if name.startswith("_") or qualname.startswith("_"):
             return False
         return True
 
     # Go conventions: uppercase first rune is exported
-    if lang == "go" or path.endswith(".go"):
+    if lang == "go" or norm_path.endswith(".go"):
         return bool(name and name[0].isupper())
 
     # TypeScript / JavaScript conventions
-    if lang in ("typescript", "javascript", "tsx") or path.endswith((".ts", ".js", ".tsx")):
-        if name.startswith("_"):
+    if lang in ("typescript", "javascript", "tsx") or norm_path.endswith((".ts", ".js", ".tsx")):
+        if name.startswith("_") or qualname.startswith("_"):
             return False
         return True
 
     # Java / Kotlin / default conventions
-    if name.startswith("_"):
+    if name.startswith("_") or qualname.startswith("_"):
         return False
     return True
 
@@ -853,7 +855,6 @@ def analyze_diff_impact(
     if len(relatable_paths) > 1:
         for fpath in relatable_paths:
             fid = f"file:{fpath}"
-            # Check if this file has ANY edge connecting it to another changed file
             connected = False
             for neighbor_id, _, _, _ in index.adj.get(fid, []):
                 n_node = index.nodes.get(neighbor_id)
@@ -979,7 +980,7 @@ def analyze_diff_impact(
     # symbols a call meant -- it is a fact about this analysis, not a defect in
     # the calling code -- so filing it against the caller's line accuses a file
     # that has nothing to do with the diff. Changing `HTTPTransport.start`
-    # produced 64 such findings, naming `secrets.py::_pem_spans` (which calls
+    # produced 64 such findings, naming `security.py::_pem_spans` (which calls
     # `match.start()`), `graph.py::add_cochange` and every other `.start()` call
     # in the repo, because six symbols share that name and the resolver splits
     # 1/n across them. As code-scanning alerts those arrived as inline review
@@ -1002,6 +1003,8 @@ def analyze_diff_impact(
         # SymbolChange, so reusing it here for an Optional lookup is a type error.
         changed = changed_by_id.get(sym_id)
         if changed is None:
+            continue
+        if changed.change_type == "added" or is_test_path(changed.path) or not changed.is_public:
             continue
         low = [c for c in callers if c.confidence < AMBIGUOUS_CALL_CONFIDENCE]
         if not low:
@@ -1074,7 +1077,10 @@ def analyze_diff_impact(
         ),
         "confidence_tiers": {
             "high": "Direct AST call resolution (confidence = 1.0)",
-            "plausible": "Transitive reachability or ambiguous symbol names (confidence < 0.8)",
+            "plausible": (
+                "Transitive reachability or ambiguous symbol names "
+                f"(confidence < {AMBIGUOUS_CALL_CONFIDENCE:.2f})"
+            ),
             "import_only": "Module-level import dependency without explicit symbol call site",
         },
     }
@@ -1085,7 +1091,11 @@ def analyze_diff_impact(
     # resolves against the wrong lines. That is a silent wrong answer, not an
     # error, so the report states its own coverage instead of implying none of
     # this happened. Build the index on the head commit being analyzed.
-    unindexed = sorted(p for p in changed_file_paths if f"file:{p}" not in index.nodes)
+    unindexed = sorted(
+        p
+        for p in changed_file_paths
+        if file_diffs[p].status != "deleted" and f"file:{p}" not in index.nodes
+    )
     guardrails["index_coverage"] = {
         "changed_files": len(changed_file_paths),
         "files_absent_from_index": unindexed,

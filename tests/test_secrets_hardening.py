@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from repo2graph import secrets
+from repo2graph import security
 from repo2graph.cli import main
-from repo2graph.secrets import (
+from repo2graph.security import (
     MAX_CONTAINER_ITEMS,
     _is_secret_path,
     redact_content,
@@ -348,7 +348,7 @@ def test_false_positive_resistance():
 # ---------------------------------------------------------------------------
 
 
-def test_iss338_lowercase_hex_assignment_is_detected():
+def test_lowercase_hex_assignment_is_detected():
     """The exact repro from #338: an all-lowercase hex value must be flagged."""
     text = 'api_key = "abcdef12345678901234567890123456"'
     findings = scan_content_secrets(text)
@@ -356,14 +356,14 @@ def test_iss338_lowercase_hex_assignment_is_detected():
     assert text[11:43] == "abcdef12345678901234567890123456"
 
 
-def test_iss338_mixed_case_assignment_still_detected():
+def test_mixed_case_assignment_still_detected():
     """The pre-fix behaviour (one uppercase char flips detection on) must hold too."""
     text = 'api_key = "Abcdef12345678901234567890123456"'
     findings = scan_content_secrets(text)
     assert findings == [("CREDENTIAL_ASSIGNMENT", 11, 43)]
 
 
-def test_iss338_lowercase_alphanumeric_api_key_is_redacted():
+def test_lowercase_alphanumeric_api_key_is_redacted():
     text = 'api_key = "4f6a8b1c2d3e4f5a6b7c8d9e0f1a2b3c"'
     redacted, count = redact_content(text)
     assert count == 1
@@ -379,7 +379,7 @@ def test_iss338_lowercase_alphanumeric_api_key_is_redacted():
         'secret = "just_snake_case_words_only"',
     ],
 )
-def test_iss338_pure_word_assignments_stay_ignored(text):
+def test_pure_word_assignments_stay_ignored(text):
     """Plain identifiers/words -- no digit at all -- must still be ignored.
 
     This is the regression guard: a fix that widens detection to *any*
@@ -420,7 +420,7 @@ _VENDOR_FIXTURES: tuple[tuple[str, str], ...] = (
 
 
 @pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
-def test_iss368_vendor_prefix_is_scanned(expected_type, secret):
+def test_vendor_prefix_is_scanned(expected_type, secret):
     text = f'token = "{secret}"'
     findings = scan_content_secrets(text)
     types = {f[0] for f in findings}
@@ -428,7 +428,7 @@ def test_iss368_vendor_prefix_is_scanned(expected_type, secret):
 
 
 @pytest.mark.parametrize("expected_type,secret", _VENDOR_FIXTURES)
-def test_iss368_vendor_prefix_is_redacted_preserving_lines(expected_type, secret):
+def test_vendor_prefix_is_redacted_preserving_lines(expected_type, secret):
     """redact-match redacts the fixture and the newline count is unchanged."""
     text = f"line one\ntoken = '{secret}'\nline three\n"
     redacted, count = redact_content(text)
@@ -440,11 +440,11 @@ def test_iss368_vendor_prefix_is_redacted_preserving_lines(expected_type, secret
     assert "line three" in redacted
 
 
-def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
+def test_anthropic_key_types_correctly_not_as_generic_openai():
     """`sk-ant-...` must be typed as anthropic_key, not the looser openai_key.
 
     Both patterns match the same span; this is the ordering/dedup contract
-    documented next to CONTENT_SECRET_PATTERNS in secrets.py.
+    documented next to CONTENT_SECRET_PATTERNS in security.py.
     """
     secret = "sk-ant-" + "A" * 24
     redacted, count = redact_content(f'x = "{secret}"')
@@ -475,7 +475,7 @@ def test_iss368_anthropic_key_types_correctly_not_as_generic_openai():
         "home/.config/gh/hosts.yml",
     ],
 )
-def test_iss368_new_secret_paths_are_detected(path):
+def test_new_secret_paths_are_detected(path):
     assert _is_secret_path(path), f"{path!r} should be classified as a secret path"
 
 
@@ -493,7 +493,7 @@ def test_iss368_new_secret_paths_are_detected(path):
         "src/hosts.yml",
     ],
 )
-def test_iss368_sibling_files_in_vendor_dirs_stay_unflagged(path):
+def test_sibling_files_in_vendor_dirs_stay_unflagged(path):
     assert not _is_secret_path(path), f"{path!r} should NOT be classified as a secret path"
 
 
@@ -501,7 +501,7 @@ def test_iss368_sibling_files_in_vendor_dirs_stay_unflagged(path):
 # False-positive corpus for the widened detection (#338 + #368)
 #
 # A false positive here is worse than a false negative: it silently drops
-# real source text out of every RAG pack (AGENTS.md). Every item below must
+# real source text out of every RAG pack (CONTRIBUTING.md). Every item below must
 # come back clean from both the scanner and the redactor.
 # ---------------------------------------------------------------------------
 
@@ -767,20 +767,20 @@ def test_a_complete_pem_block_spans_begin_through_end():
     """Offsets hand-derived: 31 + len("\nBODY\n") + 29 == 66."""
     text = BEGIN_PEM + "\nBODY\n" + END_PEM
     assert len(text) == 66
-    assert secrets._pem_spans(text) == [(0, 66)]
-    assert ("private_key", 0, 66) in secrets.scan_content_secrets(text)
+    assert security._pem_spans(text) == [(0, 66)]
+    assert ("private_key", 0, 66) in security.scan_content_secrets(text)
 
 
 def test_an_unterminated_pem_block_spans_only_its_header():
     """No END means the header alone, which is what the optional group gave."""
     text = BEGIN_PEM + "\nnot actually a key\n"
-    assert secrets._pem_spans(text) == [(0, 31)]
+    assert security._pem_spans(text) == [(0, 31)]
 
 
 def test_a_begin_nested_inside_a_block_is_not_reported_twice():
     """finditer never restarts inside a match it already made; nor does this."""
     text = BEGIN_PEM + "\n" + BEGIN_PEM + "\n" + END_PEM
-    spans = secrets._pem_spans(text)
+    spans = security._pem_spans(text)
     assert len(spans) == 1
     assert spans[0] == (0, len(text))
 
@@ -788,7 +788,7 @@ def test_a_begin_nested_inside_a_block_is_not_reported_twice():
 def test_two_separate_pem_blocks_pair_independently():
     one = BEGIN_PEM + "\nA\n" + END_PEM
     text = one + "\nfiller\n" + one
-    spans = secrets._pem_spans(text)
+    spans = security._pem_spans(text)
     assert spans == [(0, len(one)), (len(one) + 8, len(text))]
 
 
@@ -803,7 +803,7 @@ def test_repeated_begin_without_end_stays_linear():
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
     start = time.perf_counter()
-    findings = secrets.scan_content_secrets(text)
+    findings = security.scan_content_secrets(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 3.0, f"scan took {elapsed:.2f}s; the quadratic form is back"
@@ -838,7 +838,7 @@ def test_repeated_incomplete_begin_header_stays_linear():
     text = "-----BEGIN " * 40_000
 
     start = time.perf_counter()
-    findings = secrets.scan_content_secrets(text)
+    findings = security.scan_content_secrets(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 5.0, (
@@ -855,8 +855,8 @@ def test_repeated_incomplete_begin_header_stays_linear():
 def test_every_real_pem_label_is_still_matched(label):
     """Bounding the quantifier must not narrow what counts as a private key."""
     header = f"-----BEGIN {label}PRIVATE KEY-----"
-    assert secrets.PEM_BEGIN_RE.fullmatch(header), header
-    assert secrets.PEM_END_RE.fullmatch(header.replace("BEGIN", "END"))
+    assert security.PEM_BEGIN_RE.fullmatch(header), header
+    assert security.PEM_END_RE.fullmatch(header.replace("BEGIN", "END"))
 
 
 def test_redact_content_on_repeated_begin_stays_linear():
@@ -868,7 +868,7 @@ def test_redact_content_on_repeated_begin_stays_linear():
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
     start = time.perf_counter()
-    redacted, count = secrets.redact_content(text)
+    redacted, count = security.redact_content(text)
     elapsed = time.perf_counter() - start
 
     assert elapsed < 3.0, f"redact took {elapsed:.2f}s"
@@ -941,7 +941,7 @@ def test_every_allowlisted_key_actually_matches_the_regex():
     It would silently suggest the name is dangerous when the general rule
     never flagged it, which is how an allowlist rots into a list of guesses.
     """
-    from repo2graph.secrets import NON_SECRET_KEYS, SECRET_KEY_RE
+    from repo2graph.security import NON_SECRET_KEYS, SECRET_KEY_RE
 
     for key in NON_SECRET_KEYS:
         assert SECRET_KEY_RE.search(key), f"{key!r} never needed allowlisting"

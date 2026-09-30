@@ -228,7 +228,7 @@ def test_cli_stats_command_human_readable_and_json(tmp_path: Path, capsys):
     nothing pinned: the original test passed `--format text` explicitly while
     its own name claimed to be testing the default. Bare `stats` printing the
     raw `stats.json` is the pre-PR contract -- there was no `--format` flag
-    before this feature -- and `test_ac27_existing_subcommands_are_untouched`
+    before this feature -- and `test_existing_subcommands_are_untouched`
     in tests/test_rag.py depends on it, as does any caller piping it to jq.
     """
     (tmp_path / "a.py").write_text("def a(): return 1\n", encoding="utf8")
@@ -420,7 +420,7 @@ def test_cli_explain_path_command(tmp_path: Path, capsys):
 # Each of these was written against a reproduced failure, so each is a detector:
 # reverting its fix turns exactly this test red. Edge assertions are literal
 # `(src, dst, kind)` tuples hand-derived from the fixture above them -- never a
-# value the code under test computed (AGENTS.md).
+# value the code under test computed (CONTRIBUTING.md).
 # ==============================================================================
 
 

@@ -224,6 +224,46 @@ makes keeping it current a release-blocking step rather than a good intention.
   ([#345](https://github.com/Srinivasan-78/repo2graph/issues/345)) when `measure is len`, with
   byte-identical output and unchanged semantics for an arbitrary `measure`.
 
+### Fixed — repository tooling and stale references
+
+- **`prod-igy` stopped applying two area labels, silently.** `detectAreas` matched
+  `repo2graph/mcp.py` after that module became the `repo2graph/mcp/` package (`c8c20bdb`) and
+  `repo2graph/walker.py` after that shim was deleted (`8ef6d006`), so `area/mcp` and `area/walker`
+  could never be applied again and the MCP argument-guardrail reminder never fired on an MCP PR.
+  The area test asserted the stale path strings, which is what kept it quiet;
+  `test_prod_igy_area_patterns_name_paths_that_exist` now checks every `repo2graph/...` pattern
+  against the filesystem, so the next rename fails in CI instead.
+- **`prod-igy`'s PR checklist cited `AGENTS.md`**, removed in `58c1f833` when the technical
+  invariants moved into `CONTRIBUTING.md`. Every rule now names the CONTRIBUTING invariant it
+  comes from, and `checkAgentsRules` is `checkRepositoryInvariants`.
+- **`pre-commit run --all-files` broke the test suite on an unmodified tree.** `end-of-file-fixer`
+  stripped two trailing newlines from `tests/golden/rag_markdown.md`, which
+  `test_rag_markdown_is_byte_identical_to_baseline` and
+  `test_no_vectors_matches_the_baseline_golden` compare byte-for-byte against real program output.
+  The same hooks rewrote `examples/*/overview.md` (generated: `export.write_overview` writes no
+  trailing newline) and `benchmarks/corpus/` (parser input for the regression gate) on every run.
+  All three are now excluded, with the reasoning in the config.
+- **`CONTRIBUTING.md` told maintainers a tag push publishes a release.** `publish.yml` is
+  `workflow_dispatch`-only and deliberately so — its own header records that the `push: tags:` and
+  `release:` triggers made every release re-trigger itself twice, which the PyPI job tolerated and
+  the MCP Registry job did not. The documented "local bump + tag push" route therefore published
+  nothing, and recovering by dispatching would have bumped a second time. It is now one route, and
+  the local bump is documented as the dry run it has to be.
+- **Doc references that the four-document consolidation left pointing at the wrong file.**
+  `architecture.md` had been substituted for `README.md` where the text means the package
+  description setuptools reads, the `mcp-name` ownership marker, the language list
+  `test_languages_documented` actually asserts against, and the "What it can't do" section; and for
+  `docs/comparison.md` where it means the "Languages parsed for symbols" count. Also
+  `docs/CONTRIBUTING.md` → `.github/CONTRIBUTING.md` in six places, `npm/architecture.md` →
+  `npm/README.md` for the launcher resolution order (the old target documents no such thing), and
+  the remaining `repo2graph/mcp.py` paths.
+- **`examples/` documented an artifact set that is no longer committed.** `README.md` described
+  eight files per example plus a full `metadata.json` schema, and `ATTRIBUTIONS.md` recorded each
+  repository's analyzed commit as living in that file; the graph artifacts were purged in
+  `4e96b628` and only `README.md` and `overview.md` remain. Provenance now points at each example's
+  own "Revision" heading, which is where it is. This matters most in `ATTRIBUTIONS.md`, which makes
+  claims about what is redistributed.
+
 ### Changed
 
 - **The HTTP transport advertises the protocol revision it actually implements**
@@ -258,6 +298,18 @@ makes keeping it current a release-blocking step rather than a good intention.
   gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
   `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root
   `SECURITY.md` stub; the five translated READMEs and their drift test. All remain in git history.
+- `benchmarks/results_v2.json` — a `repo2graph` 1.6.0 run against `ts_app/`, `python_backend/` and
+  `modular_monolith/`, the three corpora deleted in `4e96b628`. No script, workflow or README
+  referenced it, and `benchmark_runner.py` now hard-fails on a task naming a corpus that is not
+  there, so it could not be regenerated as it stood. In git history.
+- The shipped rows and stale prose from `CONTRIBUTING.md`'s backlog. Every entry was re-checked
+  against the code: the SBOM step, `MAX_COCHANGE_BYTES`, `attestations: true`, the MCP 2.x port,
+  coverage measurement, the `jobs=1` auto-build pool pin and the above-`PARALLEL_MIN_FILES`
+  fixture had all landed. The design rationale for the incremental rebuild moved to
+  `docs/architecture.md` §3 rather than being dropped — it is shipped behaviour, not backlog.
+- `parse._receiver_kind`, dead since `_receiver_meta` took over receiver classification; it called
+  `_classify_receiver` with too few arguments to do what that function now does. Its docstring,
+  which documented the `none`/`self`/`other` semantics, moved onto `_classify_receiver` itself.
 
 ## [2.2.0] — 2026-09-26
 
@@ -580,7 +632,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   container injected) and **stale indexes** (the index is a snapshot, nothing
   watches the filesystem, and `repo2graph doctor` checks index integrity and
   vector drift — not whether your working tree moved on). `docs/why-graph.md`
-  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  gained an embedding-search section; `docs/architecture.md`'s "when to use" bullets
   became a persona routing table.
 - **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
   two places, the README's comparison table said 16, and all five translated
@@ -657,7 +709,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
   `path`/`start_line` fields -- they return markdown strings. Both corrected, and
   `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
-- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
+- **Four new docs were unreachable from `docs/architecture.md`**, along with `docs/ACTION_SECURITY.md`,
   which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
   now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
   working note.
@@ -1241,11 +1293,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   `pull_request`-from-fork runs.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
-  [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
+  `docs/SECURITY-AUDIT.md`. See also
   `docs/PRODUCTION_READINESS.md` (since removed),
-  [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
-  [docs/PRIVACY.md](docs/PRIVACY.md) and
-  [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).
+  `docs/PERFORMANCE.md`,
+  `docs/PRIVACY.md` and
+  `docs/ENTERPRISE_DEPLOYMENT.md` (all new).
 
 ## [1.5.1] — 2026-09-16
 

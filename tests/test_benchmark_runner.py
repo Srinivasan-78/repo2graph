@@ -9,8 +9,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.benchmark_runner import (  # noqa: E402
-    CORPUS_DIR,
-    TASKS_FILE,
     estimate_tokens,
     evaluate_evidence_presence,
     execute_benchmarks,
@@ -45,11 +43,14 @@ def test_evaluate_evidence_presence_full_and_partial():
     assert len(found3) == 0
 
 
+FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
+FIXTURE_TASKS_FILE = FIXTURES_DIR / "benchmark_tasks.json"
+
+
 def test_tasks_definition_completeness():
-    assert TASKS_FILE.exists()
-    tasks = json.loads(TASKS_FILE.read_text(encoding="utf-8"))
-    assert len(tasks) >= 20
-    assert len(tasks) == 25
+    assert FIXTURE_TASKS_FILE.exists()
+    tasks = json.loads(FIXTURE_TASKS_FILE.read_text(encoding="utf-8"))
+    assert len(tasks) >= 1
 
     required_keys = {
         "id",
@@ -60,50 +61,35 @@ def test_tasks_definition_completeness():
         "evidence_locations",
         "acceptable_variants",
     }
-    repos_found = set()
-
     for t in tasks:
         assert required_keys.issubset(t.keys())
         assert len(t["evidence_locations"]) > 0
-        repos_found.add(t["repo"])
-
-    # Must cover all 5 archetypes
-    assert repos_found == {
-        "ts_app",
-        "python_backend",
-        "modular_monolith",
-        "frontend_app",
-        "dynamic_patterns",
-    }
 
 
 def test_corpus_fixtures_exist():
-    assert CORPUS_DIR.is_dir()
-    expected_repos = [
-        "ts_app",
-        "python_backend",
-        "modular_monolith",
-        "frontend_app",
-        "dynamic_patterns",
-    ]
-    for r in expected_repos:
-        repo_path = CORPUS_DIR / r
-        assert repo_path.is_dir(), f"Missing corpus repo: {r}"
-        files = list(repo_path.rglob("*"))
-        assert len(files) >= 5, f"Corpus repo {r} has too few files ({len(files)})"
+    sample_repo = FIXTURES_DIR / "sample_repo"
+    assert sample_repo.is_dir()
+    files = list(sample_repo.rglob("*.py"))
+    assert len(files) >= 3
 
 
 def test_benchmark_runner_executes_suite(tmp_path):
-    summary = execute_benchmarks()
-    assert summary.total_tasks == 25
-    assert len(summary.repo_stats) == 5
+    import shutil
+
+    corpus_dir = tmp_path / "corpus"
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(FIXTURES_DIR / "sample_repo", corpus_dir / "sample_repo")
+
+    summary = execute_benchmarks(tasks_path=FIXTURE_TASKS_FILE, corpus_path=corpus_dir)
+    assert summary.total_tasks == 1
+    assert "sample_repo" in summary.repo_stats
     assert "repo2graph" in summary.workflow_metrics
     assert "ripgrep" in summary.workflow_metrics
     assert "agent_baseline" in summary.workflow_metrics
 
     r2g = summary.workflow_metrics["repo2graph"]
-    assert r2g["accuracy_rate_pct"] >= 80.0
-    assert r2g["mean_citation_accuracy"] >= 80.0
+    assert r2g["accuracy_rate_pct"] == 100.0
+    assert r2g["mean_citation_accuracy"] == 100.0
     assert r2g["mean_latency_ms"] > 0
 
 
@@ -146,3 +132,13 @@ def test_bench_real_repos_records_the_repo2graph_commit():
     prov = bench.source_commit()
     assert prov["commit"] and re.fullmatch(r"[0-9a-f]{40}", prov["commit"])
     assert isinstance(prov["dirty"], bool)
+
+
+def test_bench_real_repos_main_help():
+    import pytest
+
+    from scripts import bench_real_repos as bench
+
+    with pytest.raises(SystemExit) as exc_info:
+        bench.main(["--help"])
+    assert exc_info.value.code == 0

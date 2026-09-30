@@ -38,7 +38,7 @@ GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 #   * MINI_QUERY hits pkg/gateway.py::route_request lexically; pkg/audit.py::
 #     audit_event is reachable from it only over the CALLS edge.
 #   * SECRET_QUERY is engineered so BM25 ranks the `.env` chunk FIRST while
-#     still matching the two code chunks -- that is what makes AC-29 a real
+#     still matching the two code chunks -- that is what makes the secret filter rule a real
 #     test rather than a tautology.
 # --------------------------------------------------------------------------
 
@@ -111,6 +111,21 @@ def build_mini_index(repo: Path, out: Path) -> Path:
     return Path(out)
 
 
+def write_simple_repo(root: Path) -> Path:
+    """A minimal one-file repo so `build` can index it quickly.
+
+    Smaller than `write_mini_repo`: a single module with one symbol, for tests
+    about paths, locks and bounds that need *an* index rather than a graph with
+    interesting shape. It lived in two test files byte-for-byte identically.
+    """
+    repo = Path(root) / "src"
+    repo.mkdir()
+    (repo / "app.py").write_text(
+        "CONSTANT = 42\n\ndef hello():\n    return CONSTANT\n", encoding="utf8", newline="\n"
+    )
+    return repo
+
+
 @pytest.fixture
 def mini_repo(tmp_path):
     return write_mini_repo(tmp_path)
@@ -123,7 +138,7 @@ def mini_index(mini_repo, tmp_path):
 
 # --------------------------------------------------------------------------
 # A deliberately oversized repo, so that an unbounded pack really does blow
-# past the MCP ceiling. Without it, AC-27/28 would pass on a pack that was
+# past the MCP ceiling. Without it, the tests would pass on a pack that was
 # never near the limit and would not notice a ceiling that is not enforced.
 # --------------------------------------------------------------------------
 
@@ -182,7 +197,7 @@ def big_index(tmp_path_factory):
 # module, no long docstrings, because this generates on a 9-cell CI matrix.
 # Each module still carries a module-level table so its *file* node has a
 # chunk -- a file that is nothing but `def`s falls under the file_residual
-# floor and emits none (see AGENTS.md).
+# floor and emits none (see CONTRIBUTING.md).
 # --------------------------------------------------------------------------
 
 WIDE_MODULES = PARALLEL_MIN_FILES + 6

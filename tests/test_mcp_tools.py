@@ -2,7 +2,7 @@
 repo_blast_radius.
 
 #387 named its tool `repo_impact`; that name is already the PR/diff-impact
-tool `repo2graph/mcp.py` shipped earlier, so the reverse-reachability tool
+tool `repo2graph/mcp/` shipped earlier, so the reverse-reachability tool
 below ships as `repo_blast_radius` instead (see its docstring and
 `docs/mcp.md`).
 
@@ -86,7 +86,7 @@ def test_find_symbol_empty_name_is_an_error(mini_index):
 
 
 def test_find_symbol_never_returns_a_secret_path_node(mini_index):
-    """AC-29's rule extended to the new tool: a name inside `.env` must not
+    """the secret filter rule's rule extended to the new tool: a name inside `.env` must not
     surface a secret-path node id."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -123,7 +123,7 @@ def test_find_symbol_ambiguous_name_returns_every_candidate(mini_index):
 
 def test_find_symbol_limit_is_clamped_in_the_handler(mini_index, tmp_path):
     """Detector proof lives in the flood test below; this pins the ceiling
-    constant relationship the way test_ac28_ceiling_is_above_the_default does."""
+    constant relationship the way test_ceiling_is_above_the_default does."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_FIND_LIMIT <= mcp.MCP_MAX_FIND_LIMIT
 
@@ -261,7 +261,7 @@ def test_read_unknown_path_says_not_indexed(mini_index):
 def test_read_output_is_clamped_and_the_ceiling_actually_binds(tmp_path):
     """Flood proof: many small, back-to-back functions (each well under
     chunks.py's own 4000-char per-chunk split, so each is a single,
-    trustworthy chunk -- AGENTS.md's own note that a file must have real
+    trustworthy chunk -- CONTRIBUTING.md's own note that a file must have real
     content to carry a chunk is why they are not one giant function) whose
     *combined* widened read exceeds MCP_MAX_READ_CHARS."""
     mcp = mcp_module()
@@ -443,7 +443,7 @@ def test_path_between_visited_ceiling_actually_binds_under_flood(mini_index):
     """A hub with far more direct neighbours than MCP_MAX_PATH_VISITED, none
     of them the (unreachable) target, must report `truncated` rather than
     silently exploring the whole fan-out -- proving the visited cap binds
-    on its own, not merely the hop cap (AGENTS.md: a hop bound alone does
+    on its own, not merely the hop cap (CONTRIBUTING.md: a hop bound alone does
     not bound work on a dense graph)."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -551,7 +551,7 @@ def test_blast_radius_unknown_node_is_an_error(mini_index):
 
 
 def test_blast_radius_never_returns_a_secret_neighbour(mini_index):
-    """AC-29's rule extended: a caller/importer that lives at a secret path
+    """the secret filter rule's rule extended: a caller/importer that lives at a secret path
     must not appear even though it is graph-reachable."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -641,3 +641,51 @@ def test_no_new_tool_ever_leaks_the_env_secret(mini_index):
     for out in outs:
         assert "abc123deadbeef" not in str(out)
         assert "zzz999notreal" not in str(out)
+
+
+def test_path_between_paths_limit_is_clamped_in_the_handler(tmp_path, monkeypatch):
+    """`max_paths` above MCP_MAX_PATHS must not widen the traversal.
+
+    Nothing exercised this clamp, so deleting it would have let a caller ask for
+    an unbounded number of paths. Asserted where the value is consumed --
+    `_reconstruct`'s `cap` -- rather than by counting returned paths: the
+    bidirectional search reconstructs through one meeting node, so how many
+    paths a fixture yields is a property of the graph shape, not of the ceiling.
+    """
+    from repo2graph.mcp import traversal
+
+    mcp = mcp_module()
+    repo = tmp_path / "src"
+    pkg = repo / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf8", newline="\n")
+    (pkg / "chain.py").write_text(
+        "MODULE_NOTE = 'a two-hop chain from entry to target'\n\n\n"
+        "def target():\n    return MODULE_NOTE\n\n\n"
+        "def bridge():\n    return target()\n\n\n"
+        "def entry():\n    return bridge()\n",
+        encoding="utf8",
+        newline="\n",
+    )
+    out_dir = build_mini_index(repo, tmp_path / "idx")
+    idx = Index(out_dir)
+    entry, target = "sym:pkg/chain.py::entry", "sym:pkg/chain.py::target"
+    assert entry in idx.nodes and target in idx.nodes, sorted(idx.nodes)[:20]
+
+    caps: list[int] = []
+    real = traversal._reconstruct
+
+    def spy(parents, node, root, cap):
+        caps.append(cap)
+        return real(parents, node, root, cap)
+
+    monkeypatch.setattr(traversal, "_reconstruct", spy)
+
+    mcp.tool_repo_path_between(idx, entry, target, max_paths=999)
+    assert caps, "the traversal never reconstructed a path"
+    # The handler passes paths_limit * 4 down, so a clamped limit shows as 4x it.
+    assert max(caps) == mcp.MCP_MAX_PATHS * 4, caps
+
+    caps.clear()
+    mcp.tool_repo_path_between(idx, entry, target, max_paths=3)
+    assert max(caps) == 3 * 4, caps

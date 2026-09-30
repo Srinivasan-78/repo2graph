@@ -32,7 +32,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from version_surfaces import ROOT, bumped_paths, rewrite  # noqa: E402
 
-__all__ = ["bumped_paths"]  # re-exported for `--files`; see docs/publishing.md
+__all__ = ["bumped_paths"]  # re-exported for `--files`; see .github/CONTRIBUTING.md
 
 
 def parse_semver(v: str) -> tuple[int, int, int]:

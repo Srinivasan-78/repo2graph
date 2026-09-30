@@ -10,11 +10,11 @@ Commit `f0100363d8c374bd8e9ea7c9ba02744f0b802ca4` on `master`, analyzed 2026-09-
 
 ## Why this repository?
 
-The full kernel tree is architecture-specific code times every supported CPU family times every driver ever merged — not a size any single machine should attempt to index in one CI-friendly run (see docs/limitations.md, "extreme-scale"). This scope is one representative slice of each category the task calls out: `kernel/` (core subsystems: scheduler, cgroups, module loading), `fs/ext4/` (a representative filesystem), `drivers/net/ethernet/intel/e1000/` (a representative driver), and `include/linux/` (the headers those subsystems share).
+The full kernel tree is architecture-specific code times every supported CPU family times every driver ever merged — not a size any single machine should attempt to index in one CI-friendly run (see ../../architecture.md, "extreme-scale"). This scope is one representative slice of each category the task calls out: `kernel/` (core subsystems: scheduler, cgroups, module loading), `fs/ext4/` (a representative filesystem), `drivers/net/ethernet/intel/e1000/` (a representative driver), and `include/linux/` (the headers those subsystems share).
 
 ## Why this scope
 
-Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale).
+Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, not the whole repository) — see [what it can't do](../../README.md#what-it-cant-do).
 
 **Indexed paths:**
 - `kernel/**`
@@ -88,7 +88,7 @@ see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[../../architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 3,155 out of 68,785 total CALLS edges.
 
 ## Reproduce
@@ -99,4 +99,4 @@ python scripts/generate_examples.py --repo linux
 
 This clones `https://github.com/torvalds/linux` at `master` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#staleness)).

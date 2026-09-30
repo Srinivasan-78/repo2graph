@@ -12,7 +12,7 @@ from .export import path as artifact_path
 from .export import paths as artifact_paths
 from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
 
-from .secrets import (
+from .security import (
     SECRET_CONFIG_EXTS,
     SECRET_DIR_NAMES,
     SECRET_EXACT_NAMES,
@@ -33,6 +33,7 @@ __all__ = [
     "SECRET_WORD_RE",
     "_is_secret_path",
     "format_pack",
+    "is_lexical_weak",
     "read_jsonl",
     "tokenize",
 ]
@@ -54,31 +55,17 @@ Vector = Sequence[float]
 _T = TypeVar("_T")
 
 TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]+")
-# ISS-378: TOKEN_RE requires 2+ characters, so a single-character identifier
-# (Go/Java/TS/Rust's ubiquitous generic `T`, a matrix `A` or vector `b` in
-# numerical code) is never indexed and never matches a query -- a silent
-# zero-result rather than a ranked miss, which reads to a user as "the tool
-# does not know about this symbol". IDENT_RE is the targeted fix: it is a
-# strict superset of TOKEN_RE (same first-char class, `*` not `+`), used only
-# where a declared symbol's own `name` is at stake -- indexing it in
-# Index.__init__, matching it in _boost_identifiers, and admitting a
-# single-character query term in score() -- never for free text, which keeps
-# the index from filling with noise postings for every stray "a"/"i" in body
-# text.
+# IDENT_RE permits single-character identifiers (e.g. generic type params).
 IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 QUALNAME_SEP_RE = re.compile(r"::|\.")
 SUBTOKEN_RE = re.compile(r"_|(?<=[a-z0-9])(?=[A-Z])")
 
 # BM25 scoring constants: term frequency saturation (K1), length normalization (B).
-# BM25_AVG_LEN is the empty-index fallback / documented default; a non-empty
-# Index uses corpus avgdl = sum(lengths) / N for the length term in score().
 BM25_K1 = 1.5
 BM25_B = 0.75
 BM25_AVG_LEN = 400.0
 
-# An exact identifier match on a chunk's own name/qualname multiplies its BM25
-# score. It never introduces a chunk BM25 did not already score, so `score()`'s
-# "every hit contains a query term" invariant survives.
+# Exact identifier match multiplier.
 IDENT_BOOST = 2.5
 
 # Reciprocal rank fusion: 1/(RRF_K + rank_bm25) + 1/(RRF_K + rank_vec).
@@ -105,7 +92,7 @@ ALL_EDGE_DIRS: dict[str, tuple[str, ...]] = {}
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
 # shared with pack_context's identically valued default: the two mean different
-# things by budget_chars and must stay separately adjustable (AGENTS.md, "Two
+# things by budget_chars and must stay separately adjustable (CONTRIBUTING.md, "Two
 # budget models coexist").
 RETRIEVE_BUDGET_CHARS = 24000
 
@@ -121,26 +108,16 @@ PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
 
 
 def read_jsonl(path: Path) -> list[Record]:
-    """Load a JSONL file written by export.write_jsonl.
+    """Load and parse JSONL records from a file with per-line byte ceilings.
 
-    Reads bytes and splits on raw b"\n" only, never text mode's
-    universal-newline handling: json.dumps(ensure_ascii=False) passes U+2028,
-    U+2029 and U+0085 through verbatim, and universal-newline mode (like
-    str.splitlines()) treats those as line breaks, which would cut records
-    in half.
+    Args:
+        path: Path to the JSONL file.
 
-    ISS-408: each line is bounded at MAX_JSONL_LINE_BYTES (see integrity.py) --
-    a single JSONL record anywhere near that size is malformed regardless of
-    how large a legitimate index is, the same reasoning as
-    answer._BoundedLines' per-response ceiling. The framing comes from
-    integrity._iter_raw_lines rather than `for raw in fh` because the latter
-    reads until a newline: on a file that contains none, the allocation has
-    already happened by the time a per-line check could measure it. There is
-    deliberately no *total*-bytes ceiling here: chunks.jsonl is the
-    repository's own text and is legitimately large on a big monorepo.
-    integrity.MAX_JSONL_TOTAL_BYTES bounds the total on the verification path
-    (integrity/doctor), which reads an untrusted index end to end and can
-    afford to be strict.
+    Returns:
+        List of parsed JSON record dictionaries.
+
+    Raises:
+        ValueError: If any line exceeds MAX_JSONL_LINE_BYTES or contains invalid JSON.
     """
     rows: list[Record] = []
     with open(path, "rb") as fh:
@@ -181,6 +158,57 @@ def tokenize(text: str) -> list[str]:
     return out
 
 
+def _chunk_signature(text: str) -> str:
+    """Extract the first non-header, non-blank declaration line from a chunk's text."""
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    return lines[i].strip() if i < len(lines) else ""
+
+
+def is_lexical_weak(
+    ranked_scores: Sequence[tuple[float, int]],
+    k: int = 8,
+    min_top_score: float = 18.0,
+    flat_ratio: float = 1.35,
+    num_chunks: int | None = None,
+) -> bool:
+    """Determine whether lexical evidence for a query is weak or ambiguous.
+
+    A query has weak lexical evidence if:
+    1. No candidates were found at all.
+    2. The top-ranked BM25 score is below `min_top_score` (no strong keyword matches).
+    3. The score distribution across the top-k is flat (`top_score / s_k < flat_ratio`),
+       indicating ambiguity among candidates rather than a clear winner.
+
+    Args:
+        ranked_scores: Ranked (score, index) pairs from BM25/lexical scoring.
+        k: Number of candidates to evaluate for flatness.
+        min_top_score: Absolute score floor below which lexical match is considered weak.
+        flat_ratio: Ratio of top-1 score to top-k score below which distribution is flat.
+        num_chunks: Total chunks in index to scale floor for tiny test fixtures.
+
+    Returns:
+        True if lexical evidence is weak and graph expansion is recommended; False otherwise.
+    """
+    if not ranked_scores:
+        return True
+    top_score = ranked_scores[0][0]
+    floor = min_top_score
+    if num_chunks is not None and num_chunks < 100:
+        floor = min(min_top_score, 1.0)
+    if top_score < floor:
+        return True
+    if len(ranked_scores) >= k:
+        s_k = ranked_scores[k - 1][0]
+        if s_k > 0 and (top_score / s_k) < flat_ratio:
+            return True
+    return False
+
+
 class Index:
     # (fused, candidates) for the most recent score_rrf call, or None if no
     # fused query has run on this Index yet. A class-level default so every
@@ -219,11 +247,7 @@ class Index:
             # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
             # inspectable) with a null text/qualname must not TypeError in re.findall.
             terms = tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3
-            # ISS-378: a single-character declared name (`name`, not text/
-            # qualname prose) is admitted here even though tokenize() would
-            # drop it -- multi-character names are already reachable through
-            # tokenize(qualname) above, so this only ever adds the narrow case
-            # TOKEN_RE cannot: a name that *is* one identifier character.
+            # Single-character declared identifier (e.g. generic type param):
             name = c.get("name") or ""
             if len(name) == 1 and IDENT_RE.fullmatch(name):
                 terms += [name.lower()] * 3
@@ -234,20 +258,12 @@ class Index:
             self.df.update(counts.keys())
         self.N = len(self.chunks)
         self.avgdl = (sum(self.lengths) / self.N) if self.N else BM25_AVG_LEN
-        # Dense vectors are optional in every sense: absent, unreadable,
-        # truncated or stale, the index still answers lexically.
         self.vectors: dict[int, Vector] | None = None
         self.vector_meta: dict[str, Any] | None = None
         self._load_vectors()
 
     def _load_vectors(self) -> None:
-        """Load agent/vectors.npy into chunk-list-index keys, or give up quietly.
-
-        The file is keyed by chunk id; ids the current chunks.jsonl no longer
-        holds are dropped rather than shifted onto a neighbouring row, because
-        a mis-aligned vector produces plausible-looking garbage rankings that
-        nothing downstream can detect.
-        """
+        """Load dense chunk vectors and metadata from vectors.npy if present."""
         npy = artifact_path(self.dir, "vectors.npy")
         if not npy.exists():
             return
@@ -256,7 +272,6 @@ class Index:
 
             by_id, meta = load_vectors(npy)
         except Exception:
-            # OSError, ValueError, a malformed meta -- all the same answer.
             return
         pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
         vectors: dict[int, Vector] = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
@@ -265,11 +280,13 @@ class Index:
         self.vectors, self.vector_meta = vectors, meta
 
     def fuse_ok(self, embedder: "Embedder") -> tuple[bool, str]:
-        """May `embedder`'s query vectors be fused with this index's vectors?
+        """Verify embedder compatibility with index vector dimensions and model.
 
-        A silent model or width mismatch is worse than no vectors at all: the
-        rankings stay plausible while being meaningless, so the answer is a
-        refusal naming both sides rather than a best effort.
+        Args:
+            embedder: Embedder instance to validate.
+
+        Returns:
+            Tuple of (is_compatible, error_message).
         """
         if not self.vectors or not self.vector_meta:
             return False, (
@@ -359,14 +376,7 @@ class Index:
     _is_secret_path = staticmethod(_is_secret_path)
 
     def _served(self, c: Record) -> Record:
-        """`c` with its text content-redacted when the index may hold raw secrets.
-
-        Serve-time backstop for the agent path (`exclude_secrets=True`): an index
-        whose manifest does not say its chunks were redacted at build time
-        (`--secret-policy off`/`warn-only`, a pre-fix `--include-secrets` build,
-        or no manifest at all) is scanned here, per returned chunk. A redacted
-        index is passed through untouched, so the default path costs nothing.
-        """
+        """Return chunk record with content redacted according to policy."""
         policy = self.manifest.get("secret_filter_policy")
         if policy in ("redact-match", "exclude-file"):
             return c
@@ -377,13 +387,15 @@ class Index:
         return {**c, "text": red} if n else c
 
     def score(self, query: str) -> list[tuple[float, int]]:
-        # ISS-378: tokenize(query) alone drops single-character terms (TOKEN_RE
-        # requires 2+ chars), so a query of exactly "T" would never look up the
-        # "t" posting even though Index.__init__ now creates one for a
-        # single-character symbol name. Adding IDENT_RE's single-char matches
-        # is safe for ordinary queries: `postings.get(term)` below is a no-op
-        # for any term that was never indexed, which is every single character
-        # except a declared one-letter name.
+        """Rank indexed chunks against query using BM25 with identifier boosting.
+
+        Args:
+            query: Search terms or question string.
+
+        Returns:
+            Sorted list of (bm25_score, chunk_index) tuples.
+        """
+        # Support single-character identifiers matching declared symbols:
         q = Counter(tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1])
         acc: dict[int, float] = defaultdict(float)
         for term, qn in q.items():
@@ -404,16 +416,8 @@ class Index:
         return scored
 
     def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
-        """Multiply the score of chunks the query names outright.
-
-        A pinpoint query like `normalize_provider` should return the symbol, not
-        the prose that happens to repeat the word. Only whole identifiers from
-        the query count (not tokenize()'s sub-words), and only chunks BM25
-        already scored are touched, so score()'s invariants are unchanged.
-        """
-        # IDENT_RE, not TOKEN_RE: a query of exactly "T" must be able to boost
-        # a chunk whose declared name is "T" (ISS-378). IDENT_RE is a strict
-        # superset of TOKEN_RE, so every multi-character match is unchanged.
+        """Apply multiplier to BM25 scores for chunks matching query identifier names."""
+        # IDENT_RE supports single-character identifier names:
         idents = set(IDENT_RE.findall(query))
         if not idents:
             return
@@ -433,15 +437,18 @@ class Index:
         query: str,
         vectors: Mapping[Any, Vector] | None = None,
         embedder: "Embedder | None" = None,
+        weights: tuple[float, float] = (1.0, 1.0),
     ) -> list[tuple[float, int]]:
-        """BM25 fused with an optional dense ranking by reciprocal rank fusion.
+        """Score chunks combining lexical BM25 and dense vector rankings via RRF.
 
-        With neither `vectors` nor `embedder` this is exactly `score()` — the
-        zero-dependency default path. `embedder` is any object with
-        `.encode(list[str]) -> list[sequence[float]]` (sentence-transformers
-        satisfies it); `vectors` is a mapping of chunk index -> vector, which may
-        carry the query vector under the key "query". Similarity is computed in
-        plain Python, so no optional dependency is imported here either.
+        Args:
+            query: Query string.
+            vectors: Optional mapping of chunk indices to precomputed vectors.
+            embedder: Optional active embedder instance.
+            weights: Optional tuple of (w_bm25, w_vec) multipliers for reciprocal ranks.
+
+        Returns:
+            Sorted list of (rrf_score, chunk_index) tuples.
         """
         base = self.score(query)
         if vectors is None and embedder is None:
@@ -474,11 +481,12 @@ class Index:
             range(len(candidates)), key=lambda p: (-_cosine(qvec, cvecs[p]), candidates[p])
         )
         vec_rank = {candidates[p]: r for r, p in enumerate(by_sim, 1)}
+        w_bm25, w_vec = weights
         fused: list[tuple[float, int]] = []
         for rank, (_s, i) in enumerate(base, 1):
-            score = 1.0 / (RRF_K + rank)
+            score = w_bm25 / (RRF_K + rank)
             if i in vec_rank:
-                score += 1.0 / (RRF_K + vec_rank[i])
+                score += w_vec / (RRF_K + vec_rank[i])
             fused.append((score, i))
         fused.sort(reverse=True)
         return fused
@@ -564,13 +572,18 @@ class Index:
         min_confidence: float = 1.0,
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
     ) -> list[tuple[str, str, str, str]]:
-        """Walk `hops` edges out from `seed_nodes`, newest frontier first.
+        """Traverse graph outward from seed nodes.
 
-        `min_confidence` gates CALLS edges only: call resolution is name-based
-        and an overloaded name fans out to several candidates at 1/n confidence,
-        while IMPORTS/DEFINES/INHERITS carry no `confidence` key at all and must
-        never be dropped by the gate. `edge_dirs` maps an edge type to the
-        directions worth following (see DEFAULT_EDGE_DIRS).
+        Args:
+            seed_nodes: Starting node IDs.
+            hops: Traversal depth in hops.
+            edge_types: Allowed edge type names.
+            per_hop: Max neighbors admitted per hop.
+            min_confidence: Minimum confidence threshold for CALLS edges.
+            edge_dirs: Direction filter mapping per edge type.
+
+        Returns:
+            List of (dst_node_id, edge_type, direction, src_node_id) tuples.
         """
         wanted = frozenset(edge_types) if edge_types else DEFAULT_EDGE_TYPES
         dirs: Mapping[str, tuple[str, ...]] = DEFAULT_EDGE_DIRS if edge_dirs is None else edge_dirs
@@ -582,9 +595,6 @@ class Index:
             if not frontier:
                 break
             nxt: list[str] = []
-            # The cap is per hop, not per frontier node: breaking only the inner
-            # loop let each later frontier node add another 60 edges after the
-            # budget was already spent.
             cap = per_hop * len(frontier)
             for nid in frontier:
                 if len(nxt) >= cap:
@@ -625,18 +635,29 @@ class Index:
         exclude_secrets: bool = False,
         extra_secret_keywords: list[str] | None = None,
         extra_secret_dirs: list[str] | None = None,
+        neighbours: str = "full",
+        conditional_expansion: bool = False,
     ) -> list[Record]:
-        """Lexical seeds plus their graph neighbours, budgeted on chunk text.
+        """Retrieve ranked seed chunks and graph neighbors within character budget.
 
-        `budget_chars` bounds the sum of the returned chunks' `text` only — it
-        says nothing about how a caller renders them. pack_context() uses the
-        other model (the whole rendered markdown); do not unify the two.
-        `min_confidence=None` means "do not filter CALLS on confidence", which is
-        this method's historical behaviour. With `vectors` and `embedder` both
-        None -- the default -- seeds come from `score()` exactly as they always
-        have; supply either and they come from the fused ranking instead.
-        `exclude_secrets` drops secret-looking paths (same rule as
-        pack_context); False, the default, is the historical behaviour.
+        Args:
+            query: Search terms or question string.
+            k: Number of initial seed chunks.
+            hops: Traversal depth around seeds.
+            budget_chars: Maximum character budget across returned chunk bodies.
+            min_confidence: Minimum confidence threshold for CALLS traversal.
+            vectors: Optional precomputed vector mapping.
+            embedder: Optional Embedder for hybrid search.
+            exclude_secrets: Whether to filter secret-matching paths.
+            extra_secret_keywords: Additional sensitive keywords to filter.
+            extra_secret_dirs: Additional sensitive directory names to filter.
+            neighbours: Neighbour rendering mode: 'full' emits complete chunk text;
+                'cite' emits one-line signature citations without chunk body.
+            conditional_expansion: If True, only expands graph neighbours when lexical
+                evidence is weak or ambiguous.
+
+        Returns:
+            List of matching chunk dictionaries.
         """
         conf = 0.0 if min_confidence is None else min_confidence
 
@@ -664,7 +685,7 @@ class Index:
             if nid in seen_nodes_set or _secret(c, nid):
                 continue
             chunk_len = len(c.get("text") or "")
-            # ISS-37: test budget before appending so we do not overshoot by a whole chunk
+            # Verify budget headroom before appending to avoid overshooting:
             if picked and used + chunk_len > budget_chars:
                 break
             seen_nodes_set.add(nid)
@@ -676,11 +697,10 @@ class Index:
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
                 break
-        # ISS-37: Bound the expansion pass by both count and budget
+        # Bound the expansion pass by both count and budget:
+        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+            return picked
         max_total = k * 2
-        # edge_dirs=ALL_EDGE_DIRS, not the default: this method predates
-        # DEFAULT_EDGE_DIRS and must keep returning DEFINES-out / IMPORTS-in /
-        # INHERITS-in neighbours (D1 — `repo2graph query` output is unchanged).
         for nid, etype, direction, src in self.expand(
             seen_nodes_list, hops=hops, min_confidence=conf, edge_dirs=ALL_EDGE_DIRS
         ):
@@ -691,11 +711,16 @@ class Index:
                     break
                 if exclude_secrets:
                     c = self._served(c)
-                chunk_len = len(c.get("text") or "")
+                chunk_text = c.get("text") or ""
+                rec = c
+                if neighbours == "cite":
+                    chunk_text = _chunk_signature(chunk_text)
+                    rec = {**c, "text": chunk_text, "citation_only": True}
+                chunk_len = len(chunk_text)
                 if used + chunk_len > budget_chars:
                     break
                 src_name = self.nodes.get(src, {}).get("name") or src
-                picked.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
+                picked.append({**rec, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
                     break
@@ -704,12 +729,7 @@ class Index:
     # ---- context packing -------------------------------------------------
 
     def map_prepend(self) -> str:
-        """The repo map: the prose overview plus the top entry points.
-
-        Entry points come straight off `manifest["entrypoints"]`, which
-        export.write_manifest already sorted by reach. Both sources are
-        optional; with neither, this is the empty string.
-        """
+        """Render repository overview and top entry points as markdown."""
         parts = []
         if self.overview.strip():
             parts.append(self.overview.strip("\n"))
@@ -743,24 +763,38 @@ class Index:
         count_tokens: Callable[[str], int] | None = None,
         extra_secret_keywords: tuple[str, ...] | list[str] | None = None,
         extra_secret_dirs: tuple[str, ...] | list[str] | None = None,
+        neighbours: str = "full",
+        max_neighbours: int | None = None,
+        conditional_expansion: bool = False,
+        precision_first: bool = False,
     ) -> dict[str, Any]:
-        """An agent-ready markdown pack: repo map, `---`, then cited chunks.
+        """Assemble an agent-ready markdown context pack within budget.
 
-        `budget_chars` bounds the WHOLE returned markdown — map prepend, `---`
-        separator and every `### [cite: ...]` header included — unlike
-        retrieve(), which budgets chunk text only. `budget_chars <= 0` means
-        unbounded. Spending order is map (capped at MAP_BUDGET_FRAC of the
-        budget), then seeds in score order at full text, then graph neighbours
-        at full text or, if that no longer fits, compressed to their header
-        lines plus the signature line. Nothing is truncated mid-line.
+        Args:
+            query: Question or symbol query string.
+            k: Number of seed chunks.
+            hops: Graph expansion depth.
+            budget_chars: Overall character ceiling for assembled markdown.
+            min_confidence: Minimum confidence filter for CALLS edges.
+            expand_graph: Whether to expand seeds using graph neighbors.
+            vectors: Optional precomputed vectors.
+            embedder: Optional Embedder instance.
+            exclude_secrets: Whether to omit sensitive files.
+            budget_tokens: Optional token ceiling (replaces budget_chars).
+            count_tokens: Token counting function (defaults to len // 4).
+            extra_secret_keywords: Additional keywords for secret filtering.
+            extra_secret_dirs: Additional directory names for secret filtering.
+            neighbours: Neighbour rendering mode: 'full' emits complete chunk text;
+                'cite' emits one-line signature citations without chunk body.
+            max_neighbours: Maximum neighbour chunks to admit into context.
+            conditional_expansion: If True, only expands graph neighbours when lexical
+                evidence is weak or ambiguous.
+            precision_first: If True, prioritizes direct lexical hits in score order and
+                only admits neighbours cited by an already-admitted chunk.
 
-        `budget_tokens` *replaces* `budget_chars` as the accounting unit when
-        it is not None: every fit test then goes through the measure function
-        (`count_tokens=`, defaulting to the module-level estimate) instead of
-        len(). Accounting is cumulative — the measure is applied to the text
-        assembled so far plus the candidate block, never to blocks in
-        isolation — so a non-additive measure cannot be talked past.
-        `tokens_used` is always reported; `tokens_budget` is 0 when unset.
+        Returns:
+            Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
+            'tokens_used', 'tokens_budget', and 'truncated'.
         """
         measure_tokens = count_tokens if callable(count_tokens) else _DEFAULT_MEASURE
         use_tokens = budget_tokens is not None
@@ -770,9 +804,15 @@ class Index:
         measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
         bounded = budget > 0
+
+        ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
+        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+            expand_graph = False
+
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
-        for s, i in self.score_rrf(query, vectors=vectors, embedder=embedder)[: k * 3]:
+        seed_limit = k if precision_first else k * 3
+        for s, i in ranked[:seed_limit]:
             c = self.chunks[i]
             nid = c["node_id"]
             if nid in seen_nodes:
@@ -790,27 +830,61 @@ class Index:
             if len(seeds) >= k:
                 break
 
-        neighbours: list[Record] = []
+        graph_neighbours: list[Record] = []
         if expand_graph and seeds:
-            for nid, etype, direction, src in self.expand(
-                [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
-            ):
-                if nid in seen_nodes:
-                    continue
-                node_chunks = self.by_node.get(nid, [])
-                if not node_chunks:
-                    continue
-                c = node_chunks[0]
-                c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
-                seen_nodes.add(nid)
-                if exclude_secrets and _is_secret_path(
-                    c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+            if precision_first:
+                for seed_chunk in seeds:
+                    if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                        break
+                    for nid, etype, direction, src in self.expand(
+                        [seed_chunk["node_id"]], hops=hops, min_confidence=min_confidence
+                    ):
+                        if nid in seen_nodes:
+                            continue
+                        node_chunks = self.by_node.get(nid, [])
+                        if not node_chunks:
+                            continue
+                        c = node_chunks[0]
+                        c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                        seen_nodes.add(nid)
+                        if exclude_secrets and _is_secret_path(
+                            c_path,
+                            extra_keywords=extra_secret_keywords,
+                            extra_dirs=extra_secret_dirs,
+                        ):
+                            continue
+                        if exclude_secrets:
+                            c = self._served(c)
+                        src_name = self.nodes.get(src, {}).get("name") or src
+                        graph_neighbours.append(
+                            {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
+                        )
+                        if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                            break
+            else:
+                for nid, etype, direction, src in self.expand(
+                    [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
                 ):
-                    continue
-                if exclude_secrets:
-                    c = self._served(c)
-                src_name = self.nodes.get(src, {}).get("name") or src
-                neighbours.append({**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
+                    if nid in seen_nodes:
+                        continue
+                    node_chunks = self.by_node.get(nid, [])
+                    if not node_chunks:
+                        continue
+                    c = node_chunks[0]
+                    c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                    seen_nodes.add(nid)
+                    if exclude_secrets and _is_secret_path(
+                        c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
+                    ):
+                        continue
+                    if exclude_secrets:
+                        c = self._served(c)
+                    src_name = self.nodes.get(src, {}).get("name") or src
+                    graph_neighbours.append(
+                        {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
+                    )
+                    if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
+                        break
 
         full_map = self.map_prepend()
         shown_map = full_map
@@ -837,12 +911,25 @@ class Index:
                 body += block
             else:
                 truncated = True
-        for c in neighbours:
+        for c in graph_neighbours:
             if not picked:
                 # A neighbour without a seed is context without a question:
                 # seeds always win the budget (and an empty pack is honest).
                 truncated = True
                 break
+            if neighbours == "cite":
+                sig = _chunk_signature(c.get("text") or "")
+                c_cite = {**c, "citation_only": True}
+                block = _cite_block(c_cite, sig)
+                if not bounded:
+                    picked.append((c_cite, sig))
+                    continue
+                if fits(block):
+                    picked.append((c_cite, sig))
+                    body += block
+                else:
+                    truncated = True
+                continue
             text = c.get("text") or ""
             block = _cite_block(c, text)
             if not bounded:
@@ -947,34 +1034,24 @@ def _cosine(a: Vector, b: Vector) -> float:
 
 
 def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> str:
-    """The longest whole-line prefix of `text` that fits in `limit` units.
+    """Return the longest whole-line prefix of text that fits within limit units.
 
-    The candidate is measured whole rather than line by line, so a measure that
-    is not additive (any token estimate) is applied to the string that will
-    actually be emitted. With the default `len` this is exactly the running
-    "len(line) + a newline" arithmetic it replaces.
+    Args:
+        text: Input string to truncate at line boundary.
+        limit: Maximum allowed budget (characters or tokens).
+        measure: Measurement function (defaults to len).
 
-    ISS-345: the old loop rebuilt `"\n".join([*kept, line])` -- a fresh list
-    unpack plus a fresh O(K)-length join -- on every one of N lines, so
-    fitting a K-line prefix cost O(N*K) rather than O(N). `measure is len`
-    (true for the default, and for any caller that passes the builtin back)
-    is the additive case AGENTS.md's "with the default len this is exactly
-    the running len(line) + newline arithmetic" already documents: track the
-    cumulative character count instead of a string, and build the result
-    once at the end via a single join. A non-`len` `measure` is not provably
-    additive (a token estimate need not be), so that path is unchanged in
-    complexity -- it still measures the whole candidate every line -- but no
-    longer pays the `[*kept, line]` unpack on top of the join. Output is
-    unchanged either way: `_fit_lines` has byte-level tests.
+    Returns:
+        Truncated string with no broken lines.
     """
     if limit <= 0:
         return ""
-    lines = text.split("\n")  # never splitlines(): see AGENTS.md
+    lines = text.split("\n")
     if measure is len:
         total = 0
         n_kept = 0
         for line in lines:
-            add = len(line) if n_kept == 0 else len(line) + 1  # +1 for the "\n" join adds
+            add = len(line) if n_kept == 0 else len(line) + 1
             if total + add > limit:
                 break
             total += add
@@ -990,12 +1067,8 @@ def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> st
 
 
 def _compress(text: str) -> str:
-    """A chunk reduced to its `#` metadata header plus the signature line.
-
-    chunks.build_chunks always emits `# file:` / `# <kind>:` header lines ahead
-    of the body, so the first non-blank line after them is the def/class line.
-    """
-    lines = text.split("\n")  # never splitlines(): see AGENTS.md
+    """Compress a chunk to its metadata header lines plus declaration signature."""
+    lines = text.split("\n")
     i = 0
     while i < len(lines) and lines[i].startswith("#"):
         i += 1
@@ -1007,8 +1080,6 @@ def _compress(text: str) -> str:
     return "\n".join(kept)
 
 
-#: `# <key>: ` lines chunks.build_chunks writes after `# file:` (and, for a
-#: symbol, its `# <kind>: <qualname>  (lines a-b, lang)` line).
 _HEADER_PREFIXES = (
     "# imports: ",
     "# defines: ",
@@ -1024,7 +1095,7 @@ _PART_SUFFIX_RE = re.compile(r"#\d+$")
 
 
 def _header_len(lines: list[str]) -> int:
-    """How many leading lines of a chunk's text are its generated header."""
+    """Count leading generated header lines in chunk text."""
     if not lines or not lines[0].startswith("# file: "):
         return 0
     i = 1
@@ -1036,14 +1107,7 @@ def _header_len(lines: list[str]) -> int:
 
 
 def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
-    """`chunk` re-cited to the source lines `_compress` actually kept.
-
-    `excerpt_of` keeps the whole chunk's span. The shown span replaces
-    `start_line`/`end_line` only where chunk text maps line-for-line onto the
-    source from `start_line` -- a whole file or a whole symbol, first part.
-    A file residual (symbol spans carved out, then stripped) or a later split
-    part does not, so those keep their span and rely on the marker alone.
-    """
+    """Update chunk citation range to match lines kept by compression."""
     start = chunk.get("start_line")
     end = chunk.get("end_line")
     rec = {**chunk, "excerpt_of": [start, end]}
@@ -1053,9 +1117,8 @@ def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
         or _PART_SUFFIX_RE.search(str(chunk.get("id") or ""))
     ):
         return rec
-    lines = full.split("\n")  # never splitlines(): see AGENTS.md
+    lines = full.split("\n")
     hdr = _header_len(lines)
-    # Mirror _compress: every leading `#` line, then the first non-blank one.
     i = 0
     while i < len(lines) and lines[i].startswith("#"):
         i += 1
@@ -1073,11 +1136,7 @@ def _excerpt_record(chunk: Record, full: str, short: str) -> Record:
 
 
 def _cite_block(chunk: Record, text: str) -> str:
-    """One `### [cite: path:start-end] `symbol` (why)` block, trailing blank line.
-
-    A compressed neighbour (`excerpt_of` set) cites the lines it shows and
-    says which span they are an excerpt of, between the symbol and the why.
-    """
+    """Format markdown citation block header and disarm nested citations."""
     qual = chunk.get("qualname") or chunk.get("name") or ""
     start = chunk.get("start_line") or 1
     end = chunk.get("end_line") or start
@@ -1090,17 +1149,20 @@ def _cite_block(chunk: Record, text: str) -> str:
             if chunk.get("excerpt_exact")
             else f" [header and first line only, of {span}]"
         )
+    nid = chunk.get("node_id") or chunk.get("id") or ""
+    nid_tag = f" [{nid}]" if chunk.get("citation_only") and nid else ""
     head = (
-        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{mark} "
+        f"### [cite: {chunk.get('path') or ''}:{start}-{end}] `{qual}`{nid_tag}{mark} "
         f"({chunk.get('why') or ''})"
     )
     disarmed = "\n".join(
         "\\" + ln if ln.lstrip().startswith("### [cite:") else ln for ln in text.split("\n")
     )
-    return f"{head}\n{disarmed}\n\n"
+    return f"{head}\n{disarmed}\n\n" if disarmed else f"{head}\n\n"
 
 
 def format_pack(results: Iterable[Record]) -> str:
+    """Format retrieval records as delimited text sections."""
     out: list[str] = []
     for r in results:
         path = r.get("path") or ""

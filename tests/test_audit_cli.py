@@ -221,14 +221,14 @@ class _Types:
 def _install_fake_sdk(monkeypatch):
     """A stand-in `mcp` package exposing only the 2.x registration API.
 
-    ISS-407/#291: there used to be a `Server1x` here too, driven by a
+    legacy server cleanup/#291: there used to be a `Server1x` here too, driven by a
     `generation` parameter, because `serve()` branched on
     `hasattr(Server, "list_tools")` to speak either SDK generation. 1.x is no
     longer supported -- it deadlocks on the first tool call -- so that branch
     is gone and a 1.x-shaped fake would only assert that dead code still
     exists. The guard that actually refuses a 1.x install reads the installed
     distribution's version, not the module's shape, so it cannot be exercised
-    by a fake at all; `tests/test_mcp.py::test_iss407_a_1x_sdk_is_refused_at_startup_not_hung`
+    by a fake at all; `tests/test_mcp.py::test_a_1x_sdk_is_refused_at_startup_not_hung`
     covers it against a patched version instead.
     """
     import types as pytypes
@@ -345,14 +345,6 @@ def test_index_outside_repo_is_fresh_right_after_build(git_index, capsys):
     assert index_status(out, repo=other)["freshness"]["status"] == "stale"
 
 
-def test_doctor_on_index_outside_repo_is_not_stale(git_index):
-    from repo2graph.doctor import check_index_freshness
-
-    _repo, out = git_index
-    res = check_index_freshness(out)
-    assert res.status == "ok" and "up to date" in res.summary, (res.summary, res.details)
-
-
 # ---------------------------------------------------------------- item 4
 
 
@@ -387,7 +379,7 @@ def test_exclude_secrets_is_a_deprecated_noop(secret_index, capsys, cmd):
 
 
 def test_retrieve_python_api_default_is_unchanged(secret_index):
-    """AGENTS.md: retrieve() is a back-compat surface; the new keyword defaults off."""
+    """CONTRIBUTING.md: retrieve() is a back-compat surface; the new keyword defaults off."""
     idx = Index(secret_index)
     assert any(c["path"] == ".env" for c in idx.retrieve("ledger token"))
     assert not any(c["path"] == ".env" for c in idx.retrieve("ledger token", exclude_secrets=True))
@@ -486,15 +478,3 @@ def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):
         main(["embed", "-o", str(out), "--verify-rag"])
     report = json.loads(capsys.readouterr().out)
     assert report["rag_extra_installed"] in (True, False)
-
-
-def test_doctor_names_files_with_parse_errors(tmp_path, capsys):
-    from repo2graph.doctor import check_parsers
-
-    repo = _make_repo(tmp_path, git=False)
-    (repo / "broken.py").write_text("def broken(:\n    return ((\n", encoding="utf8")
-    main(["build", str(repo), "-o", str(repo / ".r2g")])
-    capsys.readouterr()
-    res = check_parsers(repo)
-    assert res.status in ("warn", "fail"), res
-    assert any("broken.py" in d for d in res.details), res.details

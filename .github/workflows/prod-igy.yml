@@ -4,7 +4,7 @@ name: prod-igy
 # - Classifies PRs and assigns type, size, area, and status labels
 # - Analyzes base branch alignment, commit divergence, and linked issues
 # - Reminds and tags PR authors if their branch is behind base or has merge conflicts
-# - Surfaces repository-specific architecture and review reminders from AGENTS.md
+# - Surfaces repository-specific architecture and review reminders from CONTRIBUTING.md
 # - Reports check-run results for the PR head
 # - Adds a plain-language description of the diff and a title suggestion
 #
