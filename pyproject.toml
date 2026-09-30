@@ -66,6 +66,12 @@ dev = [
 ]
 # Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
 # boost with zero extra dependencies when these are not installed.
+# numpy is declared but never imported by repo2graph -- embed.py writes and
+# reads vectors.npy by hand with `struct` precisely so the runtime needs no
+# array library. It is here because the file is a real NPY v1.0 and is meant to
+# be openable with `numpy.load`, so `[rag]` ships what you need to *use* the
+# output. Do not delete it as unused; it is a deliberate consumer-side
+# declaration (and sentence-transformers pulls it in regardless).
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
@@ -87,7 +93,9 @@ testpaths = ["tests"]
 
 # branch=True is the point of measuring at all here: statement coverage counts
 # an `if` as covered when only the taken side ever ran, which is exactly the
-# question the suite could not answer about auth.py's refusal paths.
+# question the suite could not answer about the refusal paths in security.py's
+# redaction or the clamps in mcp/guardrails.py -- the branch that *declines*
+# is the one worth proving runs.
 [tool.coverage.run]
 source = ["repo2graph"]
 branch = true
@@ -140,7 +148,7 @@ ignore_missing_imports = true
 #
 # query.py and export.py are done -- they were taken first because everything
 # else imports them, so their `Any` returns were what made callers unprovable.
-# See docs/CONTRIBUTING.md for the ranked plan.
+# See .github/CONTRIBUTING.md for the ranked plan.
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]

@@ -5,7 +5,8 @@
  * - Automatically categorizes and applies labels (type, size, area, status).
  * - Scans PR description and comments to report base branch target, branch status, and linked issues.
  * - Detects outdated branches (behind base) or merge conflicts and tags the PR author with actionable instructions.
- * - Provides repository-specific architecture and review guidance based on AGENTS.md.
+ * - Provides repository-specific architecture and review guidance based on the invariants in
+ *   .github/CONTRIBUTING.md, "Architecture & OS Compatibility Invariants".
  * - Updates comments idempotently using an HTML marker to keep PR threads clean.
  */
 
@@ -28,7 +29,7 @@ const LABEL_DEFINITIONS = {
   'size/XL': { color: 'b60205', description: 'Very large changes (>= 1000 lines)' },
 
   // Subsystem Areas
-  'area/walker': { color: 'e99695', description: 'File discovery and traversal' },
+  'area/walker': { color: 'e99695', description: 'File discovery and traversal (`parse.py`)' },
   'area/graph': { color: 'f9d0c4', description: 'Graph construction, symbols, and edges' },
   'area/query': { color: 'c5def5', description: 'Query engine, retrieval, and context packing' },
   'area/mcp': { color: 'bfd4f2', description: 'Model Context Protocol (MCP) server' },
@@ -68,7 +69,7 @@ function isTrustedCommenter(association) {
 // and every comment it produces tags the reviewer for a human pass.
 // ---------------------------------------------------------------------------
 
-// AGENTS.md, `action.yml` truthiness rule: GitHub's expression language compares
+// CONTRIBUTING.md invariant 10, `action.yml` truthiness: GitHub's expression language compares
 // strings case-insensitively but JS `===` does not, so an input written `True`
 // would open the workflow-level gate and close this one. Case-fold here.
 function envFlag(name, fallback) {
@@ -522,10 +523,10 @@ function detectType(title, branchName, changedFiles) {
 function detectAreas(changedFiles) {
   const areas = new Set();
   for (const file of changedFiles) {
-    if (file.includes('repo2graph/walker.py')) areas.add('area/walker');
+    if (file.includes('repo2graph/parse.py')) areas.add('area/walker');
     if (file.includes('repo2graph/graph.py')) areas.add('area/graph');
     if (file.includes('repo2graph/query.py')) areas.add('area/query');
-    if (file.includes('repo2graph/mcp.py') || file === 'server.json') areas.add('area/mcp');
+    if (file.includes('repo2graph/mcp/') || file === 'server.json') areas.add('area/mcp');
     if (file.includes('repo2graph/cli.py')) areas.add('area/cli');
     if (file.includes('repo2graph/embed.py')) areas.add('area/embed');
     if (file === 'action.yml') areas.add('area/action');
@@ -547,31 +548,31 @@ function extractIssues(text) {
   return Array.from(issues);
 }
 
-function checkAgentsRules(changedFiles) {
+function checkRepositoryInvariants(changedFiles) {
   const guidance = [];
 
-  const touchesWalkerOrGraph = changedFiles.some(
-    f => f.includes('repo2graph/walker.py') || f.includes('repo2graph/graph.py')
+  const touchesDiscoveryOrGraph = changedFiles.some(
+    f => f.includes('repo2graph/parse.py') || f.includes('repo2graph/graph.py')
   );
-  if (touchesWalkerOrGraph) {
+  if (touchesDiscoveryOrGraph) {
     guidance.push(
-      '- **Text Slicing (`AGENTS.md`)**: Use `src.split("\\n")` (or `_lines()`), **never** `splitlines()`. Special Unicode line terminators break tree-sitter line number sync (ISS-22).\n' +
-      '- **Windows Git Subprocess Output**: Always pass `-c core.quotepath=false`, capture bytes, and decode with `utf8, surrogateescape` to avoid cp1252 Windows encoding exceptions.'
+      '- **Text Slicing (`CONTRIBUTING.md` 1)**: Use `src.split("\\n")` (or `_lines()`), **never** `splitlines()`. Special Unicode line terminators break tree-sitter line number sync (ISS-22).\n' +
+      '- **Windows Git Subprocess Output (`CONTRIBUTING.md` 2)**: Always pass `-c core.quotepath=false`, capture bytes, and decode with `utf8, surrogateescape` to avoid cp1252 Windows encoding exceptions.'
     );
   }
 
   const touchesQuery = changedFiles.some(f => f.includes('repo2graph/query.py'));
   if (touchesQuery) {
     guidance.push(
-      '- **Two Budget Models (`AGENTS.md`)**: `retrieve()` bounds chunk text only; `pack_context()` bounds entire rendered Markdown. Do not unify them.\n' +
-      '- **Traversal Direction**: Always opt out using `ALL_EDGE_DIRS` explicitly for helpers to avoid narrowing existing callers.'
+      '- **Two Budget Models (`CONTRIBUTING.md` 4)**: `retrieve()` bounds chunk text only; `pack_context()` bounds entire rendered Markdown. Do not unify them.\n' +
+      '- **Traversal Direction (`CONTRIBUTING.md` 5)**: Always opt out using `ALL_EDGE_DIRS` explicitly for helpers to avoid narrowing existing callers.'
     );
   }
 
-  const touchesMcp = changedFiles.some(f => f.includes('repo2graph/mcp.py'));
+  const touchesMcp = changedFiles.some(f => f.includes('repo2graph/mcp/'));
   if (touchesMcp) {
     guidance.push(
-      '- **Caller-Hostile MCP Arguments (`AGENTS.md`)**: Numeric inputs must be bounded with `_clamp()` against `MCP_MAX_*` constants in handler logic, and pass `exclude_secrets=True` unconditionally.'
+      '- **Caller-Hostile MCP Arguments (`CONTRIBUTING.md` 7)**: Numeric inputs must be bounded with `_clamp()` against `MCP_MAX_*` constants in handler logic, and pass `exclude_secrets=True` unconditionally.'
     );
   }
 
@@ -716,7 +717,7 @@ function formatBotComment({
   let guidanceSection = '';
   if (guidance.length > 0) {
     guidanceSection =
-      `### 💡 Repository Rule Checklist (\`AGENTS.md\`)\n\n` +
+      `### 💡 Repository Rule Checklist (\`CONTRIBUTING.md\`)\n\n` +
       `Based on the files modified in this PR, please keep these critical repository guidelines in mind:\n\n` +
       guidance.join('\n\n') +
       '\n\n---\n\n';
@@ -969,7 +970,7 @@ async function triagePullRequest({ github, owner, repo, prNumber, core, allowAi 
   // retarget, behind-by and conflicts are exact and free, and a model has
   // nothing to contribute to them. The AI adds only prose, risk notes, a title
   // suggestion, and labels a path rule plainly missed.
-  const guidance = checkAgentsRules(changedFiles);
+  const guidance = checkRepositoryInvariants(changedFiles);
   const checks = await fetchCheckSummary({ github, owner, repo, headSha, core });
   const cfg = aiConfig();
   const reviewer = cfg.reviewer || owner;
@@ -1175,7 +1176,7 @@ module.exports.calculateSize = calculateSize;
 module.exports.detectType = detectType;
 module.exports.detectAreas = detectAreas;
 module.exports.extractIssues = extractIssues;
-module.exports.checkAgentsRules = checkAgentsRules;
+module.exports.checkRepositoryInvariants = checkRepositoryInvariants;
 module.exports.formatBotComment = formatBotComment;
 module.exports.escapeMdRef = escapeMdRef;
 module.exports.isTrustedCommenter = isTrustedCommenter;

@@ -8,7 +8,7 @@ body:
         Two things to check first, because both regularly turn a proposal into a shorter
         conversation:
 
-        - **[docs/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)** — deliberately deferred work, each item with
+        - **[.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)** — deliberately deferred work, each item with
           the reason it was deferred. That reason usually changes how you'd frame the proposal.
         - **[docs/architecture.md](../../docs/architecture.md)** — what repo2graph is for and when
           another tool is the better choice. A proposal that moves it toward being a
@@ -96,7 +96,7 @@ body:
     attributes:
       label: Checks
       options:
-        - label: I searched existing issues and `docs/CONTRIBUTING.md` for a duplicate.
+        - label: I searched existing issues and `.github/CONTRIBUTING.md` for a duplicate.
           required: true
         - label: I checked [docs/architecture.md](../../docs/architecture.md) in case this is a documented trade-off rather than a gap.
           required: true

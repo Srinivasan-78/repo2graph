@@ -1,9 +1,9 @@
 # Real-world repository examples
 
-Five public repositories, each analyzed by `repo2graph` at a pinned commit, with the generated
-graph committed alongside the exact reproduction command. This is evidence, not a demo: every
-number below came from an actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json),
-never typed in by hand.
+Five public repositories, each analyzed by `repo2graph` at a pinned commit, with the exact
+reproduction command for every one. This is evidence, not a demo: every number below came from an
+actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json), never typed in
+by hand.
 
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
 [`../scripts/generate_examples.py`](../scripts/generate_examples.py). See
@@ -40,38 +40,16 @@ maximally heterogeneous C codebase (Linux) — see each `why:` field in
 ```
 examples/<id>/
 ├── README.md          repository, revision, why this repo/scope, stats, example queries, limitations
-├── metadata.json       machine-readable: commit, versions, counts, timings (schema below)
-├── nodes.jsonl.gz       every graph node: id, type, path, name, lines — gzipped, no source text
-├── edges.jsonl.gz       every graph edge: src, dst, type — gzipped
-├── overview.md          the prose repo map (languages, most depended-on files, most called symbols)
-├── manifest.json        what every field in the other files means
-├── stats.json            the raw counters (node/edge/symbol counts, parse errors, entrypoints)
-├── graph.html            the interactive map — self-contained, opens in any browser, no network,
-│                          capped at the 300 best-connected nodes
-└── flows/                real `repo2graph query` results for that repo's example questions —
-                           citations only (node id, path, lines, match reason), no source text
+└── overview.md        the prose repo map (languages, most depended-on files, most called symbols)
 ```
 
-`metadata.json` schema (every field is measured, never estimated):
-
-```json
-{
-  "repository": "https://github.com/<owner>/<repo>",
-  "id": "kubernetes",
-  "commit": "<full 40-char SHA>",
-  "branch": "<ref analyzed>",
-  "generated_at": "<UTC ISO 8601>",
-  "repo2graph_version": "<version that produced this>",
-  "graph_schema_version": "repo2graph/1",
-  "languages": ["go"],
-  "scope": "scoped",
-  "include": ["<globs>", "..."],
-  "nodes": 0, "edges": 0,
-  "stats": { "...": "the same counters as stats.json" },
-  "clone_seconds": 0.0, "build_seconds": 0.0,
-  "viz_nodes": 300
-}
-```
+Two files, both prose. The generator writes a full artifact set beside them — `nodes.jsonl.gz`,
+`edges.jsonl.gz`, `manifest.json`, `stats.json`, `graph.html` and `flows/*.json` — but none of it is
+committed: it was about 28 MB of generated binary and boilerplate that every clone of this
+repository had to carry, and it was dropped in `4e96b628`. Run the generator yourself (below) if you
+want the graphs; nothing about them is secret, only large. Each example's own `README.md` carries the
+numbers and the pinned commit, which is what the tables here and in `../benchmarks/results.json`
+are checked against.
 
 ## Reproduce any of these
 
@@ -89,14 +67,15 @@ no network access from that point on), runs the example queries, validates the r
 
 Because every one of the five repositories moves upstream, re-running `--all` today will index a
 newer commit and produce different numbers than the table above — that is expected, and is exactly
-why every artifact here is pinned to the commit recorded in its own `metadata.json` rather than to
-a branch name.
+why every example records the commit it was built from, under "Revision" in its own `README.md`,
+rather than a branch name.
 
 ## Contributing a new example
 
 Add an entry to [`repositories.yaml`](repositories.yaml) — repository URL, ref, clone depth, scope
 (`full` or `scoped` with `include`/`exclude`/`max_files`), language focus, category, a `why:`
 paragraph, and 3-5 architecture-relevant example queries — then run
-`python scripts/generate_examples.py --repo <id>` and commit the result. No new Python code is
-needed for a well-behaved repository; the framework is data-driven by design (see
+`python scripts/generate_examples.py --repo <id>` and commit the `README.md` and `overview.md` it
+writes, leaving the graph artifacts uncommitted as above. No new Python code is needed for a
+well-behaved repository; the framework is data-driven by design (see
 [examples/repositories.yaml](repositories.yaml)).

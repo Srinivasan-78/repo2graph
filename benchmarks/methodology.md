@@ -8,13 +8,14 @@ reproduce them exactly. Retrieval quality is a different benchmark with a differ
 ## What is controlled
 
 - **Repository revision.** Every result is pinned to the exact commit SHA `scripts/generate_examples.py`
-  checked out, recorded in both `results.json` and that repository's `examples/<id>/metadata.json`.
+  checked out, recorded in both `results.json` and that repository's `examples/<id>/README.md`
+  (under "Revision").
   Re-running against the same `ref` (usually `main`/`master`) later will check out a *different*,
   newer commit — see [docs/architecture.md](../docs/architecture.md#staleness).
 - **repo2graph version.** Recorded per result (`repo2graph_version`, from `repo2graph.__version__`
   at generation time).
 - **Scope.** For the four scoped repositories, the exact `include`/`exclude`/`max_files` parameters
-  are recorded in `metadata.json` and pinned in `examples/repositories.yaml` — the same repository
+  are pinned in `examples/repositories.yaml` — the same repository
   at the same commit with different scope parameters is a different, not-comparable measurement.
 - **Analysis parameters.** `git_history` (CO_CHANGE window), `jobs` (parser parallelism, left at the
   default: one process per core), and the format set written (`jsonl,overview,html`) are the same
@@ -44,8 +45,8 @@ was produced by the same invocation.
 
 ## Reproducing a specific number
 
-1. Find the repository's entry in `results.json` or `examples/<id>/metadata.json` for the exact
-   `commit` and scope parameters.
+1. Find the repository's entry in `results.json` for the exact `commit`, and its scope parameters
+   in `examples/repositories.yaml`.
 2. `git clone --filter=blob:none <repository url>`, `git checkout <commit>` (and, for a scoped
    repository, `git sparse-checkout set` the same paths from `examples/repositories.yaml`).
 3. Time `repo2graph build . -o .r2g --include <same include globs> --max-files <same max_files>

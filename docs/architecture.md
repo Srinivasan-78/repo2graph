@@ -193,6 +193,40 @@ Four layers, applied in this order:
    `sensitive` is a second net for a tree that names its credentials something `security.py` does
    not recognise.
 
+### Incremental rebuild
+
+`build(cache=...)` reads a `{path: entry}` map from `agent/parse.cache.json` and reuses a file's
+`ParsedFile` when its sha256 *and* its language both still match. Everything downstream of parsing
+is then recomputed from the complete symbol set, exactly as a full build does: the global name
+index, `CALLS` confidences, `INHERITS`, `mark_entrypoints()` and `reach`.
+
+Nothing is spliced, and that is the whole design. `build()` resolves `CALLS` through a *global* name
+index and sets `confidence = 1/len(candidates)`, so adding or deleting a symbol named `run` in file A
+changes the confidence — and the count — of `CALLS` edges emitted from files B and C that did not
+change at all; `mark_entrypoints()`/`reach` is a whole-graph BFS on top of that. A merge that
+reparsed only the changed paths and spliced their nodes and edges in would produce an index that is
+wrong in a way nothing detects: stale confidences and stale entrypoint flags flow straight into
+`chunks.jsonl` headers and into `pack_context`'s `min_confidence` gate. Rebuilding every caller's
+edges from its cached symbols is what makes a repo-wide confidence shift land correctly on an
+unchanged caller.
+
+The cost model is what makes exactness free rather than a compromise: parsing dominates a build and
+resolution is O(edges) and negligible, so recomputing all of it buys correctness for no measurable
+time. Every file is still *read* — the content hash is the bytes, and there is no cheaper way to know
+a file is unchanged — and reading is the small half.
+
+The acceptance test is whole-artifact byte equality against a full rebuild across an add, a modify,
+a delete and a no-op (`tests/test_incremental.py`). That is also why the hit/miss tallies live on
+`Graph.incremental` rather than in `Graph.stats`: `stats.json` is one of the artifacts compared, so a
+counter that differs between the two routes by construction would have had to be special-cased out of
+the comparison, weakening the very test that makes the feature trustworthy.
+
+Deliberately not implemented: partial confidence recalculation over "affected symbol namespaces", and
+a reverse-edge index for a partial reach BFS. Both compute the same answer as the full re-resolution
+above, cost more code and more ways to be subtly wrong, and save time that is already close to zero.
+If resolution ever becomes the bottleneck on a very large repo, that is when to revisit them, with a
+profile in hand.
+
 ### Staleness
 
 `status.compute_freshness()` is the single implementation of "is this index current", used by
