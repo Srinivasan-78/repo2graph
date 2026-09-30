@@ -1,7 +1,9 @@
 # Methodology
 
-How the numbers in [`results.json`](results.json) and [../README.md](../README.md)
-were produced, and what would have to match for you to reproduce them exactly.
+How the build-scale numbers in [`results.json`](results.json) — file, node and edge counts,
+clone and build wall-clock time — were produced, and what would have to match for you to
+reproduce them exactly. Retrieval quality is a different benchmark with a different method:
+[`real/README.md`](real/README.md).
 
 ## What is controlled
 
@@ -23,11 +25,12 @@ were produced, and what would have to match for you to reproduce them exactly.
 - **Hardware.** These are single-machine numbers (this project's own development machine, Windows,
   Python 3.13.15, whatever else happened to be running at the time) with no isolation, warm-up
   discipline, or repeated-trial averaging. Do not use `build_seconds` here for capacity planning on
-  different hardware — see [../architecture.md](../docs/architecture.md) for numbers that were
-  measured with that goal in mind, on a controlled synthetic fixture.
+  different hardware. There is no hardware-independent alternative in this repository to compare
+  against: the controlled synthetic-fixture timings this section used to point at were dropped in
+  the documentation consolidation and have not been regenerated.
 - **Network conditions.** `clone_seconds` reflects this run's actual bandwidth and GitHub's response
   time at that moment; it is the least reproducible number in the file for exactly that reason.
-- **Peak memory.** Not measured — see [../README.md](../README.md) for why.
+- **Peak memory.** Not measured, and not claimed anywhere.
 
 ## How results.json is updated
 
@@ -49,5 +52,5 @@ was produced by the same invocation.
    --git-history <same git_history>` yourself.
 
 A different number under otherwise-identical parameters most likely means different hardware or
-network conditions, not a regression — cross-check against `../architecture.md`'s controlled
-synthetic-fixture numbers if you need a hardware-independent comparison.
+network conditions, not a regression. Node and edge counts, unlike the timings, are
+deterministic for a given commit and scope — if those differ, it is a real change.

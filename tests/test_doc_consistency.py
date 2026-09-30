@@ -292,19 +292,30 @@ def test_cli_doc_names_every_doctor_check_that_exists():
 
 
 def test_the_shipped_doc_set_is_the_documented_one():
-    """`docs/` is four reference pages, and adding a fifth is a decision.
+    """`docs/` is five reference pages, and adding a sixth is a decision.
 
     The tree previously grew to 29 documents -- compliance theater, speculative
     RFCs, roadmap trackers and three overlapping architecture pages -- with an
     index file to make them findable. Pinning the set means a new page has to be
     added here deliberately, which is where the "should this be a section of an
     existing page" question gets asked.
+
+    `comparison.md` is the deliberate fifth. The consolidation dropped it and
+    repointed README's "how it compares with Serena, Aider, ..." link at
+    architecture.md, which names none of those tools -- the link resolved, so
+    nothing caught it, and the promise went unmet. It is not a section of
+    architecture.md (that page describes this system, not other people's) and it
+    is too long for a 167-line landing README, which is why it is its own page.
     """
     docs_dir = REPO_ROOT / "docs"
     shipped = {p.name for p in docs_dir.glob("*.md")}
-    assert shipped == {"architecture.md", "cli.md", "mcp.md", "python-api.md"}, (
-        f"docs/ no longer holds the documented set: {sorted(shipped)}"
-    )
+    assert shipped == {
+        "architecture.md",
+        "cli.md",
+        "comparison.md",
+        "mcp.md",
+        "python-api.md",
+    }, f"docs/ no longer holds the documented set: {sorted(shipped)}"
 
 
 def test_architecture_doc_names_the_standard_edge_fields():

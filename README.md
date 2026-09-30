@@ -38,12 +38,12 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 ```
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
-output: [docs/architecture.md](docs/architecture.md).
+output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
 
 ## Is it better than grep?
 
 **For single-file lexical queries, no: grep is the better tool.**
-We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, held to the same token budget ([benchmarks/real/results.json](benchmarks/real/results.json)):
+We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, held to the same token budget ([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in [benchmarks/real/results.json](benchmarks/real/results.json)):
 
 | Budget | repo2graph (2.x default) | repo2graph-cite (opt-in) | grep, then read around hits |
 |---:|---:|---:|---:|
@@ -57,18 +57,26 @@ On purely lexical questions where the evidence sits in a single file, text searc
 
 grep structurally cannot traverse dependency edges, compute reverse call closures, or follow cross-module delegation. On our structural benchmark across the same four repositories ([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence provably spans cross-file graph edges):
 
-| Budget | repo2graph | repo2graph-bm25 | ripgrep |
-|---:|---:|---:|---:|
-| 4,000 tokens | **70%** | 50% | 20% |
-| 8,000 tokens | **80%** | 50% | 70% |
+| Budget | repo2graph | repo2graph-cite | repo2graph-bm25 | ripgrep |
+|---:|---:|---:|---:|---:|
+| 2,000 tokens | 20% | 10% | 20% | 20% |
+| 4,000 tokens | **70%** | 30% | 50% | 20% |
+| 8,000 tokens | **80%** | 30% | 50% | 70% |
 
-Graph expansion provides a **+20 to +30 percentage point advantage** over lexical search alone, and beats grep by up to **+50 pp**.
+Graph expansion adds 20–30 pp over lexical search alone at 4k and 8k tokens. Against grep the margin is **+50 pp at 4,000 tokens**, but **+10 pp at 8,000 and nothing at 2,000** — give grep enough budget and it closes most of the gap. Citation mode, which wins the lexical table above, is the *worst* retriever here: a signature locates a cross-file answer without containing it. There is no single best setting. This is 10 tasks, so one task is 10 pp; treat every cell as ±1 task.
 
 ### Where repo2graph wins for agents: multi-turn loops
 
-In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`):
-- **Cross-file structural tasks:** repo2graph achieves **50% task success in 2.2 mean turns** (2,282 mean tokens), while ripgrep achieves only **10% success in 6.0 mean turns**.
-- **General tasks:** repo2graph achieves **54% task success in 1.9 mean turns** (7,133 tokens) vs ripgrep's **20% success in 3.6 turns** (939 tokens).
+In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No model is in the loop — the "agent" is a deterministic policy over real ripgrep and a real index:
+
+| Task set | Method | Success | Mean turns | Mean tokens | Precision per read |
+|---|---|---:|---:|---:|---:|
+| Structural (10) | repo2graph | **70%** | **3.3** | 4,006 | 2.4% |
+| Structural (10) | ripgrep | 10% | 6.0 | **1,879** | **11.0%** |
+| General (35) | repo2graph | **54%** | **1.9** | 7,133 | 2.4% |
+| General (35) | ripgrep | 20% | 3.6 | **939** | **37.8%** |
+
+More answers in fewer turns, and it is not cheap: 2.1× ripgrep's tokens on the structural set and 7.6× on the general one, at a fraction of its precision per read. repo2graph buys recall with context; the budget-matched comparison is the single-shot tables above.
 
 What it does do that grep doesn't:
 
@@ -83,7 +91,7 @@ What it does do that grep doesn't:
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
 Cursor's index and Claude Code's own search, including when to use those instead:
-**[docs/architecture.md](docs/architecture.md)**.
+**[docs/comparison.md](docs/comparison.md)**.
 
 ## Five questions to start with
 
@@ -108,8 +116,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
 ```
 
 `@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
-calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli.md),
-[docs/cli.md](docs/cli.md).
+calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli.md).
 
 ## Commands
 
@@ -140,15 +147,19 @@ Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/py
   `build --incremental`.
 
 <a id="languages"></a>Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
-C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. Measured
-rates for each limitation: [architecture.md](docs/architecture.md).
+C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. The
+specific cases that defeat it — reflection dispatch, string-keyed registries, barrel re-exports —
+are pinned as known failures in the
+[synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins).
 
 ## Status
 
 The 2.x CLI, MCP tools and output schema follow semver: breaking changes wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
-unconditionally ([privacy](.github/SECURITY.md), [threat model](.github/SECURITY.md),
-[security policy](.github/SECURITY.md)). A Docker image for read-only, non-root deployments is
-described in [.github/SECURITY.md](.github/SECURITY.md#container-deployment).
+unconditionally ([what never leaves your machine](.github/SECURITY.md#what-never-leaves-your-machine),
+[how credential files are excluded](.github/SECURITY.md#how-credential-files-are-excluded),
+[reporting a vulnerability](.github/SECURITY.md#reporting-a-vulnerability)). A Docker image for
+read-only, non-root deployments is described in
+[.github/SECURITY.md](.github/SECURITY.md#container-deployment).
 
 ## Contributing
 
@@ -158,10 +169,10 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 make lint format-check typecheck test
 ```
 
-Branch from `develop`. Start with [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md),
-[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) and
+Branch from `develop`. Start with [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) and
 [docs/architecture.md](docs/architecture.md). The most useful contribution right now is new
-questions for the [retrieval benchmark](docs/architecture.md), especially on repositories
-you know well. All docs: [docs/architecture.md](docs/architecture.md).
+questions for the [retrieval benchmark](benchmarks/real/README.md), especially on repositories
+you know well. All docs: [architecture](docs/architecture.md), [CLI](docs/cli.md),
+[MCP](docs/mcp.md), [Python API](docs/python-api.md), [comparison](docs/comparison.md).
 
 MIT licensed.
