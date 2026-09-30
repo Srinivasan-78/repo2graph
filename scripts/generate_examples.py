@@ -350,7 +350,7 @@ different numbers — see [docs/architecture.md](../../docs/architecture.md#3-in
     (repo_dir / "README.md").write_text(readme, encoding="utf8", newline="\n")
 
 
-def generate_one(entry: dict, results: dict) -> dict:
+def _generate_one(entry: dict, results: dict) -> dict:
     repo_id = entry["id"]
     print(f"[{repo_id}] cloning {entry['url']}@{entry['ref']} ...", file=sys.stderr)
     workdir = Path(tempfile.mkdtemp(prefix=f"r2g-example-{repo_id}-"))
@@ -469,7 +469,7 @@ def main() -> int:
 
     results_by_id = {}
     for entry in selected:
-        generate_one(entry, results_by_id)
+        _generate_one(entry, results_by_id)
 
     results_path = Path(args.results)
     results_path.parent.mkdir(parents=True, exist_ok=True)
