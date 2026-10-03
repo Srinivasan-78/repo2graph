@@ -68,7 +68,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `-o`, `--out` | `.r2g` | Where the map is written. |
 | `--formats` | `jsonl,graphml,cypher,overview,html` | Which artifacts to write. Drop what you do not need to save time. |
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
-| `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. |
+| `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
