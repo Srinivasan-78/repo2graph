@@ -1518,9 +1518,13 @@ def test_optional_rag_extra_and_untouched_core_dependencies():
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))
     extras = data["project"].get("optional-dependencies", {})
     assert extras.get("rag") == ["sentence-transformers>=3.0", "numpy>=1.24"], extras
+    # The upper bound on the language pack is a security boundary, not a
+    # compatibility one: 0.x bundles every grammar in the wheel, 1.x downloads
+    # them from the network on first use. See
+    # tests/test_grammar_availability.py::test_language_pack_is_capped_below_1_0.
     assert data["project"]["dependencies"] == [
         "tree-sitter>=0.23",
-        "tree-sitter-language-pack>=0.7",
+        "tree-sitter-language-pack>=0.7,<1.0",
     ]
 
 

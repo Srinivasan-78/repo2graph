@@ -629,11 +629,30 @@ except ImportError:  # pragma: no cover
 
 @lru_cache(maxsize=None)
 def parser_for(lang: str):
+    """The parser for `lang`, or None if one cannot be obtained for any reason.
+
+    The except clause is deliberately broad. It used to name
+    `(LookupError, ValueError, ImportError, AttributeError)`, which covers what
+    tree-sitter-language-pack 0.x raises but not 1.x: that line raises its own
+    `DownloadError`, `ChecksumMismatchError`, `CacheLockError`,
+    `DynamicLoadError`, `ParserSetupError` and friends, all deriving from a
+    private `tree_sitter_language_pack.exceptions.Error` rather than from
+    anything in the tuple. Offline, every one of those escaped `parser_for`
+    instead of answering None -- so the caller could not tell "no grammar" from
+    "no symbols", and the file was dropped without ever being counted as
+    unparsed.
+
+    Catching the base class by import would couple us to a private module, and
+    narrowing the tuple again would re-break on the next exception they add.
+    Every failure here means exactly one thing to every caller -- there is no
+    parser -- so collapse them all to None and let the `grammar_unavailable`
+    tally in `parse_source` make the condition loud upstream.
+    """
     if _get_parser is None:
         return None
     try:
         return _get_parser(lang)
-    except (LookupError, ValueError, ImportError, AttributeError):
+    except Exception:  # noqa: BLE001 - any failure means "no parser"; see docstring
         return None
 
 
@@ -703,6 +722,12 @@ class ParsedFile:
     parse_errors: int = 0
     used_cpp: bool = False
     is_chunked: bool = False
+    # True when no grammar could be obtained for `lang`, so this file was never
+    # actually parsed. Without it, the unavailable-grammar case is byte-identical
+    # to "parsed fine, genuinely declares nothing" -- both are an empty
+    # ParsedFile -- and a build with every grammar missing reported
+    # stats["parsed"] == stats["files"] and exited 0 with an empty graph.
+    grammar_unavailable: bool = False
     import_details: list[ImportDetail] = field(default_factory=list)
     # 1-based line per entry of `imports`, index-aligned with it by
     # construction (both are appended in the same step of the walk). The
@@ -1471,7 +1496,17 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
-        return ParsedFile(lang=lang, symbols=[], imports=[])
+        # `cfg is None` means the language is not one we extract from -- an
+        # ordinary, expected outcome. `parser is None` with a cfg present means a
+        # grammar we *do* support could not be loaded, which is an environment
+        # fault and must stay distinguishable from a file that simply declares
+        # nothing. See `grammar_unavailable` on ParsedFile.
+        return ParsedFile(
+            lang=lang,
+            symbols=[],
+            imports=[],
+            grammar_unavailable=cfg is not None and parser is None,
+        )
     tree = parser.parse(source)
 
     def _count_errors(node):

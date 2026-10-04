@@ -900,6 +900,28 @@ def _safe_open(path: Path, mode: str = "rb"):
     return open(path, mode)  # noqa: SIM115
 
 
+def _redact_metadata(text: str, g) -> str:
+    """Redact secrets in a signature or docstring before it enters the graph.
+
+    These two fields are copied into chunk headers, `nodes.jsonl`, `graph.html`,
+    GraphML and Cypher without passing through the chunk-body scan, so this is
+    the one place that covers every consumer. `warn-only` and `off` deliberately
+    leave the text alone, matching what those policies mean for chunk bodies --
+    `Index._served` is the serve-time net for them.
+    """
+    if not text:
+        return text
+    policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
+    if policy not in ("redact-match", "exclude-file"):
+        return text
+    from .security import redact_content
+
+    redacted, n = redact_content(text, policy="redact-match")
+    if n and hasattr(g, "stats"):
+        g.stats["redacted_secret_metadata"] += n
+    return redacted
+
+
 def _read_and_parse(item):
     """Read one file and parse it if it is code.
 
@@ -1382,6 +1404,13 @@ def build(
 
         if pf is None:
             continue
+        if getattr(pf, "grammar_unavailable", False):
+            # Counted, not parsed: a supported language whose grammar would not
+            # load contributed no symbols and no edges. Tallied separately so the
+            # total-failure check below can tell an empty graph caused by a broken
+            # install from one caused by an empty repository.
+            g.stats["grammar_unavailable"] += 1
+            continue
         parsed[rel] = pf
         g.stats["parsed"] += 1
         g.stats["parse_errors"] += pf.parse_errors
@@ -1401,6 +1430,15 @@ def build(
         file_keys = {symbol_key(s_) for s_ in pf.symbols}
         for sym in pf.symbols:
             sid = f"sym:{rel}::{symbol_key(sym)}"
+            # Signatures and docstrings are secret-bearing text like any other,
+            # and only the chunk *body* was ever scanned. A credential in a
+            # docstring or a default argument therefore shipped verbatim in five
+            # places at once: the `# doc:` line of every chunk header
+            # (chunks.py), `nodes.jsonl`, the JSON payload embedded in
+            # `graph.html` (viz.py), GraphML, and Cypher -- none of which redact.
+            # Redacting here, at the one point the fields enter the graph, fixes
+            # all five rather than four of them; `redact_content` is
+            # line-preserving, so citation line numbers are unaffected.
             g.add_node(
                 sid,
                 type="symbol",
@@ -1411,8 +1449,8 @@ def build(
                 lang=lang,
                 start_line=sym.start_line,
                 end_line=sym.end_line,
-                signature=sym.signature,
-                docstring=sym.docstring,
+                signature=_redact_metadata(sym.signature, g),
+                docstring=_redact_metadata(sym.docstring, g),
             )
             g.stats[f"symbol:{sym.kind}"] += 1
             # A Go method / Kotlin extension names a receiver type that may be
@@ -1463,6 +1501,27 @@ def build(
                         evidence=imp_evidence,
                     )
                     g.stats["imports_unresolved"] += 1
+
+    # ----- grammars did not load at all: fail, do not publish an empty graph -----
+    # A build that discovered supported source files but could obtain a grammar for
+    # none of them is a broken environment, not a repository with nothing in it.
+    # Left alone it exited 0 with a graph of files and directories and zero code
+    # edges, `doctor` reported ok, `impact` rated every PR LOW because nothing was
+    # reachable, and `--incremental` cached the empty result so the next build
+    # reproduced it without even retrying. This is the one parse failure that is
+    # never best-effort: the tool did not do its job.
+    _unavailable = g.stats.get("grammar_unavailable", 0)
+    if _unavailable and not parsed:
+        raise ParseError(
+            f"no tree-sitter grammar could be loaded for any of the {_unavailable} "
+            "supported source file(s) found, so the graph would contain no symbols, "
+            "calls or imports. This is an installation or network problem, not a "
+            "property of the repository.\n"
+            "       Check it with `repo2graph doctor`, and reinstall grammars with "
+            "`pip install -U 'tree-sitter-language-pack>=0.7,<1.0'` -- the 1.x line "
+            "ships a loader that downloads grammars on first use, which cannot work "
+            "offline or behind a restricted proxy."
+        )
 
     # ----- name index for call/inheritance resolution -----
     imported_files: dict[str, set[str]] = defaultdict(set)
