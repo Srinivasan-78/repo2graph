@@ -689,3 +689,44 @@ def test_path_between_paths_limit_is_clamped_in_the_handler(tmp_path, monkeypatc
     caps.clear()
     mcp.tool_repo_path_between(idx, entry, target, max_paths=3)
     assert max(caps) == 3 * 4, caps
+
+
+def test_repo_search_forwards_every_advertised_parameter(mini_index):
+    """The dispatcher dropped `neighbours`/`max_neighbours` that the schema advertises.
+
+    A client setting `neighbours="cite"` got full-body neighbours and no error,
+    which made the mode the README benchmarks as the best 8k retriever
+    unreachable over MCP. Asserted against the schema rather than a hand-written
+    list, so a newly advertised parameter that is not forwarded fails here.
+    """
+    import inspect
+
+    from repo2graph.mcp.schemas import TOOL_SCHEMAS
+
+    mcp = mcp_module()
+    advertised = set(TOOL_SCHEMAS["repo_search"]["properties"])
+    accepted = set(inspect.signature(mcp.tool_repo_search).parameters) - {"index"}
+    assert advertised <= accepted, advertised - accepted
+
+    idx = Index(mini_index)
+    seen = {}
+
+    def _spy(index, query, **kw):
+        seen.update(kw)
+        return "ok"
+
+    import repo2graph.mcp as mcp_mod
+
+    orig = mcp_mod.tool_repo_search
+    try:
+        mcp_mod.tool_repo_search = _spy
+        mcp.dispatch(
+            idx,
+            "repo_search",
+            {"query": "gateway", "neighbours": "cite", "max_neighbours": 3},
+        )
+    finally:
+        mcp_mod.tool_repo_search = orig
+
+    assert seen.get("neighbours") == "cite", seen
+    assert seen.get("max_neighbours") == 3, seen
