@@ -36,7 +36,9 @@ from repo2graph.impact import (
     format_markdown,
     format_pr_comment,
     format_sarif,
+    is_fixture_path,
     is_public_symbol,
+    is_test_or_fixture_path,
     is_test_path,
     parse_unified_diff,
 )
@@ -252,6 +254,24 @@ def test_is_public_symbol():
     assert is_public_symbol({"name": "unexportedGoFunc", "path": "pkg/mod.go"}) is False
     assert is_public_symbol({"name": "pub_func", "visibility": "public"}) is True
     assert is_public_symbol({"name": "priv_func", "visibility": "private"}) is False
+    assert (
+        is_public_symbol(
+            {
+                "name": "Product",
+                "path": "benchmarks/corpus/modular_monolith/monolith/catalog/models.py",
+            }
+        )
+        is False
+    )
+    assert (
+        is_public_symbol(
+            {
+                "name": "UserService",
+                "path": "benchmarks/corpus/ts_app/src/services/user.service.ts",
+            }
+        )
+        is False
+    )
 
 
 def test_is_test_path():
@@ -260,8 +280,33 @@ def test_is_test_path():
     assert is_test_path("src/__tests__/button.test.tsx") is True
     assert is_test_path("src/components/card.spec.ts") is True
     assert is_test_path("pkg/service_test.go") is True
+    assert is_test_path("specs/router_spec.rb") is True
+    assert is_test_path("conftest.py") is True
+    assert is_test_path("benchmarks/corpus/modular_monolith/tests/test_billing_workflow.py") is True
+    assert is_test_path("benchmarks/corpus/ts_app/tests/user.service.test.ts") is True
+    assert is_test_path("benchmarks/corpus/ts_app/src/server.ts") is False
+    assert is_test_path("benchmarks/corpus/modular_monolith/monolith/catalog/models.py") is False
     assert is_test_path("repo2graph/query.py") is False
     assert is_test_path("src/index.ts") is False
+
+
+def test_is_fixture_path():
+    assert is_fixture_path("benchmarks/corpus/ts_app/src/server.ts") is True
+    assert is_fixture_path("benchmarks/corpus/modular_monolith/monolith/catalog/models.py") is True
+    assert is_fixture_path("benchmarks/corpus/python_backend/app/schemas/order_schema.py") is True
+    assert is_fixture_path("fixtures/sample_payload.json") is True
+    assert is_fixture_path("examples/django/app.py") is True
+    assert is_fixture_path("repo2graph/query.py") is False
+    assert is_fixture_path("src/index.ts") is False
+    assert is_fixture_path("tests/test_api.py") is False
+
+
+def test_is_test_or_fixture_path():
+    assert is_test_or_fixture_path("tests/test_api.py") is True
+    assert is_test_or_fixture_path("benchmarks/corpus/ts_app/src/server.ts") is True
+    assert is_test_or_fixture_path("fixtures/sample_payload.json") is True
+    assert is_test_or_fixture_path("repo2graph/query.py") is False
+    assert is_test_or_fixture_path("src/index.ts") is False
 
 
 def test_is_test_path_matches_components_not_a_path_suffix():
