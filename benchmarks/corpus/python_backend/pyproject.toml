@@ -1,0 +1,9 @@
+[project]
+name = "benchmark-python-backend"
+version = "0.1.0"
+dependencies = [
+    "fastapi>=0.110.0",
+    "pydantic>=2.6.0",
+    "sqlalchemy>=2.0.0"
+]
+

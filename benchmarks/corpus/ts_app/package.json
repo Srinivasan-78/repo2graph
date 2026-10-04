@@ -1,0 +1,12 @@
+{
+  "name": "benchmark-ts-app",
+  "version": "1.0.0",
+  "scripts": {
+    "test": "jest"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
+

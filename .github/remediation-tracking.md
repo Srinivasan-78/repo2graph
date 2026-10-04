@@ -38,6 +38,12 @@ in the unreleased window. Seven P1/P2 items in the spec target this deleted code
 | **C25** | **Prompt-injection isolation (P1)** | `repo2graph/answer.py` — `FENCE_LABEL`, `_FENCE_RULES`, `build_prompt` | `tests/test_prompt_isolation.py` (7) |
 | **NEW-1** | **Changelog advertised 9 deleted flags; breaking removal undocumented** | `CHANGELOG.md` | `test_doc_consistency.py::test_unreleased_changelog_does_not_advertise_flags_that_do_not_exist` |
 | **NEW-2** | **`make typecheck` broken by numpy stubs** | `pyproject.toml` | verified by `python -m mypy repo2graph/` |
+| **E40** | **Resource limits: `--max-bytes`, `--max-edges`, `--limit-policy truncate\|warn`** | `graph.py` — `LIMIT_POLICIES`, `Graph.max_edges`, `Graph.limits_hit`, `_within_byte_budget`; `cli.py` flags; `export.py` `_stats_extra` writes `limits_hit` | `tests/test_resource_limits.py` (9) |
+| **C26b** | **Total wall-clock budget on provider streaming** | `answer.py` — `MAX_ANSWER_SECONDS`, `_BoundedLines.timed_out`, `_note_timed_out` | `tests/test_answer_limits.py::test_a_trickling_provider_cannot_stream_forever` + the negative case |
+| **E43** | **Parse-cache key now includes grammar versions** | `parse.py` — `grammar_fingerprint()`; `export.py` — `write_parse_cache`/`load_parse_cache` | `tests/test_incremental.py::test_a_grammar_upgrade_invalidates_the_cache`, `::test_a_cache_written_before_grammars_were_keyed_is_ignored` |
+| **NEW-3** | **Removed HTTP/OIDC surface had no regression guard** | `647e76f3` deleted it; nothing referenced the ten flags | `tests/test_http_surface_removed.py` (26) |
+| **G57** | **Property/fuzz testing** | `hypothesis` in `[dev]`; UTF-8/surrogates, chunk line slicing, path normalization | `tests/test_properties.py` (21 + 1 strict xfail) |
+| **NEW-4** | **`explain_path` normalizes only the parent, so a trailing `..` defeats filename rules (Windows)** | `parse.py:explain_path` — found by G57, **left unfixed**, see CHANGELOG "Known issues" | `tests/test_properties.py::test_a_trailing_dotdot_cannot_launder_an_excluded_path` (strict xfail on win32) |
 
 ### C25 — repository content was indistinguishable from operator instructions
 
@@ -184,9 +190,6 @@ Spec premise false. Do not re-implement.
 | ID | Item | Evidence | Pri |
 |---|---|---|---|
 | A4 | **Mostly satisfied, one gap.** `.github/SECURITY.md` *is* the threat model — reporting surface ("CLI / MCP stdio / GitHub Action"), what never leaves the machine, the `rag --answer` egress exception, credential exclusion, enterprise rationale, repo protections, container deployment. #263 was closed `COMPLETED` legitimately; the spec's request for a *new* `docs/security-model.md` is misplaced, and most of its asked-for content (TLS, reverse proxy, multi-tenant) no longer applies at all. **Residual gap:** it does not state that repository content can carry prompt injection, which the fence in `answer.py` now mitigates | P3 |
-| E40 | Resource-limit **defaults** | `--max-files`/`--max-nodes` default `0` = unlimited. `max_nodes` fails closed via `GraphLimitExceeded`, so partial graphs can't masquerade as complete — but no `max_edges`/`max_chunks`/`max_bytes`/`max_duration`, no `--limit-policy truncate\|warn` | P2 |
-| C26b | No **total wall-clock** budget for provider calls | `answer.py:25` says so itself: "`HTTP_TIMEOUT` is a socket timeout, not a transfer bound — a host that trickles bytes resets it forever". Bounded by `MAX_ANSWER_BYTES`, so bytes not time | P2 |
-| G57 | No property/fuzz testing | `hypothesis` absent from `[dev]` and from every test | P2 |
 | C23 | Retrieval vs rendered budget naming | `--budget` / `--budget-tokens` coexist; no `source_text_chars`/`rendered_context_chars` split in JSON | P2 |
 | C30 | Per-edge-type expansion controls | `--query-min-conf` exists; no per-edge-kind include/exclude, direction, or presets | P2 |
 | E45 | Perf regression **gates** | `benchmarks/` + `benchmark.yml` exist; no peak-RSS tracking, no fail-on-regression threshold | P2 |
@@ -194,7 +197,6 @@ Spec premise false. Do not re-implement.
 | F48 | Flag-naming audit | `--jobs 0` / `--max-files 0` zero-means-unlimited is consistent but undocumented as a rule | P3 |
 | C28 | AST-aware chunk boundaries for huge symbols | `chunks.py` (331) is char-ceiling based | P3 |
 | C31 | Tokenizer transparency | heuristic estimate not labelled as estimate vs exact | P3 |
-| E43 | Cache key lacks grammar/parser version | `cache.py` keys content+language; tree-sitter grammar version not in the key | P3 |
 | E47 | Pluggable graph storage | in-memory dict/list; no storage interface | P3 |
 | F53 | Typed public API models | `docs/python-api.md` exists; returns are `dict[str, Any]` | P3 |
 | G55 | 64 `except Exception` sites | many justified in comments; no debug-mode re-raise | P3 |
@@ -207,17 +209,19 @@ Spec premise false. Do not re-implement.
 The spec's 10 PRs assumed ~40 items of work. Verified, it is 3 landed + ~16 open, and
 PRs 2, 3, 4, 5, 7, 8 are substantially already-shipped or not-applicable.
 
-1. **Landed here** — C25 prompt isolation, NEW-1 changelog accuracy + guard test, NEW-2 typecheck fix.
-2. **Document the prompt-injection trust boundary in `.github/SECURITY.md` (A4 residual)** —
+1. **Landed earlier** — C25 prompt isolation, NEW-1 changelog accuracy + guard test, NEW-2 typecheck fix.
+2. **Landed in this pass** — E40 resource limits (`--max-bytes`, `--max-edges`,
+   `--limit-policy`, with `limits_hit` recorded in `stats.json` under both policies), C26b
+   provider wall-clock budget, E43 grammar version in the parse-cache key, G57 property tests,
+   NEW-3 a regression guard for the removed HTTP/OIDC surface, and NEW-4 a strict xfail pinning
+   the `explain_path` trailing-`..` defect that G57 found.
+3. **Document the prompt-injection trust boundary in `.github/SECURITY.md` (A4 residual)** —
    that page already carries the threat model; it just predates the fence. State that repository
    content is untrusted input to an LLM, what the fence does, and that it is mitigation rather
    than elimination.
-3. **Resource-limit defaults (E40)** + `--limit-policy`, manifest `complete: false` marker.
-4. **Provider wall-clock budget (C26b)** — small, closes the gap the code documents.
-5. **Property tests (G57)** — `hypothesis` on chunk slicing, path normalization, UTF-8/surrogates, JSONL framing.
-6. **Budget naming + JSON fields (C23)**, then per-edge expansion controls + presets (C30).
-7. **Perf gates (E45)** and viz aggregation (E46).
-8. **Cleanup (F48, E43, G55, G59)**.
+4. **Budget naming + JSON fields (C23)**, then per-edge expansion controls + presets (C30).
+5. **Perf gates (E45)** and viz aggregation (E46).
+6. **Cleanup (F48, G55, G59)**.
 
 ## Final-report inputs
 

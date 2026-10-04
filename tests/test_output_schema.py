@@ -460,14 +460,19 @@ def test_answer_appends_the_segment(monkeypatch, capsys):
     monkeypatch.setattr(answer_mod, "_disclose", lambda *a, **k: None)
 
     class _Lines(list):
-        """Stands in for _BoundedLines, which the caller also asks `.truncated`."""
+        """Stands in for _BoundedLines; the caller asks it for both bound flags."""
 
         truncated = False
+        timed_out = False
 
     monkeypatch.setattr(
         answer_mod,
         "_BoundedLines",
-        lambda resp, limit: _Lines([b'data: {"choices":[{"delta":{"content":"f returns 1."}}]}']),
+        # `*_` absorbs the byte ceiling and the wall-clock budget: this double
+        # is about what the stream yields, not about what bounds it, and
+        # spelling the bounds out here would make it a second place to update
+        # every time one is added.
+        lambda resp, *_: _Lines([b'data: {"choices":[{"delta":{"content":"f returns 1."}}]}']),
     )
 
     class _Opener:

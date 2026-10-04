@@ -1,7 +1,7 @@
 # Synthetic regression suite
 
-`benchmarks/corpus/` holds two small repositories written by this project, and
-[`../tasks.json`](../tasks.json) holds 10 questions about them.
+`benchmarks/corpus/` holds five small repositories written by this project, and
+[`../tasks.json`](../tasks.json) holds 25 questions about them — five per repository.
 [`../../scripts/benchmark_runner.py`](../../scripts/benchmark_runner.py) runs the questions on
 every PR ([`benchmark.yml`](../../.github/workflows/benchmark.yml), Ubuntu and Windows) and fails
 the build if repo2graph's hit rate drops below 80%.
@@ -17,16 +17,21 @@ repo2graph does on code it did not write, see the
 
 ## What the corpus covers
 
+Five archetypes, chosen so that a regression in one language or one shape of codebase cannot hide
+behind the others:
+
 | Directory | What it exercises |
 |---|---|
-| `dynamic_patterns/` | The cases static analysis cannot resolve: `getattr` dispatch, string-keyed plugin registries, five unrelated `execute()` methods, `__init_subclass__` registration, barrel re-exports |
+| `ts_app/` | Express-style TypeScript service: routes → controllers → services → models, with auth middleware and a crypto util |
+| `python_backend/` | FastAPI-style layering: router → dependencies → service → model/schema, plus a payment collaborator |
+| `modular_monolith/` | Cross-domain structure: billing, catalog, identity, shipping and notifications over a shared kernel with an event bus |
 | `frontend_app/` | React/TSX component, hook and context hierarchy; service-to-page data flow |
+| `dynamic_patterns/` | The cases static analysis cannot resolve: `getattr` dispatch, string-keyed plugin registries, five unrelated `execute()` methods, `__init_subclass__` registration, barrel re-exports |
 
-Three further corpora (`ts_app/`, `python_backend/`, `modular_monolith/`) were removed in
-`4e96b628`. Their 15 tasks were removed from `tasks.json` at the same time, because
-`benchmark_runner.py` now hard-fails on a task naming a repository the corpus does not have —
-silently dropping those tasks used to shrink the gate while still reporting the original count as
-a pass.
+`ts_app/`, `python_backend/` and `modular_monolith/` were removed in `4e96b628` along with their
+15 tasks, and restored afterwards. `benchmark_runner.py` hard-fails on a task naming a repository
+the corpus does not have, which is what makes the pairing safe: silently dropping those tasks used
+to shrink the gate while still reporting the original count as a pass.
 
 ## Known failure cases it pins
 
@@ -44,6 +49,6 @@ These are kept in the suite on purpose, so a change that claims to fix one has t
 ## Run it
 
 ```bash
-python scripts/benchmark_runner.py            # all 10 tasks, summary table
+python scripts/benchmark_runner.py            # all 25 tasks, summary table
 python scripts/benchmark_runner.py --ci       # exit 1 if the hit rate drops below 80%
 ```

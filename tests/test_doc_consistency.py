@@ -119,6 +119,47 @@ def test_languages_documented():
         )
 
 
+def test_language_scorecard_matches_the_generator():
+    """The scorecard table in docs/architecture.md is what the generator emits today.
+
+    `scripts/generate_language_scorecard.py` shipped with no consumer: nothing in
+    docs/, README or CI referenced it, and its own docstring pointed at a
+    `docs/LANGUAGE_SCORECARD.json` that was never committed. A generator whose
+    output nobody reads stops being run, and then stops being right -- it scores
+    `LANG_CFG` by introspection, so every language added or extended moves these
+    numbers silently.
+
+    Pinning the rendered table means adding a language fails here until the table
+    is regenerated, which is the step that would otherwise be forgotten.
+    """
+    import subprocess
+    import sys
+
+    generated = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "generate_language_scorecard.py")],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO_ROOT,
+    ).stdout.strip()
+
+    doc = ARCHITECTURE_PATH.read_text(encoding="utf-8")
+    begin, end = (
+        "<!-- BEGIN GENERATED: language-scorecard -->",
+        "<!-- END GENERATED: language-scorecard -->",
+    )
+    assert begin in doc and end in doc, (
+        f"{ARCHITECTURE_PATH.name} lost the generated-scorecard markers"
+    )
+    embedded = doc.split(begin, 1)[1].split(end, 1)[0].strip()
+
+    assert embedded == generated, (
+        "docs/architecture.md's language scorecard is stale. Regenerate it:\n"
+        "  python scripts/generate_language_scorecard.py\n"
+        "and paste the table between the BEGIN/END GENERATED markers."
+    )
+
+
 def test_action_inputs_and_outputs_documented():
     """Verify every input and output in action.yml is documented in docs/cli.md."""
     assert ACTION_YML_PATH.exists()

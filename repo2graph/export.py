@@ -1078,6 +1078,13 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
         # later command) writes vectors.npy -- false is correct at build time.
         "has_vectors": False,
         "index_schema_version": INDEX_SCHEMA_VERSION,
+        # Which resource ceilings actually bound this build; empty when none
+        # did. Written under both `--limit-policy` values: `truncate` suppresses
+        # the stderr warning, never the record. A reader asking "are there
+        # really no callers of f, or was that edge dropped at the ceiling?" has
+        # no other way to tell, and an index that cannot answer that is worse
+        # than one that was never bounded.
+        "limits_hit": dict(getattr(g, "limits_hit", {}) or {}),
     }
     sha = _git_short_sha(g.root)
     if sha:
@@ -1199,10 +1206,15 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         path: Destination for `parse.cache.json`.
     """
     from .graph import PARSE_CACHE_FORMAT
+    from .parse import grammar_fingerprint
 
     payload = {
         "format": STATE_FORMAT,
         "cache_format": PARSE_CACHE_FORMAT,
+        # Part of the cache key, not metadata: a grammar upgrade changes what
+        # the same bytes parse to without changing PARSE_CACHE_FORMAT. See
+        # `parse.grammar_fingerprint`.
+        "grammars": grammar_fingerprint(),
         "files": dict(getattr(g, "parse_cache", {}) or {}),
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
@@ -1213,10 +1225,20 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
     """Read a previous build's parse cache out of an index directory.
 
     Every failure mode -- no index, no cache file, unreadable, malformed JSON,
-    a format bump -- returns an empty dict, which makes the next build a full
-    one. An incremental build that silently reuses entries it does not
-    understand is the failure this whole feature was deferred to avoid, so the
-    only safe response to an unrecognised cache is to ignore it.
+    a format bump, a grammar upgrade -- returns an empty dict, which makes the
+    next build a full one. An incremental build that silently reuses entries it
+    does not understand is the failure this whole feature was deferred to avoid,
+    so the only safe response to an unrecognised cache is to ignore it.
+
+    The grammar check is the one that does not depend on anyone remembering to
+    bump a constant: `PARSE_CACHE_FORMAT` tracks changes to our own extraction,
+    while `grammar_fingerprint()` tracks the tree-sitter versions that decide
+    what the extraction is handed. A cache written before a grammar upgrade is
+    not wrong in any way this function could detect from its contents -- it is
+    simply no longer reproducible -- so it is discarded on identity, not on
+    inspection. Entries written before this field existed have no `grammars`
+    key and so can never match, which is the intended outcome: they were
+    produced by an unknown grammar version.
 
     Args:
         outdir: The index directory (the one holding `agent/`).
@@ -1225,6 +1247,7 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
         `{relpath: entry}`, or an empty dict when no usable cache is present.
     """
     from .graph import PARSE_CACHE_FORMAT
+    from .parse import grammar_fingerprint
 
     try:
         cache_path = path(Path(outdir), "parse.cache.json")
@@ -1232,6 +1255,8 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
     except (OSError, ValueError, KeyError):
         return {}
     if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:
+        return {}
+    if data.get("grammars") != grammar_fingerprint():
         return {}
     files = data.get("files")
     return files if isinstance(files, dict) else {}

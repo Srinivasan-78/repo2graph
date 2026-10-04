@@ -64,6 +64,17 @@ LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # not of repo2graph -- which is why the Graph carries the value it was built
 # with and manifest.json reports that value rather than this default (#245).
 DEFAULT_MAX_CALL_CANDIDATES = 5
+
+# What happens when `--max-edges` or `--max-bytes` binds. Both policies cut at
+# the limit -- a bound that does not bound is not one -- and both record the cut
+# in `stats.json`. They differ only in whether the cut is announced on stderr.
+# `warn` is the default because a partial index that looks complete is the
+# expensive failure here: the next reader cannot tell a repository with no
+# callers of `f` from one whose caller was dropped at the ceiling. `truncate` is
+# for callers that have already decided to bound the build and do not want the
+# noise on every run.
+LIMIT_POLICIES = ("warn", "truncate")
+DEFAULT_LIMIT_POLICY = "warn"
 # Method names of the built-in collection, string and promise types across the
 # indexed languages. `x.get()` on a receiver whose type the parser cannot see is
 # far more often `dict.get` / `Map.get` than the repository's own `get`, so an
@@ -174,9 +185,19 @@ class Graph:
         name: str,
         max_files: int = 0,
         max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
+        max_edges: int = 0,
+        limit_policy: str = DEFAULT_LIMIT_POLICY,
     ):
         self.root, self.name = root, name
         self.max_files = max_files
+        self.max_edges = max_edges
+        self.limit_policy = limit_policy
+        # Which resource limits actually bound this build, and by how much.
+        # Recorded whatever the policy is: `truncate` chooses to stay quiet on
+        # stderr, never to produce an index that cannot say it is partial. An
+        # artifact that was cut and does not admit it is the failure every other
+        # bound in this file is written to avoid.
+        self.limits_hit: dict[str, int] = {}
         # The ambiguous-call fan-out limit this graph was resolved under.
         # Carried on the Graph purely so the writers can report it: export's
         # manifest.json describes the artifacts it ships beside, and a manifest
@@ -211,6 +232,7 @@ class Graph:
         # and a hit/miss count differs by construction between the two.
         self.incremental: dict[str, int] | None = None
         self._warned_large = False
+        self._limits_announced: set[str] = set()
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
@@ -239,6 +261,19 @@ class Graph:
         key = (src, dst, etype)
         if key in self._edge_seen:
             return
+        # Checked after the duplicate test, so a repeated edge is not counted as
+        # one the ceiling dropped. Discovery order is deterministic (see
+        # CONTRIBUTING's "Deterministic Discovery Order"), so the same build
+        # with the same limit keeps the same edges -- which is what lets
+        # `test_max_edges_truncation_is_deterministic` compare two runs.
+        if self.max_edges > 0 and len(self.edges) >= self.max_edges:
+            self.limits_hit["edges_dropped"] = self.limits_hit.get("edges_dropped", 0) + 1
+            self._note_limit(
+                "edges",
+                f"repo2graph: warning: edge ceiling reached at {self.max_edges} edges; "
+                f"further edges are dropped and the graph is partial",
+            )
+            return
         self._edge_seen.add(key)
         # Every edge leaves here carrying the standard trust metadata, whatever
         # the caller remembered to pass. Normalising at the one chokepoint is
@@ -247,6 +282,20 @@ class Graph:
         self.edges.append(normalize_edge(dict(src=src, dst=dst, type=etype, **attrs)))
         self.stats[f"edge:{etype}"] += 1
         self._warn_if_large()
+
+    def _note_limit(self, which: str, message: str) -> None:
+        """Announce a limit the first time it binds, if the policy says to.
+
+        Once per limit per build, not once per dropped item: a ceiling reached
+        early would otherwise print a line for every remaining edge and bury
+        the build's real output.
+        """
+        if self.limit_policy != "warn":
+            return
+        if which in self._limits_announced:
+            return
+        self._limits_announced.add(which)
+        print(message, file=sys.stderr)
 
     def _warn_if_large(self) -> None:
         if self._warned_large:
@@ -1297,6 +1346,45 @@ def parse_all(files, jobs: int, config=None):
         return [_read_and_parse(i) for i in items]
 
 
+def _within_byte_budget(files, budget: int, g: "Graph"):
+    """The leading files whose cumulative size fits in `budget` bytes.
+
+    Stops at the first file that would exceed the budget rather than skipping
+    it and continuing: skipping would make the selection depend on the sizes of
+    files *after* the one that did not fit, so inserting a large file in the
+    middle of a repository could silently change which small files at the end
+    were indexed. Stopping keeps the selection a prefix of the discovery order,
+    which is the property that makes it reproducible.
+
+    A single file larger than the whole budget therefore yields nothing, which
+    is correct and is why the limit is announced: a budget too small to admit
+    the first file is a misconfiguration, not an empty repository.
+    """
+    kept = []
+    used = 0
+    for rel, absolute in files:
+        try:
+            size = absolute.stat().st_size
+        except OSError:
+            # Unreadable here means unparseable later; let the normal path
+            # record it rather than charging it against the budget.
+            kept.append((rel, absolute))
+            continue
+        if used + size > budget:
+            dropped = len(files) - len(kept)
+            g.limits_hit["files_dropped_over_max_bytes"] = dropped
+            g._note_limit(
+                "bytes",
+                f"repo2graph: warning: byte budget reached at {used} of {budget} bytes; "
+                f"{dropped} discovered file(s) were not indexed and the graph is partial",
+            )
+            break
+        used += size
+        kept.append((rel, absolute))
+    g.stats["bytes_indexed"] = used
+    return kept
+
+
 # ---------- build ----------
 def build(
     root: Path,
@@ -1309,6 +1397,9 @@ def build(
     max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
     config=None,
     cochange_min: int = 3,
+    max_bytes: int = 0,
+    max_edges: int = 0,
+    limit_policy: str = DEFAULT_LIMIT_POLICY,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1328,6 +1419,15 @@ def build(
             clamped value is recorded on the returned Graph so the writers can
             state the limit this build actually used.
         config: BuildConfig
+        max_bytes: When positive, stop adding files once their cumulative
+            on-disk size would exceed this many bytes. Applied over the
+            deterministic discovery order, so the same repository and the same
+            limit select the same files.
+        max_edges: When positive, the graph holds at most this many edges;
+            later ones are dropped.
+        limit_policy: `warn` (default) announces a bound on stderr the first
+            time it binds; `truncate` cuts silently. Both record the cut in
+            `stats.json` -- see `LIMIT_POLICIES`.
 
     Returns:
         The populated Graph. `parse_cache` holds the cache for the *next*
@@ -1335,7 +1435,16 @@ def build(
     """
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name, max_files=max_files, max_call_candidates=max_call_candidates)
+    if limit_policy not in LIMIT_POLICIES:
+        raise ValueError(f"limit_policy must be one of {LIMIT_POLICIES}, not {limit_policy!r}")
+    g = Graph(
+        root,
+        root.name,
+        max_files=max_files,
+        max_call_candidates=max_call_candidates,
+        max_edges=max_edges,
+        limit_policy=limit_policy,
+    )
     g.config = config
     g.include_globs = list(include) if include else None
     g.exclude_globs = list(exclude) if exclude else None
@@ -1345,6 +1454,8 @@ def build(
     files = list(discover(root, include, exclude, stats=g.stats, config=config))
     if max_files > 0:  # a negative limit must not become files[:-n] and drop the tail
         files = files[:max_files]
+    if max_bytes > 0:
+        files = _within_byte_budget(files, max_bytes, g)
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
     ctx.update(path_index(file_index))

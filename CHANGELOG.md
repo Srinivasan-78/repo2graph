@@ -15,6 +15,47 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Property-based tests, via `hypothesis` (G57).** `tests/test_properties.py` — 22 properties over
+  UTF-8/surrogate decoding, chunk line slicing, and path normalization, the three areas where
+  hand-written examples kept missing cases because they spell inputs the way the rest of the
+  codebase produces them. Run under a fixed profile (`derandomize=True`, `max_examples=100`,
+  `deadline=None`) so CI cannot go flaky; the properties were first verified at `max_examples=4000`
+  non-derandomized, so the shipped setting is not hiding what the wider search found. Among them,
+  a direct detector for CONTRIBUTING invariant 1: a source with no `\n` is exactly one line however
+  many `U+2028` / `\x0b` / `\x0c` / `\x85` characters it holds, which is precisely what
+  `splitlines()` would get wrong.
+- **`--max-bytes`, `--max-edges` and `--limit-policy truncate|warn` (E40).** `--max-files` bounded
+  discovery, but nothing bounded the two axes that actually decide a build's memory ceiling: total
+  source bytes read, and total edges held. Edge count grows with how interconnected the code is,
+  not with how many files it has, so a repository well under any file count can still produce
+  millions of edges. `--max-bytes` keeps a *prefix* of discovery order rather than skipping an
+  oversized file and continuing — skipping would make which small files are indexed depend on the
+  sizes of files after them, so one large file inserted mid-repository could silently change the
+  tail of the selection. Both ceilings record what they cut under `limits_hit` in `stats.json`,
+  under **both** policies: `truncate` buys silence on stderr and nothing else, because a reader
+  asking "are there really no callers of `f`, or was that edge dropped?" has no other way to tell.
+  `tests/test_resource_limits.py`, including a determinism test pinning that two builds under one
+  ceiling keep the same edges.
+- **A total wall-clock bound on provider streaming, `MAX_ANSWER_SECONDS` (C26b).** `rag --answer`
+  had two bounds and needed three. `HTTP_TIMEOUT` is a *socket* timeout: it measures the gap
+  between reads and resets on every byte that arrives, so a host sending one byte at a time, for
+  ever, never trips it. `MAX_ANSWER_BYTES` bounds total size, but a trickle that stays under the
+  ceiling is never bounded by it either — together they permitted an indefinite hang on a stream
+  that looked well behaved, against an endpoint `OLLAMA_HOST` makes operator-choosable. The
+  stream now also stops after 600s measured on `time.monotonic()`, so an NTP step cannot cut a
+  healthy answer short. `timed_out` is reported separately from `truncated`, with distinct
+  wording: "too slow" and "too much" have different causes and different remedies.
+- **A seventh `doctor` check: `MCP Server`.** An MCP client surfaces a failed SDK preflight only
+  as "server failed to start" or an empty tool list — `server._require_sdk()` raises `SystemExit`
+  with an accurate message and the client swallows it — so a wrong or absent `mcp` SDK was a
+  setup failure users could not diagnose from inside their editor. `doctor` now runs the same
+  gate without launching the server, importing `SDK_SPEC`/`_sdk_version`/`_sdk_major` from
+  `mcp/server.py` rather than restating them, so a doctor that says ok and a server that refuses
+  to start cannot disagree. An absent SDK is a **warning**, not a failure: `repo2graph[mcp]` is an
+  extra and a CLI-only install is supported. It deliberately does not read the client's own
+  configuration (`~/.claude.json`, Cursor's `mcp.json`) — those belong to other tools and
+  `doctor --json` is documented as safe to paste into a bug report; a test enforces that over the
+  module's AST. Index freshness remains deliberately out of `doctor`, owned by `index-status`.
 - **`.github/remediation-tracking.md` and `.github/distribution.md`** — a verified status map for
   the 60-item security/correctness remediation spec, and the distribution plan with its claims
   checked against `benchmarks/real/`. They live in `.github/` beside `CONTRIBUTING.md`, **not** in
@@ -276,8 +317,79 @@ makes keeping it current a release-blocking step rather than a good intention.
   ([#345](https://github.com/Srinivasan-78/repo2graph/issues/345)) when `measure is len`, with
   byte-identical output and unchanged semantics for an arbitrary `measure`.
 
+### Known issues
+
+- **`explain-path` misreports a filename-rule verdict for a path spelled with a trailing `..`,
+  on Windows.** Found by the new property tests and left unfixed deliberately, pinned by a strict
+  platform-conditional xfail so a fix cannot land unnoticed. `parse.explain_path` normalizes only
+  the *parent* of its target (`target_path.parent.resolve() / target_path.name`), so a trailing
+  `..` survives into the relative path every later rule is matched against. On Windows the Win32
+  API collapses `..` lexically before the stat, so the existence check succeeds against the
+  different file the path actually names. With a `.env` in the root, `explain-path .env` correctly
+  answers `secret_file`, while `explain-path .env/src/..` answers `included`.
+
+  **This is a wrong answer from the diagnostic, not an indexing leak.** `discover()` never produces
+  that spelling and the build path still excludes the file — verified: a build of a tree containing
+  `.env` indexes only the source file. It also fails in the conservative direction, claiming a
+  credential file *would* be indexed when it would not. Not reachable on POSIX, where `stat` is
+  physical and `.env/src` is `ENOTDIR`.
+
 ### Fixed — repository tooling and stale references
 
+- **The incremental parse cache survived a grammar upgrade (E43).** `PARSE_CACHE_FORMAT` is bumped
+  by hand, so it catches every change to *our* extraction and none to the grammars that feed it. A
+  tree-sitter upgrade changes what the same bytes parse to while nothing in this repository
+  changes — so `--incremental` reused every entry for every unmodified file, and the resulting
+  index was a silent mix of two grammar versions that no full rebuild could reproduce.
+  `test_incremental_is_byte_identical_to_a_full_rebuild` cannot see this because it never changes
+  grammars mid-run. `parse.grammar_fingerprint()` now records the installed `tree-sitter` and
+  `tree-sitter-language-pack` versions in `parse.cache.json`, and a mismatch discards the cache the
+  same way a format bump does. A cache written before the field existed has no `grammars` key and
+  so can never match, which is the intended outcome: it was produced by an unknown grammar version.
+- **The language scorecard credited C with 123 tests.** The test-coverage column matched
+  `f"test_{lang}" in name`, which for `c` is true of `test_cli_*`, `test_cache_*` and
+  `test_citation_*` — every one of them counted, and the number was published in a table. Matching
+  now requires the language as a whole `_`-delimited token, which takes C from 123 to 1.
+- **Nothing asserted the removed HTTP/OIDC surface stays removed.** `647e76f3` deleted `auth.py`,
+  `http_server.py` and ten flags, but no test referenced any of them, so a reintroduction would
+  have been invisible to CI. `tests/test_http_surface_removed.py` covers all three layers. Worth
+  recording how it is written: an exit-status assertion alone is **not** a detector here —
+  re-adding one of the deleted value-taking options still exits 2, because argparse then reports
+  "expected one argument" instead of "unrecognized arguments". The primary check introspects the
+  registered options across
+  the top-level parser and every subparser; the behavioural test passes a value so a value-taking
+  reintroduction cannot pass either. The import scan walks `ast.Import`/`ast.ImportFrom` rather
+  than matching substrings, so `security.py`'s literal `"jwt"` secret pattern does not trip it.
+- **Two issue templates were deleted while everything kept routing people to them.**
+  `81bf24d5` removed the five per-category templates; `bug_report.yml` still told edge reports to
+  use *Incorrect or missing graph edge*, `feature_request.yml` still redirected language requests
+  to *Language / parser support*, and `CONTRIBUTING.md`'s "Where does this go?" table still listed
+  both. `bugreport.py` went further and claimed its five `CATEGORIES` paired with the templates
+  "one-to-one", asserted by a `tests/test_bugreport.py` that did not exist. Both templates are
+  restored (their links repointed at the docs that survived consolidation), the remaining three
+  categories are the dropdown on `bug_report.yml`, and `tests/test_bugreport.py` now exists: it
+  checks every category is offered somewhere, every template named in prose declares that name,
+  and every relative link out of a template resolves. The third caught a real `../../../` in
+  `feature_request.yml`, which rendered as a 404.
+- **`scripts/generate_language_scorecard.py` shipped with no consumer.** Nothing in `docs/`,
+  `README.md` or CI referenced it, and its own docstring pointed at a
+  `docs/LANGUAGE_SCORECARD.json` that was never committed — so the one artefact answering "how
+  well is *my* language supported" existed only as a script nobody ran. Its table is now
+  `docs/architecture.md` §4, between `BEGIN/END GENERATED` markers, with the priority order for
+  deep support and an explicit note on which columns are judgement rather than measurement.
+  Scores are read off `LANG_CFG`, so adding a language moves them:
+  `test_language_scorecard_matches_the_generator` fails until the table is regenerated, and the
+  §6 documentation checklist says so.
+- **CONTRIBUTING §7 promised measured C/C++ parse-error rates that no longer existed.** The link
+  pointed at `architecture.md`, which names no such rates after the consolidation. It now says
+  plainly that the macro penalty is a judgement call and that nothing here measures per-language
+  `parse_errors` across real code.
+- **Three of the five synthetic corpus archetypes, and 15 of its 25 tasks, were gone.**
+  `4e96b628` removed `ts_app/`, `python_backend/` and `modular_monolith/` with no stated reason,
+  leaving the regression gate covering TSX and dynamic-Python only — no TypeScript service, no
+  layered Python backend, no cross-domain monolith. All three are restored with their tasks; the
+  gate runs 25 again across 5 archetypes. `benchmarks/corpus/README.md` keeps its "regression
+  gate, not a benchmark" framing and does **not** reinstate the withdrawn ripgrep comparison.
 - **`make typecheck` failed outright once the `rag` extra was installed.** numpy's bundled stubs
   use PEP 695 `type` statements, which mypy refuses to parse under `python_version = "3.10"`:
   it reported a syntax error inside `numpy/__init__.pyi` and stopped, "errors prevented further

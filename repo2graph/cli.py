@@ -192,6 +192,9 @@ def cmd_build(args):
                 max_call_candidates=args.max_call_candidates,
                 config=config,
                 cochange_min=getattr(args, "cochange_min", 3),
+                max_bytes=getattr(args, "max_bytes", 0),
+                max_edges=getattr(args, "max_edges", 0),
+                limit_policy=getattr(args, "limit_policy", "warn"),
             )
             chunks = None if args.no_chunks else iter_chunks(g)
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
@@ -279,6 +282,9 @@ def cmd_github(args):
                 max_call_candidates=args.max_call_candidates,
                 no_chunks=args.no_chunks,
                 cochange_min=getattr(args, "cochange_min", 3),
+                max_bytes=getattr(args, "max_bytes", 0),
+                max_edges=getattr(args, "max_edges", 0),
+                limit_policy=getattr(args, "limit_policy", "warn"),
             )
     except LockTimeoutError as exc:
         raise SystemExit(f"error: {exc}") from None
@@ -1334,6 +1340,27 @@ def main(argv=None):
         help="minimum co-edits across git history required to emit a CO_CHANGE edge (default: 3)",
     )
     common.add_argument("--max-files", type=_nonneg, default=0)
+    common.add_argument(
+        "--max-bytes",
+        type=_nonneg,
+        default=0,
+        help="stop indexing once discovered files exceed N bytes in total (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-edges",
+        type=_nonneg,
+        default=0,
+        help="keep at most N edges; later ones are dropped (0 = no limit)",
+    )
+    common.add_argument(
+        "--limit-policy",
+        choices=("warn", "truncate"),
+        default="warn",
+        help=(
+            "what a reached limit does: 'warn' (default) says so on stderr, "
+            "'truncate' cuts quietly. Both record the cut in stats.json"
+        ),
+    )
     common.add_argument(
         "--jobs",
         type=_nonneg,

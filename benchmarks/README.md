@@ -42,7 +42,7 @@ log, and what the benchmark does not measure.
 
 ## Regression gate (`corpus/`)
 
-Two small synthetic repositories and 10 questions, run on every PR by
+Five small synthetic repositories and 25 questions, run on every PR by
 [`benchmark.yml`](../.github/workflows/benchmark.yml), failing the build below an 80% hit rate.
 [`corpus/README.md`](corpus/README.md) lists what it covers and the known failure cases it pins
 on purpose.

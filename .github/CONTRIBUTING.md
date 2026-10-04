@@ -571,6 +571,10 @@ All of these, or CI fails or the docs lie:
 - [ ] `README.md` — the language list under "What it can't do" (the `<a id="languages">`
       paragraph; `test_languages_documented` is what fails if you skip this).
 - [ ] `docs/comparison.md` — the "Languages parsed for symbols" count.
+- [ ] `docs/architecture.md` — the [language scorecard](../docs/architecture.md#4-language-support).
+      Run `python scripts/generate_language_scorecard.py` and paste the table between the
+      `BEGIN/END GENERATED` markers; the scores are read off `LANG_CFG`, so a new entry changes
+      them and `test_language_scorecard_matches_the_generator` fails until you do.
 - [ ] `CHANGELOG.md` — under `## [Unreleased]` → `### Added`.
 
 The counts drifted once already (the docs said 16 grammars / 28 extensions for some time after
@@ -585,8 +589,10 @@ Before claiming a language works, check it against a real repository and look at
 than discovered by a user:
 
 - **Macro-heavy languages parse imperfectly.** C and C++ produce thousands of tree-sitter `ERROR`
-  nodes around unexpanded macros; a `cpp` preprocessor fallback recovers a minority. See
-  [../architecture.md](../docs/architecture.md) for the measured rates.
+  nodes around unexpanded macros; a `cpp` preprocessor fallback recovers a minority. This is why
+  both sit at 75 on the parsing dimension of the
+  [language scorecard](../docs/architecture.md#4-language-support) — a judgement call, not a
+  measured rate: nothing here measures per-language `parse_errors` across real code.
 - **Call resolution is name-based for every language, including yours.** A language with heavy
   method-name reuse (TypeScript's `dispose()`, `getId()`) produces more ambiguous `CALLS` edges
   than one with prefix-disciplined naming. That is a property of the language's conventions, not a

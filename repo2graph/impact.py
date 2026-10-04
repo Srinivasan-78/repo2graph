@@ -432,7 +432,7 @@ def get_git_diff(repo_root: Path | str, base: str = "main", head: str | None = N
     return proc.stdout.decode("utf8", "surrogateescape")
 
 
-_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
 _TEST_BASENAME_SUFFIXES = (
     "_test.py",
     "_test.go",
@@ -445,6 +445,26 @@ _TEST_BASENAME_SUFFIXES = (
     ".spec.tsx",
     ".spec.jsx",
 )
+_FIXTURE_DIR_NAMES = frozenset(
+    {
+        "benchmarks",
+        "benchmark",
+        "fixtures",
+        "fixture",
+        "examples",
+        "example",
+        "corpus",
+    }
+)
+
+
+def is_fixture_path(path: str) -> bool:
+    """Identify whether a relative path represents benchmark, fixture, or example code."""
+    parts = path.replace("\\", "/").lower().split("/")
+    if any(part in _FIXTURE_DIR_NAMES for part in parts[:-1]):
+        return True
+    base = parts[-1]
+    return base in ("conftest.py", "fixture.py", "benchmark.py", "example.py")
 
 
 def is_test_path(path: str) -> bool:
@@ -461,7 +481,17 @@ def is_test_path(path: str) -> bool:
         return True
 
     base = parts[-1]
-    return base == "test.py" or base.startswith("test_") or base.endswith(_TEST_BASENAME_SUFFIXES)
+    return (
+        base == "test.py"
+        or base == "conftest.py"
+        or base.startswith("test_")
+        or base.endswith(_TEST_BASENAME_SUFFIXES)
+    )
+
+
+def is_test_or_fixture_path(path: str) -> bool:
+    """Identify whether a relative path represents test, benchmark, fixture, or example code."""
+    return is_test_path(path) or is_fixture_path(path)
 
 
 def is_public_symbol(node: dict[str, Any]) -> bool:
@@ -478,7 +508,7 @@ def is_public_symbol(node: dict[str, Any]) -> bool:
         return True
 
     norm_path = path.replace("\\", "/")
-    if norm_path.startswith(".github/") or is_test_path(norm_path):
+    if norm_path.startswith(".github/") or is_test_or_fixture_path(norm_path):
         return False
 
     # Python conventions: leading underscore (including __dunder__) is not public API
@@ -881,7 +911,7 @@ def analyze_diff_impact(
                     if connected:
                         break
 
-            if not connected and not is_test_path(fpath):
+            if not connected and not is_test_or_fixture_path(fpath):
                 suspicious.append(
                     SuspiciousFinding(
                         rule_id="R2G-IMP-001",
@@ -940,7 +970,7 @@ def analyze_diff_impact(
         # "high blast radius" on every file of PR #422. Test helpers are skipped
         # for the reason R2G-IMP-001 skips them: a shared fixture with many
         # callers is how a suite is meant to look.
-        if sc.change_type == "added" or is_test_path(sc.path):
+        if sc.change_type == "added" or is_test_or_fixture_path(sc.path):
             continue
         # Confident callers only. The count is the whole claim, and an ambiguous
         # name match inflates it without evidence: changing `HTTPTransport.start`
@@ -994,7 +1024,7 @@ def analyze_diff_impact(
     for ic in impacted_callers:
         # Test callers are excluded for the reason R2G-IMP-003 excludes them: a
         # shared helper resolving loosely is how a suite looks, not a risk.
-        if is_test_path(ic.path):
+        if is_test_or_fixture_path(ic.path):
             continue
         ambiguous_by_symbol.setdefault(ic.target_symbol_id, []).append(ic)
 
@@ -1004,7 +1034,11 @@ def analyze_diff_impact(
         changed = changed_by_id.get(sym_id)
         if changed is None:
             continue
-        if changed.change_type == "added" or is_test_path(changed.path) or not changed.is_public:
+        if (
+            changed.change_type == "added"
+            or is_test_or_fixture_path(changed.path)
+            or not changed.is_public
+        ):
             continue
         low = [c for c in callers if c.confidence < AMBIGUOUS_CALL_CONFIDENCE]
         if not low:

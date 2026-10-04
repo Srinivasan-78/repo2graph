@@ -266,4 +266,8 @@ class ManifestRecord(TypedDict, total=False):
 StatsRecord = dict[str, Any]
 """`stats.json`'s shape: dynamic `Counter` keys plus `export._stats_extra`'s
 fixed keys (`top_hub_nodes`, `languages`, `has_vectors`, `index_schema_version`,
-optionally `built_at_commit`, `co_change_hotspots`)."""
+`limits_hit`, optionally `built_at_commit`, `co_change_hotspots`).
+
+`limits_hit` is always present and is `{}` when no resource ceiling bound the
+build. A consumer deciding whether an index is complete reads it rather than
+inferring from counts -- see `graph.LIMIT_POLICIES`."""

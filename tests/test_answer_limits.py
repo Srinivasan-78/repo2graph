@@ -415,3 +415,75 @@ def test_stream_answer_goes_through_the_guarded_opener():
     assert len(installed) == 1
     assert isinstance(installed[0], answer._SameOriginRedirect)
     assert answer._SameOriginRedirect.max_redirections == 3
+
+
+# ------------------------------------- axis 3: a stream that never ends ----
+
+
+class TricklingResponse(SizedResponse):
+    """A response that serves small blocks and charges wall-clock time per read.
+
+    The point of the double is the pairing: every block is tiny, so the byte
+    ceiling is never approached, while the clock advances on each read. That is
+    exactly the shape neither of the other two bounds catches -- `HTTP_TIMEOUT`
+    is a socket timeout and resets on every byte that does arrive.
+    """
+
+    def __init__(self, body: bytes, block: int, seconds_per_read: float):
+        super().__init__(body)
+        self._block = block
+        self._per_read = seconds_per_read
+        self.now = 0.0
+
+    def read(self, size=-1):
+        self.now += self._per_read
+        return super().read(min(size, self._block) if size and size > 0 else self._block)
+
+
+def trickle(monkeypatch, body: bytes, block: int, seconds_per_read: float) -> TricklingResponse:
+    """Serve `body` slowly, with `answer`'s clock driven by the response itself."""
+    resp = TricklingResponse(body, block, seconds_per_read)
+    monkeypatch.setattr(answer, "_OPENER", FakeOpener(lambda req, *a, **kw: resp))
+    monkeypatch.setattr(answer.time, "monotonic", lambda: resp.now)
+    return resp
+
+
+def test_a_trickling_provider_cannot_stream_forever(monkeypatch, capsys):
+    """Axis 3 (C26b): a slow stream is bounded by wall-clock time, not bytes.
+
+    Neither existing bound closes this. `MAX_ANSWER_BYTES` only fires once the
+    body is enormous, and this one is a few kilobytes. `HTTP_TIMEOUT` measures
+    the gap *between* reads and resets whenever a byte arrives, so a host that
+    sends a little, forever, never trips it. Before `MAX_ANSWER_SECONDS` the
+    call had no upper bound on its own duration at all.
+
+    The budget is the real `MAX_ANSWER_SECONDS`, not a shrunken one, so a
+    fixture that is merely short cannot pass this by accident.
+    """
+    only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
+    budget = answer.MAX_ANSWER_SECONDS
+    # Enough pieces that the clock must run past the budget long before EOF.
+    body = ndjson(["tick "] * 4000)
+    assert len(body) < answer.MAX_ANSWER_BYTES, "the byte ceiling must not be what fires here"
+
+    resp = trickle(monkeypatch, body, block=64, seconds_per_read=budget / 10)
+    answer.stream_answer(PACK, provider="ollama")
+
+    assert resp.served < len(body), "the stream must stop before the body is exhausted"
+    assert resp.now > budget
+    err = capsys.readouterr().err
+    assert "still streaming after" in err
+    assert "truncated" not in err, "a slow stream is not an oversized one"
+
+
+def test_a_prompt_stream_is_not_reported_as_timed_out(monkeypatch, capsys):
+    """The budget must not fire on a normal answer that simply took some time."""
+    only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
+    body = ndjson(["hello ", "world"])
+    resp = trickle(
+        monkeypatch, body, block=1 << 16, seconds_per_read=answer.MAX_ANSWER_SECONDS / 1000
+    )
+    answer.stream_answer(PACK, provider="ollama")
+
+    assert resp.now < answer.MAX_ANSWER_SECONDS
+    assert "still streaming after" not in capsys.readouterr().err
