@@ -769,6 +769,20 @@ def sanitize_url(url: str) -> str:
         r"\g<1>[redacted:password]\g<3>",
         s,
     )
+    # Userinfo with no colon is the credential itself, not a user name. Git
+    # remotes written by CI and by `gh auth setup-git` take exactly this shape --
+    # `https://ghp_...@github.com/o/r.git` -- and the rule above cannot see them
+    # because it requires a `user:pass` pair. `integrity.py` reads
+    # `remote.origin.url` into the manifest's provenance, so a token in a remote
+    # was published in `manifest.json` and shipped with the index.
+    # `git` and `oauth2` are conventional literal user names carrying no secret
+    # (`ssh://git@github.com/...` is the canonical SSH remote), so redacting
+    # them would lose information without protecting anything.
+    s = re.sub(
+        r"\b([a-z][a-z0-9+.-]*://)(?!(?:git|oauth2)@)([^/\s:@]+)(@[^\/\s]+)",
+        r"\g<1>[redacted:userinfo]\g<3>",
+        s,
+    )
     # Redact sensitive query parameters
     return SENSITIVE_QUERY_PARAMS_RE.sub(r"\g<1>[redacted:query_param]", s)
 

@@ -244,3 +244,42 @@ def test_an_ordinary_docstring_is_left_alone(tmp_path):
     docs = "\n".join(n.get("docstring", "") for n in g.nodes.values())
     assert "Return the password policy name." in docs
     assert "REDACTED" not in docs
+
+
+# --------------------------------------------------------------------------
+# A token in a git remote must not reach manifest.json
+# --------------------------------------------------------------------------
+
+from repo2graph.security import sanitize_url  # noqa: E402
+
+
+def test_a_bare_token_userinfo_in_a_remote_url_is_redacted():
+    """`integrity.py` reads remote.origin.url into the manifest's provenance.
+
+    The password rule required a `user:pass` pair, so the shape CI actually
+    writes -- `https://<token>@github.com/o/r.git`, with the token as the whole
+    userinfo and no password -- passed through untouched and was published in
+    `manifest.json` alongside the index.
+    """
+    for token in ("ghp_AAAAAAAAAAAAAAAAAAAAAAAA", "glpat-xxxxxxxxxxxxxxxxxxxx"):
+        url = f"https://{token}@github.com/o/r.git"
+        out = sanitize_url(url)
+        assert token not in out, out
+        assert "redacted" in out
+
+
+def test_the_user_colon_password_form_is_still_redacted():
+    out = sanitize_url("https://x-access-token:ghp_SECRETVALUE@github.com/o/r.git")
+    assert "ghp_SECRETVALUE" not in out
+    assert "x-access-token" in out, "the user name is not the secret and stays readable"
+
+
+def test_conventional_non_secret_usernames_are_left_alone():
+    """`ssh://git@...` is the canonical SSH remote; redacting it loses information."""
+    for url in ("ssh://git@github.com/o/r.git", "https://oauth2@gitlab.com/o/r.git"):
+        assert sanitize_url(url) == url
+
+
+def test_a_remote_with_no_credentials_is_unchanged():
+    for url in ("https://github.com/o/r.git", "git@github.com:o/r.git"):
+        assert sanitize_url(url) == url
