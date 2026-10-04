@@ -21,7 +21,10 @@ together in git. Retrieval starts from BM25 matches and follows those links.
 
 It needs no model, no API key, no language server and no database. Building, querying and the
 MCP server make no network calls; the only exceptions are `rag --answer` (opt-in, sends the pack
-to an LLM) and `repo2graph github` (clones a repository). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
+to an LLM) and `repo2graph github` (clones a repository). Parsers are part of that promise:
+`tree-sitter-language-pack` is pinned below 1.0 so every grammar arrives compiled into the
+installed wheel, rather than being downloaded on first parse — see
+[SECURITY.md](.github/SECURITY.md#why-this-is-safe-for-enterprise-use). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
 
 ## Try it
 

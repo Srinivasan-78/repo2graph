@@ -327,11 +327,17 @@ returns `[]`, not an error. Secret-excluded paths never appear.
 
 **Purpose:** Widen a `[cite: path:start-end]` citation -- the anchor every
 other tool's output is built around -- with no filesystem access. Read from
-`chunks.jsonl`, not disk: chunks have already passed secret-path exclusion and
-content redaction, the filesystem has not, and a served index may have no
-source tree beside it at all (the `graph` branch / GitHub Action artifact
-case). This is what makes the tool safe and correct over the HTTP transport,
-from a different machine, with nothing shared but the index.
+`chunks.jsonl`, not disk: those chunks have passed secret-path exclusion, the
+filesystem has not, and a served index may have no source tree beside it at all
+(the `graph` branch / GitHub Action artifact case). This is what makes the tool
+correct when the index is all you have.
+
+Content redaction is applied **at serve time**, to the lines actually returned,
+exactly as `repo_search` gets it from `Index._served`. Build-time redaction
+cannot be relied on here: `--secret-policy off` and `warn-only` deliberately
+store the text unredacted, and this tool previously handed that straight back
+while `repo_search` over the same bytes redacted it. If the index manifest
+cannot be read, the tool redacts rather than guessing.
 
 **Input parameters:**
 

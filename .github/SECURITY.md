@@ -82,6 +82,22 @@ relevant if you're running it where an untrusted caller can pick the arguments.
   only required third-party dependencies are `tree-sitter` and `tree-sitter-language-pack`, both
   parsers; `sentence-transformers`/`numpy` (the `rag` extra) and the `mcp` SDK (the `mcp` extra) are
   optional and never load unless you ask for them.
+- **Grammars are installed, never fetched at run time.** `tree-sitter-language-pack` is pinned
+  `>=0.7,<1.0`, and that upper bound is a security boundary rather than a compatibility one. The
+  0.x line compiles every grammar into the wheel (0.13.0 is a 33 MB wheel). The 1.x line ships a
+  2.5 MB loader and an 89 KB sdist, and downloads roughly 21 MB of unsigned native code from the
+  network on the first `get_parser()` call — into the process that is holding your source, and in
+  CI your tokens. That would bypass your package proxy, your lockfile and your SBOM, make the
+  hashed artefact a loader rather than the code that actually runs, and break both the
+  no-network guarantee above and the read-only container below. 1.x exposes no offline switch, so
+  raising the cap means vendoring grammars first. `tests/test_grammar_availability.py` asserts the
+  bound so a dependency bump cannot quietly undo it.
+- **A broken grammar fails the build instead of emptying the graph.** If no grammar can be loaded
+  for any supported file that was discovered, `build` exits non-zero and says so. It used to exit
+  0 with a graph of files and directories and no symbols, calls or imports — while `doctor`
+  reported "ok" because its grammar check counted entries in a dict literal instead of loading
+  anything, `impact` rated every PR LOW because nothing was reachable, and `--incremental` cached
+  the empty result. An empty graph and an empty repository are now distinguishable.
 - **Auto-build only writes where you pointed it.** The MCP server's first-call index build writes
   exclusively into `<repo_path>/.r2g`, never outside the tree you gave it.
 
