@@ -831,6 +831,163 @@ def test_blast_radius_counts_only_confidently_resolved_callers(ambiguous_caller_
     assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-003"] == []
 
 
+def test_blast_radius_ignores_test_and_fixture_callers():
+    """R2G-IMP-003: callers from test or fixture suites are test coverage, not risk.
+
+    A helper called by 8 unit test functions across test modules must not trigger
+    high blast radius. Only production callers put downstream contracts at risk.
+    """
+    idx = MockIndex()
+    idx.add_node("file:pkg/service.py", type="file", path="pkg/service.py")
+    idx.add_node(
+        "sym:pkg/service.py::handler",
+        type="symbol",
+        name="handler",
+        qualname="handler",
+        kind="function",
+        path="pkg/service.py",
+        start_line=10,
+        end_line=20,
+    )
+    # One production caller
+    idx.add_node("file:pkg/client.py", type="file", path="pkg/client.py")
+    idx.add_node(
+        "sym:pkg/client.py::call_it",
+        type="symbol",
+        name="call_it",
+        qualname="call_it",
+        kind="function",
+        path="pkg/client.py",
+        start_line=1,
+        end_line=5,
+    )
+    idx.add_edge(
+        "sym:pkg/client.py::call_it",
+        "sym:pkg/service.py::handler",
+        "CALLS",
+        confidence=1.0,
+        evidence=edgemeta.evidence("pkg/client.py", 2),
+    )
+    # 8 test callers across 3 test modules
+    for i in range(8):
+        tpath = f"tests/test_suite_{i % 3}.py"
+        idx.add_node(f"file:{tpath}", type="file", path=tpath)
+        cid = f"sym:{tpath}::test_case_{i}"
+        idx.add_node(
+            cid,
+            type="symbol",
+            name=f"test_case_{i}",
+            qualname=f"test_case_{i}",
+            kind="function",
+            path=tpath,
+            start_line=1,
+            end_line=5,
+        )
+        idx.add_edge(
+            cid,
+            "sym:pkg/service.py::handler",
+            "CALLS",
+            confidence=1.0,
+            evidence=edgemeta.evidence(tpath, 2),
+        )
+
+    diff = (
+        "diff --git a/pkg/service.py b/pkg/service.py\n"
+        "--- a/pkg/service.py\n"
+        "+++ b/pkg/service.py\n"
+        "@@ -12,1 +12,1 @@\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    report = analyze_diff_impact(idx, diff=diff)
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-003"] == []
+
+
+def test_ambiguous_call_ignores_transitive_ambiguity():
+    """R2G-IMP-004 is about this symbol's own call sites, not downstream transitive calls.
+
+    If A calls B directly with 1.0 confidence, but C calls A with 0.2 confidence,
+    B's caller list is not unresolved -- only direct callers (depth == 1) matter.
+    """
+    idx = MockIndex()
+    for p, name in (("pkg/b.py", "target_b"), ("pkg/a.py", "caller_a"), ("pkg/c.py", "caller_c")):
+        idx.add_node(f"file:{p}", type="file", path=p)
+        idx.add_node(
+            f"sym:{p}::{name}",
+            type="symbol",
+            name=name,
+            qualname=name,
+            kind="function",
+            path=p,
+            start_line=10,
+            end_line=20,
+        )
+    # caller_a calls target_b directly with 1.0
+    idx.add_edge(
+        "sym:pkg/a.py::caller_a",
+        "sym:pkg/b.py::target_b",
+        "CALLS",
+        confidence=1.0,
+        evidence=edgemeta.evidence("pkg/a.py", 12),
+    )
+    # caller_c calls caller_a with 0.2
+    idx.add_edge(
+        "sym:pkg/c.py::caller_c",
+        "sym:pkg/a.py::caller_a",
+        "CALLS",
+        confidence=0.2,
+        evidence=edgemeta.evidence("pkg/c.py", 12),
+    )
+
+    diff = (
+        "diff --git a/pkg/b.py b/pkg/b.py\n"
+        "--- a/pkg/b.py\n"
+        "+++ b/pkg/b.py\n"
+        "@@ -12,1 +12,1 @@\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    report = analyze_diff_impact(idx, diff=diff)
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-004"] == []
+
+
+def test_impact_caller_traversal_ignores_untyped_receiver_builtins():
+    """CALLS edges flagged with untyped_receiver are guesses on builtins and not callers."""
+    idx = MockIndex()
+    for p, name in (("pkg/srv.py", "start"), ("pkg/sec.py", "regex_check")):
+        idx.add_node(f"file:{p}", type="file", path=p)
+        idx.add_node(
+            f"sym:{p}::{name}",
+            type="symbol",
+            name=name,
+            qualname=name,
+            kind="function",
+            path=p,
+            start_line=10,
+            end_line=20,
+        )
+    # m.start() guess
+    idx.add_edge(
+        "sym:pkg/sec.py::regex_check",
+        "sym:pkg/srv.py::start",
+        "CALLS",
+        confidence=0.2,
+        untyped_receiver=True,
+        evidence=edgemeta.evidence("pkg/sec.py", 12),
+    )
+    diff = (
+        "diff --git a/pkg/srv.py b/pkg/srv.py\n"
+        "--- a/pkg/srv.py\n"
+        "+++ b/pkg/srv.py\n"
+        "@@ -12,1 +12,1 @@\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+    report = analyze_diff_impact(idx, diff=diff)
+    assert report.impacted_callers == []
+    assert [f.title for f in report.suspicious_findings if f.rule_id == "R2G-IMP-004"] == []
+
+
 def test_untested_public_api_rule_needs_the_graph_to_know_the_caller(sample_graph_index):
     """ "No test edge" only means "untested" if the graph sees any caller at all.
 

@@ -725,6 +725,11 @@ def analyze_diff_impact(
             for neighbor_id, etype, direction, edge in index.adj.get(curr_id, []):
                 if etype != "CALLS" or direction != "in":
                     continue
+                # A builtin method guess on an untyped receiver (e.g. `m.start()`
+                # on a regex match or `f.write()`) is not a real call target:
+                # see edgemeta.counts_as_call.
+                if edge.get("untyped_receiver"):
+                    continue
 
                 conf = float(edge.get("confidence") or 1.0) * parent_conf
                 if min_confidence is not None and conf < min_confidence:
@@ -984,8 +989,13 @@ def analyze_diff_impact(
             if c.target_symbol_id == sc.id
             and c.depth == 1
             and c.confidence >= AMBIGUOUS_CALL_CONFIDENCE
+            and not is_test_or_fixture_path(c.path)
         ]
-        unique_caller_files = {c.path for c in direct_callers if c.path != sc.path}
+        unique_caller_files = {
+            c.path
+            for c in direct_callers
+            if c.path != sc.path and not is_test_or_fixture_path(c.path)
+        }
         if len(direct_callers) >= 8 or len(unique_caller_files) >= 3:
             suspicious.append(
                 SuspiciousFinding(
@@ -1022,9 +1032,12 @@ def analyze_diff_impact(
     changed_by_id = {sc.id: sc for sc in symbols_changed}
     ambiguous_by_symbol: dict[str, list[ImpactedCaller]] = {}
     for ic in impacted_callers:
+        # Direct callers only: ambiguity on transitive edges (e.g. downstream
+        # calls to `.write()` or `.get()`) does not mean this symbol's own
+        # caller list is unresolved.
         # Test callers are excluded for the reason R2G-IMP-003 excludes them: a
         # shared helper resolving loosely is how a suite looks, not a risk.
-        if is_test_or_fixture_path(ic.path):
+        if ic.depth != 1 or is_test_or_fixture_path(ic.path):
             continue
         ambiguous_by_symbol.setdefault(ic.target_symbol_id, []).append(ic)
 
