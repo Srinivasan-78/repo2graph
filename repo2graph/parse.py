@@ -620,7 +620,14 @@ def discover(
         yield rp, abspath
 
 
-_get_parser: Callable[[str], Parser] | None
+# `Callable[..., Parser]`, not `Callable[[str], Parser]`: the two supported
+# language-pack lines type this differently. 0.x declares `get_parser` over a
+# `Literal[...]` of every known language name, 1.x over a plain `str`. A `[str]`
+# parameter list is incompatible with the Literal one (parameters are
+# contravariant), so pinning the narrower signature made mypy fail against the
+# version actually in `uv.lock`. `parser_for` validates the name at run time by
+# catching the failure, which is the only check that holds across both.
+_get_parser: Callable[..., Parser] | None
 try:
     from tree_sitter_language_pack import get_parser as _get_parser
 except ImportError:  # pragma: no cover
