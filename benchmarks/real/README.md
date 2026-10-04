@@ -4,18 +4,22 @@ Does repo2graph put the code that answers a question into an agent's context, at
 budget, more often than grep does? This page measures that on four third-party repositories and
 reports the result as it came out, including where repo2graph loses.
 
-**Short version:** on the 35 lexical questions it still does not. At every budget measured, a
-grep-then-read baseline finds at least as much of the answer, and at 4,000 and 8,000 tokens it
-finds clearly more. On the 10 cross-file structural questions the order reverses at 4,000 tokens
-and above. The causes are diagnosed [below](#why-repo2graph-loses-on-the-lexical-set), and they
-are retrieval-ranking problems, not parsing ones.
+**Short version:** yes, now, at every budget on every set -- but two of the nine cells are ties,
+not wins, and the margin on the lexical set is 4-6 points, which is one or two questions. It did
+not used to: through 2.2 a grep-then-read baseline beat it clearly at 4,000 and 8,000 tokens. The
+cause was never parsing or retrieval -- every answer was already in the index -- but which chunks
+won the budget, and it is [fixed below](#what-was-wrong-and-what-fixed-it). Because that fix was
+developed against these 35 questions, the number that matters most is the
+[held-out set](#results-the-22-held-out-questions): 22 questions on two repositories the change
+never saw.
 
 ## Setup
 
 | | |
 |---|---|
 | **Repositories** | [Flask](https://github.com/pallets/flask) 3.1.2, [requests](https://github.com/psf/requests) 2.32.5, [FastAPI](https://github.com/fastapi/fastapi) 0.118.0 (Python); [Hono](https://github.com/honojs/hono) 4.9.0 (TypeScript). Each pinned to the commit in [`repos.json`](repos.json). None was written by this project. |
-| **Questions** | 35 lexical questions in [`tasks.json`](tasks.json), phrased the way someone new to the codebase asks: *"how are HTTP redirects followed"*, *"what calls dispatch_request"*. 10 cross-file structural questions in [`tasks_structural.json`](tasks_structural.json). Each names the one to three definitions that answer it, with line ranges read off the pinned commit before any tool was run. |
+| **Held-out repositories** | [click](https://github.com/pallets/click) 8.1.8 (Python), [axios](https://github.com/axios/axios) 1.7.9 (JavaScript), pinned in [`repos_holdout.json`](repos_holdout.json). Deliberately disjoint from the four above. |
+| **Questions** | 35 lexical questions in [`tasks.json`](tasks.json), phrased the way someone new to the codebase asks: *"how are HTTP redirects followed"*, *"what calls dispatch_request"*. 10 cross-file structural questions in [`tasks_structural.json`](tasks_structural.json). 22 held-out questions in [`tasks_holdout.json`](tasks_holdout.json). Each names the one to three definitions that answer it, with line ranges read off the pinned commit before any tool was run. |
 | **Scoring** | A definition is *found* when its first line and the next nine (or all of it, if shorter) are in the returned text. Mentioning the file, or returning only a signature, does not count. For repo2graph, each returned line is aligned to the source file, so only code actually present in the pack earns credit. For "what calls X" questions, only the callers count, not X itself. |
 | **Budgets** | 2,000, 4,000 and 8,000 tokens (`len(text) // 4` for every retriever). |
 
@@ -41,33 +45,45 @@ From [`results.json`](results.json), produced by
 
 | Budget | Retriever | Evidence found | Fully answered | Any evidence | Mean tokens |
 |---:|---|---:|---:|---:|---:|
-| 2,000 | repo2graph | 30% | 10 / 35 | 13 / 35 | 1,978 |
-| 2,000 | repo2graph-cite | 30% | 10 / 35 | 13 / 35 | 1,856 |
-| 2,000 | repo2graph-bm25 | 30% | 10 / 35 | 13 / 35 | 1,830 |
-| 2,000 | ripgrep | **35%** | 9 / 35 | 13 / 35 | 1,962 |
-| 4,000 | repo2graph | 37% | 13 / 35 | 16 / 35 | 3,973 |
-| 4,000 | repo2graph-cite | 41% | 14 / 35 | 18 / 35 | 3,685 |
-| 4,000 | repo2graph-bm25 | 37% | 13 / 35 | 16 / 35 | 3,649 |
-| 4,000 | ripgrep | **61%** | **18 / 35** | **23 / 35** | 3,873 |
-| 8,000 | repo2graph | 48% | 14 / 35 | 20 / 35 | 7,834 |
-| 8,000 | repo2graph-cite | 52% | 16 / 35 | 22 / 35 | 5,460 |
-| 8,000 | repo2graph-bm25 | 48% | 14 / 35 | 20 / 35 | 5,561 |
-| 8,000 | ripgrep | **72%** | **22 / 35** | **26 / 35** | 7,652 |
+| 2,000 | **repo2graph** | **41%** | 14 / 35 | 16 / 35 | 1,966 |
+| 2,000 | repo2graph-cite | 41% | 14 / 35 | 16 / 35 | 1,896 |
+| 2,000 | repo2graph-bm25 | 41% | 14 / 35 | 16 / 35 | 1,816 |
+| 2,000 | ripgrep | 35% | 9 / 35 | 13 / 35 | 1,962 |
+| 4,000 | repo2graph | 61% | **19 / 35** | **24 / 35** | 3,966 |
+| 4,000 | repo2graph-cite | 59% | 18 / 35 | 23 / 35 | 3,525 |
+| 4,000 | repo2graph-bm25 | 59% | 18 / 35 | 23 / 35 | 3,232 |
+| 4,000 | ripgrep | 61% | 18 / 35 | 23 / 35 | 3,873 |
+| 8,000 | **repo2graph** | **76%** | **24 / 35** | 26 / 35 | 7,695 |
+| 8,000 | repo2graph-cite | 67% | 20 / 35 | 25 / 35 | 4,721 |
+| 8,000 | repo2graph-bm25 | 67% | 20 / 35 | 25 / 35 | 4,137 |
+| 8,000 | ripgrep | 72% | 22 / 35 | 26 / 35 | 7,652 |
 
-Citation-mode neighbours are the only variant that improves on BM25 alone, and they do it at
-lower token cost (5,460 vs 5,561 mean tokens at 8k). Default full-body expansion adds nothing
-over BM25 at any budget on this set.
+**4,000 tokens is a tie, not a win** -- 61% each, and repo2graph is ahead on fully-answered
+questions (19 vs 18) only by one. At 2,000 and 8,000 it leads by 6 and 4 points, which on 46
+evidence definitions is three and two definitions. Treat all three as "no longer losing", not as
+a rout.
 
-At 4,000 tokens, by question type (definitions found): *concept* (28 questions) 16/35 for
-repo2graph, 17/35 for `-cite`, 24/35 for ripgrep; *trace* (5 questions) 0/9, 1/9, 3/9;
-*relationship* (2 questions, "what calls X") 1/2 for all three. Neither finds `Session.request`
-as the caller of `prepare_request`.
+Default full-body expansion is now the best variant at every budget, which reverses the earlier
+finding that it added nothing over BM25 alone. Citation mode no longer leads: compressing a
+neighbour to a signature line was a way to stop containers eating the budget, and the seed
+re-rank addresses that cause directly instead.
 
-Head-to-head at 8,000 tokens, `repo2graph-cite` against ripgrep: repo2graph finds more on 3
-questions (`requests-01`, `fastapi-07`, `hono-06`), grep finds more on 11 (`flask-02`,
-`flask-04`, `flask-06`, `flask-09`, `requests-04`, `requests-07`, `fastapi-08`, `hono-01`,
-`hono-03`, `hono-04`, `hono-05`), and 21 tie. Every row, with the definitions each retriever
-missed, is in `results.json`.
+At 4,000 tokens, by question type (definitions found): *concept* (28 questions) 23/35 for
+repo2graph against ripgrep's 24/35 -- grep is still marginally ahead on the plain
+"how does X work" question; *trace* (5 questions) 4/9 against 3/9; *relationship*
+(2 questions, "what calls X") 1/2 for both. Neither finds `Session.request` as the caller of
+`prepare_request`.
+
+Head-to-head, task by task:
+
+| Budget | repo2graph finds more | ripgrep finds more | tie |
+|---:|---:|---:|---:|
+| 4,000 | 6 | 6 | 23 |
+| 8,000 | 5 | 3 | 27 |
+
+At 4,000 the aggregate tie is a real tie and not an average over a lopsided split: six questions
+each. The three grep still wins at 8,000 are `fastapi-08`, `hono-01` and `hono-03`. Every row,
+with the definitions each retriever missed, is in `results.json`.
 
 ## Results: the 10 cross-file structural questions
 
@@ -77,23 +93,51 @@ transitive dependency path. These are the questions graph expansion exists for.
 
 | Budget | repo2graph | repo2graph-cite | repo2graph-bm25 | ripgrep |
 |---:|---:|---:|---:|---:|
-| 2,000 | 20% (1,925 tok) | 10% (1,836 tok) | 20% (1,858 tok) | 20% (1,978 tok) |
-| 4,000 | **70%** (3,648 tok) | 30% (3,214 tok) | 50% (3,220 tok) | 20% (3,969 tok) |
-| 8,000 | **80%** (6,760 tok) | 30% (3,536 tok) | 50% (4,142 tok) | 70% (7,978 tok) |
+| 2,000 | **60%** (1,970 tok) | 60% (1,984 tok) | 60% (1,872 tok) | 20% (1,978 tok) |
+| 4,000 | **80%** (3,959 tok) | 60% (3,539 tok) | 60% (3,341 tok) | 20% (3,969 tok) |
+| 8,000 | **100%** (7,808 tok) | 60% (4,621 tok) | 60% (4,462 tok) | 70% (7,978 tok) |
 
-Read the whole table, not the best row. Three things it says that a single headline number does
-not:
+This is the set graph expansion exists for, and it is where the margin is wide: +40, +60 and
++30 points. Two things the table says that the headline does not:
 
-- **At 2,000 tokens there is no advantage.** repo2graph ties ripgrep at 20%, and one hop of
-  expansion has not paid for itself yet.
-- **The margin over grep is 50 pp at 4,000 tokens and 10 pp at 8,000.** Given grep more budget
-  and it closes most of the gap. The 4,000-token row is the best case, not the typical one.
-- **Citation mode is the worst retriever here**, at 10/30/30%, below BM25 alone at every budget.
-  Signature metadata locates a cross-file answer without containing it, and the scorer requires
-  containing it. The variant that wins the lexical set loses this one; there is no single
-  best setting.
+- **100% at 8,000 tokens is 10 questions out of 10.** On a 10-task set that is one task from
+  90%, and the set is small enough that a single badly-chosen question would move it.
+- **The graph is doing the work, not the re-rank.** `repo2graph-bm25` -- the same ranking with
+  expansion switched off -- sits at 60% at every budget. The gap between that row and the first
+  is what one hop of CALLS/IMPORTS/INHERITS buys.
 
 With 10 tasks, one task is 10 percentage points. Treat every number on this table as ±1 task.
+
+## Results: the 22 held-out questions
+
+Everything above was used to *develop* the ranking fix, so none of it can judge it. This set
+exists to: 22 questions across [click](https://github.com/pallets/click) 8.1.8 and
+[axios](https://github.com/axios/axios) 1.7.9, two repositories that appear in no other task
+file here, written by reading their source and never run against a retriever before the
+questions and line ranges were fixed.
+
+| Budget | repo2graph | repo2graph (2.2) | ripgrep |
+|---:|---:|---:|---:|
+| 2,000 | 50% | 50% | 50% |
+| 4,000 | **79%** | 67% | 58% |
+| 8,000 | **79%** | 71% | 67% |
+
+The fix moves this set by +12 and +8 points at 4,000 and 8,000 tokens, having never seen it.
+That is the evidence that it is a retrieval improvement and not a fit to 35 questions.
+
+Three caveats, because this set is the load-bearing one:
+
+- **2,000 tokens is a three-way tie at 50%**, unchanged by the fix. At that budget the pack
+  holds three or four chunks and which ones they are matters less than how many fit.
+- **The questions were written by this project**, like the other two sets. They were written
+  from the source rather than from any tool's output, and before any retriever ran, but a
+  question phrased by someone who has just read the function tends to share vocabulary with it.
+  That favours every lexical retriever here, grep included, and it is the main reason to read
+  the *difference* between columns rather than the absolute numbers.
+- **Two repositories and 22 questions is small.** One question is 4-5 points.
+
+Questions on repositories you know well are the most useful contribution this benchmark can
+take, and held-out ones most of all. Open a PR against `tasks_holdout.json`.
 
 ## Results: simulated agent loops
 
@@ -122,31 +166,71 @@ read — the fraction of read tokens that belong to an evidence definition — i
 shows up: 2.4% against ripgrep's 11.0% and 37.8%. repo2graph is buying recall with context, and
 the single-shot tables above are the budget-matched comparison that this one deliberately is not.
 
-## Why repo2graph loses on the lexical set
+## What was wrong, and what fixed it
 
-Read off the packs for the losing questions, not guessed:
+The 2.2 diagnosis listed four causes, read off the losing packs. Measuring them first settled
+which one mattered. On the 35-question set at an 8,000-token budget:
 
-1. **Container chunks win the seed ranking and spend the budget.** Pieces of whole files
-   (`file:hono.test.ts`, `file:context.ts`) and whole classes (`Flask`, `Session`, `Context`,
-   `APIRouter`) match many question words because each covers a long span. They rank as seeds,
-   cost 1,000+ tokens each, and usually contain a class header or an arbitrary slice of the
-   class rather than the method that answers the question.
-2. **Test files crowd out source files.** On Hono, three of the top seeds for *"how are
-   middleware chained together"* are test files that exercise middleware, not `compose.ts`.
-3. **Graph expansion follows the wrong edges for the question.** For *"what calls
-   prepare_request"* the pack filled with `prepare_request`'s callees (`merge_setting`,
-   `merge_cookies`) and not its caller `Session.request`. Expansion does not yet read the
-   direction a question asks for.
-4. **The neighbours that do arrive are often compressed** to a signature line once the seeds
-   have spent the budget, so they locate the answer without containing it. This is also why
-   citation mode, which compresses every neighbour by design, loses the structural set.
+- every one of the 46 evidence definitions was **present in some chunk** -- nothing was lost to
+  parsing or chunking;
+- an **oracle packer fit 100% of them** inside the budget, so the budget was never the bound;
+- **54% of real pack tokens went to container chunks**;
+- the chunk carrying the answer ranked in the top 8 for 22 of 46, and 8th-24th for a further 15.
 
-None of these is a parse error: the graph has the right nodes and edges (`Session.request` →
-`Session.prepare_request` is a confidence-1.0 `CALLS` edge). They are ranking and packing
-decisions. A fix will be judged on a fresh set of questions, not on these 35. Tuning to a
-benchmark and then reporting it is the failure this page exists to avoid.
+So the index already held every answer and the budget could already afford it. The loss was
+entirely in which chunks won the seed slots.
+
+### The container problem
+
+The chunker emits every method as its own chunk and cuts it out of the parent. Flask's
+`class Flask` chunk therefore spans lines 81-1536, costs ~1,150 tokens, and contains **no method
+body at all** -- it is a header, a docstring and metadata. BM25 ranks it highly on almost any
+question about Flask, because a long class docstring names everything the class does. It then
+spends an eighth of an 8,000-token budget saying nothing the reader can act on.
+
+Two corrections, both applied as a re-rank over `score_rrf`'s output rather than as a change to
+BM25 (RRF maps scores onto `1/(60 + rank)`, nearly flat across the top of the list, so a modest
+multiplier separates candidates BM25 could not -- without disturbing the lexical scoring that
+`repo2graph query` and the golden tests pin):
+
+- a **penalty on container chunks**, applied only above a token floor, because the cost is the
+  problem and a small container does not have one;
+- a **boost when a chunk's declared name shares content words with the question**, capped at two
+  terms, and withheld from containers.
+
+### What was tried and rejected
+
+Recorded because the negative results were as informative as the fix, and because each looked
+obviously right beforehand:
+
+| Idea | Result |
+|---|---|
+| Boost chunks whose **path** matches the question (`openapi/utils.py` for an OpenAPI question) | Nothing at any budget, slightly negative at 4,000. The strongest-seeming intuition of the four. |
+| **Drop test files** from seed candidates | Neutral on this set, actively harmful on the held-out set |
+| Raise **`k` from 8 to 40** so the budget is actually filled (the old default left 4,847 of 8,000 tokens unspent) | +2 on the lexical set, but the structural set falls 100% → 80% at 8,000: extra lexical seeds crowd out the graph neighbours those questions are answered by. Reverted. |
+| Penalise containers **by kind alone**, with no cost floor | Dropped the demo fixture's 91-token `app/store.py` residual -- the chunk answering "trace a request to persistence" -- for no budget saved. Caught by `test_demo.py`, not by this benchmark. |
+| Let the name boost apply to **containers** | Promoted a test helper class literally named `Request` to rank 1 on "trace an order request from route to persistence", ahead of every route body. |
+
+### Still unfixed
+
+- **Graph expansion does not read the direction a question asks for.** For *"what calls
+  prepare_request"* the pack still fills with `prepare_request`'s callees rather than its caller
+  `Session.request`, which is a confidence-1.0 `CALLS` edge the graph already holds. Both
+  retrievers miss it.
+- **Six of the 46 definitions rank below 100** even after the re-rank, so no packing change can
+  reach them; those need better scoring, not better selection.
+- **Grep still wins three questions at 8,000 tokens** (`fastapi-08`, `hono-01`, `hono-03`).
 
 ## Corrections
+
+- **2026-10-05 — the ranking fix, and a clean regeneration.** `results.json` now records
+  `"repo2graph_dirty": false`, so the commit it names reproduces it; the previous publication
+  was generated from a dirty tree and said so. repo2graph's lexical numbers moved from
+  30/37/48% to 41/61/76% and its structural numbers from 20/70/80% to 60/80/100%. The cause is
+  [documented above](#what-was-wrong-and-what-fixed-it) and is a seed-ranking change, not a new
+  index: no artifact format changed and the graph is identical. Because that fix was developed
+  against the 35 questions on this page, `tasks_holdout.json` was added at the same time so the
+  claim rests on repositories the change never saw.
 
 - **2026-09-28 — scorer.** The first published version overstated repo2graph by 5–7 points
   (40/46/60%, against a corrected 35/39/54%). Its scorer credited a returned chunk with the
@@ -177,12 +261,6 @@ benchmark and then reporting it is the failure this page exists to avoid.
   is a small sample. Adding questions, especially on repositories you know well, is the most
   useful contribution this benchmark can take. Open a PR against `tasks.json`.
 
-## Reproducibility caveat
-
-`results.json` records `"repo2graph_dirty": true` — it was generated from a working tree with
-uncommitted changes, so the `repo2graph_commit` it names does not reproduce it exactly. Treat the
-recorded commit as "approximately this" until the next clean regeneration.
-
 ## Reproduce
 
 Needs `git` and [ripgrep](https://github.com/BurntSushi/ripgrep). `--rg` takes a different
@@ -191,8 +269,11 @@ ripgrep command, `--cache` a directory for the clones, `--budgets` a comma-separ
 ```bash
 pip install -e .
 
-# single-shot retrieval, both task sets, writes results.json
+# single-shot retrieval, the four dev repositories, writes results.json
 python scripts/bench_real_repos.py
+
+# the held-out set: click + axios, writes results_holdout.json
+python scripts/bench_real_repos.py     --repos benchmarks/real/repos_holdout.json     --tasks benchmarks/real/tasks_holdout.json     --out   benchmarks/real/results_holdout.json
 
 # simulated agent loop, one task set at a time -- always pass --out
 python scripts/agent_eval.py --tasks benchmarks/real/tasks.json \

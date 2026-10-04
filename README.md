@@ -45,28 +45,52 @@ output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
 
 ## Is it better than grep?
 
-**For single-file lexical queries, no: grep is the better tool.**
-We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, held to the same token budget ([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in [benchmarks/real/results.json](benchmarks/real/results.json)):
+**On cross-file structural questions, clearly. On single-file lexical ones, marginally — and it
+used to lose them.** Measured on 35 questions about Flask, requests, FastAPI and Hono, scored
+against the definitions that answer them, at the same token budget
+([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in
+[benchmarks/real/results.json](benchmarks/real/results.json)):
 
-| Budget | repo2graph (2.x default) | repo2graph-cite (opt-in) | grep, then read around hits |
+| Budget | repo2graph | repo2graph in 2.2 | grep, then read around hits |
 |---:|---:|---:|---:|
-| 2,000 tokens | 30% | 30% (1,856 tokens) | **35%** (1,962 tokens) |
-| 4,000 tokens | 37% | **41%** (3,685 tokens) | **61%** (3,873 tokens) |
-| 8,000 tokens | 48% | **52%** (5,460 tokens) | **72%** (7,652 tokens) |
+| 2,000 tokens | **41%** | 30% | 35% |
+| 4,000 tokens | 61% | 37% | 61% |
+| 8,000 tokens | **76%** | 48% | 72% |
 
-On purely lexical questions where the evidence sits in a single file, text search is grep's optimum. In default full-body expansion, graph neighbours can displace direct lexical hits. With citation-mode neighbours (`--neighbours=cite`), neighbours cost ~15 tokens of signature metadata rather than full chunk bodies, serving as a navigation index that matches or beats BM25 recall at lower token cost (5,460 vs 5,561 mean tokens at 8k).
+**4,000 tokens is a tie**, and the 2,000 and 8,000 margins are three and two definitions out of
+46. Through 2.2 grep won this table outright; the gap was never parsing or retrieval — every
+answer was already in the index, and an oracle packer fit all of them in budget — but that 54%
+of the pack went to class and file *container* chunks, which the chunker builds by cutting their
+members out. A class header cannot contain the method you asked about. Seeds are now ranked on
+whether a chunk can plausibly hold an answer.
+
+Because that fix was developed against those 35 questions, the number worth trusting is the
+**held-out set** — 22 questions on [click](https://github.com/pallets/click) and
+[axios](https://github.com/axios/axios), repositories the change never saw
+([tasks_holdout.json](benchmarks/real/tasks_holdout.json)):
+
+| Budget | repo2graph | repo2graph in 2.2 | grep |
+|---:|---:|---:|---:|
+| 2,000 tokens | 50% | 50% | 50% |
+| 4,000 tokens | **79%** | 67% | 58% |
+| 8,000 tokens | **79%** | 71% | 67% |
 
 ### Where repo2graph wins: cross-file structural questions
 
-grep structurally cannot traverse dependency edges, compute reverse call closures, or follow cross-module delegation. On our structural benchmark across the same four repositories ([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence provably spans cross-file graph edges):
+grep structurally cannot traverse dependency edges, compute reverse call closures, or follow
+cross-module delegation. On the structural set across the same four repositories
+([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence
+provably spans cross-file graph edges):
 
-| Budget | repo2graph | repo2graph-cite | repo2graph-bm25 | ripgrep |
-|---:|---:|---:|---:|---:|
-| 2,000 tokens | 20% | 10% | 20% | 20% |
-| 4,000 tokens | **70%** | 30% | 50% | 20% |
-| 8,000 tokens | **80%** | 30% | 50% | 70% |
+| Budget | repo2graph | repo2graph-bm25 (no graph) | ripgrep |
+|---:|---:|---:|---:|
+| 2,000 tokens | **60%** | 60% | 20% |
+| 4,000 tokens | **80%** | 60% | 20% |
+| 8,000 tokens | **100%** | 60% | 70% |
 
-Graph expansion adds 20–30 pp over lexical search alone at 4k and 8k tokens. Against grep the margin is **+50 pp at 4,000 tokens**, but **+10 pp at 8,000 and nothing at 2,000** — give grep enough budget and it closes most of the gap. Citation mode, which wins the lexical table above, is the *worst* retriever here: a signature locates a cross-file answer without containing it. There is no single best setting. This is 10 tasks, so one task is 10 pp; treat every cell as ±1 task.
+The middle column is the same ranking with graph expansion switched off, so the gap between it
+and the first is what one hop of `CALLS`/`IMPORTS`/`INHERITS` buys: +20 pp at 4k and +40 pp at
+8k. This is 10 tasks, so one task is 10 pp; treat every cell as ±1 task.
 
 ### Where repo2graph wins for agents: multi-turn loops
 
