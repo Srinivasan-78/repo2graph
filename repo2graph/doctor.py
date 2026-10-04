@@ -1,8 +1,8 @@
 """Environment diagnostics for `repo2graph doctor`.
 
 Inspects Python version, platform encoding, git CLI, tree-sitter grammars,
-directory write permissions, and whether an existing index's artifacts are
-intact.
+whether the MCP server's SDK preflight would pass, directory write permissions,
+and whether an existing index's artifacts are intact.
 
 Index freshness is deliberately not checked here: `status.compute_freshness()`
 owns that answer and `repo2graph index-status` reports it, so keeping a second
@@ -213,6 +213,87 @@ def check_tree_sitter() -> CheckResult:
     )
 
 
+def check_mcp_server() -> CheckResult:
+    """Check that `repo2graph-mcp` could actually start, without launching it.
+
+    An MCP client reports a server that fails its SDK preflight as "server failed
+    to start" or simply shows no tools -- `server._require_sdk()` raises SystemExit
+    with an accurate message, and the client swallows it. That makes a wrong or
+    absent `mcp` SDK one of the setup failures users cannot diagnose from inside
+    their editor, which is the case for answering it here.
+
+    The version gate is imported from `mcp/server.py` rather than restated, so a
+    doctor that says "ok" and a server that refuses to start cannot disagree.
+
+    This deliberately does **not** read the client's own configuration
+    (`~/.claude.json`, Cursor's `mcp.json`). Those live outside the repository,
+    belong to other tools, and `doctor --json` is explicitly meant to be safe to
+    paste into a bug report -- see `.github/SECURITY.md`.
+    """
+    name = "MCP Server"
+    try:
+        from .mcp.server import SDK_SPEC, _sdk_major, _sdk_version
+    except Exception as exc:  # noqa: BLE001 - a broken import must read as a check, not a crash
+        return CheckResult(name, "fail", f"repo2graph's own MCP module failed to import: {exc}")
+
+    launcher = shutil.which("repo2graph-mcp")
+    details = [f"required SDK: {SDK_SPEC}"]
+    details.append(
+        f"`repo2graph-mcp` on PATH: {launcher}"
+        if launcher
+        else "`repo2graph-mcp` is not on PATH (clients that invoke it via `uvx` do not need it)"
+    )
+
+    try:
+        import mcp as mcp_sdk
+    except ImportError:
+        return CheckResult(
+            name,
+            "warn",
+            "the mcp SDK is not installed, so repo2graph-mcp cannot start",
+            details=details,
+            remediation=(
+                'Only the MCP server needs it: `pip install "repo2graph[mcp]"`. '
+                "The CLI and the GitHub Action work without it."
+            ),
+        )
+
+    installed = _sdk_version(mcp_sdk)
+    details.insert(1, f"installed SDK: mcp {installed}")
+
+    try:
+        from mcp.server import Server as _Server  # noqa: F401
+    except ImportError as exc:
+        return CheckResult(
+            name,
+            "fail",
+            f"the installed mcp SDK ({installed}) is unusable: {exc}",
+            details=details,
+            remediation=f'pip install "{SDK_SPEC}"',
+        )
+
+    major = _sdk_major(installed)
+    if major is not None and major < 2:
+        return CheckResult(
+            name,
+            "fail",
+            f"mcp {installed} is a 1.x release; repo2graph-mcp requires {SDK_SPEC}",
+            details=details,
+            remediation=(
+                f'pip install "{SDK_SPEC}" -- 1.x hangs on the first tool call '
+                f"under repo2graph-mcp (#407), which an MCP client shows as a "
+                f"server that never responds."
+            ),
+        )
+
+    return CheckResult(
+        name,
+        "ok",
+        f"mcp {installed} satisfies {SDK_SPEC}",
+        details=details,
+    )
+
+
 def check_permissions(path: Path | str) -> CheckResult:
     """Verify write permissions for the target directory."""
     target = Path(path).resolve()
@@ -295,6 +376,7 @@ def run_doctor(path: str | Path = ".") -> DoctorReport:
     report.checks.append(check_platform_encoding())
     report.checks.append(check_git(target_path))
     report.checks.append(check_tree_sitter())
+    report.checks.append(check_mcp_server())
     report.checks.append(check_permissions(target_path))
     report.checks.append(check_artifact_integrity(target_path))
     return report

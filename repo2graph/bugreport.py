@@ -43,9 +43,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# The feedback categories, matching the GitHub issue templates one-to-one so
-# `--category` and the template chooser cannot drift apart.
-# tests/test_bugreport.py asserts the pairing against .github/ISSUE_TEMPLATE/.
+# The feedback categories. Every one of these is reachable from a GitHub issue
+# template, so `--category` and the template chooser cannot drift apart: the two
+# relationship categories have their own template (incorrect_edge.yml), and the
+# remaining three are the category dropdown on bug_report.yml.
+# tests/test_bugreport.py asserts that pairing against .github/ISSUE_TEMPLATE/.
 CATEGORIES: dict[str, str] = {
     "incorrect-relationship": "An edge exists that should not, or points at the wrong target",
     "missing-relationship": "An edge that should exist does not",

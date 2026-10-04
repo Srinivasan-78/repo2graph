@@ -1,6 +1,7 @@
 """Tests for repo2graph doctor command and diagnostic probes."""
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ from repo2graph.doctor import (
     DoctorReport,
     check_artifact_integrity,
     check_git,
+    check_mcp_server,
     check_permissions,
     check_platform_encoding,
     check_python,
@@ -48,6 +50,81 @@ def test_doctor_tree_sitter_missing():
         res = check_tree_sitter()
         assert res.status == "fail"
         assert res.remediation is not None
+
+
+def test_doctor_mcp_server_ok_in_this_environment():
+    """The dev extras install a supported SDK, so this must read ok here.
+
+    Pinned against `SDK_SPEC` rather than a literal version: the spec is the
+    server's own gate, and a test asserting "mcp 2.x" would have to be edited
+    the day the floor moves, which is exactly when it should instead be proving
+    that doctor moved with it.
+    """
+    from repo2graph.mcp.server import SDK_SPEC
+
+    res = check_mcp_server()
+    assert res.status == "ok", res.summary
+    assert SDK_SPEC in res.summary
+    assert any("installed SDK" in d for d in res.details)
+
+
+def test_doctor_mcp_sdk_missing_is_a_warning_not_a_failure():
+    """`repo2graph[mcp]` is an extra. A CLI-only install is a supported setup,
+    so an absent SDK must not fail a pipeline gated on `doctor`'s exit code."""
+    with patch.dict("sys.modules", {"mcp": None}):
+        res = check_mcp_server()
+    assert res.status == "warn"
+    assert res.remediation is not None
+    assert "repo2graph[mcp]" in res.remediation
+
+
+def test_doctor_rejects_the_sdk_major_the_server_rejects():
+    """mcp 1.x hangs on the first tool call (#407). The server refuses to start
+    on it; doctor has to say so too, or it certifies a setup that cannot work."""
+    with patch("repo2graph.mcp.server._sdk_version", return_value="1.30.0"):
+        res = check_mcp_server()
+    assert res.status == "fail"
+    assert "1.30.0" in res.summary
+    assert res.remediation is not None
+
+
+def test_doctor_does_not_read_mcp_client_config_files():
+    """`doctor --json` is documented as safe to paste into a bug report, which
+    holds only while it stays out of files belonging to other tools.
+
+    Checked over the AST's string *constants*, not the raw source: the probe's
+    own docstring names these files in order to say it does not read them, and a
+    substring scan cannot tell that apart from opening one.
+    """
+    import ast
+
+    import repo2graph.doctor as doctor_mod
+
+    tree = ast.parse(Path(doctor_mod.__file__).read_text(encoding="utf-8"))
+
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and id(node) not in docstrings
+    ]
+
+    for client_config in (".claude.json", "claude_desktop_config.json", "mcp.json"):
+        offenders = [lit for lit in literals if client_config in lit]
+        assert not offenders, (
+            f"doctor references {client_config} in executable code; that is a "
+            f"client's own configuration and must not reach a diagnostic bundle."
+        )
 
 
 def test_doctor_git_missing(tmp_path):

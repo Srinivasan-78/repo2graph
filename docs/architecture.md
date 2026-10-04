@@ -238,7 +238,67 @@ user.
 
 ---
 
-## 4. Module reference
+## 4. Language support
+
+Seventeen languages get symbol-level treatment; every other file is still indexed as text.
+Coverage is not uniform across them, and the differences are large enough that "supported"
+on its own would mislead.
+
+<!-- BEGIN GENERATED: language-scorecard -->
+| Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
+| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 0 funcs |
+| **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 2 funcs |
+| **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 8 funcs |
+| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 4 funcs |
+| **java** | Tier 2 | **67 (C+)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 30 (F) | 20 (F) | 1 funcs |
+| **kotlin** | Tier 2 | **64 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 30 (F) | 0 (F) | 4 funcs |
+| **php** | Tier 3 | **72 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 30 (F) | 0 (F) | 5 funcs |
+| **rust** | Tier 3 | **67 (C+)** | 90 (A-) | 75 (B-) | 55 (D) | 100 (A) | 30 (F) | 0 (F) | 1 funcs |
+| **csharp** | Tier 3 | **64 (C)** | 90 (A-) | 60 (C) | 65 (C+) | 90 (A-) | 30 (F) | 0 (F) | 3 funcs |
+| **ruby** | Tier 3 | **62 (C)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 30 (F) | 0 (F) | 3 funcs |
+| **c** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 123 funcs |
+| **cpp** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 10 funcs |
+| **scala** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 0 funcs |
+| **swift** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 4 funcs |
+| **bash** | Tier 4 | **51 (D)** | 85 (B+) | 35 (F) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 3 funcs |
+| **lua** | Tier 4 | **35 (F)** | 85 (B+) | 35 (F) | 55 (D) | 0 (F) | 0 (F) | 0 (F) | 2 funcs |
+<!-- END GENERATED: language-scorecard -->
+
+Regenerate with `python scripts/generate_language_scorecard.py`;
+`tests/test_doc_consistency.py::test_language_scorecard_matches_the_generator` fails if this
+table and the generator disagree.
+
+**What the numbers are, and are not.** Each dimension is scored by introspecting what the parser
+actually declares for that language — the `LANG_CFG` entry's `kind_map`, `call_types`,
+`import_types` and `doc` coverage, whether `_BASE_NODES` reaches its inheritance clause, whether
+`parse_import_details` and `resolve_import` handle its module syntax, and whether the suite has
+tests naming it. Two inputs are expert judgement rather than measurement: grammar robustness
+(the macro penalty that holds C and C++ to 75) and ecosystem manifest awareness. Nothing in this
+repository measures per-language `parse_errors` rates across real code, so those two columns are
+the ones to distrust; `stats.json` reports `parse_errors` per build if you want to check a
+language against your own tree. These are **capability** scores, not retrieval accuracy — they say what the
+pipeline is equipped to extract, not how often an answer about that language is right. For
+measured retrieval quality see [benchmarks/real/README.md](../benchmarks/real/README.md), which
+covers Python and TypeScript only.
+
+Two dimensions score low for every language because the feature does not exist yet rather than
+because any one grammar is weak: repo2graph emits no `TESTS` edges (test-to-implementation
+linking is inferred from `IMPORTS`), and no framework-specific edge types — no `ROUTES_TO`,
+`INJECTS`, `MODELS` or `CONFIGURES`. Those two caps are why no language reaches an A overall.
+
+**Priority order for deep support.** TypeScript/JavaScript and Python first: they are the two
+ecosystems already at Tier 1, the two the retrieval benchmark measures, and the two where
+framework-aware edges (routes, DI, ORM models) would pay off most. Go is the third, chosen over
+Java/Kotlin because its import resolution already scores 100 while its call resolution is the
+weakest part of an otherwise strong entry — the narrowest gap to close. C and C++ are explicitly
+not on this list: the macro problem is upstream of anything repo2graph can fix without a
+preprocessor.
+
+---
+
+## 5. Module reference
 
 Sizes are a rough guide to where the complexity is, not a target.
 
@@ -312,7 +372,7 @@ already drifted.
 
 ---
 
-## 5. Where a change goes
+## 6. Where a change goes
 
 | You want to… | Start at | Also touch |
 |---|---|---|
@@ -327,7 +387,7 @@ already drifted.
 
 ---
 
-## 6. Tests
+## 7. Tests
 
 The files that will fail on a change you did not expect to be load-bearing:
 

@@ -15,6 +15,17 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **A seventh `doctor` check: `MCP Server`.** An MCP client surfaces a failed SDK preflight only
+  as "server failed to start" or an empty tool list — `server._require_sdk()` raises `SystemExit`
+  with an accurate message and the client swallows it — so a wrong or absent `mcp` SDK was a
+  setup failure users could not diagnose from inside their editor. `doctor` now runs the same
+  gate without launching the server, importing `SDK_SPEC`/`_sdk_version`/`_sdk_major` from
+  `mcp/server.py` rather than restating them, so a doctor that says ok and a server that refuses
+  to start cannot disagree. An absent SDK is a **warning**, not a failure: `repo2graph[mcp]` is an
+  extra and a CLI-only install is supported. It deliberately does not read the client's own
+  configuration (`~/.claude.json`, Cursor's `mcp.json`) — those belong to other tools and
+  `doctor --json` is documented as safe to paste into a bug report; a test enforces that over the
+  module's AST. Index freshness remains deliberately out of `doctor`, owned by `index-status`.
 - **`.github/remediation-tracking.md` and `.github/distribution.md`** — a verified status map for
   the 60-item security/correctness remediation spec, and the distribution plan with its claims
   checked against `benchmarks/real/`. They live in `.github/` beside `CONTRIBUTING.md`, **not** in
@@ -278,6 +289,36 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed — repository tooling and stale references
 
+- **Two issue templates were deleted while everything kept routing people to them.**
+  `81bf24d5` removed the five per-category templates; `bug_report.yml` still told edge reports to
+  use *Incorrect or missing graph edge*, `feature_request.yml` still redirected language requests
+  to *Language / parser support*, and `CONTRIBUTING.md`'s "Where does this go?" table still listed
+  both. `bugreport.py` went further and claimed its five `CATEGORIES` paired with the templates
+  "one-to-one", asserted by a `tests/test_bugreport.py` that did not exist. Both templates are
+  restored (their links repointed at the docs that survived consolidation), the remaining three
+  categories are the dropdown on `bug_report.yml`, and `tests/test_bugreport.py` now exists: it
+  checks every category is offered somewhere, every template named in prose declares that name,
+  and every relative link out of a template resolves. The third caught a real `../../../` in
+  `feature_request.yml`, which rendered as a 404.
+- **`scripts/generate_language_scorecard.py` shipped with no consumer.** Nothing in `docs/`,
+  `README.md` or CI referenced it, and its own docstring pointed at a
+  `docs/LANGUAGE_SCORECARD.json` that was never committed — so the one artefact answering "how
+  well is *my* language supported" existed only as a script nobody ran. Its table is now
+  `docs/architecture.md` §4, between `BEGIN/END GENERATED` markers, with the priority order for
+  deep support and an explicit note on which columns are judgement rather than measurement.
+  Scores are read off `LANG_CFG`, so adding a language moves them:
+  `test_language_scorecard_matches_the_generator` fails until the table is regenerated, and the
+  §6 documentation checklist says so.
+- **CONTRIBUTING §7 promised measured C/C++ parse-error rates that no longer existed.** The link
+  pointed at `architecture.md`, which names no such rates after the consolidation. It now says
+  plainly that the macro penalty is a judgement call and that nothing here measures per-language
+  `parse_errors` across real code.
+- **Three of the five synthetic corpus archetypes, and 15 of its 25 tasks, were gone.**
+  `4e96b628` removed `ts_app/`, `python_backend/` and `modular_monolith/` with no stated reason,
+  leaving the regression gate covering TSX and dynamic-Python only — no TypeScript service, no
+  layered Python backend, no cross-domain monolith. All three are restored with their tasks; the
+  gate runs 25 again across 5 archetypes. `benchmarks/corpus/README.md` keeps its "regression
+  gate, not a benchmark" framing and does **not** reinstate the withdrawn ripgrep comparison.
 - **`make typecheck` failed outright once the `rag` extra was installed.** numpy's bundled stubs
   use PEP 695 `type` statements, which mypy refuses to parse under `python_version = "3.10"`:
   it reported a syntax error inside `numpy/__init__.pyi` and stopped, "errors prevented further

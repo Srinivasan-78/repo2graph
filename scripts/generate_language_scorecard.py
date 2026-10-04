@@ -5,11 +5,16 @@ Audits language parser coverage, symbol extraction breadth, call resolution,
 import resolution, test-to-implementation linking, and framework-specific edge
 capabilities across all supported tree-sitter languages.
 
+The default Markdown table is the one embedded in `docs/architecture.md` between its
+`BEGIN/END GENERATED: language-scorecard` markers. Scores are derived from `LANG_CFG`
+by introspection, so adding or extending a language moves them: regenerate and paste
+the table back, or `test_doc_consistency.py::test_language_scorecard_matches_the_generator`
+fails.
+
 Usage:
-    python scripts/generate_language_scorecard.py
+    python scripts/generate_language_scorecard.py          # the table in docs/architecture.md
     python scripts/generate_language_scorecard.py --json
     python scripts/generate_language_scorecard.py --detail
-    python scripts/generate_language_scorecard.py --output docs/LANGUAGE_SCORECARD.json
 """
 
 from __future__ import annotations

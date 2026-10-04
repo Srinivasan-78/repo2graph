@@ -480,6 +480,14 @@ Inspects the runtime environment and, if one is present, the index's artifacts.
   `CO_CHANGE` edges and `--git-history` need it.
 - **Tree-sitter Grammars**: loads the language table and reports how many
   grammars are configured.
+- **MCP Server**: runs the same SDK preflight `repo2graph-mcp` runs at startup —
+  is the `mcp` SDK installed, importable, and on a supported major — and reports
+  whether the `repo2graph-mcp` launcher is on `PATH`. A client shows these
+  failures only as "server failed to start" or an empty tool list, so this is the
+  one place they are legible. A missing SDK is a warning, not a failure: the CLI
+  and the Action never import it. It does **not** read your client's
+  configuration files; those belong to other tools and `doctor --json` is meant
+  to be safe to paste into a bug report.
 - **Permissions**: verifies the target directory can be created and written to,
   cleaning up anything it had to create to find out.
 
