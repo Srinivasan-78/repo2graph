@@ -183,7 +183,7 @@ Spec premise false. Do not re-implement.
 
 | ID | Item | Evidence | Pri |
 |---|---|---|---|
-| A4 | `docs/security-model.md` absent | `docs/` = architecture, cli, comparison, mcp, python-api. Needs rewriting for stdio-only — most of the spec's requested content (TLS, reverse proxy, multi-tenant) no longer applies | P2 |
+| A4 | **Mostly satisfied, one gap.** `.github/SECURITY.md` *is* the threat model — reporting surface ("CLI / MCP stdio / GitHub Action"), what never leaves the machine, the `rag --answer` egress exception, credential exclusion, enterprise rationale, repo protections, container deployment. #263 was closed `COMPLETED` legitimately; the spec's request for a *new* `docs/security-model.md` is misplaced, and most of its asked-for content (TLS, reverse proxy, multi-tenant) no longer applies at all. **Residual gap:** it does not state that repository content can carry prompt injection, which the fence in `answer.py` now mitigates | P3 |
 | E40 | Resource-limit **defaults** | `--max-files`/`--max-nodes` default `0` = unlimited. `max_nodes` fails closed via `GraphLimitExceeded`, so partial graphs can't masquerade as complete — but no `max_edges`/`max_chunks`/`max_bytes`/`max_duration`, no `--limit-policy truncate\|warn` | P2 |
 | C26b | No **total wall-clock** budget for provider calls | `answer.py:25` says so itself: "`HTTP_TIMEOUT` is a socket timeout, not a transfer bound — a host that trickles bytes resets it forever". Bounded by `MAX_ANSWER_BYTES`, so bytes not time | P2 |
 | G57 | No property/fuzz testing | `hypothesis` absent from `[dev]` and from every test | P2 |
@@ -208,9 +208,10 @@ The spec's 10 PRs assumed ~40 items of work. Verified, it is 3 landed + ~16 open
 PRs 2, 3, 4, 5, 7, 8 are substantially already-shipped or not-applicable.
 
 1. **Landed here** — C25 prompt isolation, NEW-1 changelog accuracy + guard test, NEW-2 typecheck fix.
-2. **`docs/security-model.md` (A4)** — stdio trust model, artifact sensitivity, `rag --answer`
-   egress, prompt-injection residual risk, Action token handling. Explicitly state HTTP is
-   *not offered* and why.
+2. **Document the prompt-injection trust boundary in `.github/SECURITY.md` (A4 residual)** —
+   that page already carries the threat model; it just predates the fence. State that repository
+   content is untrusted input to an LLM, what the fence does, and that it is mitigation rather
+   than elimination.
 3. **Resource-limit defaults (E40)** + `--limit-policy`, manifest `complete: false` marker.
 4. **Provider wall-clock budget (C26b)** — small, closes the gap the code documents.
 5. **Property tests (G57)** — `hypothesis` on chunk slicing, path normalization, UTF-8/surrogates, JSONL framing.
@@ -223,7 +224,8 @@ PRs 2, 3, 4, 5, 7, 8 are substantially already-shipped or not-applicable.
 - **Verified:** 60/60 triaged.
 - **Fixed:** 3 (1 P1 security, 2 correctness/accuracy).
 - **Not reproducible / not applicable:** 7 (deleted HTTP/auth subsystem) + 33 already shipped with tests.
-- **Open:** 16, none critical; highest are P2.
+- **Open:** 16, none critical; highest are P2. A4 downgraded to P3 after verifying
+  `.github/SECURITY.md` already serves as the threat model.
 - **Perf before/after:** unchanged — no hot-path code touched. Suite 50.1s → 29.6s wall is
   xdist scheduling variance, not a measured improvement.
 - **Status after changes:** 1902 passed, 8 skipped; ruff clean; format clean; mypy clean (39 files).
