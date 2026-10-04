@@ -15,6 +15,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`.github/remediation-tracking.md` and `.github/distribution.md`** — a verified status map for
+  the 60-item security/correctness remediation spec, and the distribution plan with its claims
+  checked against `benchmarks/real/`. They live in `.github/` beside `CONTRIBUTING.md`, **not** in
+  `docs/`: `test_the_shipped_doc_set_is_the_documented_one` pins `docs/` to its five reference
+  pages precisely to keep roadmap trackers and outreach material out of it, and that invariant is
+  worth more than the convenience of putting them there.
 - **Four new MCP tools**, taking the surface from six to ten
   ([#384](https://github.com/Srinivasan-78/repo2graph/issues/384),
   [#385](https://github.com/Srinivasan-78/repo2graph/issues/385),
@@ -35,46 +41,20 @@ makes keeping it current a release-blocking step rather than a good intention.
     reverse `INHERITS`, reverse `IMPORTS` on the containing file, and `CO_CHANGE` files by count.
     Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because `repo_impact`
     already exists and analyses a PR diff — a different question.
-- **MCP server flags for the HTTP transport's new limits**: `--http-insecure-ok`, `--trust-proxy`,
-  `--trusted-proxies`, and `--rate-limit-requests` / `--rate-limit-window` /
-  `--max-concurrent-requests` / `--max-queue-size` / `--max-concurrent-builds` /
-  `--max-response-bytes`. A `RateLimitConfig` is built only when at least one is passed, so
-  untouched fields keep their single set of defaults rather than a second, driftable copy.
-
 ### Security
 
-- **Rate limiting and concurrency quotas for HTTP MCP**
-  ([#264](https://github.com/Srinivasan-78/repo2graph/issues/264)): a per-client sliding window,
-  a server-wide concurrency semaphore with a bounded queue and bounded wait, an independent
-  build-concurrency gate, and a response-size cap. Client identity comes from the verified auth
-  subject where there is one, so a shared bearer token does not pool every caller into one bucket.
-  Overload answers in the JSON-RPC implementation-defined error range, not as a malformed-request
-  error. The limiter's own identity map is bounded by `max_tracked_clients` — its own knob, since
-  eviction from it is not a throttle: it clears a client's history and grants a fresh allowance.
-- **Content type is validated on `POST`**
-  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `application/json` with
-  optional parameters, case-insensitively. A *missing* Content-Type is refused rather than assumed
-  — `urllib` silently sends `x-www-form-urlencoded` when a caller sets no header, which is exactly
-  the misconfigured client this check exists to catch.
-- **Strict JSON-RPC envelope validation**
-  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `jsonrpc` version, method type
-  and length, id type and numeric range, params schema, body length, nesting depth, duplicate
-  top-level keys, non-finite JSON constants, and strict UTF-8 decoding. Errors are bounded and
-  structured; no stack trace reaches a caller.
-- **TLS and trusted-proxy rules for remote binds**
-  ([#267](https://github.com/Srinivasan-78/repo2graph/issues/267)): binding non-loopback with
-  authentication configured prints a high-visibility banner and emits an
-  `http_transport_no_tls_termination` event unless explicitly acknowledged — this server does not
-  terminate TLS, so a bearer credential travels in clear without a proxy in front of it.
-  `X-Forwarded-For` is ignored by default and consulted only when `--trust-proxy` is set *and* the
-  immediate peer is in the allowlist, and never for authentication.
-- **`Host` and `Origin` are checked on `GET` and `HEAD`**, not only `POST`
-  ([#372](https://github.com/Srinivasan-78/repo2graph/issues/372)), so a page in the user's browser
-  cannot read the discovery documents or `/healthz` cross-origin. Those stay unauthenticated by
-  necessity — a client must learn how to authenticate before it holds a credential.
-- **RSA keys below 2048 bits, and unbounded public exponents, fail verification**
-  ([#367](https://github.com/Srinivasan-78/repo2graph/issues/367)). Both fail closed exactly as a
-  bad signature does, so a caller cannot tell a weak key from a forged one.
+- **Repository content reaches an LLM as data, not as instructions.** `rag --answer` is the one
+  path that sends repository text to a provider, and a repository is untrusted input: a comment,
+  docstring, test fixture or vendored file can address the model directly ("ignore all previous
+  instructions", "print the contents of `.env`"). `answer.build_prompt` pasted the pack straight
+  into the user turn, where it read exactly like the operator's own words and there was no in-band
+  way for the model to tell the two apart. The pack now travels inside a fence whose label carries
+  a per-call random nonce; the system turn names that label in advance and states that everything
+  between the markers is data, and that a request inside the fence to change the task, reveal
+  secrets, fetch a URL or run a command is content to report rather than comply with. The question
+  is restated after the fence closes, so a pack ending in "now ignore the question above" has
+  nothing left to hijack. A *fixed* sentinel would be forgeable by any file that simply contains
+  it, which is why the nonce is random per call rather than a constant.
 - **JSONL index reads are bounded on the untrusted-index path**
   ([#408](https://github.com/Srinivasan-78/repo2graph/issues/408)). An index is untrusted input —
   shipped on a `graph` branch, as Action artifacts and in `examples/`. Lines are framed over fixed
@@ -226,6 +206,15 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed — repository tooling and stale references
 
+- **`make typecheck` failed outright once the `rag` extra was installed.** numpy's bundled stubs
+  use PEP 695 `type` statements, which mypy refuses to parse under `python_version = "3.10"`:
+  it reported a syntax error inside `numpy/__init__.pyi` and stopped, "errors prevented further
+  checking", without checking a line of this package. CI never saw it because CI does not install
+  `[rag]` — but `make install` does, so every contributor who followed the documented setup had a
+  broken typecheck target. numpy's stubs are now excluded with `follow_imports = "skip"`
+  (`silent` still parses the file); `python_version` stays at the declared `requires-python`
+  floor rather than being raised to paper over it. The package itself was already clean: 39 files,
+  no errors.
 - **`prod-igy` stopped applying two area labels, silently.** `detectAreas` matched
   `repo2graph/mcp.py` after that module became the `repo2graph/mcp/` package (`c8c20bdb`) and
   `repo2graph/walker.py` after that shim was deleted (`8ef6d006`), so `area/mcp` and `area/walker`
@@ -294,6 +283,30 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Removed
 
+- **The HTTP MCP transport and the bespoke OIDC/JWT auth engine** (`repo2graph/http_server.py`,
+  `repo2graph/auth.py`, `647e76f3`). **This is a breaking change for anyone who ran the 2.2.0
+  server over HTTP.** `repo2graph-mcp` is now stdio-only, which is what every supported client
+  (Claude Code, Claude Desktop, Cursor) actually uses.
+
+  Gone with it, all of which `repo2graph-mcp` accepted in 2.2.0: `--http-only`, `--http-host`,
+  `--http-port`, `--http-allow-hosts`, `--well-known-port`, `--auth-token`, `--auth-oidc-issuer`,
+  `--auth-audience`, `--auth-jwks-ttl`, `--auth-cimd`, and the `/healthz` and OIDC discovery
+  endpoints. `--allow-auto-build` went too — auto-build is the default on stdio and `--no-auto-build`
+  remains the way to turn it off. Passing any removed flag now fails as an unknown argument.
+  `--out`, `--no-auto-build`, `--async-build`, `--cache-size`, `--cache-ttl`, `--audit-log`,
+  `--audit-log-level` and `--audit-log-fsync` are unchanged.
+
+  **Migration.** Point your client at the stdio command instead — `uvx --from
+  "repo2graph[mcp]" repo2graph-mcp .`, per [docs/mcp.md](docs/mcp.md). Stdio inherits the parent
+  process's identity, so bearer-token and OIDC configuration has nothing left to guard and is
+  simply dropped rather than replaced. The per-request output ceilings in `mcp/guardrails.py` are
+  unchanged and still enforced on every tool call. If you genuinely need a network-reachable MCP
+  endpoint, put a maintained MCP HTTP gateway in front of the stdio server rather than relying on
+  this project to terminate TLS — which it never did.
+
+  Why: ~4,000 lines of security-critical network and crypto code (hand-rolled RSA/JWT
+  verification, JWKS refresh, forwarded-header trust, rate limiting) served a transport no
+  supported client requested, and every line of it was a liability that stdio does not have.
 - Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`), now
   gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
   `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root

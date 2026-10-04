@@ -151,6 +151,20 @@ ignore_missing_imports = true
 # See .github/CONTRIBUTING.md for the ranked plan.
 follow_imports = "silent"
 
+# numpy ships stubs that use PEP 695 `type` statements, which mypy refuses to
+# parse under `python_version = "3.10"` -- it reports a *syntax* error in
+# numpy/__init__.pyi and then stops, so `make typecheck` fails before checking a
+# single line of this package. CI never caught it because CI does not install
+# the `rag` extra; anyone who ran `make install` (which does) saw the whole
+# typecheck target break. `python_version` stays at 3.10 because that is the
+# declared floor in `requires-python`, so the fix is to stop following numpy's
+# stubs rather than to raise the floor. `skip`, not `silent`: `silent` still
+# parses the file.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+
 [[tool.mypy.overrides]]
 module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
