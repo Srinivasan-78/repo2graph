@@ -232,6 +232,15 @@ def dispatch(
             k=args.get("k", 8),
             hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
+            # `neighbours` and `max_neighbours` are advertised in
+            # TOOL_SCHEMAS["repo_search"] and accepted by tool_repo_search, but
+            # were never forwarded here: a client setting either got the default
+            # and no error. That made `neighbours="cite"` unreachable over MCP --
+            # the mode the README's own benchmark table reports as the best
+            # retriever at an 8k budget (5,460 vs 5,561 mean tokens). Defaults
+            # match the function's own, so omitting them stays a no-op.
+            neighbours=args.get("neighbours", "full"),
+            max_neighbours=args.get("max_neighbours"),
         )
     elif name == "repo_neighbours":
         result = _neighbours(

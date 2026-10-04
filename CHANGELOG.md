@@ -43,6 +43,78 @@ makes keeping it current a release-blocking step rather than a good intention.
     already exists and analyses a PR diff — a different question.
 ### Security
 
+- **Grammars no longer download themselves at first build.**
+  `tree-sitter-language-pack` is now pinned `>=0.7,<1.0`, and the upper bound is a security
+  boundary rather than a compatibility one. `>=0.7` resolved to 1.x, whose wheel is 2.5 MB and
+  whose sdist is 89 KB: the grammars are not in it, and roughly 21 MB of unsigned native code was
+  fetched from the network on the first `get_parser()` call, into the process holding the user's
+  source and — in CI — their tokens. 0.x compiles every grammar into the wheel (0.13.0 is 33 MB).
+  The 1.x behaviour broke three promises at once: the README's and SECURITY.md's "building,
+  querying and the MCP server make no network calls"; `uv.lock` and the SBOM, which described a
+  loader rather than the code that executes; and the documented read-only container and
+  egress-restricted CI, which simply could not work. 1.x exposes no offline switch —
+  `PackConfig` carries only `cache_dir`, `languages` and `groups`, all pre-*download* controls —
+  so raising the cap means vendoring grammars or dropping the claim.
+  `tests/test_grammar_availability.py::test_language_pack_is_capped_below_1_0` asserts the bound
+  so a dependency bump cannot quietly undo it.
+- **An unloadable grammar now fails the build instead of publishing an empty graph.**
+  `parse_source` answered an unavailable grammar with an empty-but-valid `ParsedFile`, making
+  "the grammar did not load" byte-identical to "this file declares nothing". A build with no
+  working grammars therefore reported `parsed == files`, wrote a graph of files and directories
+  with zero symbols, calls or imports, and exited 0 — and `--incremental` cached that result, so
+  the next build reproduced it without retrying. `impact` rated every PR LOW because nothing was
+  reachable. `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
+  `ParseError` when supported files were found and no grammar loaded for any of them, and the
+  message names the cause and the fix rather than leaving it looking like an empty repository.
+- **`doctor`'s grammar check can now fail.** It reported `len(LANG_CFG)` grammars "configured"
+  and returned `ok`; `LANG_CFG` is a dict literal, so the number was a property of the source
+  code and the check could not detect the thing it was named after. It now calls `parser_for()`
+  for every configured language and reports loaded-versus-configured — `fail` when none load,
+  `warn` when some do not, with the affected languages listed.
+- **`parser_for` no longer lets backend errors escape.** It caught
+  `(LookupError, ValueError, ImportError, AttributeError)`, which covers 0.x. Every 1.x failure —
+  `DownloadError`, `ChecksumMismatchError`, `CacheLockError`, `DynamicLoadError`,
+  `ParserSetupError` — derives from a private base outside that tuple, so offline they propagated
+  instead of answering `None`, and the file was dropped without being counted as unparsed.
+- **Signatures and docstrings are scanned for secrets.** Only chunk *bodies* ever were, so a
+  credential in a docstring or a default argument shipped verbatim in five places at once: the
+  `# doc:` line of every chunk header, `nodes.jsonl`, the JSON payload embedded in `graph.html`,
+  GraphML, and Cypher. Redaction now happens where the two fields enter the graph, which covers
+  all five rather than four, and is line-preserving so citation line numbers are unaffected.
+- **Secrets longer than a chunk no longer escape detection.** Scanning ran per 4,000-character
+  slice *after* splitting, and `_pem_spans` pairs a BEGIN with the next END within the text it is
+  given. A private key straddling the boundary left the first slice matching only its
+  `-----BEGIN ...-----` header and the second — the base64 body and the END line — matching
+  nothing, so under `redact-match` the key shipped almost whole and under `exclude-file` only the
+  slice holding the BEGIN was dropped. The whole body is now scanned before it is split, so
+  `exclude-file` drops the entire symbol rather than one arbitrary slice of it.
+- **Unquoted credential formats are detected.** Both existing rules required a *quoted* value,
+  which missed the three places enterprise credentials actually live: unquoted YAML
+  (`ansible_become_pass: ...`, and the `*_pass`/`pwd` family generally), INI/`.env`/`.properties`
+  (`password=...`), and delimited connection strings (`Password=...;`, JDBC `?password=`, Azure
+  `AccountKey=`, kubeconfig `client-key-data`). The new rule admits bare `pass`, `pwd` and
+  `token` as keys, so it rejects values shaped like identifiers, attribute paths, function calls
+  or placeholders — `token = get_token()` and `password: required` are not credentials.
+- **PGP and SSH2/PuTTY private keys are recognised.** The detector required `PRIVATE KEY`
+  followed immediately by five dashes, which excluded `-----BEGIN PGP PRIVATE KEY BLOCK-----`
+  ("KEY BLOCK"), the four-dash `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----`, and PuTTY's
+  `PuTTY-User-Key-File-N:` header, which has no armour to pair at all. All three scanned clean
+  and shipped in full under every policy.
+- **Twelve more credential filenames are treated as secret paths**: `admin.conf`,
+  `*.kubeconfig` (only the bare name was listed), `.vault_pass`, `_netrc`, `pgpass.conf`,
+  `local.settings.json`, `appsettings.<env>.json` (not the base file, which holds non-secret
+  defaults by convention), `web.config`, `NuGet.Config`, `.my.cnf`, `.s3cfg`, `.boto` and
+  `*.publishsettings`. None matched an entry, an extension or a keyword before — "settings" is
+  not "secret", and bare "pass" is not "password".
+- **MCP `repo_read` redacts at serve time, like every other agent-facing path.** It sliced
+  `index.chunks` straight back to the caller instead of going through `Index._served`, so an
+  index built with `--secret-policy off` or `warn-only` — which deliberately stores text
+  unredacted — served credentials in clear from this tool while `repo_search` over the same bytes
+  redacted them. `docs/mcp.md` claimed without qualification that chunks "have already passed
+  secret-path exclusion and content redaction": true of the search path, false of this one.
+  Applied to the assembled slice rather than to the whole chunk cache, so only the lines actually
+  served are scanned and `repo_read` keeps its no-filesystem-access guarantee; an unreadable
+  manifest redacts rather than guessing.
 - **Repository content reaches an LLM as data, not as instructions.** `rag --answer` is the one
   path that sends repository text to a provider, and a repository is untrusted input: a comment,
   docstring, test fixture or vendored file can address the model directly ("ignore all previous

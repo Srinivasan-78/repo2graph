@@ -380,6 +380,11 @@ runs:
           ${{ inputs.out }}
           !${{ inputs.out }}/local.json
         retention-days: 30
+        # `out` defaults to `.r2g`, a dot-directory, and upload-artifact has
+        # excluded hidden files by default since v4. Without this the upload
+        # silently matched nothing: the step still succeeded, the job stayed
+        # green, and the only symptom was an empty artifact nobody checked.
+        include-hidden-files: true
 
     - name: Push graph to branch
       if: ${{ inputs.commit-branch != '' }}

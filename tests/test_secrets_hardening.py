@@ -1174,6 +1174,68 @@ def test_policy_off_index_is_redacted_at_serve_time_for_agents(tmp_path):
     assert LIVE_KEY not in mcp.tool_repo_search(idx, "OPENAI_API_KEY load_settings")
 
 
+def _symbol_secret_repo(tmp_path: Path) -> Path:
+    """A repo whose secret lives inside a function, so it lands in a symbol chunk."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "settings.py").write_text(
+        f'def load_settings():\n    key = "{LIVE_KEY}"\n    return key\n',
+        encoding="utf8",
+        newline="\n",
+    )
+    return src
+
+
+def test_repo_read_redacts_at_serve_time_like_repo_search_does(tmp_path):
+    """`repo_read` sliced `index.chunks` straight back to the caller.
+
+    Every other agent-facing path routes through `Index._served`, which
+    re-redacts when the index was built with `off` or `warn-only`. `repo_read`
+    did not, so the same bytes came back in clear from one MCP tool and redacted
+    from another -- while docs/mcp.md stated without qualification that chunks
+    "have already passed secret-path exclusion and content redaction".
+    """
+    from repo2graph import mcp
+    from repo2graph.query import Index
+
+    # The secret has to sit inside a function body, not at module level:
+    # `repo_read` deliberately refuses a span covered only by a `file_residual`
+    # chunk, so a module-level constant is unreachable through this tool and
+    # would make the test pass for the wrong reason.
+    src = _symbol_secret_repo(tmp_path)
+    out = tmp_path / "out"
+    assert (
+        main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", "off"])
+        == 0
+    )
+    idx = Index(out)
+    # Precondition: the stored text really is unredacted, so this proves serve
+    # time is doing the work rather than build time having already done it.
+    assert LIVE_KEY in (out / "agent" / "chunks.jsonl").read_text(encoding="utf8")
+
+    read = mcp.tool_repo_read(idx, "settings.py", start_line=1, end_line=3)
+    assert not isinstance(read, mcp.ToolError), read
+    assert LIVE_KEY not in read
+    assert "[REDACTED:" in read
+    # And the two tools now agree.
+    assert LIVE_KEY not in mcp.tool_repo_search(idx, "load_settings key")
+
+
+def test_repo_read_leaves_text_alone_when_build_time_redaction_applied(tmp_path):
+    """Under the default policy there is nothing left to redact, so no double pass."""
+    from repo2graph import mcp
+    from repo2graph.query import Index
+
+    src = _symbol_secret_repo(tmp_path)
+    out = tmp_path / "out"
+    assert main(["build", str(src), "-o", str(out), "--formats", "jsonl"]) == 0
+    idx = Index(out)
+    read = mcp.tool_repo_read(idx, "settings.py", start_line=1, end_line=3)
+    assert not isinstance(read, mcp.ToolError), read
+    assert LIVE_KEY not in read
+    assert "def load_settings" in read
+
+
 @pytest.mark.parametrize(
     "text",
     [

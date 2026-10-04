@@ -316,8 +316,74 @@ def resolve_paths(repo: str | None = None, out: str | None = None) -> tuple[Path
         return (Path(out) if out else repo_path / INDEX_DIRNAME), repo_path
     out_path = Path(out) if out else Path(INDEX_DIRNAME)
     if out_path.name == INDEX_DIRNAME and out_path.parent.is_dir():
-        return out_path, out_path.parent
+        inferred = out_path.parent
+        if out is None:
+            # Neither `repo` nor `--out` was given, so `out_path` is a bare
+            # `.r2g` and `inferred` is the process's working directory. That is
+            # how `repo2graph-mcp` with no arguments came to index whatever
+            # directory the MCP client happened to launch it in: Claude Desktop
+            # and Cursor do not inherit a project cwd, so for a client started
+            # in the user's home folder, a desktop, a mounted drive or a
+            # OneDrive root, the first tool call walked that entire tree.
+            #
+            # An explicit `--out <repo>/.r2g` is a deliberate choice of parent
+            # and is left alone; so is an explicit `repo`. Only the directory
+            # nobody named gets checked.
+            _assert_inferable_repo_root(inferred)
+        return out_path, inferred
     return out_path, None
+
+
+#: Files that mark a directory as the root of a project, as opposed to a home
+#: folder or a drive that merely contains projects.
+_PROJECT_MARKERS = (
+    ".git",
+    "pyproject.toml",
+    "setup.py",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "composer.json",
+    "Gemfile",
+    "CMakeLists.txt",
+    "mix.exs",
+    ".hg",
+    ".svn",
+)
+
+
+def _assert_inferable_repo_root(path: Path) -> None:
+    """Refuse to infer a repository from a directory that is not a project root."""
+    try:
+        resolved = path.resolve()
+    except OSError:  # pragma: no cover - unresolvable cwd cannot be served
+        resolved = path
+
+    hint = (
+        "Pass the repository as an absolute path instead:\n"
+        '       repo2graph-mcp /abs/path/to/repo   (or "args": ["/abs/path/to/repo"] '
+        "in your MCP client config)"
+    )
+    if resolved.parent == resolved:
+        raise SystemExit(
+            f"error: refusing to index the filesystem root ({resolved}), inferred from "
+            f"the working directory.\n       {hint}"
+        )
+    if resolved == Path.home().resolve():
+        raise SystemExit(
+            f"error: refusing to index your home directory ({resolved}), inferred from "
+            f"the working directory.\n       {hint}"
+        )
+    if not any((resolved / marker).exists() for marker in _PROJECT_MARKERS):
+        raise SystemExit(
+            f"error: {resolved} does not look like a project root (no .git, pyproject.toml, "
+            f"package.json, go.mod, Cargo.toml or similar), and was only inferred from the "
+            f"working directory -- indexing it could walk an entire home folder or drive.\n"
+            f"       {hint}"
+        )
 
 
 def main(argv=None) -> int:

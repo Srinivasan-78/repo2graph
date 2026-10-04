@@ -448,6 +448,32 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     }
 
 
+def _validate_auto_build_out(out, repo_root) -> None:
+    """Harden an auto-build output directory, the way `build` hardens its `-o`.
+
+    `build` runs `validate_outdir` before it writes anything. The three
+    *implicit* builds -- `impact`'s, `rag <src>`'s and the MCP server's -- did
+    not, even though they finish at the same `dump_all`, whose directory swap
+    renames the target aside and then deletes it. `repo2graph rag . -o .`
+    therefore deleted the working tree.
+
+    No `force` parameter: `build --force` exists because a human typed both the
+    path and the override. Nothing is typed here, so there is no override to
+    honour -- the caller should run `build` explicitly if they mean it.
+    """
+    from .integrity import validate_outdir
+
+    try:
+        validate_outdir(out, repo_root=repo_root)
+    except ValueError as exc:
+        raise SystemExit(
+            f"error: {exc}\n"
+            "       This directory would have been replaced by an automatically built "
+            "index. Point -o at a dedicated index directory (e.g. -o .r2g), or run "
+            "`repo2graph build` yourself if you really mean this path."
+        ) from None
+
+
 def _warn_exclude_secrets_deprecated(args) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
@@ -521,6 +547,12 @@ def _rag_index_dir(args) -> Path:
             output_dir=str(out),
         )
         g = build(tpath, config=cfg)
+        # `build` validates its own `-o` (cli.py:130); this auto-build path did
+        # not, so `impact` could stage an index over any directory the caller
+        # named -- and `dump_all`'s directory swap renames the target aside and
+        # deletes it. No `--force` here on purpose: nobody typed this path, so
+        # there is no intent to override.
+        _validate_auto_build_out(out, tpath)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
         return out
     from .fetch import index_github, parse_spec
@@ -1029,6 +1061,10 @@ def cmd_impact(args):
             )
         sys.stderr.write(f"no index at {out}: building one from {repo_path}\n")
         graph = build(repo_path)
+        # Same omission as the `impact` auto-build above: `rag <src>` reached
+        # `dump_all` without `validate_outdir`, so `rag . -o .` renamed the
+        # working tree aside and deleted it.
+        _validate_auto_build_out(out, repo_path)
         dump_all(graph, iter_chunks(graph), out, {"jsonl", "overview"})
 
     _require_index(out, "chunks.jsonl")

@@ -351,8 +351,16 @@ def test_index_outside_repo_is_fresh_right_after_build(git_index, capsys):
 @pytest.fixture
 def secret_index(tmp_path, capsys):
     repo = _make_repo(tmp_path, git=False)
+    # The key is `LEDGER_NOTE`, not `LEDGER_TOKEN`, on purpose. These tests are
+    # about secret-*path* exclusion -- is the `.env` chunk served or withheld --
+    # and they need a marker string that survives into the stored chunk so its
+    # presence or absence is the signal. A secret-shaped key now trips
+    # content redaction at build time (UNQUOTED_SECRET_RE), which would redact
+    # the marker and make every assertion below pass for the wrong reason.
+    # Building with `--secret-policy off` is not an alternative: `Index._served`
+    # re-redacts at serve time for exactly that policy.
     (repo / ".env").write_text(
-        "LEDGER_TOKEN=abc123deadbeef  # greet ledger token\n", encoding="utf8"
+        "LEDGER_NOTE=abc123deadbeef  # greet ledger marker\n", encoding="utf8"
     )
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out), "--include-secrets"])

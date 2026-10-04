@@ -25,7 +25,25 @@ classifiers = [
 ]
 dependencies = [
     "tree-sitter>=0.23",
-    "tree-sitter-language-pack>=0.7",
+    # Capped below 1.0 deliberately, and this is a security boundary rather than a
+    # compatibility one. 0.x ships every grammar compiled into the wheel (0.13.0 is
+    # a 33 MB wheel); 1.x ships a 2.5 MB wheel and a 89 KB sdist and fetches the
+    # grammars -- roughly 21 MB of unsigned native code -- from the network on first
+    # `get_parser()`, into the process that is holding the user's source and, in CI,
+    # their tokens.
+    #
+    # That breaks three things this project promises. The README and
+    # .github/SECURITY.md both state that building, querying and the MCP server make
+    # no network calls, with `rag --answer` and `github` named as the only
+    # exceptions. `uv.lock` and the SBOM stop describing what actually executes,
+    # because the hashed artefact is a loader rather than the grammars. And the
+    # documented read-only container and egress-restricted CI simply cannot work.
+    #
+    # 1.x exposes no offline switch: `PackConfig` carries only `cache_dir`,
+    # `languages` and `groups`, all of which are pre-*download* controls, so there is
+    # no configuration that makes 1.x satisfy the no-network claim. Raising this cap
+    # therefore means either dropping the claim or vendoring grammars first.
+    "tree-sitter-language-pack>=0.7,<1.0",
 ]
 
 [project.urls]

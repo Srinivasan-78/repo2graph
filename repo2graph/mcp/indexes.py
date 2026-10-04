@@ -50,8 +50,16 @@ def _build_index(repo: Path, out: Path) -> None:
     from ..chunks import iter_chunks
     from ..export import dump_all
     from ..graph import build
+    from ..integrity import validate_outdir
     from ..parse import BuildConfig
 
+    # `build -o` is hardened by `validate_outdir`; this auto-build reached the
+    # same `dump_all` without it, and that swap renames the target aside and
+    # deletes it. The server picks `out` itself (`<repo>/.r2g`) or takes it from
+    # `--out`, so a misconfigured client could have it replace a real directory.
+    # Raised as ValueError rather than SystemExit: this runs inside a live stdio
+    # server, which must answer the tool call rather than exit the process.
+    validate_outdir(out, repo_root=repo)
     graph = build(repo, config=BuildConfig(output_dir=str(out)))
     dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
 

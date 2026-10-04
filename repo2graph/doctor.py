@@ -147,17 +147,18 @@ def check_git(path: Path | None = None) -> CheckResult:
 
 
 def check_tree_sitter() -> CheckResult:
-    """Check tree-sitter grammars and parser availability."""
-    try:
-        from .parse import LANG_CFG
+    """Check that grammars actually *load*, not merely that they are configured.
 
-        available = list(LANG_CFG.keys())
-        return CheckResult(
-            "Tree-sitter Grammars",
-            "ok",
-            f"{len(available)} grammars configured",
-            details=[f"languages: {', '.join(sorted(available))}"],
-        )
+    This used to report `len(LANG_CFG)` grammars "configured" and return "ok".
+    `LANG_CFG` is a dict literal in `parse.py`, so the count was a property of the
+    source code and the check could not fail for the thing it was named after: with
+    every grammar unloadable, doctor still said ok and `build` still exited 0 with an
+    empty graph. `parser_for()` swallows LookupError/ValueError/ImportError/
+    AttributeError and returns None, so "no grammar" and "nothing to parse" are
+    indistinguishable downstream unless something actually asks for a parser.
+    """
+    try:
+        from .parse import LANG_CFG, parser_for
     except Exception as exc:
         return CheckResult(
             "Tree-sitter Grammars",
@@ -165,6 +166,51 @@ def check_tree_sitter() -> CheckResult:
             f"tree-sitter grammars missing: {exc}",
             remediation="Ensure tree-sitter and language grammars are installed.",
         )
+
+    configured = sorted(LANG_CFG.keys())
+    loaded: list[str] = []
+    failed: list[str] = []
+    for lang in configured:
+        try:
+            ok = parser_for(lang) is not None
+        except Exception:  # noqa: BLE001 - a broken grammar must read as failed, not crash doctor
+            ok = False
+        (loaded if ok else failed).append(lang)
+
+    details = [f"loaded {len(loaded)}/{len(configured)}: {', '.join(loaded) or 'none'}"]
+    if failed:
+        details.append(f"failed to load: {', '.join(failed)}")
+
+    if not loaded:
+        return CheckResult(
+            "Tree-sitter Grammars",
+            "fail",
+            f"no grammars could be loaded ({len(configured)} configured)",
+            details=details,
+            remediation=(
+                "Every parse will yield an empty graph. Reinstall with grammars bundled: "
+                "`pip install -U 'tree-sitter-language-pack>=0.7,<1.0'`. The 1.x line ships "
+                "a loader and downloads grammars on first use, which fails in offline or "
+                "egress-restricted environments."
+            ),
+        )
+    if failed:
+        return CheckResult(
+            "Tree-sitter Grammars",
+            "warn",
+            f"{len(failed)} of {len(configured)} grammars could not be loaded",
+            details=details,
+            remediation=(
+                "Files in the affected languages will contribute no symbols or edges. "
+                "Reinstall `tree-sitter-language-pack` (>=0.7,<1.0 bundles all grammars)."
+            ),
+        )
+    return CheckResult(
+        "Tree-sitter Grammars",
+        "ok",
+        f"{len(loaded)} grammars loaded",
+        details=details,
+    )
 
 
 def check_permissions(path: Path | str) -> CheckResult:
