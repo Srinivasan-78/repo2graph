@@ -81,7 +81,10 @@ def test_doctor_mcp_sdk_missing_is_a_warning_not_a_failure():
 def test_doctor_rejects_the_sdk_major_the_server_rejects():
     """mcp 1.x hangs on the first tool call (#407). The server refuses to start
     on it; doctor has to say so too, or it certifies a setup that cannot work."""
-    with patch("repo2graph.mcp.server._sdk_version", return_value="1.30.0"):
+    import importlib
+
+    mcp_server = importlib.import_module("repo2graph.mcp.server")
+    with patch.object(mcp_server, "_sdk_version", return_value="1.30.0"):
         res = check_mcp_server()
     assert res.status == "fail"
     assert "1.30.0" in res.summary
