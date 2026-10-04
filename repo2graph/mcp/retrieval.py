@@ -321,6 +321,29 @@ def tool_repo_read(
     hi = min(cursor - 1, want_end)
     text = "\n".join(pieces)
 
+    # Serve-time redaction, matching what `pack_context`/`retrieve` get from
+    # `Index._served`. `repo_read` sliced `index.chunks` straight back to the
+    # caller, so an index built with `--secret-policy off` or `warn-only` --
+    # whose stored chunk text is deliberately unredacted -- served credentials
+    # in clear here while `repo_search` over the very same bytes redacted them.
+    # docs/mcp.md claimed without qualification that chunks "have already passed
+    # secret-path exclusion and content redaction": true of the search path,
+    # false of this one.
+    #
+    # Applied to the assembled slice rather than inside `_aux` so only the lines
+    # actually served are scanned, and so building the path cache stays free of
+    # both the work and the manifest read. The manifest lookup is guarded
+    # because `repo_read` is required to answer without touching the
+    # filesystem; if the policy cannot be determined, redact rather than guess.
+    try:
+        policy = index.manifest.get("secret_filter_policy")
+    except Exception:  # noqa: BLE001 - unreadable manifest must fail safe, not open
+        policy = None
+    if policy not in ("redact-match", "exclude-file"):
+        from ..security import redact_content
+
+        text, _ = redact_content(text)
+
     if len(text) > MCP_MAX_READ_CHARS:
         text = _fit_lines(text, MCP_MAX_READ_CHARS, len)
         note += (

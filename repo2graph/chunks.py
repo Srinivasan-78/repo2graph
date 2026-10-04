@@ -231,11 +231,22 @@ def iter_chunks(g, include_files: bool = True):
         if ext:
             header.append(f"# calls (outside the repo): {', '.join(ext)}")
         if n.get("docstring"):
+            # Already redacted at graph-build time (`graph._redact_metadata`), so
+            # this is the stored value and not a second, unscanned copy.
             header.append("# doc: " + n["docstring"].replace("\n", " ")[:300])
-        for i, part in enumerate(_split(body)):
-            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
-            if proc_part is None:
-                continue
+        # Scan and redact the whole body *before* splitting. Per-slice scanning
+        # let any secret longer than the split escape: `_pem_spans` pairs a
+        # BEGIN with the next END within the text it is handed, so a private key
+        # straddling the 4,000-character boundary left the first slice matching
+        # only its `-----BEGIN ...-----` header line, and the second slice -- the
+        # base64 body plus the END line -- matching nothing at all. Under
+        # `redact-match` the key shipped almost entirely in clear; under
+        # `exclude-file` only the slice holding the BEGIN was dropped while the
+        # body was kept. Redaction is line-preserving, so splitting afterwards
+        # keeps every citation line number intact, and `exclude-file` now drops
+        # the whole symbol instead of one arbitrary slice of it.
+        proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
+        for i, part in enumerate(_split(proc_body) if proc_body is not None else ()):
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -254,7 +265,7 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": caller_edges,
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
-                "text": "\n".join(header) + "\n" + proc_part,
+                "text": "\n".join(header) + "\n" + part,
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
@@ -305,10 +316,10 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
         if defines:
             header.append(f"# defines: {', '.join(defines)}")
-        for i, part in enumerate(_split(body)):
-            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
-            if proc_part is None:
-                continue
+        # Whole-body scan before the split, for the same reason as the symbol
+        # pass above: a secret longer than one slice escaped detection entirely.
+        proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
+        for i, part in enumerate(_split(proc_body) if proc_body is not None else ()):
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -327,5 +338,5 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": [],
                 "callee_edges": [],
                 "base_edges": [],
-                "text": "\n".join(header) + "\n" + proc_part,
+                "text": "\n".join(header) + "\n" + part,
             }

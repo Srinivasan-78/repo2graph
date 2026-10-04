@@ -28,6 +28,11 @@ SECRET_EXTS = frozenset(
         ".cer",
         ".crt",
         ".ovpn",
+        # A kubeconfig under any name (`cluster1.kubeconfig`): the bare
+        # `kubeconfig` exact-name entry only caught the unsuffixed spelling.
+        ".kubeconfig",
+        # Azure publish profiles: deployment credentials in clear.
+        ".publishsettings",
         ".kdbx",
         ".keystore",
         ".jks",
@@ -103,6 +108,34 @@ SECRET_EXACT_NAMES = frozenset(
         # The dotless spelling Apache and nginx docs use for the same file as
         # `.htpasswd`: user names and password hashes.
         "htpasswd",
+        # --- Enterprise and cross-platform credential files ---
+        # All of these were indexed as ordinary source: no entry here, no
+        # matching extension, and no SECRET_KEYWORDS substring (note "settings"
+        # is not "secret" and bare "pass" is not "password").
+        #
+        # kubeadm writes cluster-admin credentials here; the `.kube` directory
+        # entry does not cover a file sitting in /etc/kubernetes or copied into
+        # a repo.
+        "admin.conf",
+        # Windows spellings of files whose dotted forms are already listed:
+        # PostgreSQL's password file and curl's netrc.
+        "pgpass.conf",
+        "_netrc",
+        # Ansible vault password file -- the key to every vaulted secret in the
+        # repo, and the one file that makes the rest decryptable.
+        ".vault_pass",
+        ".vault-password",
+        # Azure Functions local settings: connection strings and AccountKeys.
+        "local.settings.json",
+        # ASP.NET / IIS: connection strings and machine keys.
+        "web.config",
+        # NuGet feed credentials (plaintext or reversibly encrypted).
+        "nuget.config",
+        # MySQL client credentials.
+        ".my.cnf",
+        # s3cmd and boto: AWS access key and secret key.
+        ".s3cfg",
+        ".boto",
         # Composer's per-project credential store (`http-basic`, `github-oauth`,
         # `gitlab-token` ...). Composer only ever reads this name for that purpose.
         "auth.json",
@@ -172,6 +205,10 @@ SECRET_PATH_SUFFIXES = (
     ".config/gh/hosts.yml",
 )
 
+# `appsettings.<env>.json`, but not the base `appsettings.json`. Applied to the
+# final path segment, already lowercased by `_is_secret_path`.
+APPSETTINGS_OVERLAY_RE = re.compile(r"^appsettings\..+\.json$")
+
 SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
 
 # Field names whose *value* is a credential whatever it looks like.
@@ -233,8 +270,28 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
 # `OPENSSH`, `ENCRYPTED`, `ENCRYPTED RSA`, and the bare `PRIVATE KEY`.
 # Python 3.10 is the floor here, so possessive `*+` is not available.
 _PEM_LABEL = r"[-A-Z0-9_ ]{0,40}"
-PEM_BEGIN_RE = re.compile(rf"-----BEGIN {_PEM_LABEL}PRIVATE KEY-----")
-PEM_END_RE = re.compile(rf"-----END {_PEM_LABEL}PRIVATE KEY-----")
+# Three armour families, not one. The original pattern demanded `PRIVATE KEY`
+# followed immediately by five dashes, which silently excluded two formats that
+# carry real private keys:
+#
+#   -----BEGIN PGP PRIVATE KEY BLOCK-----     ("KEY BLOCK-----", not "KEY-----")
+#   ---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----  (four dashes, and spaces inside)
+#
+# Both scanned clean and shipped in full under every policy. The bound on
+# `_PEM_LABEL` stays {0,40} for the linear-time reason documented above.
+_PEM_CORE = rf"-----BEGIN {_PEM_LABEL}PRIVATE KEY-----"
+_PGP_BEGIN = r"-----BEGIN PGP PRIVATE KEY BLOCK-----"
+_SSH2_BEGIN = rf"---- BEGIN {_PEM_LABEL}PRIVATE KEY ----"
+PEM_BEGIN_RE = re.compile(rf"(?:{_PEM_CORE}|{_PGP_BEGIN}|{_SSH2_BEGIN})")
+PEM_END_RE = re.compile(
+    rf"(?:-----END {_PEM_LABEL}PRIVATE KEY-----"
+    rf"|-----END PGP PRIVATE KEY BLOCK-----"
+    rf"|---- END {_PEM_LABEL}PRIVATE KEY ----)"
+)
+# PuTTY's own format has no BEGIN/END armour at all -- the key material follows
+# a `PuTTY-User-Key-File-N:` header -- so it cannot be paired and is matched as
+# a plain single-line marker in CONTENT_SECRET_PATTERNS instead.
+PUTTY_KEY_RE = re.compile(r"PuTTY-User-Key-File-\d+:")
 
 # Types whose spans are computed by a dedicated pass rather than by running
 # their entry below over the text. The entry is still the shape test used by
@@ -270,6 +327,8 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("sendgrid_key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
     ("telegram_bot_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
     ("private_key", PEM_BEGIN_RE),
+    # Not in PAIRED_TYPES: PuTTY keys carry no END marker to pair with.
+    ("putty_private_key", PUTTY_KEY_RE),
     (
         "jwt",
         re.compile(r"\beyJ[-A-Za-z0-9_]{10,}\.eyJ[-A-Za-z0-9_]{10,}\.[-A-Za-z0-9_]+\b"),
@@ -341,6 +400,38 @@ JSON_SECRET_RE = re.compile(
     r"(?:pass(?:word|wd)|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)"
     r"(?P<suffix>[A-Za-z0-9_.-]{0,40})(?(kq)(?P=kq))\s*:\s*(?P<vq>[\"'])"
     r"(?P<value>(?:(?!(?P=vq))[^\\\s]|\\[^\r\n]){8,1024})(?P=vq)"
+)
+
+# Unquoted credential values. ASSIGNMENT_RE and JSON_SECRET_RE both require the
+# value to be quoted, which covers source literals and JSON but misses the three
+# places enterprise credentials actually live:
+#
+#   ansible_become_pass: hunter2            YAML with no quotes
+#   password=hunter2!                       .env / .ini / .properties
+#   Server=db;User Id=sa;Password=hunter2;  ADO/JDBC connection strings
+#   AccountKey=Base64Key==;                 Azure storage
+#   client-key-data: LS0tLS1CRUdJTi...      kubeconfig
+#
+# The key alternation is wider than the quoted rules': bare `pass` and `pwd` are
+# admitted here (Ansible's `*_pass` family, `db_pwd`), along with `accountkey`
+# and `client-key-data`. `pass` alone is why the value test below is strict --
+# "pass" appears in ordinary prose constantly.
+#
+# The value runs to end-of-line, `;`, `&` or `"`, carries no whitespace (a space
+# means prose), and must not open with a quote, which the quoted rules already
+# own. Parentheses are excluded too: `token = get_token()` is a function call,
+# and no credential carries an unquoted paren, so this one character class is
+# what keeps the wider key set from firing on ordinary code.
+# Length-bounded on both sides of the key so the scan stays linear.
+_UNQUOTED_VALUE_CHAR = r"[^\s\"';&()]"
+UNQUOTED_SECRET_RE = re.compile(
+    r"(?im)(?:^|[^A-Za-z0-9_])"
+    r"(?P<key>[A-Za-z0-9_.\- ]{0,40}?"
+    r"(?:pass(?:word|wd)?|pwd|secret|token|api[-_]?key|auth[-_]?key|access[-_]?token"
+    r"|accountkey|client[-_]key[-_]data)"
+    r"(?P<suffix>[A-Za-z0-9_.-]{0,40}?))"
+    r"[ \t]*[:=][ \t]*"
+    rf"(?P<value>{_UNQUOTED_VALUE_CHAR}{{6,1024}})"
 )
 
 #: A secret word followed by one of these names a *property of* the credential
@@ -430,6 +521,15 @@ def _is_secret_path(
     if any(
         stripped == suffix or stripped.endswith("/" + suffix) for suffix in SECRET_PATH_SUFFIXES
     ):
+        return True
+
+    # ASP.NET environment overlays: `appsettings.Production.json`,
+    # `appsettings.Development.json`. These routinely carry connection strings
+    # with embedded credentials. Matched as a pattern rather than an exact name
+    # because the middle segment is arbitrary, and deliberately *not* matching
+    # the base `appsettings.json`, which conventionally holds the non-secret
+    # defaults that the overlays override.
+    if APPSETTINGS_OVERLAY_RE.match(parts[-1] if parts else ""):
         return True
 
     single_segment_extra = (
@@ -567,6 +667,28 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
 
     # 4. JSON-style credential pairs (`"password": "..."`)
     findings.extend(("CREDENTIAL_JSON", start, end) for start, end in _json_secret_spans(text))
+
+    # 5. Unquoted values: YAML, INI/.env/.properties, connection strings,
+    #    kubeconfig. Reuses the same two false-positive filters as the quoted
+    #    rules -- a `tokenUrl`/`secretName`-style property name is not a
+    #    credential, and `${VAR}`/`<your-token>`/`*****` are placeholders.
+    for m in UNQUOTED_SECRET_RE.finditer(text):
+        if _NON_SECRET_SUFFIX_RE.match(m.group("suffix") or ""):
+            continue
+        value = m.group("value")
+        if _JSON_PLACEHOLDER_RE.match(value):
+            continue
+        # The key set here includes bare `pass`/`pwd`/`token`, which appear all
+        # over ordinary code, so a value shaped like an identifier or a dotted
+        # attribute path is treated as code rather than a credential:
+        # `token = self._refresh_token`, `password: required`. Requiring at least
+        # one digit or symbol is what separates those from `hunter2xyz`,
+        # `s3cr3tValue` and base64 key material. A purely alphabetic unquoted
+        # password is the accepted cost; the quoted rules still catch it when it
+        # is written as a literal.
+        if not _json_secret_value_ok(value) and re.fullmatch(r"[A-Za-z_][A-Za-z_.]*", value):
+            continue
+        findings.append(("CREDENTIAL_UNQUOTED", m.start("value"), m.end("value")))
 
     # Sort by start index
     findings.sort(key=lambda x: x[1])
