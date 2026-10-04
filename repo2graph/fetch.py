@@ -314,6 +314,9 @@ def index_github(
     max_call_candidates: int = 5,
     no_chunks: bool = False,
     cochange_min: int = 3,
+    max_bytes: int = 0,
+    max_edges: int = 0,
+    limit_policy: str = "warn",
 ) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
@@ -336,6 +339,9 @@ def index_github(
             config=config,
             max_call_candidates=max_call_candidates,
             cochange_min=cochange_min,
+            max_bytes=max_bytes,
+            max_edges=max_edges,
+            limit_policy=limit_policy,
         )
         g.name = f"{owner}/{repo}"
         # The clone is deleted below, so there is no local tree for

@@ -73,6 +73,9 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
+| `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
+| `--max-edges` | `0` (no limit) | Keep at most N edges. Edges grow with how interconnected the code is, not with file count, so this is the bound that matters on a dense repository. |
+| `--limit-policy` | `warn` | What a reached limit does. `warn` says so on stderr once per limit; `truncate` cuts quietly. **Both** record the cut under `limits_hit` in `stats.json` — a bounded index always says it is partial, so a missing edge is never mistaken for an absent relationship. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |

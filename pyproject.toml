@@ -73,10 +73,18 @@ include = ["repo2graph*"]
 # database or fixture state, so it parallelises almost linearly -- 134s serial
 # down to 36s on 16 cores, 49s on a 4-vCPU runner. `[tool.coverage.run]` below
 # already sets `parallel = true`, which is what lets the workers' data combine.
+# hypothesis: tests/test_properties.py only. Capped below 7 for the same reason
+# the other caps here exist -- a major bump is the untested thing. Hypothesis
+# ships behaviour changes (new health checks, strategy shrinking, deprecations
+# promoted to errors) that turn a green property suite red without a line of
+# this repository changing, and the floor is 6.100 because the profile that
+# file registers uses `derandomize` together with `suppress_health_check`,
+# which is what keeps the run reproducible across the 12-cell CI matrix.
 dev = [
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3.5",
+    "hypothesis>=6.100,<7",
     "ruff>=0.5",
     "mypy>=1.11",
     "pre-commit>=3.5",

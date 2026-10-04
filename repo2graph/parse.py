@@ -634,6 +634,39 @@ except ImportError:  # pragma: no cover
     _get_parser = None
 
 
+@lru_cache(maxsize=1)
+def grammar_fingerprint() -> str:
+    """Identity of the installed grammars, for the incremental parse cache key.
+
+    `PARSE_CACHE_FORMAT` is bumped by hand whenever *our* extraction changes, so
+    it catches every change we make and none that we don't. A tree-sitter
+    grammar upgrade is the second kind: the same source, parsed by a newer
+    grammar, can yield different node types and therefore different symbols,
+    calls and qualnames -- with `PARSE_CACHE_FORMAT` untouched, because nothing
+    in this repository changed. `--incremental` would then reuse entries
+    produced by the old grammar for every file whose bytes did not change, and
+    the resulting index would be a silent mix of two grammar versions that no
+    full rebuild could reproduce. Determinism is the property the incremental
+    path is tested against (`test_incremental_is_byte_identical_to_a_full_rebuild`),
+    and that test cannot see this because it never changes grammars mid-run.
+
+    Both distributions matter: `tree-sitter-language-pack` ships the grammars and
+    `tree-sitter` is the runtime that walks them. An unknown version reads as
+    "unknown" rather than raising -- a cache that cannot be keyed is one that
+    must not be trusted, and an "unknown" token simply never matches a recorded
+    one, so the next build is a full build.
+    """
+    from importlib.metadata import version as _dist_version
+
+    parts: list[str] = []
+    for dist in ("tree-sitter", "tree-sitter-language-pack"):
+        try:
+            parts.append(f"{dist}={_dist_version(dist)}")
+        except Exception:  # noqa: BLE001 - any lookup failure is "unknown"; see docstring
+            parts.append(f"{dist}=unknown")
+    return " ".join(parts)
+
+
 @lru_cache(maxsize=None)
 def parser_for(lang: str):
     """The parser for `lang`, or None if one cannot be obtained for any reason.
