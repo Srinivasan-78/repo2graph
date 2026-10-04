@@ -457,3 +457,69 @@ def test_build_reports_the_resolved_absolute_out_path(tmp_path, capsys):
     report = json.loads(capsys.readouterr().out)
     assert Path(report["out"]).is_absolute(), report["out"]
     assert report["out"] != ".r2g"
+
+
+# Every subcommand with its own flags, plus the two `explain` leaves. Kept
+# explicit rather than scraped from the subparser map so that a *new* command
+# has to be added here deliberately -- a scrape would silently cover nothing
+# when the registration shape changes.
+_CLI_COMMANDS = (
+    "build",
+    "query",
+    "rag",
+    "impact",
+    "github",
+    "embed",
+    "map",
+    "stats",
+    "explain-path",
+    "doctor",
+    "bug-report",
+    "index-status",
+    "demo",
+    "completion",
+    "version",
+)
+_EXPLAIN_LEAVES = (("explain", "edge"), ("explain", "node"), ("explain", "retrieval"))
+
+
+def _all_real_long_flags() -> set[str]:
+    """Every `--flag` the shipped CLI or the MCP server actually accepts."""
+    flags = _help_long_flags([])
+    for command in _CLI_COMMANDS:
+        flags |= _help_long_flags([command])
+    for argv in _EXPLAIN_LEAVES:
+        flags |= _help_long_flags(list(argv))
+    # The MCP server parses its own argv in mcp/server.py rather than through
+    # repo2graph.cli, so --help cannot reach it from here.
+    server_src = (REPO_ROOT / "repo2graph" / "mcp" / "server.py").read_text(encoding="utf-8")
+    flags |= set(re.findall(r'"(--[a-z][\w-]*)"', server_src))
+    return flags
+
+
+def test_unreleased_changelog_does_not_advertise_flags_that_do_not_exist():
+    """A removed subsystem left its flags behind in `[Unreleased]` (`647e76f3`).
+
+    The HTTP transport and the OIDC/JWT auth engine were deleted, but the
+    section kept advertising `--http-insecure-ok`, `--trust-proxy`,
+    `--rate-limit-requests` and six more. That section is not just prose:
+    `.github/workflows/publish.yml` reads it and uses it as the GitHub Release
+    body, so the next release would have shipped notes describing flags that
+    fail as unknown arguments.
+
+    The `### Removed` subsection is exempt by design -- naming a flag that no
+    longer exists is exactly its job.
+    """
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## [Unreleased]" in text
+    unreleased = text.split("## [Unreleased]", 1)[1].split("\n## [", 1)[0]
+    sections = re.split(r"(?m)^### ", unreleased)
+    body = "\n".join(s for s in sections if not s.lower().startswith("removed"))
+    # Only backticked tokens: prose such as "the --foo style" is not a claim
+    # that the flag exists, and `--` shows up inside URLs and diff output.
+    mentioned = set(re.findall(r"`(--[a-zA-Z][\w-]*)", body))
+    stale = sorted(mentioned - _all_real_long_flags())
+    assert stale == [], (
+        f"CHANGELOG [Unreleased] advertises flags that no longer exist: {stale}. "
+        "Move them to ### Removed with migration notes, or delete the entry."
+    )
