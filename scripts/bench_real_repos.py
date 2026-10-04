@@ -53,7 +53,7 @@ STOPWORDS = frozenset(
     "a an and are as at be by does do for from get gets how in into is it its like "
     "of on or the their then to up what when where which who why with".split()
 )
-RG_TYPES = {"python": "py", "typescript": "ts"}
+RG_TYPES = {"python": "py", "typescript": "ts", "javascript": "js"}
 
 
 def source_version(root: Path = ROOT) -> str:
@@ -225,14 +225,28 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--budgets", default="2000,4000,8000")
     ap.add_argument("--out", type=Path, default=BENCH / "results.json")
     ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
+    ap.add_argument(
+        "--repos",
+        type=Path,
+        default=None,
+        help="repository set (default: benchmarks/real/repos.json)",
+    )
+    ap.add_argument(
+        "--tasks",
+        type=Path,
+        default=None,
+        help="task set (default: benchmarks/real/tasks.json; disables the structural set)",
+    )
     args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
     if shutil.which(rg[0]) is None:
         raise SystemExit("ripgrep (rg) is required for the baseline")
     budgets = [int(b) for b in args.budgets.split(",")]
 
-    repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
-    tasks = json.loads((BENCH / "tasks.json").read_text())["tasks"]
+    repos_path = args.repos or (BENCH / "repos.json")
+    tasks_path = args.tasks or (BENCH / "tasks.json")
+    repos = {r["name"]: r for r in json.loads(repos_path.read_text(encoding="utf8"))["repos"]}
+    tasks = json.loads(tasks_path.read_text(encoding="utf8"))["tasks"]
     args.cache.mkdir(parents=True, exist_ok=True)
 
     indexes: dict[str, Index] = {}
@@ -249,9 +263,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = []
     structural_tasks_path = BENCH / "tasks_structural.json"
+    # The structural set names symbols in repos.json's repositories, so it is
+    # only meaningful alongside the default task set. An explicit --tasks is a
+    # different corpus; pairing it with these would score them against an index
+    # that does not contain their evidence.
     structural_tasks = (
         json.loads(structural_tasks_path.read_text(encoding="utf8"))["tasks"]
-        if structural_tasks_path.exists()
+        if args.tasks is None and structural_tasks_path.exists()
         else []
     )
     structural_rows = []
