@@ -4,8 +4,8 @@
     "total_tasks": 35,
     "success_rate": 0.429,
     "mean_turns_to_answer": 1.47,
-    "mean_tokens_to_answer": 2447,
-    "precision_per_read": 0.2799,
+    "mean_tokens_to_answer": 2448,
+    "precision_per_read": 0.2798,
     "per_task": [
       {
         "task": "flask-01",
@@ -203,13 +203,13 @@
         "task": "hono-07",
         "solved": true,
         "turns": 1,
-        "tokens": 1968
+        "tokens": 1980
       },
       {
         "task": "hono-08",
         "solved": true,
         "turns": 1,
-        "tokens": 1998
+        "tokens": 1997
       },
       {
         "task": "hono-09",

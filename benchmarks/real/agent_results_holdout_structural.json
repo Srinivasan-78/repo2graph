@@ -1,11 +1,11 @@
 {
   "repo2graph": {
-    "solved": 15,
+    "solved": 14,
     "total_tasks": 40,
-    "success_rate": 0.375,
-    "mean_turns_to_answer": 3.0,
-    "mean_tokens_to_answer": 2543,
-    "precision_per_read": 0.1537,
+    "success_rate": 0.35,
+    "mean_turns_to_answer": 3.07,
+    "mean_tokens_to_answer": 2576,
+    "precision_per_read": 0.1601,
     "per_task": [
       {
         "task": "ho-struct-flask-01",
@@ -94,8 +94,8 @@
       {
         "task": "ho-struct-hono-03",
         "solved": false,
-        "turns": 2,
-        "tokens": 2056
+        "turns": 1,
+        "tokens": 1969
       },
       {
         "task": "ho-struct2-flask-01",
@@ -225,9 +225,9 @@
       },
       {
         "task": "ho-struct2-hono-03",
-        "solved": true,
+        "solved": false,
         "turns": 2,
-        "tokens": 2085
+        "tokens": 1998
       },
       {
         "task": "ho-struct2-hono-04",
