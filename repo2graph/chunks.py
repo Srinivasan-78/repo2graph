@@ -78,8 +78,31 @@ def _keepends_lf(text: str) -> list[str]:
 
 
 def _split(text: str, max_chars: int = MAX_CHARS):
+    """The parts of `_split_spans`, without their line offsets."""
+    return [part for part, _lo, _hi in _split_spans(text, max_chars)]
+
+
+def _split_spans(text: str, max_chars: int = MAX_CHARS) -> list[tuple[str, int, int]]:
+    """Split on line boundaries, each part with the lines it covers.
+
+    Returns `(part, first, last)` per part, where `first` and `last` are
+    inclusive 0-based offsets into the *body's* lines. Callers turn those into
+    source line numbers, because only they know where the body started.
+
+    Every part used to be emitted carrying its parent's whole range, so a
+    243-line function became three chunks all citing `encoders.py:102-344`,
+    two of which begin mid-body with no `def` line in them. `[cite: ...]` is
+    how an agent goes and checks an answer, so a range that does not describe
+    the text beside it is worse than no citation.
+
+    Two details make the offsets less obvious than counting newlines:
+    parts deliberately overlap by `OVERLAP_LINES`, so their spans overlap too;
+    and a single line longer than `max_chars` is cut into several parts that
+    all sit on that one source line.
+    """
     if len(text) <= max_chars:
-        return [text]
+        lines = _keepends_lf(text)
+        return [(text, 0, max(0, len(lines) - 1))]
     lines = _keepends_lf(text)
     # A single line longer than max_chars (minified JS/CSS, a long SVG
     # path, base64, one-line JSON, ...) can't be shrunk by grouping on line
@@ -87,15 +110,22 @@ def _split(text: str, max_chars: int = MAX_CHARS):
     # Break any such line into max_chars-sized pieces first so every entry the
     # packer sees is already within budget; "".join(pieces) still == the
     # original line, so no text is lost or reordered.
+    # `owner[k]` is the body line that piece `k` belongs to. Without it, a
+    # minified line cut into ten pieces would look like ten source lines.
+    owner: list[int] = list(range(len(lines)))
     if any(len(ln) > max_chars for ln in lines):
         bounded: list[str] = []
-        for ln in lines:
+        owner = []
+        for idx, ln in enumerate(lines):
             if len(ln) > max_chars:
-                bounded.extend(ln[j : j + max_chars] for j in range(0, len(ln), max_chars))
+                for j in range(0, len(ln), max_chars):
+                    bounded.append(ln[j : j + max_chars])
+                    owner.append(idx)
             else:
                 bounded.append(ln)
+                owner.append(idx)
         lines = bounded
-    out: list[str] = []
+    out: list[tuple[str, int, int]] = []
     buf: list[str] = []
     size = 0
     i = 0
@@ -106,7 +136,7 @@ def _split(text: str, max_chars: int = MAX_CHARS):
             buf.append(lines[i])
             size += len(lines[i])
             i += 1
-        out.append("".join(buf))
+        out.append(("".join(buf), owner[start], owner[i - 1]))
         if i < len(lines):
             i = max(start + 1, i - OVERLAP_LINES)
     return out
@@ -246,7 +276,18 @@ def iter_chunks(g, include_files: bool = True):
         # keeps every citation line number intact, and `exclude-file` now drops
         # the whole symbol instead of one arbitrary slice of it.
         proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
-        for i, part in enumerate(_split(proc_body) if proc_body is not None else ()):
+        body_spans = _split_spans(proc_body) if proc_body is not None else []
+        for i, (part, lo, hi) in enumerate(body_spans):
+            # The body starts at the symbol's first line, so a body offset maps
+            # straight onto a source line. Clamp to the symbol's own end: a
+            # redaction that changed the line count must not push a citation
+            # past the definition it names.
+            p_start = min(n["end_line"], n["start_line"] + lo)
+            p_end = min(n["end_line"], n["start_line"] + hi)
+            part_header = list(header)
+            part_header[1] = (
+                f"# {n['kind']}: {n['qualname']}  (lines {p_start}-{p_end}, {n['lang']})"
+            )
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -256,8 +297,8 @@ def iter_chunks(g, include_files: bool = True):
                 "lang": n["lang"],
                 "name": n["name"],
                 "qualname": n["qualname"],
-                "start_line": n["start_line"],
-                "end_line": n["end_line"],
+                "start_line": p_start,
+                "end_line": p_end,
                 "entrypoint": bool(n.get("entrypoint")),
                 "callers": callers,
                 "callees": callees,
@@ -265,7 +306,7 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": caller_edges,
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
-                "text": "\n".join(header) + "\n" + part,
+                "text": "\n".join(part_header) + "\n" + part,
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
@@ -294,15 +335,23 @@ def iter_chunks(g, include_files: bool = True):
             if cur <= len(lines):
                 keep += lines[cur - 1 :]
                 line_indices.extend(range(cur, len(lines) + 1))
-            body = "\n".join(keep).strip()
+            joined = "\n".join(keep)
+            body = joined.strip()
             if len(body) < 40:
                 continue
             label_kind = "file_residual"
-            span_start = line_indices[0] if line_indices else None
-            span_end = line_indices[-1] if line_indices else None
+            # A residual is the file with its symbols cut out, so its lines are
+            # not contiguous and `line_indices` is the only way back to source
+            # line numbers. `.strip()` above drops leading blank lines, which
+            # shifts that correspondence by however many it removed.
+            lead = joined[: len(joined) - len(joined.lstrip())].count("\n")
+            line_map = line_indices[lead:]
+            span_start = line_map[0] if line_map else None
+            span_end = line_map[-1] if line_map else None
         else:
             body, label_kind = src, "file"
             span_start, span_end = 1, n.get("lines", 0)
+            line_map = list(range(1, body.count("\n") + 2))
         imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][
             :MAX_IMPORTS
         ]
@@ -319,7 +368,13 @@ def iter_chunks(g, include_files: bool = True):
         # Whole-body scan before the split, for the same reason as the symbol
         # pass above: a secret longer than one slice escaped detection entirely.
         proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
-        for i, part in enumerate(_split(proc_body) if proc_body is not None else ()):
+        body_spans = _split_spans(proc_body) if proc_body is not None else []
+        for i, (part, lo, hi) in enumerate(body_spans):
+            if line_map:
+                p_start = line_map[min(lo, len(line_map) - 1)]
+                p_end = line_map[min(hi, len(line_map) - 1)]
+            else:
+                p_start, p_end = span_start, span_end
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -329,8 +384,8 @@ def iter_chunks(g, include_files: bool = True):
                 "lang": n.get("lang"),
                 "name": n["name"],
                 "qualname": n["path"],
-                "start_line": span_start,
-                "end_line": span_end,
+                "start_line": p_start,
+                "end_line": p_end,
                 "entrypoint": False,
                 "callers": [],
                 "callees": [],

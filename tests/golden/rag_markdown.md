@@ -14,7 +14,7 @@ languages: python=3, md=1
 
 ---
 
-### [cite: docs/notes.md:1-10] `docs/notes.md` (seed)
+### [cite: docs/notes.md:1-9] `docs/notes.md` (seed)
 # file: docs/notes.md (md, 10 lines)
 # Notes
 
