@@ -4,14 +4,14 @@
     "total_tasks": 10,
     "success_rate": 0.7,
     "mean_turns_to_answer": 3.29,
-    "mean_tokens_to_answer": 4006,
-    "precision_per_read": 0.0239,
+    "mean_tokens_to_answer": 3099,
+    "precision_per_read": 0.0309,
     "per_task": [
       {
         "task": "struct-flask-01",
         "solved": true,
         "turns": 4,
-        "tokens": 8457
+        "tokens": 8411
       },
       {
         "task": "struct-flask-02",
@@ -29,13 +29,13 @@
         "task": "struct-requests-01",
         "solved": true,
         "turns": 5,
-        "tokens": 9264
+        "tokens": 3130
       },
       {
         "task": "struct-requests-02",
         "solved": true,
         "turns": 3,
-        "tokens": 2265
+        "tokens": 2224
       },
       {
         "task": "struct-requests-03",
@@ -47,25 +47,25 @@
         "task": "struct-fastapi-01",
         "solved": false,
         "turns": 2,
-        "tokens": 46613
+        "tokens": 1949
       },
       {
         "task": "struct-fastapi-02",
         "solved": false,
         "turns": 2,
-        "tokens": 46613
+        "tokens": 1949
       },
       {
         "task": "struct-hono-01",
         "solved": true,
         "turns": 1,
-        "tokens": 1998
+        "tokens": 1869
       },
       {
         "task": "struct-hono-02",
         "solved": false,
         "turns": 1,
-        "tokens": 1990
+        "tokens": 1992
       }
     ]
   },

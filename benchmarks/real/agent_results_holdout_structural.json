@@ -1,0 +1,502 @@
+{
+  "repo2graph": {
+    "solved": 15,
+    "total_tasks": 40,
+    "success_rate": 0.375,
+    "mean_turns_to_answer": 3.0,
+    "mean_tokens_to_answer": 2543,
+    "precision_per_read": 0.1537,
+    "per_task": [
+      {
+        "task": "ho-struct-flask-01",
+        "solved": true,
+        "turns": 3,
+        "tokens": 1712
+      },
+      {
+        "task": "ho-struct-flask-02",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1868
+      },
+      {
+        "task": "ho-struct-flask-03",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1995
+      },
+      {
+        "task": "ho-struct-flask-04",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1985
+      },
+      {
+        "task": "ho-struct-requests-01",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3810
+      },
+      {
+        "task": "ho-struct-requests-02",
+        "solved": true,
+        "turns": 5,
+        "tokens": 4965
+      },
+      {
+        "task": "ho-struct-requests-03",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1995
+      },
+      {
+        "task": "ho-struct-requests-04",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2506
+      },
+      {
+        "task": "ho-struct-fastapi-01",
+        "solved": false,
+        "turns": 4,
+        "tokens": 3072
+      },
+      {
+        "task": "ho-struct-fastapi-02",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3729
+      },
+      {
+        "task": "ho-struct-fastapi-03",
+        "solved": false,
+        "turns": 2,
+        "tokens": 1948
+      },
+      {
+        "task": "ho-struct-fastapi-04",
+        "solved": false,
+        "turns": 2,
+        "tokens": 1955
+      },
+      {
+        "task": "ho-struct-hono-01",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1987
+      },
+      {
+        "task": "ho-struct-hono-02",
+        "solved": true,
+        "turns": 2,
+        "tokens": 2344
+      },
+      {
+        "task": "ho-struct-hono-03",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2056
+      },
+      {
+        "task": "ho-struct2-flask-01",
+        "solved": true,
+        "turns": 4,
+        "tokens": 2540
+      },
+      {
+        "task": "ho-struct2-flask-02",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4624
+      },
+      {
+        "task": "ho-struct2-flask-03",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1961
+      },
+      {
+        "task": "ho-struct2-flask-04",
+        "solved": false,
+        "turns": 2,
+        "tokens": 3007
+      },
+      {
+        "task": "ho-struct2-flask-05",
+        "solved": true,
+        "turns": 5,
+        "tokens": 2845
+      },
+      {
+        "task": "ho-struct2-flask-06",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4523
+      },
+      {
+        "task": "ho-struct2-flask-07",
+        "solved": false,
+        "turns": 3,
+        "tokens": 2683
+      },
+      {
+        "task": "ho-struct2-requests-01",
+        "solved": false,
+        "turns": 3,
+        "tokens": 2368
+      },
+      {
+        "task": "ho-struct2-requests-02",
+        "solved": true,
+        "turns": 4,
+        "tokens": 3163
+      },
+      {
+        "task": "ho-struct2-requests-03",
+        "solved": true,
+        "turns": 5,
+        "tokens": 3637
+      },
+      {
+        "task": "ho-struct2-requests-04",
+        "solved": true,
+        "turns": 3,
+        "tokens": 2155
+      },
+      {
+        "task": "ho-struct2-requests-05",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2006
+      },
+      {
+        "task": "ho-struct2-requests-06",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1917
+      },
+      {
+        "task": "ho-struct2-fastapi-01",
+        "solved": true,
+        "turns": 5,
+        "tokens": 2961
+      },
+      {
+        "task": "ho-struct2-fastapi-02",
+        "solved": false,
+        "turns": 2,
+        "tokens": 3017
+      },
+      {
+        "task": "ho-struct2-fastapi-03",
+        "solved": false,
+        "turns": 2,
+        "tokens": 1952
+      },
+      {
+        "task": "ho-struct2-fastapi-04",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1983
+      },
+      {
+        "task": "ho-struct2-fastapi-05",
+        "solved": false,
+        "turns": 2,
+        "tokens": 1949
+      },
+      {
+        "task": "ho-struct2-fastapi-06",
+        "solved": false,
+        "turns": 2,
+        "tokens": 1996
+      },
+      {
+        "task": "ho-struct2-hono-01",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1980
+      },
+      {
+        "task": "ho-struct2-hono-02",
+        "solved": false,
+        "turns": 3,
+        "tokens": 3798
+      },
+      {
+        "task": "ho-struct2-hono-03",
+        "solved": true,
+        "turns": 2,
+        "tokens": 2085
+      },
+      {
+        "task": "ho-struct2-hono-04",
+        "solved": true,
+        "turns": 3,
+        "tokens": 1990
+      },
+      {
+        "task": "ho-struct2-hono-05",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4045
+      },
+      {
+        "task": "ho-struct2-hono-06",
+        "solved": false,
+        "turns": 4,
+        "tokens": 2295
+      }
+    ]
+  },
+  "ripgrep": {
+    "solved": 4,
+    "total_tasks": 40,
+    "success_rate": 0.1,
+    "mean_turns_to_answer": 2.5,
+    "mean_tokens_to_answer": 586,
+    "precision_per_read": 0.2901,
+    "per_task": [
+      {
+        "task": "ho-struct-flask-01",
+        "solved": true,
+        "turns": 2,
+        "tokens": 431
+      },
+      {
+        "task": "ho-struct-flask-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1710
+      },
+      {
+        "task": "ho-struct-flask-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1724
+      },
+      {
+        "task": "ho-struct-flask-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1807
+      },
+      {
+        "task": "ho-struct-requests-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1713
+      },
+      {
+        "task": "ho-struct-requests-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1792
+      },
+      {
+        "task": "ho-struct-requests-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1809
+      },
+      {
+        "task": "ho-struct-requests-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1712
+      },
+      {
+        "task": "ho-struct-fastapi-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1675
+      },
+      {
+        "task": "ho-struct-fastapi-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1800
+      },
+      {
+        "task": "ho-struct-fastapi-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1714
+      },
+      {
+        "task": "ho-struct-fastapi-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1618
+      },
+      {
+        "task": "ho-struct-hono-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1668
+      },
+      {
+        "task": "ho-struct-hono-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1400
+      },
+      {
+        "task": "ho-struct-hono-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1422
+      },
+      {
+        "task": "ho-struct2-flask-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1654
+      },
+      {
+        "task": "ho-struct2-flask-02",
+        "solved": true,
+        "turns": 4,
+        "tokens": 997
+      },
+      {
+        "task": "ho-struct2-flask-03",
+        "solved": true,
+        "turns": 2,
+        "tokens": 508
+      },
+      {
+        "task": "ho-struct2-flask-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1673
+      },
+      {
+        "task": "ho-struct2-flask-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1788
+      },
+      {
+        "task": "ho-struct2-flask-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2036
+      },
+      {
+        "task": "ho-struct2-flask-07",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1707
+      },
+      {
+        "task": "ho-struct2-requests-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1597
+      },
+      {
+        "task": "ho-struct2-requests-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1365
+      },
+      {
+        "task": "ho-struct2-requests-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2239
+      },
+      {
+        "task": "ho-struct2-requests-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1595
+      },
+      {
+        "task": "ho-struct2-requests-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2074
+      },
+      {
+        "task": "ho-struct2-requests-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1707
+      },
+      {
+        "task": "ho-struct2-fastapi-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1637
+      },
+      {
+        "task": "ho-struct2-fastapi-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1997
+      },
+      {
+        "task": "ho-struct2-fastapi-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1160
+      },
+      {
+        "task": "ho-struct2-fastapi-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1613
+      },
+      {
+        "task": "ho-struct2-fastapi-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1781
+      },
+      {
+        "task": "ho-struct2-fastapi-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1973
+      },
+      {
+        "task": "ho-struct2-hono-01",
+        "solved": true,
+        "turns": 2,
+        "tokens": 408
+      },
+      {
+        "task": "ho-struct2-hono-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1375
+      },
+      {
+        "task": "ho-struct2-hono-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1510
+      },
+      {
+        "task": "ho-struct2-hono-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1428
+      },
+      {
+        "task": "ho-struct2-hono-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1988
+      },
+      {
+        "task": "ho-struct2-hono-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1359
+      }
+    ]
+  }
+}
