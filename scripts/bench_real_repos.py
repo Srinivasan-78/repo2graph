@@ -9,6 +9,15 @@ definitions that answer it:
                          (k=8, hops=1, secrets excluded).
 * ``repo2graph-bm25`` -- the same call with ``expand_graph=False``: the BM25
                          seeds alone, so the difference is what the graph adds.
+* ``repo2graph-cond`` -- the same call with ``conditional_expansion=True``, so
+                         `is_lexical_weak` decides per question whether the
+                         graph is consulted at all. Every other row fixes that
+                         decision in advance; this one is the only row where
+                         the tool chooses, which is what the shipped default
+                         would do if the flag were on.
+* ``repo2graph-cond-cite``
+                      -- conditional expansion plus citation-mode neighbours:
+                         the two token-saving mechanisms together.
 * ``ripgrep``         -- ``rg`` for the question's words, then read +/-15 lines
                          around the best-scoring hits until the budget is spent.
                          This is the grep-then-read loop a coding agent runs,
@@ -224,6 +233,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cache", type=Path, default=Path(tempfile.gettempdir()) / "r2g-bench-real")
     ap.add_argument("--budgets", default="2000,4000,8000")
     ap.add_argument("--out", type=Path, default=BENCH / "results.json")
+    ap.add_argument(
+        "--tasks",
+        type=Path,
+        default=BENCH / "tasks.json",
+        help="lexical task file (default: benchmarks/real/tasks.json). Point this at a "
+        "held-out set to judge a retrieval change without tuning against the published one.",
+    )
+    ap.add_argument(
+        "--structural-tasks",
+        type=Path,
+        default=BENCH / "tasks_structural.json",
+        help="structural task file (default: benchmarks/real/tasks_structural.json)",
+    )
     ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
     args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
@@ -232,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     budgets = [int(b) for b in args.budgets.split(",")]
 
     repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
-    tasks = json.loads((BENCH / "tasks.json").read_text())["tasks"]
+    tasks = json.loads(args.tasks.read_text(encoding="utf8"))["tasks"]
     args.cache.mkdir(parents=True, exist_ok=True)
 
     indexes: dict[str, Index] = {}
@@ -248,7 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         indexes[name] = Index(out)
 
     rows = []
-    structural_tasks_path = BENCH / "tasks_structural.json"
+    structural_tasks_path = args.structural_tasks
     structural_tasks = (
         json.loads(structural_tasks_path.read_text(encoding="utf8"))["tasks"]
         if structural_tasks_path.exists()
@@ -272,11 +294,33 @@ def main(argv: list[str] | None = None) -> int:
             bm25 = idx.pack_context(
                 t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
             )
+            cond = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                conditional_expansion=True,
+            )
+            cond_cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+                conditional_expansion=True,
+            )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
                 ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
                 ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
+                ("repo2graph-cond", covered_lines_r2g(cond, root), cond["tokens_used"]),
+                (
+                    "repo2graph-cond-cite",
+                    covered_lines_r2g(cond_cite, root),
+                    cond_cite["tokens_used"],
+                ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)
@@ -310,11 +354,33 @@ def main(argv: list[str] | None = None) -> int:
             bm25 = idx.pack_context(
                 t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
             )
+            cond = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                conditional_expansion=True,
+            )
+            cond_cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+                conditional_expansion=True,
+            )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
                 ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
                 ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
+                ("repo2graph-cond", covered_lines_r2g(cond, root), cond["tokens_used"]),
+                (
+                    "repo2graph-cond-cite",
+                    covered_lines_r2g(cond_cite, root),
+                    cond_cite["tokens_used"],
+                ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)
@@ -334,7 +400,14 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = []
     for budget in budgets:
-        for method in ("repo2graph", "repo2graph-cite", "repo2graph-bm25", "ripgrep"):
+        for method in (
+                "repo2graph",
+                "repo2graph-cite",
+                "repo2graph-bm25",
+                "repo2graph-cond",
+                "repo2graph-cond-cite",
+                "ripgrep",
+            ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
             summary.append(
                 {
@@ -353,7 +426,14 @@ def main(argv: list[str] | None = None) -> int:
     structural_summary = []
     if structural_rows:
         for budget in budgets:
-            for method in ("repo2graph", "repo2graph-cite", "repo2graph-bm25", "ripgrep"):
+            for method in (
+                "repo2graph",
+                "repo2graph-cite",
+                "repo2graph-bm25",
+                "repo2graph-cond",
+                "repo2graph-cond-cite",
+                "ripgrep",
+            ):
                 sel = [
                     r for r in structural_rows if r["budget"] == budget and r["method"] == method
                 ]
@@ -388,7 +468,10 @@ def main(argv: list[str] | None = None) -> int:
         encoding="utf8",
         newline="\n",
     )
-    print("=== Lexical Benchmark (tasks.json, 35 tasks) ===")
+    # Name the file that was actually read: a held-out run printing
+    # "tasks.json, 35 tasks" is how a held-out number gets pasted into a table
+    # as if it were the published one.
+    print(f"=== Lexical Benchmark ({args.tasks.name}, {len(tasks)} tasks) ===")
     print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
     print("|---:|---|---:|---:|---:|---:|")
     for s in summary:
@@ -399,7 +482,10 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if structural_summary:
-        print("\n=== Structural Benchmark (tasks_structural.json, 10 tasks) ===")
+        print(
+            f"\n=== Structural Benchmark ({structural_tasks_path.name}, "
+            f"{len(structural_tasks)} tasks) ==="
+        )
         print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
         print("|---:|---|---:|---:|---:|---:|")
         for s in structural_summary:
