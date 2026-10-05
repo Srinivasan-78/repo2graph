@@ -80,8 +80,9 @@ makes keeping it current a release-blocking step rather than a good intention.
     path's minimum edge confidence. `CO_CHANGE` is opt-in, never traversed by default.
   - `repo_blast_radius` — reverse reachability: the reverse `CALLS` closure by hop distance,
     reverse `INHERITS`, reverse `IMPORTS` on the containing file, and `CO_CHANGE` files by count.
-    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because `repo_impact`
-    already exists and analyses a PR diff — a different question.
+    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because at the time
+    `repo_impact` was taken by the PR-diff analyser — a different question. That tool is gone
+    (see **Removed**), but the name stays: it is the one that was shipped and documented.
 ### Security
 
 - **Grammars no longer download themselves at first build.**
@@ -103,8 +104,9 @@ makes keeping it current a release-blocking step rather than a good intention.
   "the grammar did not load" byte-identical to "this file declares nothing". A build with no
   working grammars therefore reported `parsed == files`, wrote a graph of files and directories
   with zero symbols, calls or imports, and exited 0 — and `--incremental` cached that result, so
-  the next build reproduced it without retrying. `impact` rated every PR LOW because nothing was
-  reachable. `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
+  the next build reproduced it without retrying — and every downstream query answered from that
+  empty graph as though the repository really had no callers.
+  `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
   `ParseError` when supported files were found and no grammar loaded for any of them, and the
   message names the cause and the fix rather than leaving it looking like an empty repository.
 - **`doctor`'s grammar check can now fail.** It reported `len(LANG_CFG)` grammars "configured"
@@ -188,7 +190,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
   are redacted at serve time.
 - **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
-  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `query` and `explain retrieval` (previously only MCP and `rag --answer`).
   `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
 - **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
   escaped `RecursionError` and a dropped connection.
@@ -246,20 +248,13 @@ makes keeping it current a release-blocking step rather than a good intention.
   said 50); the request is kept as `cochange_requested_commits`.
 - `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
 
-### Fixed — CLI, MCP and impact
+### Fixed — CLI and MCP
 
 - **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
   manifest; `explain-path` gained `-o/--out` and reports the same rule.
 - **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
-  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  tools, git failures and bad `repo_build_status` ids. Out-of-range numbers are
   clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
-- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
-  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
-- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
-  definition line(s); a changed line is charged to its innermost symbol; a comment- or
-  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
-  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
-  not a unified diff is an error, not LOW RISK.
 - **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
   source root) and for `repo2graph github` builds (reported as not checkable, with the right
   refresh command).
@@ -293,6 +288,42 @@ makes keeping it current a release-blocking step rather than a good intention.
 
   Migration: there is none in-tree. A PR blast-radius check can be rebuilt on `repo_blast_radius`,
   which survives because it answers a graph question rather than a diff question.
+
+- **The retrieval mode knobs.** Choosing a retrieval configuration is no longer a caller's job.
+  Measured on 40 held-out lexical and 40 held-out structural questions, in both the BM25 and the
+  dense configuration, none of these settings has a regime where it wins — the numbers are in
+  [`benchmarks/real/results_holdout_knobs.json`](benchmarks/real/results_holdout_knobs.json).
+
+  Two surfaces, with different compatibility stories:
+
+  - **Over MCP, the `neighbours` and `max_neighbours` parameters of `repo_search` are gone.**
+    They were advertised in the tool schema and are no longer accepted.
+  - **On the CLI, `--neighbours`/`--neighbors`, `--conditional-expansion` and
+    `--precision-first` are retired no-ops.** They still parse, so no existing command line
+    breaks, and setting one emits a `retired_flag_ignored` warning explaining that the tool now
+    decides. They do nothing.
+
+  `--neighbours=cite` is worse than the default everywhere (dense rows, 2k/4k/8k: −1/−8/−19 pp
+  lexical and −3/−10/−31 pp structural) and, more decisively, it is *dominated* by turning graph
+  expansion off altogether: at 8,000 tokens it returns 38% lexical / 45% structural for
+  5,307 / 4,396 mean tokens, against 40% / 50% for 5,083 / 4,475. Citation mode's only claim was
+  token economy, and it does not hold it on the lexical set. This is the mode the README
+  advertised as the opt-in that wins the lexical table — which it did win, on the 35 published
+  questions it was diagnosed against.
+
+  `--conditional-expansion` is an exact no-op with dense vectors — identical recall *and*
+  identical mean token counts at all three budgets — and costs 17 pp of structural recall at 8k
+  without them (52% against the default's 69%). Useless or harmful, never right. It gates
+  expansion on BM25 confidence, and a structural question names its symbol, so BM25 looks
+  confident and the graph is skipped on exactly the questions it exists for. Its verdict had
+  flipped twice on underpowered question sets before the 40-task set settled it.
+
+  `--precision-first` was only ever exercised alongside citation mode and has no independent
+  measurement, so it goes with it.
+
+  All of them survive as internal keyword arguments to `pack_context`, which is what keeps the
+  ablation rows above reproducible. What is gone is the choice presented to a caller: the tool
+  decides, because every measured setting of these knobs was worse than letting it.
 
 ### Fixed — MCP SDK, staleness and annotations
 

@@ -45,43 +45,66 @@ output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
 
 ## Is it better than grep?
 
-**For single-file lexical queries, no: grep is the better tool.**
-We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored against the definitions that answer them, held to the same token budget ([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in [benchmarks/real/results.json](benchmarks/real/results.json)):
-
-| Budget | repo2graph (2.x default) | repo2graph-cite (opt-in) | grep, then read around hits |
-|---:|---:|---:|---:|
-| 2,000 tokens | 30% | 30% (1,856 tokens) | **35%** (1,962 tokens) |
-| 4,000 tokens | 37% | **41%** (3,685 tokens) | **61%** (3,873 tokens) |
-| 8,000 tokens | 48% | **52%** (5,460 tokens) | **72%** (7,652 tokens) |
-
-On purely lexical questions where the evidence sits in a single file, text search is grep's optimum. In default full-body expansion, graph neighbours can displace direct lexical hits.
-
-> **The `repo2graph-cite` column is a retired configuration.** It won this table, which is why it was once recommended here. Re-measured on a held-out set of 40 lexical and 40 structural questions it lost to the default everywhere (-1/-8/-19 pp lexical, -3/-10/-31 pp structural) and was dominated by simply turning graph expansion off, which returns better recall for fewer tokens. `--neighbours=cite` is now a no-op that warns, and the mode is no longer advertised over MCP. The numbers below are left as measured rather than deleted.
+**On cross-file structural questions, yes. On single-file lexical queries, no — grep is the
+better tool.** Both halves are measured on 40 lexical and 40 structural questions about Flask,
+requests, FastAPI and Hono that repo2graph was **not** tuned against, scored against the
+definitions that answer them, every retriever held to the same token budget
+([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in
+[`results_holdout_final.json`](benchmarks/real/results_holdout_final.json)).
 
 ### Where repo2graph wins: cross-file structural questions
 
-grep structurally cannot traverse dependency edges, compute reverse call closures, or follow cross-module delegation. On our structural benchmark across the same four repositories ([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence provably spans cross-file graph edges):
+grep structurally cannot traverse dependency edges, compute reverse call closures, or follow
+cross-module delegation. On questions whose evidence provably spans a cross-file graph edge:
 
-| Budget | repo2graph | repo2graph-cite | repo2graph-bm25 | ripgrep |
-|---:|---:|---:|---:|---:|
-| 2,000 tokens | 20% | 10% | 20% | 20% |
-| 4,000 tokens | **70%** | 30% | 50% | 20% |
-| 8,000 tokens | **80%** | 30% | 50% | 70% |
+| Budget | repo2graph | lexical search alone | grep, then read around hits |
+|---:|---:|---:|---:|
+| 2,000 tokens | **17%** | 14% | 14% |
+| 4,000 tokens | **36%** | 29% | 21% |
+| 8,000 tokens | **69%** | 43% | 38% |
 
-Graph expansion adds 20–30 pp over lexical search alone at 4k and 8k tokens. Against grep the margin is **+50 pp at 4,000 tokens**, but **+10 pp at 8,000 and nothing at 2,000** — give grep enough budget and it closes most of the gap. Citation mode, which wins the lexical table above, is the *worst* retriever here: a signature locates a cross-file answer without containing it. There is no single best setting. This is 10 tasks, so one task is 10 pp; treat every cell as ±1 task.
+**The graph is what does it**, and that is the comparison that matters: expansion adds +3/+7/+26 pp
+over the same retriever with expansion switched off. Against grep the margin is +2/+14/+31 pp —
+it widens with budget rather than closing, because grep has no edge to follow however much room
+it is given.
 
-### Where repo2graph wins for agents: multi-turn loops
+### Where grep wins: single-file lexical questions
 
-In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No model is in the loop — the "agent" is a deterministic policy over real ripgrep and a real index:
+| Budget | repo2graph | grep, then read around hits |
+|---:|---:|---:|
+| 2,000 tokens | 16% | **28%** |
+| 4,000 tokens | 26% | **48%** |
+| 8,000 tokens | 43% | **59%** |
+
+On purely lexical questions where the evidence sits in a single file, text search is grep's
+optimum, and this gap is real: −12/−22/−15 pp. We have not closed it. The remaining cause looks
+like vocabulary mismatch rather than ranking — a question that says "datetime" does not match
+code that says "timestamp" — which is why the
+[dense-vector path](benchmarks/real/README.md#the-dense-result) closes it to −2 pp at 8,000
+tokens and more BM25 tuning has not. That path needs a downloaded model, so it is opt-in
+(`pip install "repo2graph[rag]"`) and the zero-dependency default stays the default.
+
+### Where repo2graph wins for agents: fewer turns
+
+In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No
+model is in the loop — the "agent" is a deterministic policy over real ripgrep and a real index:
 
 | Task set | Method | Success | Mean turns | Mean tokens | Precision per read |
 |---|---|---:|---:|---:|---:|
-| Structural (10) | repo2graph | **70%** | **3.3** | 4,006 | 2.4% |
-| Structural (10) | ripgrep | 10% | 6.0 | **1,879** | **11.0%** |
-| General (35) | repo2graph | **54%** | **1.9** | 7,133 | 2.4% |
-| General (35) | ripgrep | 20% | 3.6 | **939** | **37.8%** |
+| Structural (40) | repo2graph | **38%** | 3.0 | 2,543 | 15.4% |
+| Structural (40) | ripgrep | 10% | **2.5** | **586** | **29.0%** |
+| Lexical (40) | repo2graph | 18% | **1.0** | 1,962 | 21.5% |
+| Lexical (40) | ripgrep | 18% | 3.0 | **740** | **89.1%** |
 
-More answers in fewer turns, and it is not cheap: 2.1× ripgrep's tokens on the structural set and 7.6× on the general one, at a fraction of its precision per read. repo2graph buys recall with context; the budget-matched comparison is the single-shot tables above.
+Nearly four times the structural success rate, and it reaches a lexical answer in one turn where
+grep needs three. It is not cheap: 4.3× grep's tokens on the structural set and 2.6× on the
+lexical one, and **grep wins precision per read on both**. repo2graph buys recall and turns with
+context; the budget-matched comparison is the single-shot tables above.
+
+For completeness, the 35+10 question set this page used to report — visible since the first
+version of these tables and therefore a regression set, not evidence — now reads 39/44/56%
+lexical against grep's 35/61/72%, and 20/70/80% structural against grep's 20/20/70%. Those are
+the better-looking numbers, which is exactly why the held-out set is the one quoted above.
 
 What it does do that grep doesn't:
 
@@ -153,7 +176,16 @@ Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/py
 C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. The
 specific cases that defeat it — reflection dispatch, string-keyed registries, barrel re-exports —
 are pinned as known failures in the
-[synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins).
+[synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins), and
+per-language coverage is scored, unevenly, in
+[docs/architecture.md §4](docs/architecture.md#4-language-support).
+
+**Two of those seventeen are benchmarked on real repositories**: Python (Flask, requests,
+FastAPI) and TypeScript (Hono). Treat the rest as parsed-and-unmeasured. That is not a formality —
+the retrieval benchmark found two parse gaps in the *one* TypeScript repository as soon as it
+looked, one of which was hiding
+[Hono's entire public API](benchmarks/real/README.md#fixed-this-round), and neither would have
+been visible without a real repository to ask questions about.
 
 ## Status
 

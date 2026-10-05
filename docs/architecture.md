@@ -244,6 +244,15 @@ Seventeen languages get symbol-level treatment; every other file is still indexe
 Coverage is not uniform across them, and the differences are large enough that "supported"
 on its own would mislead.
 
+The scorecard below is computed from this project's own test corpus. **Only two of the seventeen
+are additionally measured on third-party repositories** — Python and TypeScript, in
+[`benchmarks/real/`](../benchmarks/real/README.md) — and the gap between those two kinds of
+evidence is not small. Both parse defects found in the 2026-10 retrieval round
+(class fields holding functions; export aliases having no node) sat in the single TypeScript
+repository in that corpus, scored Tier 1 at 82 (B) here, and were invisible to the synthetic
+suite. A high row below means "the patterns we thought to write a test for work", not "this
+language has been exercised against real code".
+
 <!-- BEGIN GENERATED: language-scorecard -->
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
