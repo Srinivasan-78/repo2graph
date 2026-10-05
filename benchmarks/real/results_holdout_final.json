@@ -1,6 +1,6 @@
 {
  "repo2graph_version": "2.2.0",
- "repo2graph_commit": "cd290a4e57a8c5b046374d45389784141fbd5bf4",
+ "repo2graph_commit": "1314dcf6bab058a6db74b5ab949a4ea785f24026",
  "repo2graph_dirty": false,
  "summary": [
   {
@@ -9322,7 +9322,7 @@
    "tasks_fully_answered": 6,
    "tasks_any_evidence": 7,
    "tasks": 40,
-   "mean_tokens_used": 1961
+   "mean_tokens_used": 1962
   },
   {
    "budget": 2000,
@@ -9331,7 +9331,7 @@
    "tasks_fully_answered": 5,
    "tasks_any_evidence": 5,
    "tasks": 40,
-   "mean_tokens_used": 1795
+   "mean_tokens_used": 1796
   },
   {
    "budget": 2000,
@@ -9340,7 +9340,7 @@
    "tasks_fully_answered": 6,
    "tasks_any_evidence": 6,
    "tasks": 40,
-   "mean_tokens_used": 1812
+   "mean_tokens_used": 1813
   },
   {
    "budget": 2000,
@@ -9349,7 +9349,7 @@
    "tasks_fully_answered": 6,
    "tasks_any_evidence": 6,
    "tasks": 40,
-   "mean_tokens_used": 1864
+   "mean_tokens_used": 1865
   },
   {
    "budget": 2000,
@@ -9358,7 +9358,7 @@
    "tasks_fully_answered": 5,
    "tasks_any_evidence": 5,
    "tasks": 40,
-   "mean_tokens_used": 1758
+   "mean_tokens_used": 1759
   },
   {
    "budget": 2000,
@@ -9385,7 +9385,7 @@
    "tasks_fully_answered": 8,
    "tasks_any_evidence": 8,
    "tasks": 40,
-   "mean_tokens_used": 3424
+   "mean_tokens_used": 3422
   },
   {
    "budget": 4000,
@@ -9394,7 +9394,7 @@
    "tasks_fully_answered": 12,
    "tasks_any_evidence": 12,
    "tasks": 40,
-   "mean_tokens_used": 3486
+   "mean_tokens_used": 3487
   },
   {
    "budget": 4000,
@@ -9403,7 +9403,7 @@
    "tasks_fully_answered": 13,
    "tasks_any_evidence": 13,
    "tasks": 40,
-   "mean_tokens_used": 3624
+   "mean_tokens_used": 3625
   },
   {
    "budget": 4000,
@@ -9412,7 +9412,7 @@
    "tasks_fully_answered": 8,
    "tasks_any_evidence": 8,
    "tasks": 40,
-   "mean_tokens_used": 3369
+   "mean_tokens_used": 3367
   },
   {
    "budget": 4000,
@@ -9430,7 +9430,7 @@
    "tasks_fully_answered": 28,
    "tasks_any_evidence": 30,
    "tasks": 40,
-   "mean_tokens_used": 7214
+   "mean_tokens_used": 7210
   },
   {
    "budget": 8000,
@@ -9439,7 +9439,7 @@
    "tasks_fully_answered": 13,
    "tasks_any_evidence": 13,
    "tasks": 40,
-   "mean_tokens_used": 4231
+   "mean_tokens_used": 4229
   },
   {
    "budget": 8000,
@@ -9448,7 +9448,7 @@
    "tasks_fully_answered": 18,
    "tasks_any_evidence": 18,
    "tasks": 40,
-   "mean_tokens_used": 4799
+   "mean_tokens_used": 4800
   },
   {
    "budget": 8000,
@@ -9457,7 +9457,7 @@
    "tasks_fully_answered": 22,
    "tasks_any_evidence": 22,
    "tasks": 40,
-   "mean_tokens_used": 5215
+   "mean_tokens_used": 5216
   },
   {
    "budget": 8000,
@@ -9466,7 +9466,7 @@
    "tasks_fully_answered": 13,
    "tasks_any_evidence": 13,
    "tasks": 40,
-   "mean_tokens_used": 4172
+   "mean_tokens_used": 4170
   },
   {
    "budget": 8000,
@@ -17543,7 +17543,7 @@
    "kind": "structural",
    "budget": 2000,
    "method": "repo2graph",
-   "tokens_used": 1958,
+   "tokens_used": 1997,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17556,7 +17556,7 @@
    "kind": "structural",
    "budget": 2000,
    "method": "repo2graph-cite",
-   "tokens_used": 1974,
+   "tokens_used": 1993,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17569,7 +17569,7 @@
    "kind": "structural",
    "budget": 2000,
    "method": "repo2graph-bm25",
-   "tokens_used": 1920,
+   "tokens_used": 1959,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17582,7 +17582,7 @@
    "kind": "structural",
    "budget": 2000,
    "method": "repo2graph-cond",
-   "tokens_used": 1920,
+   "tokens_used": 1959,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17595,7 +17595,7 @@
    "kind": "structural",
    "budget": 2000,
    "method": "repo2graph-cond-cite",
-   "tokens_used": 1920,
+   "tokens_used": 1959,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17621,7 +17621,7 @@
    "kind": "structural",
    "budget": 4000,
    "method": "repo2graph",
-   "tokens_used": 3988,
+   "tokens_used": 3975,
    "found": 1,
    "evidence": 1,
    "missed": []
@@ -17632,7 +17632,7 @@
    "kind": "structural",
    "budget": 4000,
    "method": "repo2graph-cite",
-   "tokens_used": 3535,
+   "tokens_used": 3460,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17645,7 +17645,7 @@
    "kind": "structural",
    "budget": 4000,
    "method": "repo2graph-bm25",
-   "tokens_used": 3157,
+   "tokens_used": 3196,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17658,7 +17658,7 @@
    "kind": "structural",
    "budget": 4000,
    "method": "repo2graph-cond",
-   "tokens_used": 3157,
+   "tokens_used": 3196,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17671,7 +17671,7 @@
    "kind": "structural",
    "budget": 4000,
    "method": "repo2graph-cond-cite",
-   "tokens_used": 3448,
+   "tokens_used": 3373,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17697,7 +17697,7 @@
    "kind": "structural",
    "budget": 8000,
    "method": "repo2graph",
-   "tokens_used": 7978,
+   "tokens_used": 7826,
    "found": 1,
    "evidence": 1,
    "missed": []
@@ -17708,7 +17708,7 @@
    "kind": "structural",
    "budget": 8000,
    "method": "repo2graph-cite",
-   "tokens_used": 3535,
+   "tokens_used": 3460,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17721,7 +17721,7 @@
    "kind": "structural",
    "budget": 8000,
    "method": "repo2graph-bm25",
-   "tokens_used": 3157,
+   "tokens_used": 3196,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17734,7 +17734,7 @@
    "kind": "structural",
    "budget": 8000,
    "method": "repo2graph-cond",
-   "tokens_used": 3157,
+   "tokens_used": 3196,
    "found": 0,
    "evidence": 1,
    "missed": [
@@ -17747,7 +17747,7 @@
    "kind": "structural",
    "budget": 8000,
    "method": "repo2graph-cond-cite",
-   "tokens_used": 3448,
+   "tokens_used": 3373,
    "found": 0,
    "evidence": 1,
    "missed": [
