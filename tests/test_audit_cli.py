@@ -101,39 +101,6 @@ def git_index(tmp_path, capsys):
     return repo, out
 
 
-def test_repo_impact_default_head_sees_uncommitted_changes(git_index):
-    repo, out = git_index
-    (repo / "app.py").write_text(CHANGED, encoding="utf8")  # not committed
-    idx = Index(out)
-    # The test process's cwd is some other git checkout: the root must come
-    # from the index (manifest's source_root), never Path.cwd().
-    text = mcp_mod.dispatch(idx, "repo_impact", {"format": "json"})
-    assert not isinstance(text, mcp_mod.ToolError), text
-    report = json.loads(text)
-    assert "app.py" in json.dumps(report["files_changed"]), report
-
-
-def test_repo_impact_uses_the_servers_repo_root(git_index, monkeypatch, tmp_path):
-    repo, out = git_index
-    (repo / "app.py").write_text(CHANGED, encoding="utf8")
-    idx = Index(out)
-    idx.repo_root = repo  # what open_index(out, repo=...) sets
-    monkeypatch.chdir(tmp_path)  # not a git repo
-    report = json.loads(mcp_mod.tool_repo_impact(idx, format="json"))
-    assert "app.py" in json.dumps(report["files_changed"]), report
-
-
-def test_repo_impact_git_failure_is_an_error_with_gits_reason(git_index):
-    repo, out = git_index
-    text = mcp_mod.dispatch(Index(out), "repo_impact", {"base": "no-such-branch"})
-    assert isinstance(text, mcp_mod.ToolError)
-    assert "no-such-branch" in text
-    # git's own words, not just an exception type name
-    low = text.lower()
-    assert "unknown revision" in low or "bad revision" in low or "ambiguous" in low, text
-    assert str(repo) not in text and repo.as_posix() not in text
-
-
 @pytest.mark.parametrize(
     "name,args",
     [
@@ -466,18 +433,6 @@ def test_explain_retrieval_default_k_matches_rag(git_index, monkeypatch, capsys)
     main(["explain", "retrieval", "greet", "-o", str(out), "--json"])
     capsys.readouterr()
     assert seen["k"] == 8
-
-
-def test_impact_without_main_hints_at_base(tmp_path, capsys):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "app.py").write_text(SRC, encoding="utf8")
-    _git(repo, "init", "-q", "-b", "trunk")
-    _git(repo, "add", "app.py")
-    _git(repo, "commit", "-qm", "init")
-    with pytest.raises(SystemExit) as exc:
-        main(["impact", str(repo), "-o", str(tmp_path / "idx")])
-    assert "--base" in str(exc.value) and "hint" in str(exc.value)
 
 
 def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):

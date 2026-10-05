@@ -2,7 +2,7 @@
 
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
-pasting a pack into a chat window. This page is its full contract: the ten tools,
+pasting a pack into a chat window. This page is its full contract: the nine tools,
 their argument bounds, the server's own flags, and a config block per client.
 
 It is an *additional* surface, not a replacement: every tool is a thin call into
@@ -203,7 +203,6 @@ runtime argument — see [`server.json`](../server.json).
 | `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |
-| `repo_impact` | optional `base`, `head`, `diff`, `max_depth`, `format` | PR and git diff impact analysis: changed symbols, affected public APIs, callers, tests, and blast radius. |
 | `repo_blast_radius` | `node_id`, optional `max_hops`, `include_cochange`, `limit` | Reverse reachability from a node_id: callers, subclasses, importers and co-changed files, by hop distance. |
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
@@ -214,10 +213,10 @@ and are never served from the cache — a cached cache-stats or progress reading
 the one answer guaranteed to be out of date.
 
 > **Naming note:** an earlier design for `repo_blast_radius` called it
-> `repo_impact` — but that name already belongs to the PR/diff-impact tool
-> above, a fully built, different, existing feature. It ships as
-> `repo_blast_radius` instead so neither tool breaks the other; do not
-> confuse the two when reading an older issue or draft that used the old name.
+> `repo_impact`, which at the time was taken by the PR/diff-impact tool. That
+> tool has since been removed, but `repo_blast_radius` keeps its name: it
+> answers a graph question ("what depends on this symbol") rather than a diff
+> question, and renaming it now would break every client that already calls it.
 
 ### Tool annotations are honest about auto-build (#292)
 
@@ -246,8 +245,7 @@ here raises on a bad value; a value below the minimum is raised to it, one above
 the maximum is lowered to it, and a non-number (`"abc"`, `null` excepted,
 non-finite) takes the default **and the reply starts with a one-line
 `_note: k='abc' is not an integer; used the default 8._`** so the substitution is
-visible (for `repo_impact`, only in the `markdown` and `pr-comment` formats -- a
-prefix would stop `json`/`sarif` parsing). `budget_tokens` also treats zero or
+visible. `budget_tokens` also treats zero or
 negative as "not a budget anyone means": it takes the **default** with a note.
 
 | Argument | Tool | Default | Minimum | Maximum |
@@ -265,9 +263,6 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | nodes visited | `repo_path_between` | — | — | 4 000 (both frontiers combined) |
 | `max_hops` | `repo_blast_radius` | 3 | 1 | 6 |
 | nodes visited | `repo_blast_radius` | — | — | 4 000 per section (callers/subclasses/importers) |
-| `max_depth` | `repo_impact` | 2 | 1 | 4 |
-| `diff` (length) | `repo_impact` | — | — | 1 000 000 chars |
-| output (tokens) | `repo_impact` | — | — | 12 000 |
 | `query` (length) | `repo_search` | — | — | 4 000 chars |
 | `node_id` (length) | `repo_neighbours`, `repo_path_between`, `repo_blast_radius` | — | — | 2 000 chars |
 | `path` (length) | `repo_read` | — | — | 2 000 chars |
@@ -279,7 +274,7 @@ project uses: `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand any
 of them something else and it says so instead of returning nothing.
 
 `repo_path_between`'s hop and visited-node ceilings are deliberately their own
-constants, not a reuse of `repo_search`/`repo_neighbours`/`repo_impact`'s
+constants, not a reuse of `repo_search`/`repo_neighbours`'s
 `MCP_MAX_HOPS` (4) — a bidirectional path search does roughly `max_hops / 2`
 layers of real work on each side, not `max_hops` deep on one, so the same
 number does not mean the same cost.
@@ -287,7 +282,7 @@ number does not mean the same cost.
 ### Errors are flagged, not just worded
 
 A call the server cannot answer — a missing `query` or `node_id`, a `node_id`
-that is not in the graph, an unknown tool name, a `repo_impact` whose `git diff`
+that is not in the graph, an unknown tool name, a traversal whose `git diff`
 failed, whose `diff` text is not a unified diff or whose `format` is not one of
 `markdown`/`json`/`sarif`/`pr-comment`, a `repo_build_status` with no or an
 unknown `task_id` (or on a server without `--async-build`, whose error body is
@@ -404,9 +399,9 @@ impact radius of changing the scheduler?"* deserved and did not have: the
 reverse of `repo_neighbours`' one hop in both directions, specifically the
 reverse *closure*, by hop distance.
 
-> Ships under this name rather than `repo_impact`, which is already the
-> PR/diff-impact tool documented above -- see the naming note near the top of
-> this page.
+> Named `repo_blast_radius` rather than `repo_impact` because that name
+> belonged to the PR/diff-impact tool, since removed -- see the naming note
+> near the top of this page.
 
 **Input parameters:**
 
@@ -431,43 +426,6 @@ Each of `callers`/`subclasses`/`importers` is its own bounded reverse walk (up
 to 4 000 visited nodes and `limit` rows), so a hub symbol that would reach
 most of the graph reports `summary.truncated: true` rather than a partial set
 presented as complete. `exclude_secrets` is unconditional, as everywhere else.
-
-### `repo_impact`
-
-**Purpose:** Analyze PR or git diff impact against a base branch using the code graph. Detects changed symbols, affected public APIs, impacted callers across depth hops, test coverage, and blast radius with grounded citations.
-
-**Input parameters:**
-
-| Parameter | Type | Meaning |
-|---|---|---|
-| `base` | string (optional) | Base branch or commit ref to compare against (default `"main"`). |
-| `head` | string (optional) | Head branch or commit ref. Omitted: the **working tree** (committed and uncommitted changes) is compared against `base`, exactly like `repo2graph impact`. Given: the three-dot `base...head` comparison of two refs. |
-| `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
-| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to 1-4). |
-| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, `"json"` or `"sarif"` (SARIF v2.1.0). Anything else is an `isError` result listing these. |
-
-`git diff` runs in the server's indexed repository — the `--repo` it was started
-for, else the source root recorded in the index's `manifest.json`, else the index
-directory's parent — never in the server process's working directory. When git
-fails, git's own message is relayed (with every absolute path replaced by
-`<repo>`/`<path>`) as an `isError` result; a repository whose default branch is
-not `main` needs `base`.
-
-Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](cli.md).
-
-**Output is bounded too, not just the inputs.** The report grows with the number
-of impacted symbols rather than with `max_depth`, so a wide diff could render far
-past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
-
-- `markdown` and `pr-comment` are cut on a line boundary and end with a
-  `_[truncated to 12000 tokens…]_` note.
-- `json` and `sarif` are **not** cut — a line-boundary cut would stop being parseable. It is
-  replaced by a valid document carrying `"truncated": true`, a `reason`, and the
-  scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
-  per-symbol lists omitted.
-
-Run `repo2graph impact` for the full, unbounded report; the ceiling exists
-because this tool's output lands directly in an agent's context window.
 
 ### `repo_cache_stats`
 
@@ -590,7 +548,7 @@ The first-supported client. Everything here is verified against Claude Code's
 
 - [Install](#install)
 - [Verify it worked](#verify-it-worked)
-- [The ten tools](#the-ten-tools)
+- [The nine tools](#the-nine-tools)
 - [First questions worth asking](#first-questions-worth-asking)
 - [Telling the agent how to use it](#telling-the-agent-how-to-use-it)
 - [Troubleshooting](#troubleshooting)
@@ -677,14 +635,13 @@ the repo2graph entry, and names the problem — command not on `PATH`, missing
 `[mcp]` extra, relative or non-existent path, or unparseable JSON. It never
 echoes an entry's `env` values.
 
-#### The ten tools
+#### The nine tools
 
 | Tool | Use it for | Bounds |
 |---|---|---|
 | `repo_map` | orientation: languages, hub files, entry points | — |
 | `repo_search` | "where is X handled?" — BM25 seeds expanded one hop through the graph | `k` ≤ 50, `hops` ≤ 4, budget ≤ 12,000 tokens (default 6,000) |
 | `repo_neighbours` | "what calls this?" — from a known `node_id` | `hops` ≤ 4, `limit` ≤ 50 |
-| `repo_impact` | blast radius of a diff against a base branch | — |
 | `repo_find_symbol` | name → `node_id`, when you already know what you're looking for | `limit` ≤ 50 |
 | `repo_read` | widen a `[cite: path:start-end]` citation into more source lines | `context` ≤ 500 lines each side |
 | `repo_path_between` | "how does X reach Y" — a bounded, bidirectional path search | `max_hops` ≤ 8, `max_paths` ≤ 10 |
@@ -810,7 +767,7 @@ Full list: [architecture.md](architecture.md).
 
 ### Cursor
 
-The second-supported client. Same server, same ten tools, same output — the
+The second-supported client. Same server, same nine tools, same output — the
 differences are the config file, the scope model, and how Cursor decides to call
 a tool.
 
@@ -918,7 +875,8 @@ call relationships. For those, use the repo2graph MCP tools:
 - "what calls this" / "what would break if I change this" -> `repo_neighbours`,
   passing the `[sym:...]` node id from a previous result.
 - "where is X handled" -> `repo_search`. It returns cited source, not file paths.
-- Blast radius of the current diff -> `repo_impact`.
+- Blast radius of a symbol -> `repo_blast_radius`, which walks the reverse
+  closure of a node. There is no diff-level tool: that surface was removed.
 
 Quote the `path:line` from the tool output. If the output marks an edge
 `AMBIGUOUS`, report it as uncertain rather than asserting the target.

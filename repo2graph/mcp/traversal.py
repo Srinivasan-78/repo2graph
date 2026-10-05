@@ -1,4 +1,4 @@
-"""MCP graph-traversal tools: paths between symbols, impact, and blast radius.
+"""MCP graph-traversal tools: paths between symbols and reverse closures.
 
 Every traversal here is bounded twice -- by hop count and by visited-node
 count -- so a dense graph cannot turn one tool call into an unbounded walk.
@@ -10,14 +10,11 @@ import json
 from collections import defaultdict
 from typing import Any
 
-from ..query import Index, _fit_lines, count_tokens
+from ..query import Index
 from .guardrails import (
     DEFAULT_PATH_EDGE_TYPES,
-    MCP_MAX_BUDGET_TOKENS,
-    IMPACT_FORMATS,
     MCP_IMPACT_HOPS,
     MCP_IMPACT_LIMIT,
-    MCP_MAX_HOPS,
     MCP_MAX_IMPACT_HOPS,
     MCP_MAX_IMPACT_VISITED,
     MCP_MAX_NEIGHBOURS,
@@ -30,10 +27,9 @@ from .guardrails import (
     PATH_EDGE_TYPES,
     _clamp,
     _defaulted_notes,
-    _scrub_paths,
     _str,
 )
-from .nodes import _containing_file, _impact_root, _path_secret
+from .nodes import _containing_file, _path_secret
 from .schemas import ToolError
 
 
@@ -233,122 +229,6 @@ def tool_repo_path_between(
         },
         indent=2,
     )
-
-
-def tool_repo_impact(
-    index: Index,
-    base: str = "main",
-    head: str | None = None,
-    diff: str = "",
-    max_depth: Any = 2,
-    format: str = "markdown",
-) -> str:
-    """Analyze PR or git diff impact against a base branch using the code graph."""
-    base_ref = _str(base, 256).strip() or "main"
-    head_ref = _str(head, 256).strip() or None
-    diff_text = _str(diff, 1_000_000)
-    depth = _clamp(max_depth, 2, 1, MCP_MAX_HOPS)
-
-    from ..impact import (
-        analyze_diff_impact,
-        format_json,
-        format_markdown,
-        format_pr_comment,
-        format_sarif,
-        get_git_diff,
-        parse_unified_diff,
-    )
-
-    fmt = str(format).lower().strip()
-    if fmt == "comment":
-        fmt = "pr-comment"
-    if fmt not in IMPACT_FORMATS:
-        return ToolError(
-            f"unknown repo_impact format {str(format)[:40]!r}: expected one of "
-            f"{', '.join(IMPACT_FORMATS)}."
-        )
-
-    if diff_text.strip() and not parse_unified_diff(diff_text):
-        return ToolError(
-            "`diff` is not a unified diff: found no `diff --git a/<path> b/<path>` file "
-            "header. Pass the output of `git diff` (or omit `diff` to let the server run it)."
-        )
-
-    if not diff_text.strip():
-        root_path = _impact_root(index)
-        try:
-            diff_text = get_git_diff(root_path, base=base_ref, head=head_ref)
-        except Exception as exc:
-            spec = f"{base_ref}...{head_ref}" if head_ref else f"{base_ref} vs the working tree"
-            detail = _scrub_paths(str(exc), root_path)
-            return ToolError(
-                f"Error obtaining git diff ({spec}): {type(exc).__name__}: {detail}\n"
-                f"Check that the refs exist in the indexed repository (pass `base` "
-                f"if its default branch is not 'main'), or pass the diff directly via `diff`."
-            )
-
-    report = analyze_diff_impact(
-        index=index,
-        diff=diff_text,
-        base=base_ref,
-        head=head_ref or "HEAD",
-        max_depth=depth,
-        exclude_secrets=True,
-    )
-
-    if fmt == "json":
-        rendered = format_json(report)
-    elif fmt == "sarif":
-        rendered = json.dumps(format_sarif(report), indent=2)
-    elif fmt == "pr-comment":
-        rendered = format_pr_comment(report)
-    else:
-        rendered = format_markdown(report)
-    if fmt in ("markdown", "pr-comment"):
-        rendered = _defaulted_notes(max_depth=(max_depth, 2)) + rendered
-
-    if count_tokens(rendered) <= MCP_MAX_BUDGET_TOKENS:
-        return rendered
-
-    if fmt in ("json", "sarif"):
-        return json.dumps(
-            {
-                "truncated": True,
-                "reason": (
-                    f"report exceeded the {MCP_MAX_BUDGET_TOKENS}-token tool ceiling; "
-                    f"per-symbol lists omitted. Narrow the diff, or run "
-                    f"`repo2graph impact` for the full report."
-                ),
-                "base_ref": report.base_ref,
-                "head_ref": report.head_ref,
-                "risk_level": report.risk_level,
-                "blast_radius_score": report.blast_radius_score,
-                "metrics": {
-                    "files_changed_count": len(report.files_changed),
-                    "symbols_changed_count": len(report.symbols_changed),
-                    "public_apis_affected_count": len(report.public_apis_affected),
-                    "impacted_callers_count": len(report.impacted_callers),
-                    "impacted_modules_count": len(report.impacted_modules),
-                    "impacted_tests_count": len(report.impacted_tests),
-                    "untested_public_apis_count": len(report.untested_public_apis),
-                    "suspicious_findings_count": len(report.suspicious_findings),
-                },
-            },
-            indent=2,
-        )
-
-    notice = (
-        f"\n\n_[truncated to {MCP_MAX_BUDGET_TOKENS} tokens. "
-        f"Narrow the diff, or run `repo2graph impact` for the full report.]_"
-    )
-    room = max(1, MCP_MAX_BUDGET_TOKENS - (len(notice) + 3) // 4)
-
-    head_chunk = rendered[: 4 * room + 4]
-    if len(head_chunk) < len(rendered):
-        cut = head_chunk.rfind("\n")
-        if cut > 0:
-            head_chunk = head_chunk[:cut]
-    return _fit_lines(head_chunk, room, count_tokens) + notice
 
 
 def _reverse_closure(

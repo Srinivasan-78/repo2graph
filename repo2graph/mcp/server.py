@@ -25,7 +25,6 @@ from .tools import (
     tool_cache_stats,
     tool_repo_blast_radius,
     tool_repo_find_symbol,
-    tool_repo_impact,
     tool_repo_map,
     tool_repo_neighbours,
     tool_repo_path_between,
@@ -154,7 +153,6 @@ server.add_tool("repo_neighbours", tool_repo_neighbours, TOOL_SCHEMAS["repo_neig
 server.add_tool("repo_find_symbol", tool_repo_find_symbol, TOOL_SCHEMAS["repo_find_symbol"])
 server.add_tool("repo_read", tool_repo_read, TOOL_SCHEMAS["repo_read"])
 server.add_tool("repo_path_between", tool_repo_path_between, TOOL_SCHEMAS["repo_path_between"])
-server.add_tool("repo_impact", tool_repo_impact, TOOL_SCHEMAS["repo_impact"])
 server.add_tool("repo_blast_radius", tool_repo_blast_radius, TOOL_SCHEMAS["repo_blast_radius"])
 server.add_tool("repo_cache_stats", tool_cache_stats, TOOL_SCHEMAS["repo_cache_stats"])
 server.add_tool("repo_build_status", tool_build_status, TOOL_SCHEMAS["repo_build_status"])

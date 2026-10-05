@@ -545,9 +545,18 @@ def _format_callers(callers: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-# Small enough that the whole demo stays readable in one terminal screen, and
-# large enough that question 5 reaches all four modules on its path.
-DEMO_K = 6
+# Large enough that question 5 reaches all four modules on its path, which is
+# what this constant has always been for -- and now equal to `pack_context`'s own
+# default and the MCP server's `repo_search` default, so the demo shows what a
+# caller actually gets rather than a tighter configuration.
+#
+# It was 6 until answerability re-ranking landed. That change promotes specific
+# function bodies over module-level residuals, which is the point of it, and the
+# effect here was that `app/store.py` -- the module that answers the
+# "to persistence" half of question 5 -- fell just past a 6-seed cut. Readability
+# is unaffected because `DEMO_BUDGET_CHARS` is what binds, not `k`: across all
+# five questions the demo grew 29,350 characters to 29,592, under 1%.
+DEMO_K = 8
 DEMO_HOPS = 1
 DEMO_BUDGET_CHARS = 6000
 BRIEF_BODY_LINES = 10

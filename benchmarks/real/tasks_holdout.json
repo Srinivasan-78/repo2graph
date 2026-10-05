@@ -1,165 +1,386 @@
 {
-  "_comment": "Held-out validation set, on two repositories that appear in no other task file. Written to judge retrieval changes that were developed against tasks.json, because a change tuned on a set and then reported on that same set measures the tuning, not the change. Questions are phrased the way a developer new to the codebase would ask them. Every line range was read off the pinned commit in repos_holdout.json by reading the source, before any retriever was run against these repositories. Same schema and same scorer as tasks.json.",
+  "_comment": "Held-out lexical questions for the retrieval benchmark. Authored without reference to tasks.json, against the commits pinned in repos.json. Evidence line ranges read off the checked-out source.",
   "tasks": [
     {
-      "id": "click-01",
-      "repo": "click",
+      "id": "ho-flask-01",
+      "repo": "flask",
       "kind": "concept",
-      "query": "how does the command decorator turn a plain function into a command object",
-      "evidence": [{"path": "click/decorators.py", "symbol": "command", "lines": [167, 246]}]
+      "query": "how does a view's return value get turned into a response object",
+      "evidence": [
+        {"path": "flask/app.py", "symbol": "Flask.make_response", "lines": [1129, 1269]}
+      ]
     },
     {
-      "id": "click-02",
-      "repo": "click",
+      "id": "ho-flask-02",
+      "repo": "flask",
       "kind": "concept",
-      "query": "where are command line arguments split into options and positional arguments",
-      "evidence": [{"path": "click/parser.py", "symbol": "OptionParser.parse_args", "lines": [328, 344]}]
+      "query": "how is the signed session cookie read off the request and written back out",
+      "evidence": [
+        {"path": "flask/sessions.py", "symbol": "SecureCookieSessionInterface.open_session", "lines": [337, 349]},
+        {"path": "flask/sessions.py", "symbol": "SecureCookieSessionInterface.save_session", "lines": [351, 399]}
+      ]
     },
     {
-      "id": "click-03",
-      "repo": "click",
+      "id": "ho-flask-03",
+      "repo": "flask",
       "kind": "concept",
-      "query": "how is a subcommand name looked up and resolved for a group",
-      "evidence": [{"path": "click/core.py", "symbol": "MultiCommand.resolve_command", "lines": [1731, 1756]}]
+      "query": "what happens when you decorate a function to attach it to a url",
+      "evidence": [
+        {"path": "flask/sansio/scaffold.py", "symbol": "Scaffold.route", "lines": [336, 365]}
+      ]
     },
     {
-      "id": "click-04",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how does click ask the user for input interactively at the terminal",
-      "evidence": [{"path": "click/termui.py", "symbol": "prompt", "lines": [79, 187]}]
-    },
-    {
-      "id": "click-05",
-      "repo": "click",
-      "kind": "concept",
-      "query": "where is a parameter value converted and validated against its declared type",
-      "evidence": [{"path": "click/core.py", "symbol": "Parameter.type_cast_value", "lines": [2298, 2347]}]
-    },
-    {
-      "id": "click-06",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how does an option fall back to reading an environment variable",
-      "evidence": [{"path": "click/core.py", "symbol": "Option.resolve_envvar_value", "lines": [2901, 2918]}]
-    },
-    {
-      "id": "click-07",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how is help text wrapped to the terminal width",
-      "evidence": [{"path": "click/formatting.py", "symbol": "wrap_text", "lines": [29, 99]}]
-    },
-    {
-      "id": "click-08",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how does the test runner capture stdout and stderr while a command runs",
-      "evidence": [{"path": "click/testing.py", "symbol": "CliRunner.isolation", "lines": [208, 351]}]
-    },
-    {
-      "id": "click-09",
-      "repo": "click",
-      "kind": "concept",
-      "query": "where does click work out the program name to show in the usage line",
-      "evidence": [{"path": "click/utils.py", "symbol": "_detect_program_name", "lines": [520, 572]}]
-    },
-    {
-      "id": "click-10",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how is a usage error printed to the user with the usage line",
-      "evidence": [{"path": "click/exceptions.py", "symbol": "UsageError.show", "lines": [71, 91]}]
-    },
-    {
-      "id": "click-11",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how does a path parameter check that the file or directory exists",
-      "evidence": [{"path": "click/types.py", "symbol": "Path.convert", "lines": [857, 932]}]
-    },
-    {
-      "id": "click-12",
-      "repo": "click",
-      "kind": "concept",
-      "query": "how are shell completion candidates produced for a partially typed word",
-      "evidence": [{"path": "click/shell_completion.py", "symbol": "_resolve_incomplete", "lines": [559, 603]}]
-    },
-    {
-      "id": "click-13",
-      "repo": "click",
+      "id": "ho-flask-04",
+      "repo": "flask",
       "kind": "trace",
-      "query": "trace what happens from calling a command to the user callback being invoked",
+      "query": "how does a wsgi call from the server end up running my view function",
       "evidence": [
-        {"path": "click/core.py", "symbol": "BaseCommand.main", "lines": [1014, 1125]},
-        {"path": "click/core.py", "symbol": "Command.invoke", "lines": [1432, 1443]}
+        {"path": "flask/app.py", "symbol": "Flask.wsgi_app", "lines": [1479, 1527]},
+        {"path": "flask/app.py", "symbol": "Flask.full_dispatch_request", "lines": [904, 920]},
+        {"path": "flask/app.py", "symbol": "Flask.dispatch_request", "lines": [879, 902]}
       ]
     },
     {
-      "id": "click-14",
-      "repo": "click",
+      "id": "ho-flask-05",
+      "repo": "flask",
+      "kind": "concept",
+      "query": "can settings be picked up from environment variables with a shared prefix",
+      "evidence": [
+        {"path": "flask/config.py", "symbol": "Config.from_prefixed_env", "lines": [126, 185]}
+      ]
+    },
+    {
+      "id": "ho-flask-06",
+      "repo": "flask",
+      "kind": "concept",
+      "query": "where is an unhandled crash in a view turned into a 500 page",
+      "evidence": [
+        {"path": "flask/app.py", "symbol": "Flask.handle_exception", "lines": [811, 862]}
+      ]
+    },
+    {
+      "id": "ho-flask-07",
+      "repo": "flask",
+      "kind": "concept",
+      "query": "how are templates found when blueprints each have their own template folder",
+      "evidence": [
+        {"path": "flask/templating.py", "symbol": "DispatchingJinjaLoader._iter_loaders", "lines": [101, 109]}
+      ]
+    },
+    {
+      "id": "ho-flask-08",
+      "repo": "flask",
+      "kind": "concept",
+      "query": "how are one-off messages stashed for the next page render and then read back",
+      "evidence": [
+        {"path": "flask/helpers.py", "symbol": "flash", "lines": [318, 349]},
+        {"path": "flask/helpers.py", "symbol": "get_flashed_messages", "lines": [352, 391]}
+      ]
+    },
+    {
+      "id": "ho-flask-09",
+      "repo": "flask",
+      "kind": "concept",
+      "query": "how does a class based view become something that can be registered as a route",
+      "evidence": [
+        {"path": "flask/views.py", "symbol": "View.as_view", "lines": [86, 135]}
+      ]
+    },
+    {
+      "id": "ho-flask-10",
+      "repo": "flask",
       "kind": "relationship",
-      "query": "what calls resolve_command",
-      "evidence": [{"path": "click/core.py", "symbol": "MultiCommand.invoke", "lines": [1663, 1729]}]
-    },
-    {
-      "id": "axios-01",
-      "repo": "axios",
-      "kind": "concept",
-      "query": "how does axios run request and response interceptors around a request",
-      "evidence": [{"path": "core/Axios.js", "symbol": "Axios._request", "lines": [65, 191]}]
-    },
-    {
-      "id": "axios-02",
-      "repo": "axios",
-      "kind": "concept",
-      "query": "where is the adapter called and the response data transformed",
-      "evidence": [{"path": "core/dispatchRequest.js", "symbol": "dispatchRequest", "lines": [34, 81]}]
-    },
-    {
-      "id": "axios-03",
-      "repo": "axios",
-      "kind": "concept",
-      "query": "how are two request config objects merged together",
-      "evidence": [{"path": "core/mergeConfig.js", "symbol": "mergeConfig", "lines": [17, 106]}]
-    },
-    {
-      "id": "axios-04",
-      "repo": "axios",
-      "kind": "concept",
-      "query": "how does axios decide whether to resolve or reject based on the http status code",
-      "evidence": [{"path": "core/settle.js", "symbol": "settle", "lines": [14, 27]}]
-    },
-    {
-      "id": "axios-05",
-      "repo": "axios",
-      "kind": "concept",
-      "query": "how is an interceptor registered and later removed",
+      "query": "what actually invokes the app level teardown callbacks",
       "evidence": [
-        {"path": "core/InterceptorManager.js", "symbol": "InterceptorManager.use", "lines": [18, 26]},
-        {"path": "core/InterceptorManager.js", "symbol": "InterceptorManager.eject", "lines": [35, 39]}
+        {"path": "flask/ctx.py", "symbol": "AppContext.pop", "lines": [256, 272]}
+      ]
+    },
+
+    {
+      "id": "ho-requests-01",
+      "repo": "requests",
+      "kind": "concept",
+      "query": "how are redirects followed automatically",
+      "evidence": [
+        {"path": "requests/sessions.py", "symbol": "SessionRedirectMixin.resolve_redirects", "lines": [159, 280]}
       ]
     },
     {
-      "id": "axios-06",
-      "repo": "axios",
+      "id": "ho-requests-02",
+      "repo": "requests",
       "kind": "concept",
-      "query": "how are query parameters serialized and appended to the url",
-      "evidence": [{"path": "helpers/buildURL.js", "symbol": "buildURL", "lines": [33, 69]}]
+      "query": "how does the payload get encoded differently for a dict, a file, or a generator",
+      "evidence": [
+        {"path": "requests/models.py", "symbol": "PreparedRequest.prepare_body", "lines": [494, 570]}
+      ]
     },
     {
-      "id": "axios-07",
-      "repo": "axios",
+      "id": "ho-requests-03",
+      "repo": "requests",
       "kind": "concept",
-      "query": "how is a relative url combined with the configured baseURL",
-      "evidence": [{"path": "core/buildFullPath.js", "symbol": "buildFullPath", "lines": [16, 21]}]
+      "query": "where do the raw response bytes get decoded into a unicode string",
+      "evidence": [
+        {"path": "requests/models.py", "symbol": "Response.text", "lines": [910, 945]}
+      ]
     },
     {
-      "id": "axios-08",
-      "repo": "axios",
+      "id": "ho-requests-04",
+      "repo": "requests",
       "kind": "concept",
-      "query": "how is form data converted into a plain json object",
-      "evidence": [{"path": "helpers/formDataToJSON.js", "symbol": "formDataToJSON", "lines": [49, 93]}]
+      "query": "how is the character set worked out from the content type header",
+      "evidence": [
+        {"path": "requests/utils.py", "symbol": "get_encoding_from_headers", "lines": [529, 551]}
+      ]
+    },
+    {
+      "id": "ho-requests-05",
+      "repo": "requests",
+      "kind": "trace",
+      "query": "what happens between calling the module level get helper and the socket being used",
+      "evidence": [
+        {"path": "requests/api.py", "symbol": "get", "lines": [62, 73]},
+        {"path": "requests/sessions.py", "symbol": "Session.request", "lines": [500, 591]},
+        {"path": "requests/sessions.py", "symbol": "Session.send", "lines": [673, 748]}
+      ]
+    },
+    {
+      "id": "ho-requests-06",
+      "repo": "requests",
+      "kind": "concept",
+      "query": "how is the authorization header built for username and password auth",
+      "evidence": [
+        {"path": "requests/auth.py", "symbol": "_basic_auth_str", "lines": [25, 66]}
+      ]
+    },
+    {
+      "id": "ho-requests-07",
+      "repo": "requests",
+      "kind": "concept",
+      "query": "how is a 401 challenge answered by retrying with a digest",
+      "evidence": [
+        {"path": "requests/auth.py", "symbol": "HTTPDigestAuth.handle_401", "lines": [241, 283]}
+      ]
+    },
+    {
+      "id": "ho-requests-08",
+      "repo": "requests",
+      "kind": "concept",
+      "query": "how can a response body be consumed in chunks instead of all at once",
+      "evidence": [
+        {"path": "requests/models.py", "symbol": "Response.iter_content", "lines": [799, 855]}
+      ]
+    },
+    {
+      "id": "ho-requests-09",
+      "repo": "requests",
+      "kind": "concept",
+      "query": "how does it decide a host should skip the proxy entirely",
+      "evidence": [
+        {"path": "requests/utils.py", "symbol": "should_bypass_proxies", "lines": [755, 813]}
+      ]
+    },
+    {
+      "id": "ho-requests-10",
+      "repo": "requests",
+      "kind": "relationship",
+      "query": "what builds a cookie jar out of a plain dictionary of cookies",
+      "evidence": [
+        {"path": "requests/models.py", "symbol": "PreparedRequest.prepare_cookies", "lines": [610, 628]},
+        {"path": "requests/sessions.py", "symbol": "Session.prepare_request", "lines": [457, 498]},
+        {"path": "requests/utils.py", "symbol": "add_dict_to_cookiejar", "lines": [468, 476]}
+      ]
+    },
+
+    {
+      "id": "ho-fastapi-01",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how is what an endpoint returns checked against the declared response model",
+      "evidence": [
+        {"path": "routing.py", "symbol": "serialize_response", "lines": [219, 277]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-02",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how are things like datetimes and uuids made json safe before sending",
+      "evidence": [
+        {"path": "encoders.py", "symbol": "jsonable_encoder", "lines": [102, 344]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-03",
+      "repo": "fastapi",
+      "kind": "trace",
+      "query": "how do declared dependencies get resolved before the endpoint body runs",
+      "evidence": [
+        {"path": "routing.py", "symbol": "get_request_handler", "lines": [293, 434]},
+        {"path": "dependencies/utils.py", "symbol": "solve_dependencies", "lines": [580, 703]},
+        {"path": "routing.py", "symbol": "run_endpoint_function", "lines": [280, 290]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-04",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how does it work out whether a function argument is a query string value, a path piece or part of the body",
+      "evidence": [
+        {"path": "dependencies/utils.py", "symbol": "analyze_param", "lines": [356, 519]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-05",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "where is the whole api schema document assembled",
+      "evidence": [
+        {"path": "openapi/utils.py", "symbol": "get_openapi", "lines": [476, 571]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-06",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how do the interactive api docs pages get wired up and rendered",
+      "evidence": [
+        {"path": "applications.py", "symbol": "FastAPI.setup", "lines": [1077, 1128]},
+        {"path": "openapi/docs.py", "symbol": "get_swagger_ui_html", "lines": [26, 158]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-07",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "what produces the 422 body when incoming data fails validation",
+      "evidence": [
+        {"path": "exception_handlers.py", "symbol": "request_validation_exception_handler", "lines": [20, 26]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-08",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how is a file sent in a multipart form exposed to the endpoint",
+      "evidence": [
+        {"path": "datastructures.py", "symbol": "UploadFile", "lines": [30, 173]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-09",
+      "repo": "fastapi",
+      "kind": "trace",
+      "query": "how do the routes of a sub router get merged into the parent app with its prefix",
+      "evidence": [
+        {"path": "applications.py", "symbol": "FastAPI.include_router", "lines": [1334, 1537]},
+        {"path": "routing.py", "symbol": "APIRouter.include_router", "lines": [1198, 1440]},
+        {"path": "routing.py", "symbol": "APIRouter.add_api_route", "lines": [957, 1037]}
+      ]
+    },
+    {
+      "id": "ho-fastapi-10",
+      "repo": "fastapi",
+      "kind": "concept",
+      "query": "how is a bearer token pulled out of the authorization header and rejected if missing",
+      "evidence": [
+        {"path": "security/http.py", "symbol": "HTTPBearer.__call__", "lines": [301, 321]}
+      ]
+    },
+
+    {
+      "id": "ho-hono-01",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how do middleware get chained together so each one can hand off to the next",
+      "evidence": [
+        {"path": "compose.ts", "symbol": "compose", "lines": [15, 73]}
+      ]
+    },
+    {
+      "id": "ho-hono-02",
+      "repo": "hono",
+      "kind": "trace",
+      "query": "what path does an incoming request take from the entry point to a matched handler's response",
+      "evidence": [
+        {"path": "hono-base.ts", "symbol": "Hono.fetch", "lines": [466, 472]},
+        {"path": "hono-base.ts", "symbol": "Hono.#dispatch", "lines": [393, 453]}
+      ]
+    },
+    {
+      "id": "ho-hono-03",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how do i return json from a handler and where does the content type come from",
+      "evidence": [
+        {"path": "context.ts", "symbol": "Context.json", "lines": [706, 719]}
+      ]
+    },
+    {
+      "id": "ho-hono-04",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how do headers set earlier in the request survive onto the response that gets sent",
+      "evidence": [
+        {"path": "context.ts", "symbol": "Context.#newResponse", "lines": [602, 637]},
+        {"path": "context.ts", "symbol": "Context.header", "lines": [513, 525]}
+      ]
+    },
+    {
+      "id": "ho-hono-05",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how are url path placeholders pulled out and percent decoded",
+      "evidence": [
+        {"path": "request.ts", "symbol": "HonoRequest.#getDecodedParam", "lines": [98, 102]},
+        {"path": "request.ts", "symbol": "HonoRequest.#getParamValue", "lines": [118, 120]}
+      ]
+    },
+    {
+      "id": "ho-hono-06",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how does the framework decide at runtime which routing implementation is fastest for the registered routes",
+      "evidence": [
+        {"path": "router/smart-router/router.ts", "symbol": "SmartRouter.match", "lines": [21, 61]}
+      ]
+    },
+    {
+      "id": "ho-hono-07",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how is the pathname extracted from a request url without building a URL object",
+      "evidence": [
+        {"path": "utils/url.ts", "symbol": "getPath", "lines": [106, 130]}
+      ]
+    },
+    {
+      "id": "ho-hono-08",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how is a cross origin preflight answered and which headers get allowed",
+      "evidence": [
+        {"path": "middleware/cors/index.ts", "symbol": "cors", "lines": [57, 156]}
+      ]
+    },
+    {
+      "id": "ho-hono-09",
+      "repo": "hono",
+      "kind": "concept",
+      "query": "how is a single cookie value read back out of the request",
+      "evidence": [
+        {"path": "helper/cookie/index.ts", "symbol": "getCookie", "lines": [27, 48]}
+      ]
+    },
+    {
+      "id": "ho-hono-10",
+      "repo": "hono",
+      "kind": "relationship",
+      "query": "which built in middleware reject a request by throwing the framework's http error",
+      "evidence": [
+        {"path": "middleware/basic-auth/index.ts", "symbol": "basicAuth", "lines": [61, 128]},
+        {"path": "middleware/bearer-auth/index.ts", "symbol": "bearerAuth", "lines": [72, 159]},
+        {"path": "middleware/body-limit/index.ts", "symbol": "bodyLimit", "lines": [57, 115]}
+      ]
     }
   ]
 }

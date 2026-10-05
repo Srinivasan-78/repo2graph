@@ -45,65 +45,74 @@ output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
 
 ## Is it better than grep?
 
-**On cross-file structural questions, clearly. On single-file lexical ones, marginally — and it
-used to lose them.** Measured on 35 questions about Flask, requests, FastAPI and Hono, scored
-against the definitions that answer them, at the same token budget
+**On cross-file structural questions, yes. On single-file lexical queries, no — grep is the
+better tool.** Both halves are measured on 40 lexical and 40 structural questions about Flask,
+requests, FastAPI and Hono that repo2graph was **not** tuned against, scored against the
+definitions that answer them, every retriever held to the same token budget
 ([method, full tables and diagnosis](benchmarks/real/README.md); raw rows in
-[benchmarks/real/results.json](benchmarks/real/results.json)):
-
-| Budget | repo2graph | repo2graph in 2.2 | grep, then read around hits |
-|---:|---:|---:|---:|
-| 2,000 tokens | **41%** | 30% | 35% |
-| 4,000 tokens | 61% | 37% | 61% |
-| 8,000 tokens | **76%** | 48% | 72% |
-
-**4,000 tokens is a tie**, and the 2,000 and 8,000 margins are three and two definitions out of
-46. Through 2.2 grep won this table outright; the gap was never parsing or retrieval — every
-answer was already in the index, and an oracle packer fit all of them in budget — but that 54%
-of the pack went to class and file *container* chunks, which the chunker builds by cutting their
-members out. A class header cannot contain the method you asked about. Seeds are now ranked on
-whether a chunk can plausibly hold an answer.
-
-Because that fix was developed against those 35 questions, the number worth trusting is the
-**held-out set** — 22 questions on [click](https://github.com/pallets/click) and
-[axios](https://github.com/axios/axios), repositories the change never saw
-([tasks_holdout.json](benchmarks/real/tasks_holdout.json)):
-
-| Budget | repo2graph | repo2graph in 2.2 | grep |
-|---:|---:|---:|---:|
-| 2,000 tokens | 50% | 50% | 50% |
-| 4,000 tokens | **79%** | 67% | 58% |
-| 8,000 tokens | **79%** | 71% | 67% |
+[`results_holdout_final.json`](benchmarks/real/results_holdout_final.json)).
 
 ### Where repo2graph wins: cross-file structural questions
 
 grep structurally cannot traverse dependency edges, compute reverse call closures, or follow
-cross-module delegation. On the structural set across the same four repositories
-([benchmarks/real/tasks_structural.json](benchmarks/real/tasks_structural.json), where evidence
-provably spans cross-file graph edges):
+cross-module delegation. On questions whose evidence provably spans a cross-file graph edge:
 
-| Budget | repo2graph | repo2graph-bm25 (no graph) | ripgrep |
+<!-- bench-table: results_holdout_final.json structural_summary wide=evidence_recall methods=repo2graph,repo2graph-bm25,ripgrep -->
+
+| Budget | repo2graph | lexical search alone | grep, then read around hits |
 |---:|---:|---:|---:|
-| 2,000 tokens | **60%** | 60% | 20% |
-| 4,000 tokens | **80%** | 60% | 20% |
-| 8,000 tokens | **100%** | 60% | 70% |
+| 2,000 tokens | **29%** | 24% | 14% |
+| 4,000 tokens | **60%** | 48% | 21% |
+| 8,000 tokens | **79%** | 55% | 38% |
 
-The middle column is the same ranking with graph expansion switched off, so the gap between it
-and the first is what one hop of `CALLS`/`IMPORTS`/`INHERITS` buys: +20 pp at 4k and +40 pp at
-8k. This is 10 tasks, so one task is 10 pp; treat every cell as ±1 task.
+**The graph is what does it**, and that is the comparison that matters: expansion adds +5/+12/+24 pp
+over the same retriever with expansion switched off. Against grep the margin is +15/+39/+41 pp —
+it widens with budget rather than closing, because grep has no edge to follow however much room
+it is given. It also gets there for **fewer tokens than grep** at every budget, by 7, 7 and 398
+mean tokens, because a cited definition is a smaller thing to return than a window around every
+textual hit.
 
-### Where repo2graph wins for agents: multi-turn loops
+### Where grep wins: single-file lexical questions
 
-In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No model is in the loop — the "agent" is a deterministic policy over real ripgrep and a real index:
+<!-- bench-table: results_holdout_final.json summary wide=evidence_recall methods=repo2graph,ripgrep -->
+
+| Budget | repo2graph | grep, then read around hits |
+|---:|---:|---:|
+| 2,000 tokens | 17% | **28%** |
+| 4,000 tokens | 29% | **48%** |
+| 8,000 tokens | 45% | **59%** |
+
+On purely lexical questions where the evidence sits in a single file, text search is grep's
+optimum, and this gap is real: −11/−19/−14 pp. We have not closed it. The remaining cause looks
+like vocabulary mismatch rather than ranking — a question that says "datetime" does not match
+code that says "timestamp" — which is why the
+[dense-vector path](benchmarks/real/README.md#the-dense-result) closes it to −2 pp at 8,000
+tokens and more BM25 tuning has not. That path needs a downloaded model, so it is opt-in
+(`pip install "repo2graph[rag]"`) and the zero-dependency default stays the default.
+
+### Where repo2graph wins for agents: fewer turns
+
+In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No
+model is in the loop — the "agent" is a deterministic policy over real ripgrep and a real index:
 
 | Task set | Method | Success | Mean turns | Mean tokens | Precision per read |
 |---|---|---:|---:|---:|---:|
-| Structural (10) | repo2graph | **70%** | **3.3** | 4,006 | 2.4% |
-| Structural (10) | ripgrep | 10% | 6.0 | **1,879** | **11.0%** |
-| General (35) | repo2graph | **54%** | **1.9** | 7,133 | 2.4% |
-| General (35) | ripgrep | 20% | 3.6 | **939** | **37.8%** |
+| Structural (40) | repo2graph | **40%** | **1.9** | 2,590 | 12.0% |
+| Structural (40) | ripgrep | 10% | 2.5 | **586** | **29.0%** |
+| Lexical (40) | repo2graph | **20%** | **1.4** | 2,070 | 21.7% |
+| Lexical (40) | ripgrep | 18% | 3.0 | **740** | **89.1%** |
 
-More answers in fewer turns, and it is not cheap: 2.1× ripgrep's tokens on the structural set and 7.6× on the general one, at a fraction of its precision per read. repo2graph buys recall with context; the budget-matched comparison is the single-shot tables above.
+Four times the structural success rate, and it reaches an answer in one or two turns where grep
+needs three. The turn count is the number that moved most — structural went 3.1 to 1.9 — because
+sharper seed ranking puts the answer in the *first* pack more often, and a turn saved is worth
+more to an agent than a token saved. It is not cheap: 4.4× grep's tokens on the structural set and
+2.8× on the lexical one, and **grep wins precision per read on both**. repo2graph buys recall and
+turns with context; the budget-matched comparison is the single-shot tables above.
+
+For completeness, the 35+10 question set this page used to report — visible since the first
+version of these tables and therefore a regression set, not evidence — now reads 44/63/80%
+lexical against grep's 35/61/72%, and 60/80/100% structural against grep's 20/20/70%. Those are
+the better-looking numbers, which is exactly why the held-out set is the one quoted above.
 
 What it does do that grep doesn't:
 
@@ -112,9 +121,8 @@ What it does do that grep doesn't:
   that could mean several definitions is marked `ambiguous` and priced at `1/n`, not guessed.
 - **A hard ceiling.** The pack is measured, clamped and re-measured before it's returned
   (12k tokens max over MCP), so an agent can't flood its own context through this tool.
-- **PR blast radius in CI.** `repo2graph impact` reports what a diff touches: callers,
-  importers, subclasses, and the files git history says usually change alongside it
-  (`CO_CHANGE`).
+- **Reverse closures from the graph.** `repo_blast_radius` walks what depends on a symbol,
+  bounded by hop count and visit cap, with a citation per edge.
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
 Cursor's index and Claude Code's own search, including when to use those instead:
@@ -143,7 +151,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
 ```
 
 `@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
-calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli.md).
+calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 
 ## Commands
 
@@ -152,13 +160,12 @@ calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli
 | `repo2graph build <path> -o .r2g` | Parse a repo into a graph and chunks (`--incremental`, `--git-history N`) |
 | `repo2graph query "<q>" -o .r2g` | BM25 search plus one graph hop |
 | `repo2graph rag "<q>" -o .r2g` | Budget-bounded, cited context pack (`--answer` sends it to an LLM: opt-in, the only path that sends code anywhere) |
-| `repo2graph impact -i .r2g --base main` | Blast radius of a diff |
 | `repo2graph explain <edge\|node\|retrieval>` | Why an edge exists, or why a block was retrieved |
 | `repo2graph github <owner/repo> -o <dir>` | Fetch, build and clean up without a local clone |
 | `repo2graph demo` | Index a bundled example and answer the five questions above |
 | `repo2graph map`, `repo2graph stats`, `repo2graph index-status`, `repo2graph embed` | Re-render `graph.html`, report counts and freshness, add optional dense vectors |
 | `repo2graph doctor`, `repo2graph bug-report`, `repo2graph explain-path`, `repo2graph completion` | Diagnose setup, build a privacy-safe bug bundle, say why a path is (not) indexed, shell completion |
-| `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_impact`, and two status tools |
+| `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_blast_radius`, and five more |
 
 Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/python-api.md).
 
@@ -177,7 +184,16 @@ Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/py
 C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. The
 specific cases that defeat it — reflection dispatch, string-keyed registries, barrel re-exports —
 are pinned as known failures in the
-[synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins).
+[synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins), and
+per-language coverage is scored, unevenly, in
+[docs/architecture.md §4](docs/architecture.md#4-language-support).
+
+**Two of those seventeen are benchmarked on real repositories**: Python (Flask, requests,
+FastAPI) and TypeScript (Hono). Treat the rest as parsed-and-unmeasured. That is not a formality —
+the retrieval benchmark found two parse gaps in the *one* TypeScript repository as soon as it
+looked, one of which was hiding
+[Hono's entire public API](benchmarks/real/README.md#fixed-this-round), and neither would have
+been visible without a real repository to ask questions about.
 
 ## Status
 

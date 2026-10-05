@@ -25,6 +25,7 @@ from repo2graph.query import (
     NAME_TERM_BOOST,
     Index,
     count_tokens,
+    tokenize,
 )
 
 # Two of this question's content words ("order", "refund") are also subtokens of
@@ -203,3 +204,95 @@ def test_the_benchmark_task_files_stay_disjoint():
     }
     assert dev and held
     assert not (dev & held), f"held-out set shares repositories with the dev set: {dev & held}"
+
+
+# --- Interactions found by merging this change with the D2/D7 seed rules ------
+#
+# Each of the three below is a defect the merge produced and the two branches
+# could not have caught separately, because each needs one mechanism from each
+# side. They are the reason this file and `test_test_path_seeds.py` now pin the
+# *gates* on the boost rather than only its magnitude.
+
+
+@pytest.fixture
+def test_path_index(tmp_path):
+    """An implementation and a test, where the *test* name reads like the question."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "impl.py").write_text(
+        '"""Middleware chaining."""\n\n\n'
+        "def compose_middleware(handlers):\n"
+        '    """Chain every middleware handler into one callable."""\n'
+        "    return handlers\n",
+        encoding="utf8",
+    )
+    (src / "test_impl.py").write_text(
+        '"""Tests for middleware chaining."""\n\n\n'
+        "def test_middleware_chaining_runs_handlers_in_order():\n"
+        '    """Middleware chaining runs each middleware handler in order."""\n'
+        "    assert True\n",
+        encoding="utf8",
+    )
+    out = tmp_path / "idx"
+    assert main(["build", str(src), "-o", str(out)]) == 0
+    return Index(out)
+
+
+def test_a_test_definition_is_not_name_boosted(test_path_index):
+    """A test names the behaviour in the question's own words, so it collects the
+    boost more reliably than the implementation does.
+
+    `test_middleware_chaining_runs_handlers_in_order` overlaps "how are
+    middleware handlers chained together" on two terms and would take the full
+    boost; `compose_middleware`, which is the answer, overlaps on one and takes
+    half. Boosting by name and demoting by path then fight, and the boost wins
+    (2.0 * TEST_SEED_PENALTY = 1.2 still beats an unboosted source chunk), which
+    reintroduces exactly the defect `TEST_SEED_PENALTY` exists to remove.
+    """
+    query = "how are middleware handlers chained together"
+    terms = test_path_index.query_content_terms(query)
+    impl = _by_qualname(test_path_index, "compose_middleware")
+    tst = _by_qualname(test_path_index, "test_middleware_chaining_runs_handlers_in_order")
+
+    assert len(terms & set(tokenize(tst.get("qualname") or ""))) >= 2, (
+        "fixture's test name must out-overlap the implementation, or this proves nothing"
+    )
+    assert test_path_index._answerability(terms, tst) == pytest.approx(1.0)
+    assert test_path_index._answerability(terms, impl) > 1.0
+
+
+def test_a_question_about_tests_restores_the_boost(test_path_index):
+    """Withholding it is about *which answer is wanted*, not about test paths
+    being second-class. "What tests cover X" is a documented use case."""
+    terms = test_path_index.query_content_terms("what tests cover middleware chaining")
+    tst = _by_qualname(test_path_index, "test_middleware_chaining_runs_handlers_in_order")
+    assert test_path_index._answerability(terms, tst, boost_tests=True) > 1.0
+
+
+def test_a_cheap_container_is_name_boosted(tmp_path):
+    """The container rule is one rule: a container too cheap to be penalised is
+    also eligible for the boost.
+
+    Sparing a chunk the penalty and then denying it the boost is not protection
+    -- it leaves it to lose its slot to every sibling that can collect 1.5x.
+    That is what dropped `app/store.py` from the demo's "trace an order request
+    from route to persistence", the one starter question whose answer spans four
+    modules, while `CONTAINER_PENALTY_MIN_TOKENS` was doing its job.
+    """
+    src = tmp_path / "small"
+    src.mkdir()
+    (src / "persistence.py").write_text("ORDER_TABLE = 'orders'\n", encoding="utf8")
+    out = tmp_path / "small-idx"
+    assert main(["build", str(src), "-o", str(out)]) == 0
+    index = Index(out)
+    cheap = [
+        c
+        for c in index.chunks
+        if index.is_container_chunk(c) and count_tokens(c["text"]) <= CONTAINER_PENALTY_MIN_TOKENS
+    ]
+    assert cheap, "fixture must produce a cheap container chunk"
+    boosted = [c for c in cheap if index._answerability(frozenset({"persistence"}), c) > 1.0]
+    assert boosted, (
+        "no cheap container was name-boosted; names were "
+        f"{[(c.get('name'), c.get('qualname')) for c in cheap]}"
+    )

@@ -1,71 +1,71 @@
 {
   "repo2graph": {
-    "solved": 7,
+    "solved": 8,
     "total_tasks": 10,
-    "success_rate": 0.7,
-    "mean_turns_to_answer": 3.29,
-    "mean_tokens_to_answer": 4006,
-    "precision_per_read": 0.0239,
+    "success_rate": 0.8,
+    "mean_turns_to_answer": 1.5,
+    "mean_tokens_to_answer": 2189,
+    "precision_per_read": 0.124,
     "per_task": [
       {
         "task": "struct-flask-01",
         "solved": true,
-        "turns": 4,
-        "tokens": 8457
+        "turns": 1,
+        "tokens": 1985
       },
       {
         "task": "struct-flask-02",
         "solved": true,
-        "turns": 5,
-        "tokens": 1947
+        "turns": 3,
+        "tokens": 3059
       },
       {
         "task": "struct-flask-03",
         "solved": true,
-        "turns": 2,
-        "tokens": 2041
+        "turns": 1,
+        "tokens": 1657
       },
       {
         "task": "struct-requests-01",
-        "solved": true,
-        "turns": 5,
-        "tokens": 9264
+        "solved": false,
+        "turns": 3,
+        "tokens": 3164
       },
       {
         "task": "struct-requests-02",
         "solved": true,
-        "turns": 3,
-        "tokens": 2265
+        "turns": 1,
+        "tokens": 1996
       },
       {
         "task": "struct-requests-03",
         "solved": true,
         "turns": 3,
-        "tokens": 2073
+        "tokens": 3061
       },
       {
         "task": "struct-fastapi-01",
-        "solved": false,
-        "turns": 2,
-        "tokens": 46613
+        "solved": true,
+        "turns": 1,
+        "tokens": 1973
       },
       {
         "task": "struct-fastapi-02",
-        "solved": false,
-        "turns": 2,
-        "tokens": 46613
+        "solved": true,
+        "turns": 1,
+        "tokens": 1996
       },
       {
         "task": "struct-hono-01",
         "solved": true,
         "turns": 1,
-        "tokens": 1998
+        "tokens": 1786
       },
       {
         "task": "struct-hono-02",
         "solved": false,
         "turns": 1,
-        "tokens": 1990
+        "tokens": 1982
       }
     ]
   },

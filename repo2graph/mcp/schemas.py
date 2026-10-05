@@ -21,7 +21,6 @@ from .guardrails import (
     MCP_MAX_PATH_HOPS,
     MCP_MAX_PATHS,
     MCP_MAX_READ_CONTEXT,
-    MCP_MAX_SEARCH_NEIGHBOURS,
     MCP_NEIGHBOUR_LIMIT,
     MCP_PATH_HOPS,
     MCP_PATH_PATHS,
@@ -60,7 +59,6 @@ TOOL_TITLES = {
     "repo_find_symbol": "Find Symbol by Name",
     "repo_read": "Read Cited Source Window",
     "repo_path_between": "Find Path Between Nodes",
-    "repo_impact": "Analyze PR Impact",
     "repo_blast_radius": "Analyze Blast Radius",
     "repo_cache_stats": "Cache Statistics",
     "repo_build_status": "Build Task Status",
@@ -93,16 +91,6 @@ TOOL_DESCRIPTIONS = {
         "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
         "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
-    ),
-    "repo_impact": (
-        "Analyze PR or git diff impact against a base branch using the code graph. "
-        "Detects changed symbols, affected public APIs, impacted callers, test coverage, "
-        "and architectural blast radius with grounded citations. Read-only, deterministic, "
-        "zero side effects. When to use: use when assessing PR risk, planning test execution, "
-        "evaluating breaking API changes, or investigating diff blast radius. When NOT to use: "
-        "do not use for generic lexical code search (use repo_search), or to see what depends "
-        "on a single symbol with no diff in hand (use repo_blast_radius). "
-        "Output: structured markdown impact report or PR summary."
     ),
     "repo_find_symbol": (
         "Look up a symbol or file's node_id by name, for feeding into repo_neighbours, "
@@ -141,9 +129,9 @@ TOOL_DESCRIPTIONS = {
         "importers of importers of its file, and historically co-edited files, by hop "
         "distance -- the blast radius of changing it. Read-only, deterministic, zero side "
         "effects, secret files excluded. When to use: use before editing a symbol to see what "
-        "depends on it, or to answer 'what is the impact radius of changing X'. When NOT to "
-        "use: do not use for PR/diff-level risk analysis (use repo_impact) or generic search "
-        "(use repo_search). Output: JSON object with callers, subclasses, importers, "
+        "depends on it, or to answer 'what is the blast radius of changing X'. When NOT to "
+        "use: do not use for open-ended search (use repo_search) or to read a symbol's own "
+        "body (use repo_read). Output: JSON object with callers, subclasses, importers, "
         "cochange, and a summary."
     ),
     "repo_cache_stats": (
@@ -198,21 +186,15 @@ TOOL_SCHEMAS = {
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
             },
-            "neighbours": {
-                "type": "string",
-                "enum": ["full", "cite"],
-                "description": (
-                    "Neighbour rendering mode: 'full' (default) emits complete chunk text; "
-                    "'cite' emits one-line signature citations without chunk body."
-                ),
-            },
-            "max_neighbours": {
-                "type": "integer",
-                "description": (
-                    f"Maximum graph neighbour chunks to admit into context (default unbounded, "
-                    f"max {MCP_MAX_SEARCH_NEIGHBOURS})."
-                ),
-            },
+            # `neighbours` and `max_neighbours` were advertised here and are
+            # gone deliberately. Citation mode measured worse than the default
+            # on 40 held-out lexical and 40 held-out structural questions
+            # (-1/-8/-19 pp and -3/-10/-31 pp), and is dominated by turning
+            # expansion off, which costs fewer tokens for better recall. An
+            # agent picks its arguments from this schema, so advertising a
+            # dominated mode is how it gets chosen; leaving it advertised but
+            # inert would repeat the accepted-and-ignored defect that
+            # `tools.py` records having already fixed once.
         },
         "required": ["query"],
     },
@@ -239,38 +221,6 @@ TOOL_SCHEMAS = {
             },
         },
         "required": ["node_id"],
-    },
-    "repo_impact": {
-        "type": "object",
-        "properties": {
-            "base": {
-                "type": "string",
-                "description": "Base ref or branch to compare against (default 'main').",
-            },
-            "head": {
-                "type": "string",
-                "description": (
-                    "Head ref or branch to compare. Omit to compare the working tree "
-                    "(including uncommitted changes) against base."
-                ),
-            },
-            "diff": {
-                "type": "string",
-                "description": "Optional raw unified diff text. If provided, overrides git diff.",
-            },
-            "max_depth": {
-                "type": "integer",
-                "description": f"Caller traversal hops around changed symbols (default 2, max {MCP_MAX_HOPS}).",
-            },
-            "format": {
-                "type": "string",
-                "enum": ["markdown", "json", "sarif", "pr-comment"],
-                "description": (
-                    "Report format: 'markdown' (full report), 'pr-comment' (compact PR "
-                    "summary), 'json', or 'sarif' (SARIF v2.1.0). Anything else is an error."
-                ),
-            },
-        },
     },
     "repo_find_symbol": {
         "type": "object",

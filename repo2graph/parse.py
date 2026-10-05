@@ -125,6 +125,18 @@ LANG_CFG: dict[str, LangConfig] = {
             "method_definition": "method",
             "class_declaration": "class",
             "variable_declarator": "maybe_function",
+            # `class C { json = (body) => ... }` defines C.json as surely as
+            # `json() {}` does, and the idiom is everywhere in modern JS/TS
+            # because a field-bound arrow captures `this`. Without this entry the
+            # whole form produced no symbol: Hono's `context.ts` indexed its
+            # constructor and getters and not one method a caller invokes.
+            # `maybe_function` is what keeps `limit = 42` out.
+            "field_definition": "maybe_function",
+            # `export { Hono as HonoBase }` binds HonoBase, and HonoBase is the
+            # name consumers import. `maybe_alias` is what keeps the bare
+            # `export { Hono }` -- already indexed under that name -- and the
+            # `from './mod'` re-exports out. See _export_specifier_alias.
+            "export_specifier": "maybe_alias",
         },
         "call_types": {"call_expression", "new_expression"},
         "import_types": {"import_statement", "export_statement"},
@@ -267,6 +279,9 @@ LANG_CFG["typescript"]["kind_map"] = dict(
     type_alias_declaration="type",
     enum_declaration="enum",
     abstract_class_declaration="class",
+    # TypeScript's grammar names the class-field node differently from
+    # JavaScript's `field_definition`, so inheriting the map is not enough.
+    public_field_definition="maybe_function",
 )
 LANG_CFG["tsx"] = LANG_CFG["typescript"]
 LANG_CFG["cpp"] = cast(LangConfig, dict(LANG_CFG["c"]))
@@ -1081,6 +1096,83 @@ def _signature(src: bytes, node) -> str:
     return src[node.start_byte : end].decode("utf8", "replace").strip()[:300]
 
 
+# ---------- JS/TS export aliases ----------
+# A library with a private implementation behind a public façade binds the
+# public name in a second statement, and the name consumers import is the alias:
+#
+#   const _getQueryParam = (url, key) => { ... }
+#   export const getQueryParam: (...) = _getQueryParam as (...)
+#   export { Hono as HonoBase }
+#
+# Neither form produced a symbol, so `request.ts`'s `getQueryParam(this.url,
+# key)` named a callee with no node and the edge was dropped. See D7 in
+# `benchmarks/real/README.md` and `tests/test_export_aliases.py`.
+
+# `as` and `satisfies` keep the aliased expression as their first named child;
+# a parenthesised or non-null expression has only that child.
+_ALIAS_WRAPPERS = frozenset(
+    {"as_expression", "satisfies_expression", "parenthesized_expression", "non_null_expression"}
+)
+# A value that is only a *reference* renames something. Anything else -- a
+# literal, a call, a template -- is data or a computation, and `export const
+# LIMIT = 42` must stay out for the same reason `limit = 42` does.
+_ALIAS_REFERENCES = frozenset({"identifier", "member_expression", "nested_identifier"})
+
+
+def _alias_target(src: bytes, value) -> str | None:
+    """The name an exported binding's value refers to, or None if it is not a reference."""
+    # Bounded rather than recursive: `((x as T)!)` nests, but only a little, and
+    # a malformed tree must not spin here.
+    for _ in range(8):
+        if value is None:
+            return None
+        if value.type in _ALIAS_REFERENCES:
+            return _text(src, value).strip() or None
+        if value.type in _ALIAS_WRAPPERS:
+            value = value.named_children[0] if value.named_children else None
+            continue
+        return None
+    return None
+
+
+def _exported_declarator_alias(src: bytes, node) -> str | None:
+    """The target of `export const NAME = TARGET`, or None.
+
+    Only a declarator whose own statement carries the `export` keyword counts.
+    A file-local `const b = a` renames nothing a consumer can reach, and the
+    direct parent chain -- never an ancestor search -- is what keeps the fields
+    of an `export class C { foo = bar }` out of this path.
+    """
+    parent = node.parent
+    if parent is None or parent.type not in ("lexical_declaration", "variable_declaration"):
+        return None
+    grandparent = parent.parent
+    if grandparent is None or grandparent.type != "export_statement":
+        return None
+    return _alias_target(src, node.child_by_field_name("value"))
+
+
+def _export_specifier_alias(src: bytes, node) -> str | None:
+    """The new name bound by `export { TARGET as NAME }`, or None.
+
+    `export { x as y } from './mod'` is excluded: nothing is defined at that
+    line, and a barrel file of them would become dozens of one-line nodes
+    bidding against real definitions. Resolving a re-export to the file it
+    forwards to is a separate feature.
+    """
+    alias = node.child_by_field_name("alias")
+    if alias is None:
+        return None
+    stmt = node.parent
+    for _ in range(3):
+        if stmt is None or stmt.type == "export_statement":
+            break
+        stmt = stmt.parent
+    if stmt is not None and stmt.child_by_field_name("source") is not None:
+        return None
+    return _text(src, alias).strip() or None
+
+
 # Node types that hold a class's supertypes. Grammars differ: some expose them
 # through a field, others only as an unnamed child clause.
 _BASE_NODES = {
@@ -1683,9 +1775,17 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     "function",
                     "function_expression",
                 ):
-                    kind = None
+                    # Not a function, but an exported binding whose value is a
+                    # bare reference is an alias for an existing definition and
+                    # is the name consumers import.
+                    kind = "alias" if _exported_declarator_alias(source, node) else None
                 else:
                     kind = "function"
+            elif kind == "maybe_alias":
+                alias_name = _export_specifier_alias(source, node)
+                # The specifier's `name` field is the target; the symbol is the
+                # alias, so `name` has to be replaced, not just the kind.
+                name, kind = (alias_name, "alias") if alias_name else (name, None)
             if kind and lang == "kotlin" and ntype == "class_declaration":
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"

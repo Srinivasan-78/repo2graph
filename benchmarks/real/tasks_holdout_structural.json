@@ -1,0 +1,253 @@
+{
+  "_comment": "Held-out cross-file structural questions for the retrieval benchmark. Authored without reference to tasks_structural.json, against the commits pinned in repos.json. Each question's evidence provably sits in a different file from the symbol the question names.",
+  "tasks": [
+    {
+      "id": "ho-struct-flask-01",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what calls Flask.update_template_context to populate the namespace a template is rendered with",
+      "evidence": [
+        {
+          "path": "flask/templating.py",
+          "symbol": "_render",
+          "lines": [
+            126,
+            135
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-flask-02",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does Flask.send_static_file hand off to in order to actually serve a file out of the static folder",
+      "evidence": [
+        {
+          "path": "flask/helpers.py",
+          "symbol": "send_from_directory",
+          "lines": [
+            533,
+            574
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-flask-03",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does Flask.make_response use to turn a dict or list returned by a view into a response body",
+      "evidence": [
+        {
+          "path": "flask/json/provider.py",
+          "symbol": "DefaultJSONProvider.response",
+          "lines": [
+            189,
+            215
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-flask-04",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does RequestContext.push call to restore the session from the incoming cookie",
+      "evidence": [
+        {
+          "path": "flask/sessions.py",
+          "symbol": "SecureCookieSessionInterface.open_session",
+          "lines": [
+            337,
+            349
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-requests-01",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does requests Session.send hand the prepared request to for the actual HTTP transmission",
+      "evidence": [
+        {
+          "path": "requests/adapters.py",
+          "symbol": "HTTPAdapter.send",
+          "lines": [
+            590,
+            696
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-requests-02",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "where does the module-level requests.get helper end up routing the call to",
+      "evidence": [
+        {
+          "path": "requests/sessions.py",
+          "symbol": "Session.request",
+          "lines": [
+            500,
+            591
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-requests-03",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does SessionRedirectMixin.rebuild_proxies use to work out the proxy map that applies to the redirected URL",
+      "evidence": [
+        {
+          "path": "requests/utils.py",
+          "symbol": "resolve_proxies",
+          "lines": [
+            854,
+            878
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-requests-04",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does Response.iter_content use to turn streamed byte chunks into text when decode_unicode is requested",
+      "evidence": [
+        {
+          "path": "requests/utils.py",
+          "symbol": "stream_decode_response_unicode",
+          "lines": [
+            554,
+            568
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-fastapi-01",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does fastapi get_request_handler call to resolve a path operation's dependencies before the endpoint runs",
+      "evidence": [
+        {
+          "path": "dependencies/utils.py",
+          "symbol": "solve_dependencies",
+          "lines": [
+            580,
+            703
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-fastapi-02",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what calls jsonable_encoder on the value a path operation function returned",
+      "evidence": [
+        {
+          "path": "routing.py",
+          "symbol": "serialize_response",
+          "lines": [
+            219,
+            277
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-fastapi-03",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does FastAPI.openapi delegate to for building the schema document",
+      "evidence": [
+        {
+          "path": "openapi/utils.py",
+          "symbol": "get_openapi",
+          "lines": [
+            476,
+            571
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-fastapi-04",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "which coroutine does FastAPI install by default to turn a RequestValidationError into a 422 response",
+      "evidence": [
+        {
+          "path": "exception_handlers.py",
+          "symbol": "request_validation_exception_handler",
+          "lines": [
+            20,
+            26
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-hono-01",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "where do the get post and put route registration methods on a Hono app actually get defined, given the class only declares their types",
+      "evidence": [
+        {
+          "path": "hono-base.ts",
+          "symbol": "Hono.constructor",
+          "lines": [
+            122,
+            169
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-hono-02",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does Hono's dispatch use to run the matched middleware chain in order",
+      "evidence": [
+        {
+          "path": "compose.ts",
+          "symbol": "compose",
+          "lines": [
+            15,
+            73
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ho-struct-hono-03",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does HonoRequest.query use to read a single value out of the request querystring",
+      "evidence": [
+        {
+          "path": "utils/url.ts",
+          "symbol": "getQueryParam",
+          "lines": [
+            295,
+            301
+          ]
+        },
+        {
+          "path": "utils/url.ts",
+          "symbol": "_getQueryParam",
+          "lines": [
+            215,
+            293
+          ]
+        }
+      ]
+    }
+  ]
+}

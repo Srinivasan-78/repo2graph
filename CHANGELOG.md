@@ -15,10 +15,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
-- **Seeds are ranked on whether a chunk can plausibly hold an answer, and repo2graph now beats a
-  grep-then-read baseline at every budget on every benchmark set.** Lexical 30/37/48% ->
-  41/61/76% at 2k/4k/8k against grep's 35/61/72%; structural 20/70/80% -> 60/80/100% against
-  20/20/70%. The 4,000-token lexical cell is a tie, not a win.
+- **Seeds are ranked on whether a chunk can plausibly hold an answer.** On the held-out 40+40,
+  structural recall 19/25/62% -> 29/60/79% at 2k/4k/8k against grep's 14/21/38, and repo2graph
+  now spends *fewer* tokens than grep reaching it. Lexical 14/24/40% -> 17/29/45% against grep's
+  28/48/59: better, still losing. On the published 35+10 (a regression set, visible while these
+  fixes were made) lexical reads 44/63/80% against grep's 35/61/72% and structural 60/80/100%
+  against 20/20/70%.
 
   The cause was never parsing or retrieval. Measured on the 35-question set at 8,000 tokens:
   every one of the 46 evidence definitions was present in some chunk, an oracle packer fit 100%
@@ -34,17 +36,40 @@ makes keeping it current a release-blocking step rather than a good intention.
   scoring `repo2graph query` and the goldens pin. `CONTAINER_SEED_PENALTY` demotes class and
   file-residual chunks, but only above `CONTAINER_PENALTY_MIN_TOKENS`, because the cost is the
   problem and a cheap container has none. `NAME_TERM_BOOST` rewards a chunk whose declared name
-  shares content words with the question, capped at two terms and withheld from containers.
+  shares content words with the question, capped at two terms and withheld from three kinds of
+  guaranteed non-answer: bulky containers, export aliases, and -- unless the question is about
+  tests -- test definitions, which name the behaviour in the question's own words and so collect
+  the boost more reliably than the implementation does.
   `pack_context(rerank_answerability=False)` restores the 2.2 ordering.
 
-- **`benchmarks/real/tasks_holdout.json` — a held-out validation set.** 22 questions across
-  click 8.1.8 and axios 1.7.9, repositories that appear in no other task file, with every line
-  range read off the pinned commit before any retriever ran. `benchmarks/real/README.md` already
-  required that a retrieval fix "be judged on a fresh set of questions, not on these 35", and
-  the ranking change above was developed against those 35. On the held-out set it moves
-  67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58% and 67% -- having never
-  seen it. The benchmark script grew repos/tasks options to point at an alternative set, and
-  `test_the_benchmark_task_files_stay_disjoint` fails if the two sets ever share a repository.
+  Scaling the boost by the *fraction* of query terms a name covers was measured and rejected: it
+  loses 9 of 12 held-out cells. The strong multiplier earns its keep; gating which chunks are
+  eligible for it is what makes it safe.
+
+- **Two held-out sets, holding out different things.**
+  `benchmarks/real/tasks_holdout.json` is 40 lexical questions (plus 40 structural in
+  `tasks_holdout_structural_40.json`) on the same four repositories, so it tests whether a change
+  generalises to questions nobody tuned on. `benchmarks/real/tasks_holdout_repos.json` is 22
+  questions on click 8.1.8 and axios 1.7.9 -- repositories that appear in no other task file, and
+  the suite's only JavaScript -- so it tests whether a change generalises to code it never saw.
+  Every line range was read off the pinned commit before any retriever ran. On the repository set
+  the ranking change moves 67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58%
+  and 67%, having never seen it; the uncomfortable half of the same table is that graph expansion
+  adds **exactly zero** there at every budget while costing tokens. `bench_real_repos.py` grew a
+  repository-set option of its own (a benchmark script argument, not a `repo2graph` CLI flag), and
+  now drops tasks naming an unindexed repository rather than scoring them missed against an index
+  that cannot hold their evidence.
+  `test_the_benchmark_task_files_stay_disjoint` fails if the two corpora ever share a repository.
+
+- **`tests/test_bench_tables_match_artifacts.py` — published numbers are now machine-checked.**
+  Every benchmark table in `README.md`, `benchmarks/real/README.md` and `docs/comparison.md`
+  carries an HTML-comment marker naming the artifact it was read from, and the test fails if any
+  cell disagrees with that artifact, if a benchmark-shaped table carries no marker, or if a
+  referenced artifact was generated from a dirty tree. It exists because a published table had
+  silently been read off an intermediate artifact two phases old, understating two cells by
+  2.4 pp each and recording a round target as missed by 1 pp when it had passed. The 18 existing
+  doc-consistency tests check that links resolve and command lines parse, not that a number
+  matches the JSON beside it.
 
   Four ideas were tried and rejected on the evidence, recorded in that page because each looked
   obviously right beforehand: path-term boosting (worth nothing, slightly negative at 4k),
@@ -119,8 +144,9 @@ makes keeping it current a release-blocking step rather than a good intention.
     path's minimum edge confidence. `CO_CHANGE` is opt-in, never traversed by default.
   - `repo_blast_radius` — reverse reachability: the reverse `CALLS` closure by hop distance,
     reverse `INHERITS`, reverse `IMPORTS` on the containing file, and `CO_CHANGE` files by count.
-    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because `repo_impact`
-    already exists and analyses a PR diff — a different question.
+    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because at the time
+    `repo_impact` was taken by the PR-diff analyser — a different question. That tool is gone
+    (see **Removed**), but the name stays: it is the one that was shipped and documented.
 ### Security
 
 - **Grammars no longer download themselves at first build.**
@@ -142,8 +168,9 @@ makes keeping it current a release-blocking step rather than a good intention.
   "the grammar did not load" byte-identical to "this file declares nothing". A build with no
   working grammars therefore reported `parsed == files`, wrote a graph of files and directories
   with zero symbols, calls or imports, and exited 0 — and `--incremental` cached that result, so
-  the next build reproduced it without retrying. `impact` rated every PR LOW because nothing was
-  reachable. `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
+  the next build reproduced it without retrying — and every downstream query answered from that
+  empty graph as though the repository really had no callers.
+  `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
   `ParseError` when supported files were found and no grammar loaded for any of them, and the
   message names the cause and the fix rather than leaving it looking like an empty repository.
 - **`doctor`'s grammar check can now fail.** It reported `len(LANG_CFG)` grammars "configured"
@@ -227,7 +254,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
   are redacted at serve time.
 - **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
-  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `query` and `explain retrieval` (previously only MCP and `rag --answer`).
   `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
 - **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
   escaped `RecursionError` and a dropped connection.
@@ -253,8 +280,57 @@ makes keeping it current a release-blocking step rather than a good intention.
   paragraph separators as `\u2028` and `\u2029`, preventing downstream tools using `str.splitlines()`
   from desynchronizing or tearing records (#376).
 
+### Changed
+
+- **The dense-vector recommendation is now conditional, because the default caught up.** Through
+  2.2, `repo2graph embed` (the `rag` extra) added recall on both question types. Measured again
+  on the held-out 40+40 after this round's seed ranking, it adds **+12 pp of lexical recall at
+  8,000 tokens and costs 3 pp of structural** -- and 10 pp at 4,000. Nothing about the embedder
+  changed; fusing a diffuse topical signal at equal weight now dilutes a BM25 ranking that
+  structural questions, which name their symbol, had already got right. **Turn vectors on for
+  lexical questions, leave them off for structural ones.** The real fix is to pass the
+  `weights=(w_bm25, w_vec)` that `score_rrf` already accepts and `pack_context` never has, keyed
+  off the question-shape classifier that already exists for expansion direction; that is now a
+  priority rather than the speculative parameter search it looked like before.
+
+- **`DEMO_K` 6 -> 8**, matching `pack_context`'s own default and the MCP server's `repo_search`
+  default, so `repo2graph demo` shows what a caller actually gets. Sharper seed ranking promotes
+  specific function bodies over module-level residuals, which is the point of it, and the effect
+  on the demo was that `app/store.py` -- the module answering the "to persistence" half of the
+  fifth starter question -- fell just past a 6-seed cut. The demo's output grew under 1%, because
+  `DEMO_BUDGET_CHARS` is what binds.
+
 ### Fixed — indexing and call resolution
 
+- **JS/TS export aliases are symbols.** A library that keeps a private implementation behind a
+  public façade binds the public name in a second statement, and neither form produced a node:
+  `export const getQueryParam: (...) = _getQueryParam as (...)` and `export { Hono as HonoBase }`.
+  So the name every consumer writes in its `import` had no symbol, no chunk and no line range, and
+  `hono/src/request.ts`'s `getQueryParam(this.url, key)` named a callee that resolved to nothing.
+  Both forms now yield a symbol of kind `alias` spanning the alias statement's own lines, which is
+  what a citation has to point at. Two boundaries are deliberate: the binding must be *exported*
+  (a file-local `const b = a` renames nothing a consumer can reach), and `export { x as y } from
+  './mod'` is left out, because nothing is defined at that line and a barrel file of re-exports
+  would become dozens of one-line nodes bidding against real definitions. On the held-out
+  structural set this moved recall 36% → 38% at 4k and 69% → 71% at 8k with mean tokens flat,
+  which takes the lead over ripgrep to +16.7pp and +33.3pp — past the +15pp target that round
+  had recorded as missed by a point. `tests/test_export_aliases.py`.
+- **An export alias is never a seed.** Giving aliases nodes (above) also put a *rename* into seed
+  selection, and `export { module as serveStatic }` is the worst possible seed: its name is an
+  exact match for the question, and its body is one line. The single-shot recall tables could not
+  see the cost — all eighteen held-out rows were byte-identical — but the simulated agent loop
+  could: held-out structural went 15/40 → 14/40, losing *"how does the serveStatic middleware
+  decide the Content-Type header"*, whose answer is the 92-line
+  `middleware/serve-static/index.ts`. Scoring aliases down the way test paths are scored down was
+  tried first and moved nothing, because the cost was never the alias's *rank* — seeds are packed
+  in order while `fits()` holds, so at a 2,000-token budget the bigger, better-scoring seeds are
+  rejected one by one and the one-line alias fits in exactly what they could not use. A cheap
+  chunk slipping through a budget that just rejected better ones is not something a multiplier can
+  reach, so `pack_context` now skips alias chunks as seeds outright. It does **not** mark them
+  seen: graph expansion must still reach them, which is where the whole gain above comes from —
+  `utils/url.ts:295-301` enters the pack as `CALLS out of query`, not as a seed. `retrieve()`, the
+  path `repo2graph query` uses, is deliberately untouched. Restores 15/40.
+  `tests/test_alias_seeds.py`.
 - **No definition is silently dropped.** Same-name definitions in one file (overloads,
   conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
   one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
@@ -285,20 +361,13 @@ makes keeping it current a release-blocking step rather than a good intention.
   said 50); the request is kept as `cochange_requested_commits`.
 - `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
 
-### Fixed — CLI, MCP and impact
+### Fixed — CLI and MCP
 
 - **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
   manifest; `explain-path` gained `-o/--out` and reports the same rule.
 - **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
-  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  tools, git failures and bad `repo_build_status` ids. Out-of-range numbers are
   clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
-- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
-  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
-- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
-  definition line(s); a changed line is charged to its innermost symbol; a comment- or
-  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
-  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
-  not a unified diff is an error, not LOW RISK.
 - **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
   source root) and for `repo2graph github` builds (reported as not checkable, with the right
   refresh command).
@@ -307,10 +376,67 @@ makes keeping it current a release-blocking step rather than a good intention.
 - **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
   in JSON).
 - **`demo` question 4 shows the direct caller** via `explain node`.
-- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
-  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
-  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
-  `rag_extra_installed` as a boolean.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain` accepts `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `doctor` lists the files with parse
+  errors; `embed --verify-rag` reports `rag_extra_installed` as a boolean.
+
+### Removed
+
+- **`impact`, `repo_impact`, and the PR-impact workflow.** The diff-analysis surface is gone:
+  `repo2graph/impact.py`, the `impact` CLI command, the `repo_impact` MCP tool and its schema,
+  `.github/workflows/pr-impact.yml`, and the `pr-impact` inputs and outputs of the Action. With it
+  go the `--base`, `--head`, `--diff`, `--max-depth`, `--min-conf`, `--fail-on` and `--write` flags
+  of that command.
+
+  This narrows the project to one thing: retrieval. The measurements that prompted it are in
+  `benchmarks/real/` — the graph earns its keep in retrieval (on 40 held-out structural questions
+  it adds 26 pp over lexical search alone at an 8,000-token budget, and beats ripgrep at every
+  budget), whereas the diff surface was never measured at all and had drifted from its own
+  documentation: it never traversed `INHERITS` or `CO_CHANGE`, both of which the README and
+  `docs/comparison.md` described it as reporting.
+
+  **`CO_CHANGE` edges are unaffected.** They are built by `graph.py`, are still in every index,
+  and are still followed during retrieval expansion. Only the diff report that never read them is
+  gone.
+
+  Migration: there is none in-tree. A PR blast-radius check can be rebuilt on `repo_blast_radius`,
+  which survives because it answers a graph question rather than a diff question.
+
+- **The retrieval mode knobs.** Choosing a retrieval configuration is no longer a caller's job.
+  Measured on 40 held-out lexical and 40 held-out structural questions, in both the BM25 and the
+  dense configuration, none of these settings has a regime where it wins — the numbers are in
+  [`benchmarks/real/results_holdout_knobs.json`](benchmarks/real/results_holdout_knobs.json).
+
+  Two surfaces, with different compatibility stories:
+
+  - **Over MCP, the `neighbours` and `max_neighbours` parameters of `repo_search` are gone.**
+    They were advertised in the tool schema and are no longer accepted.
+  - **On the CLI, `--neighbours`/`--neighbors`, `--conditional-expansion` and
+    `--precision-first` are retired no-ops.** They still parse, so no existing command line
+    breaks, and setting one emits a `retired_flag_ignored` warning explaining that the tool now
+    decides. They do nothing.
+
+  `--neighbours=cite` is worse than the default everywhere (dense rows, 2k/4k/8k: −1/−8/−19 pp
+  lexical and −3/−10/−31 pp structural) and, more decisively, it is *dominated* by turning graph
+  expansion off altogether: at 8,000 tokens it returns 38% lexical / 45% structural for
+  5,307 / 4,396 mean tokens, against 40% / 50% for 5,083 / 4,475. Citation mode's only claim was
+  token economy, and it does not hold it on the lexical set. This is the mode the README
+  advertised as the opt-in that wins the lexical table — which it did win, on the 35 published
+  questions it was diagnosed against.
+
+  `--conditional-expansion` is an exact no-op with dense vectors — identical recall *and*
+  identical mean token counts at all three budgets — and costs 17 pp of structural recall at 8k
+  without them (52% against the default's 69%). Useless or harmful, never right. It gates
+  expansion on BM25 confidence, and a structural question names its symbol, so BM25 looks
+  confident and the graph is skipped on exactly the questions it exists for. Its verdict had
+  flipped twice on underpowered question sets before the 40-task set settled it.
+
+  `--precision-first` was only ever exercised alongside citation mode and has no independent
+  measurement, so it goes with it.
+
+  All of them survive as internal keyword arguments to `pack_context`, which is what keeps the
+  ablation rows above reproducible. What is gone is the choice presented to a caller: the tool
+  decides, because every measured setting of these knobs was worse than letting it.
 
 ### Fixed — MCP SDK, staleness and annotations
 

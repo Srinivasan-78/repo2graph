@@ -24,6 +24,8 @@ from .security import (
 )
 
 __all__ = [
+    "CALLEE_EDGE_DIRS",
+    "CALLER_EDGE_DIRS",
     "Index",
     "SECRET_CONFIG_EXTS",
     "SECRET_DIR_NAMES",
@@ -32,6 +34,9 @@ __all__ = [
     "SECRET_KEYWORDS",
     "SECRET_WORD_RE",
     "_is_secret_path",
+    "classify_query",
+    "is_test_path",
+    "edge_dirs_for",
     "format_pack",
     "is_lexical_weak",
     "read_jsonl",
@@ -147,6 +152,155 @@ DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # retrieve() passes this explicitly so that DEFAULT_EDGE_DIRS, which exists for
 # pack_context(), can never narrow what `repo2graph query` has always returned.
 ALL_EDGE_DIRS: dict[str, tuple[str, ...]] = {}
+
+# Direction filters per question shape. `expand()` has accepted `edge_dirs`
+# since it was written, but nothing derived one from the question, so every
+# query got DEFAULT_EDGE_DIRS and `CALLS` was walked both ways at once. With
+# `per_hop` slots to fill, the wrong direction arrives first about half the
+# time: "what calls prepare_request" came back with `cookiejar_from_dict` and
+# `merge_cookies` -- its callees -- and not `Session.request`, its caller, even
+# though that edge sits in the graph at confidence 1.0.
+#
+# `DEFINES` stays "in" throughout: it is how a symbol reaches its enclosing
+# file or class, which is orientation rather than a direction the question
+# chose. `IMPORTS` flips with the question because "what imports X" and "what
+# does X import" are opposite requests.
+CALLER_EDGE_DIRS: dict[str, tuple[str, ...]] = {
+    "CALLS": ("in",),
+    "DEFINES": ("in",),
+    "INHERITS": ("in",),
+    "IMPORTS": ("in",),
+}
+CALLEE_EDGE_DIRS: dict[str, tuple[str, ...]] = {
+    "CALLS": ("out",),
+    "DEFINES": ("in",),
+    "INHERITS": ("out",),
+    "IMPORTS": ("out",),
+}
+
+# Phrases that name a direction. Matched against the lowered query as whole
+# words, longest first, so "what are the callees of X" is not read as a caller
+# question by the bare word "call".
+_CALLEE_PATTERNS = (
+    r"\bcallees?\s+of\b",
+    r"\bdoes\s+\w+\s+(?:call|use|invoke|depend\s+on)\b",
+    r"\bwhat\s+does\s+.+\s+(?:call|use|invoke|depend\s+on)\b",
+    r"\b(?:call|use|invoke)s?\s+what\b",
+)
+_CALLER_PATTERNS = (
+    r"\bcallers?\s+of\b",
+    r"\b(?:what|who|which)\s+(?:\w+\s+){0,3}?(?:calls?|uses?|invokes?|imports?|references?)\b",
+    r"\bwhere\s+is\s+.+\s+(?:used|called|invoked|referenced)\b",
+    r"\bused\s+by\b",
+    r"\bdepends?\s+on\s+\w+\b",
+)
+_TRACE_PATTERNS = (
+    r"\btrace\b",
+    r"\bflows?\s+(?:from|through|to)\b",
+    r"\bfrom\s+.+\s+to\s+.+\b",
+    r"\bend\s+to\s+end\b",
+)
+# Asking *about* the tests. "What tests cover <module>" is one of the five
+# questions the README leads with, so this shape exists to switch the demotion
+# below back off rather than to turn anything on.
+_TEST_PATTERNS = (
+    r"\btests?\b",
+    r"\bspecs?\b",
+    r"\btested\b",
+    r"\btest\s+coverage\b",
+    r"\bunit\s+test",
+)
+
+# A test that exercises a thing mentions it constantly, and names the behaviour
+# in the words someone would use to ask about it, so it matches a question at
+# least as well as the implementation. On the pinned hono checkout -- whose
+# indexed src/ is 49% test chunks, because the suite sits beside the source as
+# `*.test.ts` -- test paths took 45% of seed slots and 37% of the token budget
+# at 4,000 tokens, and 8 of 10 packs held at least one test seed.
+#
+# The displacement is in the near-ties rather than the top slot: the
+# implementation scored 1.185 and a dozen tests scored 1.132. So this is a
+# tie-breaker, deliberately mild -- enough to lose a near-tie to real source,
+# never enough to bury a test that is the best answer by a distance.
+TEST_SEED_PENALTY = 0.6
+
+
+def is_test_path(path: str) -> bool:
+    """Whether a repo-relative path is test code, matched per path component.
+
+    `endswith("test.py")` is true of `latest.py`, `fastest.py` and
+    `manifest.py`, so the check is on components and known suffixes -- the bug
+    the original version of this predicate was written to fix, which is why the
+    property test in `tests/test_properties.py` pins separator invariance.
+
+    It lived in `impact.py` until that module was removed; retrieval is the only
+    remaining caller, so it lives here now.
+    """
+    parts = str(path or "").replace("\\", "/").lower().split("/")
+    if any(p in _TEST_DIR_NAMES or p.startswith("test_") for p in parts[:-1]):
+        return True
+    base = parts[-1]
+    return (
+        base in ("test.py", "conftest.py")
+        or base.startswith("test_")
+        or base.endswith(_TEST_BASENAME_SUFFIXES)
+    )
+
+
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
+_TEST_BASENAME_SUFFIXES = (
+    "_test.py",
+    "_test.go",
+    ".test.ts",
+    ".test.js",
+    ".test.tsx",
+    ".test.jsx",
+    ".spec.ts",
+    ".spec.js",
+    ".spec.tsx",
+    ".spec.jsx",
+)
+
+
+def classify_query(query: str) -> str:
+    """What shape of answer the question asks for.
+
+    Returns one of `"callers"`, `"callees"`, `"trace"` or `"concept"`.
+    `"concept"` is the default and the one that changes nothing: a question that
+    named no direction must keep following both, because narrowing it on a guess
+    would lose answers that the old behaviour found.
+
+    Callee phrasings are tested first. "What are the callees of X" contains
+    "call", so a caller pattern would otherwise claim it.
+    """
+    q = " ".join((query or "").lower().split())
+    if not q:
+        return "concept"
+    for pat in _CALLEE_PATTERNS:
+        if re.search(pat, q):
+            return "callees"
+    for pat in _CALLER_PATTERNS:
+        if re.search(pat, q):
+            return "callers"
+    for pat in _TEST_PATTERNS:
+        if re.search(pat, q):
+            return "tests"
+    for pat in _TRACE_PATTERNS:
+        if re.search(pat, q):
+            return "trace"
+    return "concept"
+
+
+def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
+    """The traversal filter a question shape implies, or None to keep the default."""
+    if shape == "callers":
+        return CALLER_EDGE_DIRS
+    if shape == "callees":
+        return CALLEE_EDGE_DIRS
+    # "trace" wants to follow a chain outward, which DEFAULT_EDGE_DIRS already
+    # does; it is kept as its own label so hops can be tuned separately later.
+    return None
+
 
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
@@ -474,6 +628,25 @@ class Index:
         scored.sort(reverse=True)
         return scored
 
+    def _demote_test_seeds(self, ranked: list[tuple[float, int]]) -> list[tuple[float, int]]:
+        """Re-rank a seed window so test files lose near-ties to real source.
+
+        Applied only when the question was not *about* tests, and only inside
+        `pack_context`: `retrieve()` must keep returning what `repo2graph query`
+        has always returned, so the penalty never reaches it.
+
+        A stable sort on the scaled score, so two chunks the penalty does not
+        separate keep the order BM25 gave them.
+        """
+        if not ranked:
+            return ranked
+        rescored = [
+            (s * TEST_SEED_PENALTY if is_test_path(self.chunks[i].get("path") or "") else s, i)
+            for s, i in ranked
+        ]
+        rescored.sort(key=lambda si: si[0], reverse=True)
+        return rescored
+
     @staticmethod
     def is_container_chunk(chunk: Mapping[str, Any]) -> bool:
         """Is this a chunk that structurally cannot hold a nested definition?
@@ -498,7 +671,13 @@ class Index:
         """The question's content words, for `_answerability`."""
         return frozenset(t for t in tokenize(query) if len(t) > 2 and t not in QUERY_STOPWORDS)
 
-    def _answerability(self, query_terms: frozenset[str], chunk: Mapping[str, Any]) -> float:
+    def _answerability(
+        self,
+        query_terms: frozenset[str],
+        chunk: Mapping[str, Any],
+        *,
+        boost_tests: bool = False,
+    ) -> float:
         """Multiplier on a chunk's fused score, from how answer-shaped it is.
 
         Deliberately a re-rank over `score_rrf`'s output rather than a change to
@@ -506,17 +685,59 @@ class Index:
         across the top of the list, so a modest multiplier here reorders
         candidates that BM25 could not separate -- without touching the lexical
         scoring that `repo2graph query` and every golden test depend on.
+
+        `boost_tests` defaults to False -- the safe case, since a question is
+        usually not about tests -- so a caller has to ask for the test boost
+        rather than get it by forgetting the argument. `pack_context` passes it
+        explicitly from the query shape. See the name-boost comment below.
         """
-        container = self.is_container_chunk(chunk)
+        # One size test governs both halves of the container rule. A container
+        # big enough to displace bodies is penalised *and* withheld from the
+        # name boost; a cheap residual is neither. Splitting the two was a
+        # defect found by the merge: `CONTAINER_PENALTY_MIN_TOKENS` spared
+        # `app/store.py`'s 91-token residual the penalty, but withholding the
+        # boost unconditionally still left it to lose its slot to every
+        # `*_order` function that could collect 1.5x -- so the demo's "trace an
+        # order request from route to persistence" stopped citing the module
+        # that holds the persistence. Protecting a chunk from the penalty and
+        # then denying it the boost is not protection.
+        bulky_container = (
+            self.is_container_chunk(chunk)
+            and count_tokens(chunk.get("text") or "") > CONTAINER_PENALTY_MIN_TOKENS
+        )
         score = 1.0
-        if container and count_tokens(chunk.get("text") or "") > CONTAINER_PENALTY_MIN_TOKENS:
+        if bulky_container:
             score *= CONTAINER_SEED_PENALTY
         # The name boost is for finding an implementation, so it is withheld
-        # from containers. Applied to them it rewards a name collision rather
-        # than an answer: on the demo fixture, "trace an order *request*"
+        # from bulky containers. Applied to them it rewards a name collision
+        # rather than an answer: on the demo fixture, "trace an order *request*"
         # promoted a test helper class literally named `Request` to rank 1,
-        # ahead of every route body the question is about.
-        if query_terms and not container:
+        # ahead of every route body the question is about. (That class is also a
+        # test path, which the rule below withholds from independently.)
+        #
+        # Export aliases are withheld for the same reason, and it is the sharper
+        # case: an alias is *nothing but* a name, so it is a guaranteed maximal
+        # name match and a guaranteed non-answer. The seed loop skips aliases
+        # outright, so boosting one cannot put it in a pack -- but it can push a
+        # real candidate out of the `k * 3` seed window, which is the one way an
+        # alias could still cost an answer after being made unseedable.
+        #
+        # Test definitions are withheld too, and this one was found by the
+        # merge: a test *names the behaviour in the question's own words*, so it
+        # collects the boost far more reliably than the implementation does.
+        # `test_middleware_chaining_runs_handlers_in_order` overlaps "how are
+        # middleware handlers chained together" on two terms and takes the full
+        # 2.0x; `compose_middleware`, which is the answer, overlaps on one and
+        # takes 1.5x. Boosting by name and demoting by path then fight, and the
+        # boost wins: 2.0 * TEST_SEED_PENALTY = 1.2 still beats an unboosted
+        # source chunk. Withholding it is what makes the two compose -- the
+        # name boost is for finding an implementation, and a test is not one.
+        if (
+            query_terms
+            and not bulky_container
+            and chunk.get("kind") != "alias"
+            and (boost_tests or not is_test_path(chunk.get("path") or ""))
+        ):
             names = tokenize(chunk.get("qualname") or chunk.get("name") or "")
             overlap = len(query_terms & set(names))
             if overlap:
@@ -921,14 +1142,22 @@ class Index:
         ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
         if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
             expand_graph = False
+        # One classification drives all three adjustments below: which chunks are
+        # answer-shaped, which seeds win slots, and which direction expansion
+        # follows.
+        shape = classify_query(query)
         # Answerability re-rank, before seeds are taken. `is_lexical_weak` above
         # reads the *lexical* distribution and so must see the unadjusted list.
         if rerank_answerability:
             terms = self.query_content_terms(query)
+            boost_tests = shape == "tests"
             ranked = (
                 sorted(
                     (
-                        (s * self._answerability(terms, self.chunks[i]), i)
+                        (
+                            s * self._answerability(terms, self.chunks[i], boost_tests=boost_tests),
+                            i,
+                        )
                         for s, i in ranked[:RERANK_CANDIDATES]
                     ),
                     key=lambda si: (-si[0], si[1]),
@@ -939,10 +1168,27 @@ class Index:
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
         seed_limit = k if precision_first else k * 3
-        for s, i in ranked[:seed_limit]:
+        seed_window = ranked[:seed_limit]
+        if shape != "tests":
+            seed_window = self._demote_test_seeds(seed_window)
+        for s, i in seed_window:
             c = self.chunks[i]
             nid = c["node_id"]
             if nid in seen_nodes:
+                continue
+            # An export alias is a rename: a correct thing to *cite* when
+            # something points at it, never a place to start reading. Scoring it
+            # down was measured and changed nothing, because the cost is not its
+            # rank -- `export { module as serveStatic }` is one line, so it fits
+            # whatever budget is left after bigger, better-scoring seeds have
+            # already been rejected by `fits()`, and a rank it keeps no matter
+            # what. So it is skipped as a seed outright.
+            #
+            # Deliberately *without* `seen_nodes.add(nid)`: graph expansion must
+            # still reach it, which is how the alias earns its keep --
+            # `utils/url.ts:295-301` enters `ho-struct-hono-03`'s pack as
+            # "CALLS out of query", not as a seed.
+            if c.get("kind") == "alias":
                 continue
             c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
             if exclude_secrets and _is_secret_path(
@@ -958,13 +1204,20 @@ class Index:
                 break
 
         graph_neighbours: list[Record] = []
+        # Follow the direction the question asked for. `retrieve()` keeps
+        # ALL_EDGE_DIRS on purpose, so `repo2graph query` is never narrowed by
+        # this; only the packed-context path routes.
+        shape_dirs = edge_dirs_for(shape)
         if expand_graph and seeds:
             if precision_first:
                 for seed_chunk in seeds:
                     if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
                         break
                     for nid, etype, direction, src in self.expand(
-                        [seed_chunk["node_id"]], hops=hops, min_confidence=min_confidence
+                        [seed_chunk["node_id"]],
+                        hops=hops,
+                        min_confidence=min_confidence,
+                        edge_dirs=shape_dirs,
                     ):
                         if nid in seen_nodes:
                             continue
@@ -990,7 +1243,10 @@ class Index:
                             break
             else:
                 for nid, etype, direction, src in self.expand(
-                    [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
+                    [c["node_id"] for c in seeds],
+                    hops=hops,
+                    min_confidence=min_confidence,
+                    edge_dirs=shape_dirs,
                 ):
                     if nid in seen_nodes:
                         continue

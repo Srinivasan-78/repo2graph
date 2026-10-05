@@ -18,7 +18,6 @@ repo2graph bug-report        privacy-preserving diagnostic bundle for an issue
 repo2graph doctor    [path]  diagnose environment, permissions, and index
 repo2graph explain-path <path> explain file inclusion/exclusion precedence
 repo2graph explain <edge|node|retrieval> explain edges, nodes, or retrieval
-repo2graph impact  [-i DIR]  analyze PR and git diff architectural blast radius
 repo2graph completion [shell] print shell completion setup script
 repo2graph version           print the version (also -v / --version)
 ```
@@ -178,8 +177,8 @@ functions around each answer come along too.
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
-| `--neighbours`, `--neighbors` | `full` | Neighbour rendering mode: `full` (default) emits complete chunk text; `cite` emits one-line signature citations without chunk body. |
-| `--conditional-expansion` | off | Expand graph neighbours only when lexical evidence is weak or ambiguous. |
+| `--neighbours`, `--neighbors` | `full` | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
+| `--conditional-expansion` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
 | `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
 | `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
 
@@ -242,9 +241,9 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--provider` | auto | `gemini`, `openai`, `anthropic` or `ollama`, only with `--answer`. |
 | `--include-secrets` | off | Include secret-looking files in the pack (and, for a source-folder target, index them). See below. |
 | `--exclude-secrets` | — | Deprecated no-op kept for old scripts; exclusion is the default. |
-| `--neighbours`, `--neighbors` | `full` | Neighbour rendering mode: `full` (default) emits complete chunk text; `cite` emits one-line signature citations without chunk body. |
-| `--conditional-expansion` | off | Expand graph neighbours only when lexical evidence is weak or ambiguous. |
-| `--precision-first` | off | Prioritize direct lexical hits in score order and only admit neighbours cited by an already-admitted chunk. |
+| `--neighbours`, `--neighbors` | `full` | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
+| `--conditional-expansion` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
+| `--precision-first` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
 | `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
@@ -597,33 +596,6 @@ secret-looking paths (`.env`, keys, credentials) out of the trace -- they are
 neither listed as candidates, walked to, nor retrieved, and the text report
 counts how many were hidden. `--include-secrets` opts back in;
 `--secret-keyword KEYWORD` and `--secret-dir DIR` (repeatable) extend the rule.
-
-
-## `impact` — PR & diff architectural impact analysis
-
-```bash
-repo2graph impact [repo] [-i <index_dir>] [--base <ref>] [--head <ref>] [--diff <file>] [--format <format>]
-```
-
-Computes the architectural blast radius of a working branch or PR against a base branch using the code graph. Intersects diff hunks with symbol spans, traverses reverse callers (`CALLS in`) and dependent modules (`IMPORTS in`), traces test coverage, and detects suspicious orphan changes or untested public APIs.
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `-i`, `-o`, `--index`, `--out <dir>` | `.r2g` | Built index directory containing `chunks.jsonl`, `nodes.jsonl`, `edges.jsonl`. |
-| `repo` (positional) | current directory | Local repository path containing git history. |
-| `--base <ref>` | `main` | Base git ref to compare against. If git fails and the repository has no `main`, the error ends with a hint to pass `--base`. |
-| `--head <ref>` | working tree | Head git ref or commit to compare; omitted, the working tree (including uncommitted changes) is compared against `--base`. |
-| `--diff <file>` | none | Path to raw unified diff file, or `-` for stdin (bypasses git). |
-| `--format <format>` | `markdown` | Output format: `markdown`, `json`, `sarif`, `pr-comment`. |
-| `--json` | off | Convenience shortcut for `--format json`. |
-| `--sarif` | off | Convenience shortcut for `--format sarif`. |
-| `--max-depth <n>` | `2` | Maximum caller traversal depth hops around changed symbols. |
-| `--min-confidence <f>`, `--min-conf <f>` | none | Minimum edge confidence filter (`0.0` - `1.0`). |
-| `--no-auto-build` | off | Fail instead of building the index when it is missing. |
-| `--include-secrets` | off | Also report changes to secret-looking paths (`.env`, keys, credentials). Excluded by default, as in `rag`/`query` and MCP `repo_impact`. |
-| `--write <path>` | none | Write output to target file path. |
-
-Full architecture, schema details, and GitHub Actions recipes are in [docs/architecture.md](architecture.md).
 
 
 ## `completion` — shell tab completion

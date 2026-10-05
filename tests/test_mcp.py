@@ -314,16 +314,18 @@ def test_tool_descriptions_stay_under_budget():
     repo_path_between, repo_blast_radius) to the original six, each of which
     needs its own sibling cross-references and when/when-not guidance to pass
     the tests below -- so the combined budget below is deliberately raised
-    from the original 3000 (six tools) to 6000 (ten tools, actual total is
-    ~5590 as of this writing): the per-tool [100, 800] cap is unchanged and
-    is what actually keeps any *one* description honest.
+    from the original 3000 (six tools) to 6000: the per-tool [100, 800] cap is
+    unchanged and is what actually keeps any *one* description honest.
+
+    `repo_impact` was removed with the rest of the diff-analysis surface, so
+    the set is nine. The combined budget is left at 6000 rather than tightened
+    to fit, because it exists to stop descriptions growing, not to pin a total.
     """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {
         "repo_map",
         "repo_search",
         "repo_neighbours",
-        "repo_impact",
         "repo_find_symbol",
         "repo_read",
         "repo_path_between",
@@ -352,11 +354,13 @@ def test_tool_descriptions_contain_usage_guidance_and_siblings():
         "repo_map": {"repo_search", "repo_neighbours"},
         "repo_search": {"repo_map", "repo_neighbours"},
         "repo_neighbours": {"repo_search", "repo_map"},
-        "repo_impact": {"repo_search"},
         "repo_find_symbol": {"repo_search", "repo_map"},
         "repo_read": {"repo_search", "repo_neighbours"},
         "repo_path_between": {"repo_neighbours", "repo_search"},
-        "repo_blast_radius": {"repo_impact", "repo_search"},
+        # `repo_blast_radius` pointed at `repo_impact` for diff-level work; with
+        # that tool removed it points at the two it can actually be confused
+        # with -- an open-ended search, and reading a symbol's own body.
+        "repo_blast_radius": {"repo_read", "repo_search"},
         "repo_cache_stats": {"repo_map", "repo_search"},
         "repo_build_status": {"repo_search", "repo_map"},
     }
@@ -1856,27 +1860,6 @@ def test_repo_build_status_problems_are_tool_errors(mini_index):
         out = mcp.dispatch(None, "repo_build_status", args, tasks=tasks)
         assert isinstance(out, mcp.ToolError), (args, tasks)
         assert json.loads(out)["error"]
-
-
-def test_repo_impact_rejects_text_that_is_not_a_diff(mini_index):
-    mcp = mcp_module()
-    out = mcp.dispatch(Index(mini_index), "repo_impact", {"diff": "not a diff at all"})
-    assert isinstance(out, mcp.ToolError)
-    assert "not a unified diff" in out
-    assert "LOW" not in out
-
-
-def test_repo_impact_sarif_is_sarif_and_unknown_formats_are_errors(mini_index):
-    mcp = mcp_module()
-    idx = Index(mini_index)
-    diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,0 +1,1 @@\n+y = 1\n"
-    sarif = json.loads(mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "sarif"}))
-    assert sarif["version"] == "2.1.0" and "runs" in sarif
-    bad = mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "html"})
-    assert isinstance(bad, mcp.ToolError)
-    for fmt in ("markdown", "json", "sarif", "pr-comment"):
-        assert fmt in bad
-    assert "sarif" in mcp.TOOL_SCHEMAS["repo_impact"]["properties"]["format"]["enum"]
 
 
 def test_tool_call_failed_exception():

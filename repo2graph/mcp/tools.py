@@ -72,7 +72,6 @@ from .traversal import (
     _reconstruct,
     _reverse_closure,
     tool_repo_blast_radius,
-    tool_repo_impact,
     tool_repo_path_between,
 )
 
@@ -115,7 +114,6 @@ __all__ = [
     "tool_cache_stats",
     "tool_repo_blast_radius",
     "tool_repo_find_symbol",
-    "tool_repo_impact",
     "tool_repo_map",
     "tool_repo_neighbours",
     "tool_repo_path_between",
@@ -216,7 +214,6 @@ def dispatch(
         if _mod
         else tool_repo_neighbours
     )
-    _impact = getattr(_mod, "tool_repo_impact", tool_repo_impact) if _mod else tool_repo_impact
     _find = (
         getattr(_mod, "tool_repo_find_symbol", tool_repo_find_symbol)
         if _mod
@@ -232,15 +229,14 @@ def dispatch(
             k=args.get("k", 8),
             hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
-            # `neighbours` and `max_neighbours` are advertised in
-            # TOOL_SCHEMAS["repo_search"] and accepted by tool_repo_search, but
-            # were never forwarded here: a client setting either got the default
-            # and no error. That made `neighbours="cite"` unreachable over MCP --
-            # the mode the README's own benchmark table reports as the best
-            # retriever at an 8k budget (5,460 vs 5,561 mean tokens). Defaults
-            # match the function's own, so omitting them stays a no-op.
-            neighbours=args.get("neighbours", "full"),
-            max_neighbours=args.get("max_neighbours"),
+            # `neighbours` and `max_neighbours` are no longer forwarded, and no
+            # longer advertised in TOOL_SCHEMAS["repo_search"] either. They were
+            # once unreachable here by accident, which was a bug; they are
+            # unreachable now on purpose, because citation mode measured worse
+            # than the default on both held-out sets and is dominated by
+            # `expand_graph=False`. A client that still sends either gets the
+            # default, which is now the better configuration rather than an
+            # arbitrary one.
         )
     elif name == "repo_neighbours":
         result = _neighbours(
@@ -248,15 +244,6 @@ def dispatch(
             str(args.get("node_id") or ""),
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
-        )
-    elif name == "repo_impact":
-        result = _impact(
-            index,
-            base=str(args.get("base") or "main"),
-            head=str(args.get("head") or "") or None,
-            diff=str(args.get("diff") or ""),
-            max_depth=args.get("max_depth", 2),
-            format=str(args.get("format") or "markdown"),
         )
     elif name == "repo_find_symbol":
         result = _find(

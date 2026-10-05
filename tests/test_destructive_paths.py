@@ -5,9 +5,10 @@
 """Writing an index must never delete something that is not an index.
 
 `dump_all`'s directory swap renames the target aside and then `rmtree`s it.
-`build` hardens its `-o` with `validate_outdir` first, but the three *implicit*
-builds -- `impact`'s, `rag <src>`'s and the MCP server's -- reached the same
-swap without it, so `repo2graph rag . -o .` deleted the working tree.
+`build` hardens its `-o` with `validate_outdir` first, but the *implicit*
+builds reached the same swap without it, so `repo2graph rag . -o .` deleted the
+working tree. There were three of them; `impact`'s went with that command, and
+`rag <src>`'s and the MCP server's are covered below.
 
 Separately, `repo2graph-mcp` with no arguments inferred the repository from the
 process's working directory. Claude Desktop and Cursor do not inherit a project
@@ -30,7 +31,7 @@ def _mcp():
 
 
 # --------------------------------------------------------------------------
-# rag <src> and impact auto-builds validate their output directory
+# the implicit builds validate their output directory
 # --------------------------------------------------------------------------
 
 
@@ -56,14 +57,28 @@ def test_rag_refuses_to_auto_build_over_a_foreign_directory(tmp_path):
     assert (foreign / "notes.txt").read_text(encoding="utf8") == "do not delete"
 
 
-def test_impact_refuses_to_auto_build_over_a_foreign_directory(tmp_path):
+def test_mcp_refuses_to_auto_build_over_a_foreign_directory(tmp_path):
+    """The server's auto-build is the third implicit build and the last one left.
+
+    It raises `ValueError`, not `SystemExit`: this runs inside a live stdio
+    server, which must answer the tool call rather than exit the process. A
+    `SystemExit` here would take the client's whole session down.
+    """
     repo = write_simple_repo(tmp_path)
     foreign = tmp_path / "docs"
     foreign.mkdir()
     (foreign / "readme.txt").write_text("keep", encoding="utf8")
-    with pytest.raises(SystemExit):
-        main(["impact", str(repo), "-i", str(foreign), "--base", "HEAD"])
-    assert (foreign / "readme.txt").is_file()
+    with pytest.raises(ValueError):
+        _mcp()._build_index(repo, foreign)
+    assert (foreign / "readme.txt").read_text(encoding="utf8") == "keep"
+
+
+def test_mcp_auto_build_into_a_dedicated_directory_still_works(tmp_path):
+    """The guard must not break the ordinary path."""
+    repo = write_simple_repo(tmp_path)
+    out = tmp_path / ".r2g"
+    _mcp()._build_index(repo, out)
+    assert (out / "agent" / "chunks.jsonl").is_file()
 
 
 def test_rag_auto_build_into_a_dedicated_directory_still_works(tmp_path):

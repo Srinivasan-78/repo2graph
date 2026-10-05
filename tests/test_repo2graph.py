@@ -2458,7 +2458,11 @@ def test_chunk_caps_and_residual_span(tmp_path):
     residual = next((c for c in chunks if c["type"] == "file_residual"), None)
     assert residual is not None
     assert residual["start_line"] == 1
-    assert residual["end_line"] == 10
+    # 9, not 10. The file's last content line is 9; the trailing newline makes a
+    # tenth, empty line that the residual body does not contain, and a citation
+    # must not claim a line it does not show. `scripts/validate_tasks.py` rejects
+    # an evidence range that ends past EOF for the same reason.
+    assert residual["end_line"] == 9
 
 
 # ---------- follow-up audit round: newly found defects ----------

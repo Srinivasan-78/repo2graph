@@ -244,12 +244,21 @@ Seventeen languages get symbol-level treatment; every other file is still indexe
 Coverage is not uniform across them, and the differences are large enough that "supported"
 on its own would mislead.
 
+The scorecard below is computed from this project's own test corpus. **Only two of the seventeen
+are additionally measured on third-party repositories** — Python and TypeScript, in
+[`benchmarks/real/`](../benchmarks/real/README.md) — and the gap between those two kinds of
+evidence is not small. Both parse defects found in the 2026-10 retrieval round
+(class fields holding functions; export aliases having no node) sat in the single TypeScript
+repository in that corpus, scored Tier 1 at 82 (B) here, and were invisible to the synthetic
+suite. A high row below means "the patterns we thought to write a test for work", not "this
+language has been exercised against real code".
+
 <!-- BEGIN GENERATED: language-scorecard -->
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
-| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 0 funcs |
-| **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 2 funcs |
+| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
+| **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 5 funcs |
 | **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 8 funcs |
 | **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 3 funcs |
 | **java** | Tier 2 | **67 (C+)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 30 (F) | 20 (F) | 1 funcs |
@@ -318,7 +327,6 @@ Sizes are a rough guide to where the complexity is, not a target.
 | Module | Lines | Owns |
 |---|---:|---|
 | `cli.py` | 1,985 | Argument parsing and every subcommand. The widest module by fan-out. |
-| `impact.py` | 1,435 | PR and diff blast-radius analysis. |
 | `mcp/` | 2,421 | The MCP server, split by concern — see below. |
 | `answer.py` | 521 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 364 | `explain edge` / `node` / `retrieval`. |
@@ -327,7 +335,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `traversal.py` | 493 | `repo_path_between`, `repo_impact`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
+| `traversal.py` | 377 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
 | `schemas.py` | 408 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
 | `server.py` | 340 | Server lifecycle, stdio connection, SDK version gate. |
 | `retrieval.py` | 314 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |

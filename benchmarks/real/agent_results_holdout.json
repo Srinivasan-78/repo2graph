@@ -1,0 +1,502 @@
+{
+  "repo2graph": {
+    "solved": 8,
+    "total_tasks": 40,
+    "success_rate": 0.2,
+    "mean_turns_to_answer": 1.38,
+    "mean_tokens_to_answer": 2070,
+    "precision_per_read": 0.2169,
+    "per_task": [
+      {
+        "task": "ho-flask-01",
+        "solved": false,
+        "turns": 5,
+        "tokens": 2900
+      },
+      {
+        "task": "ho-flask-02",
+        "solved": false,
+        "turns": 3,
+        "tokens": 3998
+      },
+      {
+        "task": "ho-flask-03",
+        "solved": false,
+        "turns": 3,
+        "tokens": 3338
+      },
+      {
+        "task": "ho-flask-04",
+        "solved": false,
+        "turns": 5,
+        "tokens": 11163
+      },
+      {
+        "task": "ho-flask-05",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1885
+      },
+      {
+        "task": "ho-flask-06",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2986
+      },
+      {
+        "task": "ho-flask-07",
+        "solved": true,
+        "turns": 4,
+        "tokens": 2885
+      },
+      {
+        "task": "ho-flask-08",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1982
+      },
+      {
+        "task": "ho-flask-09",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1913
+      },
+      {
+        "task": "ho-flask-10",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1995
+      },
+      {
+        "task": "ho-requests-01",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1988
+      },
+      {
+        "task": "ho-requests-02",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3855
+      },
+      {
+        "task": "ho-requests-03",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1995
+      },
+      {
+        "task": "ho-requests-04",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1974
+      },
+      {
+        "task": "ho-requests-05",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4756
+      },
+      {
+        "task": "ho-requests-06",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1981
+      },
+      {
+        "task": "ho-requests-07",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4224
+      },
+      {
+        "task": "ho-requests-08",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1999
+      },
+      {
+        "task": "ho-requests-09",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1980
+      },
+      {
+        "task": "ho-requests-10",
+        "solved": false,
+        "turns": 3,
+        "tokens": 3097
+      },
+      {
+        "task": "ho-fastapi-01",
+        "solved": false,
+        "turns": 5,
+        "tokens": 7966
+      },
+      {
+        "task": "ho-fastapi-02",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3651
+      },
+      {
+        "task": "ho-fastapi-03",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3742
+      },
+      {
+        "task": "ho-fastapi-04",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2780
+      },
+      {
+        "task": "ho-fastapi-05",
+        "solved": false,
+        "turns": 1,
+        "tokens": 1983
+      },
+      {
+        "task": "ho-fastapi-06",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4627
+      },
+      {
+        "task": "ho-fastapi-07",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3141
+      },
+      {
+        "task": "ho-fastapi-08",
+        "solved": false,
+        "turns": 5,
+        "tokens": 8627
+      },
+      {
+        "task": "ho-fastapi-09",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4615
+      },
+      {
+        "task": "ho-fastapi-10",
+        "solved": false,
+        "turns": 3,
+        "tokens": 3650
+      },
+      {
+        "task": "ho-hono-01",
+        "solved": false,
+        "turns": 3,
+        "tokens": 8737
+      },
+      {
+        "task": "ho-hono-02",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3045
+      },
+      {
+        "task": "ho-hono-03",
+        "solved": true,
+        "turns": 1,
+        "tokens": 1934
+      },
+      {
+        "task": "ho-hono-04",
+        "solved": false,
+        "turns": 4,
+        "tokens": 4050
+      },
+      {
+        "task": "ho-hono-05",
+        "solved": false,
+        "turns": 5,
+        "tokens": 4897
+      },
+      {
+        "task": "ho-hono-06",
+        "solved": false,
+        "turns": 4,
+        "tokens": 2550
+      },
+      {
+        "task": "ho-hono-07",
+        "solved": false,
+        "turns": 4,
+        "tokens": 4036
+      },
+      {
+        "task": "ho-hono-08",
+        "solved": false,
+        "turns": 5,
+        "tokens": 13158
+      },
+      {
+        "task": "ho-hono-09",
+        "solved": false,
+        "turns": 5,
+        "tokens": 3161
+      },
+      {
+        "task": "ho-hono-10",
+        "solved": false,
+        "turns": 2,
+        "tokens": 2051
+      }
+    ]
+  },
+  "ripgrep": {
+    "solved": 7,
+    "total_tasks": 40,
+    "success_rate": 0.175,
+    "mean_turns_to_answer": 3.0,
+    "mean_tokens_to_answer": 740,
+    "precision_per_read": 0.8915,
+    "per_task": [
+      {
+        "task": "ho-flask-01",
+        "solved": true,
+        "turns": 2,
+        "tokens": 431
+      },
+      {
+        "task": "ho-flask-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1672
+      },
+      {
+        "task": "ho-flask-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1774
+      },
+      {
+        "task": "ho-flask-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2015
+      },
+      {
+        "task": "ho-flask-05",
+        "solved": true,
+        "turns": 3,
+        "tokens": 805
+      },
+      {
+        "task": "ho-flask-06",
+        "solved": true,
+        "turns": 3,
+        "tokens": 785
+      },
+      {
+        "task": "ho-flask-07",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1822
+      },
+      {
+        "task": "ho-flask-08",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1789
+      },
+      {
+        "task": "ho-flask-09",
+        "solved": true,
+        "turns": 3,
+        "tokens": 760
+      },
+      {
+        "task": "ho-flask-10",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1578
+      },
+      {
+        "task": "ho-requests-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1557
+      },
+      {
+        "task": "ho-requests-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1881
+      },
+      {
+        "task": "ho-requests-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1418
+      },
+      {
+        "task": "ho-requests-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1554
+      },
+      {
+        "task": "ho-requests-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1194
+      },
+      {
+        "task": "ho-requests-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1491
+      },
+      {
+        "task": "ho-requests-07",
+        "solved": true,
+        "turns": 4,
+        "tokens": 916
+      },
+      {
+        "task": "ho-requests-08",
+        "solved": true,
+        "turns": 3,
+        "tokens": 770
+      },
+      {
+        "task": "ho-requests-09",
+        "solved": true,
+        "turns": 3,
+        "tokens": 712
+      },
+      {
+        "task": "ho-requests-10",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1700
+      },
+      {
+        "task": "ho-fastapi-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2191
+      },
+      {
+        "task": "ho-fastapi-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 2047
+      },
+      {
+        "task": "ho-fastapi-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1926
+      },
+      {
+        "task": "ho-fastapi-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1671
+      },
+      {
+        "task": "ho-fastapi-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1810
+      },
+      {
+        "task": "ho-fastapi-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1567
+      },
+      {
+        "task": "ho-fastapi-07",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1621
+      },
+      {
+        "task": "ho-fastapi-08",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1339
+      },
+      {
+        "task": "ho-fastapi-09",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1615
+      },
+      {
+        "task": "ho-fastapi-10",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1542
+      },
+      {
+        "task": "ho-hono-01",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1250
+      },
+      {
+        "task": "ho-hono-02",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1315
+      },
+      {
+        "task": "ho-hono-03",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1315
+      },
+      {
+        "task": "ho-hono-04",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1594
+      },
+      {
+        "task": "ho-hono-05",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1508
+      },
+      {
+        "task": "ho-hono-06",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1280
+      },
+      {
+        "task": "ho-hono-07",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1567
+      },
+      {
+        "task": "ho-hono-08",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1962
+      },
+      {
+        "task": "ho-hono-09",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1339
+      },
+      {
+        "task": "ho-hono-10",
+        "solved": false,
+        "turns": 6,
+        "tokens": 1516
+      }
+    ]
+  }
+}

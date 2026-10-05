@@ -30,21 +30,29 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
   `repo2graph/mcp/guardrails.py`, clamped in the handler). An agent cannot flood its own context
   through this tool.
 - **Every block carries a citation**, so a wrong answer shows you where it went wrong.
-- **It runs headless in CI.** The GitHub Action and `repo2graph impact` report a PR's blast radius
-  (callers, importers, subclasses, and the files git history says usually change with it) with
-  no model and no account.
+- **It runs headless in CI.** The GitHub Action builds and publishes an index with no model
+  and no account. (A `repo2graph impact` command used to report a PR's blast radius here; it was
+  removed, having never been benchmarked and having drifted from this description -- it never
+  traversed `INHERITS` or `CO_CHANGE`.)
 - **`CO_CHANGE`**: files that keep changing together, mined from git. No parser can see this.
 - **Zero-infrastructure.** No graph database, no language server, no embedding service, no
-  network call on the default path.
+  network call on the default path. This is a deliberate trade, and its measured price is now
+  smaller than it was and no longer one-directional: the optional dense-vector path
+  (`pip install "repo2graph[rag]"`, which does download a model) is worth **+12 pp of lexical
+  recall at 8,000 tokens and costs 3 pp of structural recall**, because fusing a diffuse topical
+  signal at equal weight dilutes a BM25 ranking that structural questions had already got right
+  ([the dense result](../benchmarks/real/README.md#the-dense-result)). So the offline default is
+  not merely the cheaper choice any more; on structural questions it is the better one.
 
 **Where it is not different:** retrieval quality on lexical questions. On code it did not write,
-repo2graph's cited packs find *less* of the answer than grep at the same budget — 30/41/52%
-against 35/61/72% at 2k/4k/8k tokens
+and on 40 questions it was not tuned against, repo2graph's cited packs find *less* of the answer
+than grep at the same budget — 17/29/45% against 28/48/59% at 2k/4k/8k tokens
 ([numbers and diagnosis](../benchmarks/real/README.md)). Graph expansion earns its keep on
-cross-file structural questions, where it reaches 70% at 4,000 tokens against grep's 20%, but
-that advantage is 0 pp at 2,000 tokens and 10 pp at 8,000, and it is measured over 10 tasks. If
-raw recall on ordinary questions is what you need today, a good agent with grep (or Serena, for
-exact references) is the better choice.
+cross-file structural questions, where it leads grep by +15/+39/+41 pp over the same budgets, by
+24 pp over its own lexical-only ablation at 8,000 tokens, and does it for fewer tokens than grep
+spends. If raw recall on ordinary questions
+is what you need today, a good agent with grep (or Serena, for exact references) is the better
+choice.
 
 ## The axis that matters: what comes back from a query
 
