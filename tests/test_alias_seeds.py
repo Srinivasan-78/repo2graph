@@ -37,7 +37,7 @@ import pytest
 
 from conftest import build_mini_index  # type: ignore[import-not-found]
 
-from repo2graph.query import Index
+from repo2graph.query import Index, tokenize
 
 # The real definition, in the file a reader wants, and deliberately long enough
 # that it cannot share a small budget with much else.
@@ -157,3 +157,27 @@ def test_non_alias_seeds_are_unaffected(alias_index: Index) -> None:
     seed_kinds = {str(c.get("kind") or "") for c in pack["seeds"]}
     assert seed_kinds, f"no seeds at all; chunks were {len(pack['chunks'])}"
     assert seed_kinds - {"alias"}, f"only aliases seeded, which cannot be right: {seed_kinds}"
+
+
+def test_an_alias_is_never_name_boosted(alias_index: Index) -> None:
+    """Found by merging the alias skip with answerability re-ranking.
+
+    An alias is *nothing but* a name, so it collects `NAME_TERM_BOOST` more
+    reliably than any real definition can: here its name is literally the
+    query's strongest term. The seed loop skips aliases, so a boosted alias
+    cannot reach a pack -- but the re-rank window is `k * 3`, and an alias
+    hauled up it pushes a real candidate out. That is the one way an alias can
+    still cost an answer after being made unseedable.
+    """
+    terms = alias_index.query_content_terms(QUERY)
+    aliases = [c for c in alias_index.chunks if c.get("kind") == "alias"]
+    assert aliases, "fixture produced no alias chunk"
+    boostable = [c for c in aliases if terms & set(tokenize(c.get("name") or ""))]
+    assert boostable, (
+        "fixture's aliases share no term with the query, so this proves nothing: "
+        f"{[c.get('name') for c in aliases]}"
+    )
+    for c in boostable:
+        assert alias_index._answerability(terms, c) == pytest.approx(1.0), (
+            f"alias {c.get('name')!r} was name-boosted"
+        )

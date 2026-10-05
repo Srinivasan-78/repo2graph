@@ -57,6 +57,7 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -71,7 +72,7 @@ STOPWORDS = frozenset(
     "a an and are as at be by does do for from get gets how in into is it its like "
     "of on or the their then to up what when where which who why with".split()
 )
-RG_TYPES = {"python": "py", "typescript": "ts"}
+RG_TYPES = {"python": "py", "typescript": "ts", "javascript": "js"}
 
 
 def source_version(root: Path = ROOT) -> str:
@@ -262,6 +263,13 @@ def main(argv: list[str] | None = None) -> int:
         help="also embed each index and measure the dense-fusion rows. Needs the `rag` extra; "
         "downloads nothing if the sentence-transformers model is already cached.",
     )
+    ap.add_argument(
+        "--repos",
+        type=Path,
+        default=BENCH / "repos.json",
+        help="repository set (default: benchmarks/real/repos.json). A held-out *repository* set "
+        "is a stronger test than held-out questions on the same repositories.",
+    )
     args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
     if shutil.which(rg[0]) is None:
@@ -274,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
 
         embedder = default_embedder()
 
-    repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
+    repos = {r["name"]: r for r in json.loads(args.repos.read_text(encoding="utf8"))["repos"]}
     tasks = json.loads(args.tasks.read_text(encoding="utf8"))["tasks"]
     args.cache.mkdir(parents=True, exist_ok=True)
 
@@ -299,6 +307,27 @@ def main(argv: list[str] | None = None) -> int:
         if structural_tasks_path.exists()
         else []
     )
+
+    # A task set and a repository set are chosen independently, so a task can
+    # name a repository this run did not index -- running the default structural
+    # set against `--repos repos_holdout.json` is the obvious way in. Scoring it
+    # anyway would mark every such question missed against an index that never
+    # contained its evidence, which reads as a retrieval regression. Drop them
+    # instead, and say so: a silently smaller denominator is the other way this
+    # goes wrong.
+    def for_indexed_repos(ts: list[dict[str, Any]], label: str) -> list[dict[str, Any]]:
+        keep = [t for t in ts if t["repo"] in repos]
+        if len(keep) != len(ts):
+            dropped = sorted({t["repo"] for t in ts if t["repo"] not in repos})
+            print(
+                f"note: {len(ts) - len(keep)} of {len(ts)} {label} tasks skipped -- "
+                f"not in {args.repos.name}: {', '.join(dropped)}",
+                file=sys.stderr,
+            )
+        return keep
+
+    tasks = for_indexed_repos(tasks, "lexical")
+    structural_tasks = for_indexed_repos(structural_tasks, "structural")
     structural_rows = []
 
     for t in tasks:

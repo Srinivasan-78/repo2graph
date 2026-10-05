@@ -1,0 +1,373 @@
+{
+  "_comment": "Held-out *repository* set: 22 questions on click and axios, which appear in no other task file and in no index any retrieval change in this project was developed against. This is the stronger of the two held-out axes -- tasks_holdout.json holds out the questions while reusing the four repositories, so it tests whether a change generalises to new questions; this set tests whether it generalises to new codebases, including one in a language (JavaScript) that no other set covers. Run it with --repos benchmarks/real/repos_holdout.json; the structural sets name symbols in the other four repositories and are skipped automatically.",
+  "tasks": [
+    {
+      "id": "click-01",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how does the command decorator turn a plain function into a command object",
+      "evidence": [
+        {
+          "path": "click/decorators.py",
+          "symbol": "command",
+          "lines": [
+            167,
+            246
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-02",
+      "repo": "click",
+      "kind": "concept",
+      "query": "where are command line arguments split into options and positional arguments",
+      "evidence": [
+        {
+          "path": "click/parser.py",
+          "symbol": "OptionParser.parse_args",
+          "lines": [
+            328,
+            344
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-03",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how is a subcommand name looked up and resolved for a group",
+      "evidence": [
+        {
+          "path": "click/core.py",
+          "symbol": "MultiCommand.resolve_command",
+          "lines": [
+            1731,
+            1756
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-04",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how does click ask the user for input interactively at the terminal",
+      "evidence": [
+        {
+          "path": "click/termui.py",
+          "symbol": "prompt",
+          "lines": [
+            79,
+            187
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-05",
+      "repo": "click",
+      "kind": "concept",
+      "query": "where is a parameter value converted and validated against its declared type",
+      "evidence": [
+        {
+          "path": "click/core.py",
+          "symbol": "Parameter.type_cast_value",
+          "lines": [
+            2298,
+            2347
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-06",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how does an option fall back to reading an environment variable",
+      "evidence": [
+        {
+          "path": "click/core.py",
+          "symbol": "Option.resolve_envvar_value",
+          "lines": [
+            2901,
+            2918
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-07",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how is help text wrapped to the terminal width",
+      "evidence": [
+        {
+          "path": "click/formatting.py",
+          "symbol": "wrap_text",
+          "lines": [
+            29,
+            99
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-08",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how does the test runner capture stdout and stderr while a command runs",
+      "evidence": [
+        {
+          "path": "click/testing.py",
+          "symbol": "CliRunner.isolation",
+          "lines": [
+            208,
+            351
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-09",
+      "repo": "click",
+      "kind": "concept",
+      "query": "where does click work out the program name to show in the usage line",
+      "evidence": [
+        {
+          "path": "click/utils.py",
+          "symbol": "_detect_program_name",
+          "lines": [
+            520,
+            572
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-10",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how is a usage error printed to the user with the usage line",
+      "evidence": [
+        {
+          "path": "click/exceptions.py",
+          "symbol": "UsageError.show",
+          "lines": [
+            71,
+            91
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-11",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how does a path parameter check that the file or directory exists",
+      "evidence": [
+        {
+          "path": "click/types.py",
+          "symbol": "Path.convert",
+          "lines": [
+            857,
+            932
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-12",
+      "repo": "click",
+      "kind": "concept",
+      "query": "how are shell completion candidates produced for a partially typed word",
+      "evidence": [
+        {
+          "path": "click/shell_completion.py",
+          "symbol": "_resolve_incomplete",
+          "lines": [
+            559,
+            603
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-13",
+      "repo": "click",
+      "kind": "trace",
+      "query": "trace what happens from calling a command to the user callback being invoked",
+      "evidence": [
+        {
+          "path": "click/core.py",
+          "symbol": "BaseCommand.main",
+          "lines": [
+            1014,
+            1125
+          ]
+        },
+        {
+          "path": "click/core.py",
+          "symbol": "Command.invoke",
+          "lines": [
+            1432,
+            1443
+          ]
+        }
+      ]
+    },
+    {
+      "id": "click-14",
+      "repo": "click",
+      "kind": "relationship",
+      "query": "what calls resolve_command",
+      "evidence": [
+        {
+          "path": "click/core.py",
+          "symbol": "MultiCommand.invoke",
+          "lines": [
+            1663,
+            1729
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-01",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how does axios run request and response interceptors around a request",
+      "evidence": [
+        {
+          "path": "core/Axios.js",
+          "symbol": "Axios._request",
+          "lines": [
+            65,
+            191
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-02",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "where is the adapter called and the response data transformed",
+      "evidence": [
+        {
+          "path": "core/dispatchRequest.js",
+          "symbol": "dispatchRequest",
+          "lines": [
+            34,
+            81
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-03",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how are two request config objects merged together",
+      "evidence": [
+        {
+          "path": "core/mergeConfig.js",
+          "symbol": "mergeConfig",
+          "lines": [
+            17,
+            106
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-04",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how does axios decide whether to resolve or reject based on the http status code",
+      "evidence": [
+        {
+          "path": "core/settle.js",
+          "symbol": "settle",
+          "lines": [
+            14,
+            27
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-05",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how is an interceptor registered and later removed",
+      "evidence": [
+        {
+          "path": "core/InterceptorManager.js",
+          "symbol": "InterceptorManager.use",
+          "lines": [
+            18,
+            26
+          ]
+        },
+        {
+          "path": "core/InterceptorManager.js",
+          "symbol": "InterceptorManager.eject",
+          "lines": [
+            35,
+            39
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-06",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how are query parameters serialized and appended to the url",
+      "evidence": [
+        {
+          "path": "helpers/buildURL.js",
+          "symbol": "buildURL",
+          "lines": [
+            33,
+            69
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-07",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how is a relative url combined with the configured baseURL",
+      "evidence": [
+        {
+          "path": "core/buildFullPath.js",
+          "symbol": "buildFullPath",
+          "lines": [
+            16,
+            21
+          ]
+        }
+      ]
+    },
+    {
+      "id": "axios-08",
+      "repo": "axios",
+      "kind": "concept",
+      "query": "how is form data converted into a plain json object",
+      "evidence": [
+        {
+          "path": "helpers/formDataToJSON.js",
+          "symbol": "formDataToJSON",
+          "lines": [
+            49,
+            93
+          ]
+        }
+      ]
+    }
+  ]
+}
