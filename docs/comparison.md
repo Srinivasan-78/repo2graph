@@ -30,9 +30,10 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
   `repo2graph/mcp/guardrails.py`, clamped in the handler). An agent cannot flood its own context
   through this tool.
 - **Every block carries a citation**, so a wrong answer shows you where it went wrong.
-- **It runs headless in CI.** The GitHub Action and `repo2graph impact` report a PR's blast radius
-  (callers, importers, subclasses, and the files git history says usually change with it) with
-  no model and no account.
+- **It runs headless in CI.** The GitHub Action builds and publishes an index with no model
+  and no account. (A `repo2graph impact` command used to report a PR's blast radius here; it was
+  removed, having never been benchmarked and having drifted from this description -- it never
+  traversed `INHERITS` or `CO_CHANGE`.)
 - **`CO_CHANGE`**: files that keep changing together, mined from git. No parser can see this.
 - **Zero-infrastructure.** No graph database, no language server, no embedding service, no
   network call on the default path.

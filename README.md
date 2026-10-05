@@ -90,9 +90,8 @@ What it does do that grep doesn't:
   that could mean several definitions is marked `ambiguous` and priced at `1/n`, not guessed.
 - **A hard ceiling.** The pack is measured, clamped and re-measured before it's returned
   (12k tokens max over MCP), so an agent can't flood its own context through this tool.
-- **PR blast radius in CI.** `repo2graph impact` reports what a diff touches: callers,
-  importers, subclasses, and the files git history says usually change alongside it
-  (`CO_CHANGE`).
+- **Reverse closures from the graph.** `repo_blast_radius` walks what depends on a symbol,
+  bounded by hop count and visit cap, with a citation per edge.
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
 Cursor's index and Claude Code's own search, including when to use those instead:
@@ -121,7 +120,7 @@ Cursor's index and Claude Code's own search, including when to use those instead
 ```
 
 `@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
-calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli.md).
+calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 
 ## Commands
 
@@ -130,13 +129,12 @@ calls an LLM. Inputs, outputs and the PR-impact workflow: [docs/cli.md](docs/cli
 | `repo2graph build <path> -o .r2g` | Parse a repo into a graph and chunks (`--incremental`, `--git-history N`) |
 | `repo2graph query "<q>" -o .r2g` | BM25 search plus one graph hop |
 | `repo2graph rag "<q>" -o .r2g` | Budget-bounded, cited context pack (`--answer` sends it to an LLM: opt-in, the only path that sends code anywhere) |
-| `repo2graph impact -i .r2g --base main` | Blast radius of a diff |
 | `repo2graph explain <edge\|node\|retrieval>` | Why an edge exists, or why a block was retrieved |
 | `repo2graph github <owner/repo> -o <dir>` | Fetch, build and clean up without a local clone |
 | `repo2graph demo` | Index a bundled example and answer the five questions above |
 | `repo2graph map`, `repo2graph stats`, `repo2graph index-status`, `repo2graph embed` | Re-render `graph.html`, report counts and freshness, add optional dense vectors |
 | `repo2graph doctor`, `repo2graph bug-report`, `repo2graph explain-path`, `repo2graph completion` | Diagnose setup, build a privacy-safe bug bundle, say why a path is (not) indexed, shell completion |
-| `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_impact`, and two status tools |
+| `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_blast_radius`, and five more |
 
 Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/python-api.md).
 

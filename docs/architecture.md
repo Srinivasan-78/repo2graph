@@ -318,7 +318,6 @@ Sizes are a rough guide to where the complexity is, not a target.
 | Module | Lines | Owns |
 |---|---:|---|
 | `cli.py` | 1,985 | Argument parsing and every subcommand. The widest module by fan-out. |
-| `impact.py` | 1,435 | PR and diff blast-radius analysis. |
 | `mcp/` | 2,421 | The MCP server, split by concern — see below. |
 | `answer.py` | 521 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 364 | `explain edge` / `node` / `retrieval`. |
@@ -327,7 +326,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `traversal.py` | 493 | `repo_path_between`, `repo_impact`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
+| `traversal.py` | 377 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
 | `schemas.py` | 408 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
 | `server.py` | 340 | Server lifecycle, stdio connection, SDK version gate. |
 | `retrieval.py` | 314 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |

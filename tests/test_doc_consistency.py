@@ -417,14 +417,15 @@ def test_integration_guides_quote_the_real_mcp_bounds():
             "the guide publishes these ceilings as a contract with the reader"
         )
 
-    # "The ten tools" is a heading in that guide; every tool must appear under
+    # "The nine tools" is a heading in that guide; every tool must appear under
     # it. The count is spelled out in prose, so it cannot be derived from
     # TOOL_DESCRIPTIONS here -- that would compare the docs to nothing and pass
-    # for any number. Bump both together when a tool is added.
-    assert len(TOOL_DESCRIPTIONS) == 10, (
-        f"mcp.md says 'The ten tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
+    # for any number. Bump both together when a tool is added or removed; it
+    # went from ten to nine when the `repo_impact` surface was removed.
+    assert len(TOOL_DESCRIPTIONS) == 9, (
+        f"mcp.md says 'The nine tools' but mcp.py exposes {len(TOOL_DESCRIPTIONS)}"
     )
-    assert "The ten tools" in text, "docs/mcp.md's tool-list heading no longer states the count"
+    assert "The nine tools" in text, "docs/mcp.md's tool-list heading no longer states the count"
     for tool in TOOL_DESCRIPTIONS:
         assert tool in text, f"MCP tool '{tool}' is missing from docs/mcp.md"
 
@@ -462,7 +463,8 @@ def test_cli_doc_tables_cover_every_flag_of_the_retrieval_commands():
     originally covered here were the ones that had drifted once, and `rag` then
     drifted silently because nothing checked it.
     """
-    for command in ("build", "query", "rag", "impact"):
+    # `impact` was in this list until that command was removed.
+    for command in ("build", "query", "rag"):
         section = _cli_doc_section(command)
         missing = sorted(
             f

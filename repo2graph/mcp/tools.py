@@ -72,7 +72,6 @@ from .traversal import (
     _reconstruct,
     _reverse_closure,
     tool_repo_blast_radius,
-    tool_repo_impact,
     tool_repo_path_between,
 )
 
@@ -115,7 +114,6 @@ __all__ = [
     "tool_cache_stats",
     "tool_repo_blast_radius",
     "tool_repo_find_symbol",
-    "tool_repo_impact",
     "tool_repo_map",
     "tool_repo_neighbours",
     "tool_repo_path_between",
@@ -216,7 +214,6 @@ def dispatch(
         if _mod
         else tool_repo_neighbours
     )
-    _impact = getattr(_mod, "tool_repo_impact", tool_repo_impact) if _mod else tool_repo_impact
     _find = (
         getattr(_mod, "tool_repo_find_symbol", tool_repo_find_symbol)
         if _mod
@@ -247,15 +244,6 @@ def dispatch(
             str(args.get("node_id") or ""),
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
-        )
-    elif name == "repo_impact":
-        result = _impact(
-            index,
-            base=str(args.get("base") or "main"),
-            head=str(args.get("head") or "") or None,
-            diff=str(args.get("diff") or ""),
-            max_depth=args.get("max_depth", 2),
-            format=str(args.get("format") or "markdown"),
         )
     elif name == "repo_find_symbol":
         result = _find(

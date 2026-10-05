@@ -35,6 +35,7 @@ __all__ = [
     "SECRET_WORD_RE",
     "_is_secret_path",
     "classify_query",
+    "is_test_path",
     "edge_dirs_for",
     "format_pack",
     "is_lexical_weak",
@@ -165,11 +166,16 @@ _TEST_PATTERNS = (
 TEST_SEED_PENALTY = 0.6
 
 
-def _is_test_path(path: str) -> bool:
+def is_test_path(path: str) -> bool:
     """Whether a repo-relative path is test code, matched per path component.
 
     `endswith("test.py")` is true of `latest.py`, `fastest.py` and
-    `manifest.py`, so the check is on components and known suffixes.
+    `manifest.py`, so the check is on components and known suffixes -- the bug
+    the original version of this predicate was written to fix, which is why the
+    property test in `tests/test_properties.py` pins separator invariance.
+
+    It lived in `impact.py` until that module was removed; retrieval is the only
+    remaining caller, so it lives here now.
     """
     parts = str(path or "").replace("\\", "/").lower().split("/")
     if any(p in _TEST_DIR_NAMES or p.startswith("test_") for p in parts[:-1]):
@@ -575,7 +581,7 @@ class Index:
         if not ranked:
             return ranked
         rescored = [
-            (s * TEST_SEED_PENALTY if _is_test_path(self.chunks[i].get("path") or "") else s, i)
+            (s * TEST_SEED_PENALTY if is_test_path(self.chunks[i].get("path") or "") else s, i)
             for s, i in ranked
         ]
         rescored.sort(key=lambda si: si[0], reverse=True)

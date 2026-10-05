@@ -268,10 +268,31 @@ makes keeping it current a release-blocking step rather than a good intention.
 - **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
   in JSON).
 - **`demo` question 4 shows the direct caller** via `explain node`.
-- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
-  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
-  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
-  `rag_extra_installed` as a boolean.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain` accepts `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `doctor` lists the files with parse
+  errors; `embed --verify-rag` reports `rag_extra_installed` as a boolean.
+
+### Removed
+
+- **`impact`, `repo_impact`, and the PR-impact workflow.** The diff-analysis surface is gone:
+  `repo2graph/impact.py`, the `impact` CLI command, the `repo_impact` MCP tool and its schema,
+  `.github/workflows/pr-impact.yml`, and the `pr-impact` inputs and outputs of the Action. With it
+  go the `--base`, `--head`, `--diff`, `--max-depth`, `--min-conf`, `--fail-on` and `--write` flags
+  of that command.
+
+  This narrows the project to one thing: retrieval. The measurements that prompted it are in
+  `benchmarks/real/` — the graph earns its keep in retrieval (on 40 held-out structural questions
+  it adds 26 pp over lexical search alone at an 8,000-token budget, and beats ripgrep at every
+  budget), whereas the diff surface was never measured at all and had drifted from its own
+  documentation: it never traversed `INHERITS` or `CO_CHANGE`, both of which the README and
+  `docs/comparison.md` described it as reporting.
+
+  **`CO_CHANGE` edges are unaffected.** They are built by `graph.py`, are still in every index,
+  and are still followed during retrieval expansion. Only the diff report that never read them is
+  gone.
+
+  Migration: there is none in-tree. A PR blast-radius check can be rebuilt on `repo_blast_radius`,
+  which survives because it answers a graph question rather than a diff question.
 
 ### Fixed — MCP SDK, staleness and annotations
 

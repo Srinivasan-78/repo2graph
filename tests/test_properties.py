@@ -43,7 +43,7 @@ from repo2graph.chunks import MAX_CHARS, _keepends_lf, _lines, _split
 from repo2graph.events import encodable
 from repo2graph.fetch import parse_ref, parse_spec
 from repo2graph.graph import _incomplete_utf8_tail
-from repo2graph.impact import is_test_path
+from repo2graph.query import is_test_path
 from repo2graph.parse import explain_path
 from repo2graph.security import _is_secret_path, redact_content
 
