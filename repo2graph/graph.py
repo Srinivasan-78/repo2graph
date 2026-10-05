@@ -1060,7 +1060,12 @@ def _read_and_parse(item):
 # PHP `Foo::bar()` calls, so an incremental build would disagree with a full one.
 # Chunked files also re-key children per slice (a duplicate's children used to
 # attach to the first same-name definition), which changes cached parent_key.
-PARSE_CACHE_FORMAT = 8
+# 9: JS/TS export aliases are symbols of kind "alias" (`export const public =
+# _private as T`, `export { Hono as HonoBase }`). A format-8 entry has none of
+# them, so an incremental build would restore a file with fewer nodes than a
+# full build gives it -- and every call to the aliased name would stay
+# unresolved on the incremental side only.
+PARSE_CACHE_FORMAT = 9
 
 # Languages where a bare call inside a method is a call on the implicit
 # `this` (`g()` inside `A.g` is `this.g()`). Elsewhere (Python, JS, Go, Rust,

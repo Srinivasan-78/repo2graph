@@ -218,6 +218,19 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed — indexing and call resolution
 
+- **JS/TS export aliases are symbols.** A library that keeps a private implementation behind a
+  public façade binds the public name in a second statement, and neither form produced a node:
+  `export const getQueryParam: (...) = _getQueryParam as (...)` and `export { Hono as HonoBase }`.
+  So the name every consumer writes in its `import` had no symbol, no chunk and no line range, and
+  `hono/src/request.ts`'s `getQueryParam(this.url, key)` named a callee that resolved to nothing.
+  Both forms now yield a symbol of kind `alias` spanning the alias statement's own lines, which is
+  what a citation has to point at. Two boundaries are deliberate: the binding must be *exported*
+  (a file-local `const b = a` renames nothing a consumer can reach), and `export { x as y } from
+  './mod'` is left out, because nothing is defined at that line and a barrel file of re-exports
+  would become dozens of one-line nodes bidding against real definitions. On the held-out
+  structural set this moved recall 36% → 38% at 4k and 69% → 71% at 8k with mean tokens flat,
+  which takes the lead over ripgrep to +16.7pp and +33.3pp — past the +15pp target that round
+  had recorded as missed by a point. `tests/test_export_aliases.py`.
 - **No definition is silently dropped.** Same-name definitions in one file (overloads,
   conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
   one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
