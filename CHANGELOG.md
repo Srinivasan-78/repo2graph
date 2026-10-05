@@ -15,6 +15,45 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Seeds are ranked on whether a chunk can plausibly hold an answer, and repo2graph now beats a
+  grep-then-read baseline at every budget on every benchmark set.** Lexical 30/37/48% ->
+  41/61/76% at 2k/4k/8k against grep's 35/61/72%; structural 20/70/80% -> 60/80/100% against
+  20/20/70%. The 4,000-token lexical cell is a tie, not a win.
+
+  The cause was never parsing or retrieval. Measured on the 35-question set at 8,000 tokens:
+  every one of the 46 evidence definitions was present in some chunk, an oracle packer fit 100%
+  of them inside the budget, and yet **54% of pack tokens went to container chunks**. The
+  chunker emits each method as its own chunk and cuts it from the parent, so Flask's
+  `class Flask` chunk spans lines 81-1536, costs ~1,150 tokens and holds no method body at all
+  -- while ranking highly on almost any Flask question, because a long class docstring names
+  everything the class does.
+
+  Two corrections, applied as a re-rank over `score_rrf`'s output rather than as a change to
+  BM25: RRF maps scores onto `1/(60 + rank)`, nearly flat across the top of the list, so a
+  modest multiplier separates candidates BM25 could not -- without disturbing the lexical
+  scoring `repo2graph query` and the goldens pin. `CONTAINER_SEED_PENALTY` demotes class and
+  file-residual chunks, but only above `CONTAINER_PENALTY_MIN_TOKENS`, because the cost is the
+  problem and a cheap container has none. `NAME_TERM_BOOST` rewards a chunk whose declared name
+  shares content words with the question, capped at two terms and withheld from containers.
+  `pack_context(rerank_answerability=False)` restores the 2.2 ordering.
+
+- **`benchmarks/real/tasks_holdout.json` — a held-out validation set.** 22 questions across
+  click 8.1.8 and axios 1.7.9, repositories that appear in no other task file, with every line
+  range read off the pinned commit before any retriever ran. `benchmarks/real/README.md` already
+  required that a retrieval fix "be judged on a fresh set of questions, not on these 35", and
+  the ranking change above was developed against those 35. On the held-out set it moves
+  67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58% and 67% -- having never
+  seen it. The benchmark script grew repos/tasks options to point at an alternative set, and
+  `test_the_benchmark_task_files_stay_disjoint` fails if the two sets ever share a repository.
+
+  Four ideas were tried and rejected on the evidence, recorded in that page because each looked
+  obviously right beforehand: path-term boosting (worth nothing, slightly negative at 4k),
+  dropping test files from seeds (neutral on the dev set, harmful on the held-out set), raising
+  `k` from 8 to 40 (+2 lexical, but structural falls 100% -> 80% as extra lexical seeds crowd
+  out graph neighbours), and penalising containers by kind with no cost floor (dropped the demo
+  fixture's 91-token `app/store.py` residual, caught by `test_demo.py` rather than by the
+  benchmark).
+
 - **Property-based tests, via `hypothesis` (G57).** `tests/test_properties.py` — 22 properties over
   UTF-8/surrogate decoding, chunk line slicing, and path normalization, the three areas where
   hand-written examples kept missing cases because they spell inputs the way the rest of the

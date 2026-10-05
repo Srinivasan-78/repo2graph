@@ -72,6 +72,65 @@ IDENT_BOOST = 2.5
 RRF_K = 60
 RRF_CANDIDATES = 50
 
+# --- Answerability re-ranking, applied to pack_context's seed candidates -----
+#
+# BM25 ranks a chunk by how much of the question it matches. A *container* chunk
+# matches a lot of any question about its contents -- a class docstring is long
+# and names everything the class does -- while being, structurally, the one kind
+# of chunk that cannot contain the answer: the chunker emits each method as its
+# own chunk and cuts them out of the parent, so Flask's `class Flask` chunk
+# spans lines 81-1536, costs ~1,150 tokens, and holds not one method body.
+#
+# Measured on `benchmarks/real/`: container chunks took 54% of pack tokens while
+# every evidence definition in the suite was present in some chunk and an oracle
+# packer fit 100% of them inside 8,000 tokens. The loss was never retrieval or
+# parsing; it was which chunks got the budget.
+#
+# Penalty rather than exclusion: when the question really is "where is class X
+# defined", the container chunk *is* the answer, and at a budget with room to
+# spare it should still arrive. 0.15 is deep enough that it never outranks a
+# body chunk that matched anything.
+CONTAINER_SEED_PENALTY = 0.15
+
+# ...and only once the container is big enough for its presence to cost
+# something. The penalty exists because a container crowds bodies out of the
+# budget, which a small one does not do: the demo fixture's `app/store.py`
+# residual is 91 tokens, names the module that answers "trace a request to
+# persistence", and displaces nothing. Flask's `class Flask` is 1,144 tokens
+# and displaces four method bodies. Penalising both equally dropped the cheap
+# pointer for no budget saved -- caught by `test_demo.py`, not by the
+# benchmark, because a 22-question suite does not ask "which file is this in".
+CONTAINER_PENALTY_MIN_TOKENS = 200
+
+# A chunk whose declared name shares content words with the question is more
+# likely to be the definition being asked about: "how are two config objects
+# merged" against `mergeConfig`. `_boost_identifiers` already rewards an *exact*
+# identifier match, which only fires when the asker already knows the symbol's
+# name; this rewards partial overlap after subtoken splitting, which is what a
+# question phrased in prose actually produces. Capped at two matching terms so a
+# long qualname cannot accumulate an unbounded bonus.
+NAME_TERM_BOOST = 2.0
+NAME_TERM_CAP = 2
+
+# How deep into the fused ranking the re-rank reaches. Everything below this is
+# left in its original order: the adjustment is a tie-break among plausible
+# candidates, not a licence to haul a chunk up from rank 400 on a name match.
+RERANK_CANDIDATES = 120
+
+# `k` stays at 8. Raising it to 40 fills the budget with more lexical seeds and
+# buys +2 points on the lexical set, but costs the structural set 100% -> 80% at
+# 8,000 tokens: the extra seeds crowd out the graph neighbours those questions
+# are answered by. The budget is better spent on one hop of expansion than on
+# the ninth-best lexical match.
+
+# Question words carry no evidence about which definition answers a question,
+# and several ("get", "set") collide with extremely common method names.
+QUERY_STOPWORDS = frozenset(
+    """a an and are as at be by can do does for from get has have how in into is it its
+    make not of on or out set should that the their them then there these this to up
+    use used uses using was what when where which who why will with would you your""".split()
+)
+
 # Which directions of an edge are useful when expanding from a node:
 # callees and callers for CALLS, the defining parent for DEFINES, the base
 # class for INHERITS, the imported module for IMPORTS.
@@ -414,6 +473,56 @@ class Index:
         scored = [(s, i) for i, s in acc.items() if s]
         scored.sort(reverse=True)
         return scored
+
+    @staticmethod
+    def is_container_chunk(chunk: Mapping[str, Any]) -> bool:
+        """Is this a chunk that structurally cannot hold a nested definition?
+
+        Two kinds qualify, and both for the same reason -- the chunker emits
+        their members as separate chunks and cuts them out of the parent, so
+        what is left is a header, a docstring and metadata:
+
+        * a `class` chunk, whose methods are their own chunks;
+        * a `file:` residual, which is whatever a file has left once its
+          symbols have been extracted.
+
+        They are genuine navigation aids and they are the right answer to
+        "where is class X defined". They are the wrong place to spend a seed
+        slot on "how does X work", which is what `CONTAINER_SEED_PENALTY`
+        corrects.
+        """
+        return chunk.get("kind") == "class" or str(chunk.get("node_id", "")).startswith("file:")
+
+    @staticmethod
+    def query_content_terms(query: str) -> frozenset[str]:
+        """The question's content words, for `_answerability`."""
+        return frozenset(t for t in tokenize(query) if len(t) > 2 and t not in QUERY_STOPWORDS)
+
+    def _answerability(self, query_terms: frozenset[str], chunk: Mapping[str, Any]) -> float:
+        """Multiplier on a chunk's fused score, from how answer-shaped it is.
+
+        Deliberately a re-rank over `score_rrf`'s output rather than a change to
+        BM25 itself: RRF maps scores onto `1/(60 + rank)`, which is nearly flat
+        across the top of the list, so a modest multiplier here reorders
+        candidates that BM25 could not separate -- without touching the lexical
+        scoring that `repo2graph query` and every golden test depend on.
+        """
+        container = self.is_container_chunk(chunk)
+        score = 1.0
+        if container and count_tokens(chunk.get("text") or "") > CONTAINER_PENALTY_MIN_TOKENS:
+            score *= CONTAINER_SEED_PENALTY
+        # The name boost is for finding an implementation, so it is withheld
+        # from containers. Applied to them it rewards a name collision rather
+        # than an answer: on the demo fixture, "trace an order *request*"
+        # promoted a test helper class literally named `Request` to rank 1,
+        # ahead of every route body the question is about.
+        if query_terms and not container:
+            names = tokenize(chunk.get("qualname") or chunk.get("name") or "")
+            overlap = len(query_terms & set(names))
+            if overlap:
+                scale = min(overlap, NAME_TERM_CAP) / NAME_TERM_CAP
+                score *= 1.0 + (NAME_TERM_BOOST - 1.0) * scale
+        return score
 
     def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
         """Apply multiplier to BM25 scores for chunks matching query identifier names."""
@@ -767,6 +876,7 @@ class Index:
         max_neighbours: int | None = None,
         conditional_expansion: bool = False,
         precision_first: bool = False,
+        rerank_answerability: bool = True,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -791,6 +901,9 @@ class Index:
                 evidence is weak or ambiguous.
             precision_first: If True, prioritizes direct lexical hits in score order and
                 only admits neighbours cited by an already-admitted chunk.
+            rerank_answerability: Re-rank seed candidates by how answer-shaped
+                they are before taking the top `k` -- see `_answerability`.
+                Pass False for the pre-2.3 ordering.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
@@ -808,6 +921,20 @@ class Index:
         ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
         if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
             expand_graph = False
+        # Answerability re-rank, before seeds are taken. `is_lexical_weak` above
+        # reads the *lexical* distribution and so must see the unadjusted list.
+        if rerank_answerability:
+            terms = self.query_content_terms(query)
+            ranked = (
+                sorted(
+                    (
+                        (s * self._answerability(terms, self.chunks[i]), i)
+                        for s, i in ranked[:RERANK_CANDIDATES]
+                    ),
+                    key=lambda si: (-si[0], si[1]),
+                )
+                + ranked[RERANK_CANDIDATES:]
+            )
 
         seeds: list[Record] = []
         seen_nodes: set[str] = set()

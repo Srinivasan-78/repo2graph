@@ -1,0 +1,7 @@
+{
+  "_comment": "Repositories for the held-out validation set in tasks_holdout.json. Deliberately disjoint from repos.json: a change developed against Flask/requests/FastAPI/Hono has to be judged on code it was not shaped by. `root` is the directory indexed and searched; every task path is relative to it.",
+  "repos": [
+    {"name": "click", "url": "https://github.com/pallets/click", "ref": "8.1.8", "sha": "934813e4d421071a1b3db3973c02fe2721359a6e", "root": "src", "language": "python"},
+    {"name": "axios", "url": "https://github.com/axios/axios", "ref": "v1.7.9", "sha": "b2cb45d5a533a5465c99559b16987e4d5fc08cbc", "root": "lib", "language": "javascript"}
+  ]
+}
