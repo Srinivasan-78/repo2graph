@@ -140,6 +140,61 @@ _TRACE_PATTERNS = (
     r"\bfrom\s+.+\s+to\s+.+\b",
     r"\bend\s+to\s+end\b",
 )
+# Asking *about* the tests. "What tests cover <module>" is one of the five
+# questions the README leads with, so this shape exists to switch the demotion
+# below back off rather than to turn anything on.
+_TEST_PATTERNS = (
+    r"\btests?\b",
+    r"\bspecs?\b",
+    r"\btested\b",
+    r"\btest\s+coverage\b",
+    r"\bunit\s+test",
+)
+
+# A test that exercises a thing mentions it constantly, and names the behaviour
+# in the words someone would use to ask about it, so it matches a question at
+# least as well as the implementation. On the pinned hono checkout -- whose
+# indexed src/ is 49% test chunks, because the suite sits beside the source as
+# `*.test.ts` -- test paths took 45% of seed slots and 37% of the token budget
+# at 4,000 tokens, and 8 of 10 packs held at least one test seed.
+#
+# The displacement is in the near-ties rather than the top slot: the
+# implementation scored 1.185 and a dozen tests scored 1.132. So this is a
+# tie-breaker, deliberately mild -- enough to lose a near-tie to real source,
+# never enough to bury a test that is the best answer by a distance.
+TEST_SEED_PENALTY = 0.6
+
+
+def _is_test_path(path: str) -> bool:
+    """Whether a repo-relative path is test code, matched per path component.
+
+    `endswith("test.py")` is true of `latest.py`, `fastest.py` and
+    `manifest.py`, so the check is on components and known suffixes.
+    """
+    parts = str(path or "").replace("\\", "/").lower().split("/")
+    if any(p in _TEST_DIR_NAMES or p.startswith("test_") for p in parts[:-1]):
+        return True
+    base = parts[-1]
+    return (
+        base in ("test.py", "conftest.py")
+        or base.startswith("test_")
+        or base.endswith(_TEST_BASENAME_SUFFIXES)
+    )
+
+
+_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
+_TEST_BASENAME_SUFFIXES = (
+    "_test.py",
+    "_test.go",
+    ".test.ts",
+    ".test.js",
+    ".test.tsx",
+    ".test.jsx",
+    ".spec.ts",
+    ".spec.js",
+    ".spec.tsx",
+    ".spec.jsx",
+)
 
 
 def classify_query(query: str) -> str:
@@ -162,6 +217,9 @@ def classify_query(query: str) -> str:
     for pat in _CALLER_PATTERNS:
         if re.search(pat, q):
             return "callers"
+    for pat in _TEST_PATTERNS:
+        if re.search(pat, q):
+            return "tests"
     for pat in _TRACE_PATTERNS:
         if re.search(pat, q):
             return "trace"
@@ -503,6 +561,25 @@ class Index:
         scored = [(s, i) for i, s in acc.items() if s]
         scored.sort(reverse=True)
         return scored
+
+    def _demote_test_seeds(self, ranked: list[tuple[float, int]]) -> list[tuple[float, int]]:
+        """Re-rank a seed window so test files lose near-ties to real source.
+
+        Applied only when the question was not *about* tests, and only inside
+        `pack_context`: `retrieve()` must keep returning what `repo2graph query`
+        has always returned, so the penalty never reaches it.
+
+        A stable sort on the scaled score, so two chunks the penalty does not
+        separate keep the order BM25 gave them.
+        """
+        if not ranked:
+            return ranked
+        rescored = [
+            (s * TEST_SEED_PENALTY if _is_test_path(self.chunks[i].get("path") or "") else s, i)
+            for s, i in ranked
+        ]
+        rescored.sort(key=lambda si: si[0], reverse=True)
+        return rescored
 
     def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
         """Apply multiplier to BM25 scores for chunks matching query identifier names."""
@@ -900,8 +977,14 @@ class Index:
 
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
+        # One classification drives both halves of the routing: which seeds win
+        # slots, and which direction expansion follows.
+        shape = classify_query(query)
         seed_limit = k if precision_first else k * 3
-        for s, i in ranked[:seed_limit]:
+        seed_window = ranked[:seed_limit]
+        if shape != "tests":
+            seed_window = self._demote_test_seeds(seed_window)
+        for s, i in seed_window:
             c = self.chunks[i]
             nid = c["node_id"]
             if nid in seen_nodes:
@@ -923,7 +1006,6 @@ class Index:
         # Follow the direction the question asked for. `retrieve()` keeps
         # ALL_EDGE_DIRS on purpose, so `repo2graph query` is never narrowed by
         # this; only the packed-context path routes.
-        shape = classify_query(query)
         shape_dirs = edge_dirs_for(shape)
         if expand_graph and seeds:
             if precision_first:
