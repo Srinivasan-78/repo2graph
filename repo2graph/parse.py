@@ -125,6 +125,13 @@ LANG_CFG: dict[str, LangConfig] = {
             "method_definition": "method",
             "class_declaration": "class",
             "variable_declarator": "maybe_function",
+            # `class C { json = (body) => ... }` defines C.json as surely as
+            # `json() {}` does, and the idiom is everywhere in modern JS/TS
+            # because a field-bound arrow captures `this`. Without this entry the
+            # whole form produced no symbol: Hono's `context.ts` indexed its
+            # constructor and getters and not one method a caller invokes.
+            # `maybe_function` is what keeps `limit = 42` out.
+            "field_definition": "maybe_function",
         },
         "call_types": {"call_expression", "new_expression"},
         "import_types": {"import_statement", "export_statement"},
@@ -267,6 +274,9 @@ LANG_CFG["typescript"]["kind_map"] = dict(
     type_alias_declaration="type",
     enum_declaration="enum",
     abstract_class_declaration="class",
+    # TypeScript's grammar names the class-field node differently from
+    # JavaScript's `field_definition`, so inheriting the map is not enough.
+    public_field_definition="maybe_function",
 )
 LANG_CFG["tsx"] = LANG_CFG["typescript"]
 LANG_CFG["cpp"] = cast(LangConfig, dict(LANG_CFG["c"]))
