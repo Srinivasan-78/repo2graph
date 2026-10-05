@@ -73,13 +73,13 @@ From [`results_holdout_final.json`](results_holdout_final.json). 40 lexical ques
 | Budget | Retriever | Evidence found | Fully answered | Any evidence | Mean tokens |
 |---:|---|---:|---:|---:|---:|
 | 2,000 | repo2graph | 16% | 7 / 40 | 8 / 40 | 1,979 |
-| 2,000 | repo2graph-bm25 | 16% | 7 / 40 | 8 / 40 | 1,858 |
+| 2,000 | repo2graph-bm25 | 16% | 7 / 40 | 8 / 40 | 1,863 |
 | 2,000 | ripgrep | **28%** | **12 / 40** | **15 / 40** | 1,966 |
-| 4,000 | repo2graph | 26% | 11 / 40 | 13 / 40 | 3,970 |
-| 4,000 | repo2graph-bm25 | 26% | 11 / 40 | 13 / 40 | 3,680 |
+| 4,000 | repo2graph | 26% | 11 / 40 | 13 / 40 | 3,971 |
+| 4,000 | repo2graph-bm25 | 26% | 11 / 40 | 13 / 40 | 3,679 |
 | 4,000 | ripgrep | **48%** | **19 / 40** | **23 / 40** | 3,945 |
-| 8,000 | repo2graph | 43% | 17 / 40 | 20 / 40 | 7,962 |
-| 8,000 | repo2graph-bm25 | 38% | 16 / 40 | 19 / 40 | 5,551 |
+| 8,000 | repo2graph | 43% | 17 / 40 | 20 / 40 | 7,958 |
+| 8,000 | repo2graph-bm25 | 38% | 16 / 40 | 19 / 40 | 5,550 |
 | 8,000 | ripgrep | **59%** | **24 / 40** | **26 / 40** | 7,806 |
 
 40 structural questions — evidence that provably spans cross-file dependency edges, which is
@@ -87,22 +87,22 @@ what graph expansion exists for:
 
 | Budget | Retriever | Evidence found | Fully answered | Mean tokens |
 |---:|---|---:|---:|---:|
-| 2,000 | repo2graph | **17%** | **6 / 40** | 1,960 |
+| 2,000 | repo2graph | **17%** | **6 / 40** | 1,962 |
 | 2,000 | repo2graph-bm25 | 14% | 6 / 40 | 1,813 |
 | 2,000 | ripgrep | 14% | 6 / 40 | 1,972 |
-| 4,000 | repo2graph | **36%** | **14 / 40** | 3,864 |
-| 4,000 | repo2graph-bm25 | 29% | 12 / 40 | 3,485 |
+| 4,000 | repo2graph | **38%** | **14 / 40** | 3,864 |
+| 4,000 | repo2graph-bm25 | 29% | 12 / 40 | 3,487 |
 | 4,000 | ripgrep | 21% | 9 / 40 | 3,975 |
-| 8,000 | repo2graph | **69%** | **28 / 40** | 7,210 |
-| 8,000 | repo2graph-bm25 | 43% | 18 / 40 | 4,798 |
+| 8,000 | repo2graph | **71%** | **28 / 40** | 7,210 |
+| 8,000 | repo2graph-bm25 | 43% | 18 / 40 | 4,800 |
 | 8,000 | ripgrep | 38% | 16 / 40 | 7,978 |
 
 Three things this says:
 
-- **Graph expansion is the product, and it is measurable.** It adds +3 / +7 / +26 pp over BM25
+- **Graph expansion is the product, and it is measurable.** It adds +3 / +9 / +28 pp over BM25
   alone on structural questions, and the 8,000-token row is the clearest result on this page:
-  69% against 43%. On lexical questions it adds nothing until 8k, where it adds 5 pp.
-- **repo2graph beats grep on structural questions at every budget** (+2 / +14 / +31 pp). No
+  71% against 43%. On lexical questions it adds nothing until 8k, where it adds 5 pp.
+- **repo2graph beats grep on structural questions at every budget** (+3 / +17 / +33 pp). No
   earlier version of this page could say that; at 2,000 tokens the two used to tie.
 - **It still loses on lexical questions at every budget** (−12 / −22 / −15 pp). This is the
   unresolved result, and 4,000 tokens is the worst of it.
@@ -113,7 +113,7 @@ Per repository, to show that neither result is uniform (evidence recall, 2k / 4k
 |---|---|---|---|---|
 | flask | 36 / 36 / 64% | **57 / 79 / 79%** | 18 / 27 / 73% | **36 / 45** / 73% |
 | requests | 21 / 50 / **71%** | 21 / **43** / 64% | 10 / 20 / **90%** | 0 / 20 / 50% |
-| hono | 7 / 20 / 27% | **20 / 27 / 33%** | **36 / 64 / 64%** | 9 / 9 / 18% |
+| hono | 7 / 20 / 27% | **20 / 27 / 33%** | **36 / 73 / 73%** | 9 / 9 / 18% |
 | fastapi | 0 / 0 / 13% | **13 / 47 / 60%** | 0 / **30 / 50%** | 10 / 10 / 10% |
 
 **fastapi is the worst repository in the corpus by a wide margin** — 13% lexical recall at 8,000
@@ -164,14 +164,15 @@ Measured on the held-out set.
 | | Target | Before | After | |
 |---|---|---|---|---|
 | **T1** lexical gap to grep, every budget | ≥ −5 pp | −14 / −24 / −19 | −12 / −22 / −15 | ❌ |
-| **T2** structural lead over grep, 4k and 8k | ≥ +15 pp | +13 / +31 | +14 / +31 | ❌ by 1 pp at 4k |
-| **T3** mean tokens vs grep, matched budget | ≤ grep | +110 @8k | +13 / +25 / +156 | ❌ |
+| **T2** structural lead over grep, 4k and 8k | ≥ +15 pp | +13 / +31 | **+17 / +33** | ✅ |
+| **T3** mean tokens vs grep, matched budget | ≤ grep | +110 @8k | +13 / +26 / +152 | ❌ |
 | **T4** agent-loop token ratio | ≤ 2× | 7.6× / 2.1× | see below | ❌ except one set |
 | **T5** retrieval mode flags on default path | 0 | 4 | **0** | ✅ |
 
-Two of five, and one of those two is T5, which was a deletion rather than a measurement. This is
-the honest summary of the round: **the structural thesis is now solid and the lexical gap is
-not closed.**
+Three of five, and one of the three is T5, which was a deletion rather than a measurement. T2
+passed only on the round's last fix — the export-alias one, which was worth +2.4 pp of structural
+recall at 4k and carried the target over the line. This is the honest summary of the round:
+**the structural thesis is now solid and the lexical gap is not closed.**
 
 The plan this round followed had a written stop condition — *if the lexical gap is still worse
 than −10 pp after the ranking and packing fixes, stop, because the remainder is likely vocabulary
@@ -184,7 +185,10 @@ section is what it points to.
 benchmarked. Turning it on, with no change to repo2graph itself, is the largest lever found in
 this round.
 
-Held-out, from [`results_holdout_knobs.json`](results_holdout_knobs.json):
+Held-out, from [`results_holdout_knobs.json`](results_holdout_knobs.json). That run predates the
+export-alias fix below, so its default structural row reads 36% / 69% rather than the 38% / 71%
+in the headline table — the dense and ablation rows were measured against *that* default, and
+re-reading one row off a later artifact would compare two different builds:
 
 | | 2k | 4k | 8k |
 |---|---|---|---|

@@ -60,11 +60,11 @@ cross-module delegation. On questions whose evidence provably spans a cross-file
 | Budget | repo2graph | lexical search alone | grep, then read around hits |
 |---:|---:|---:|---:|
 | 2,000 tokens | **17%** | 14% | 14% |
-| 4,000 tokens | **36%** | 29% | 21% |
-| 8,000 tokens | **69%** | 43% | 38% |
+| 4,000 tokens | **38%** | 29% | 21% |
+| 8,000 tokens | **71%** | 43% | 38% |
 
-**The graph is what does it**, and that is the comparison that matters: expansion adds +3/+7/+26 pp
-over the same retriever with expansion switched off. Against grep the margin is +2/+14/+31 pp —
+**The graph is what does it**, and that is the comparison that matters: expansion adds +3/+9/+28 pp
+over the same retriever with expansion switched off. Against grep the margin is +3/+17/+33 pp —
 it widens with budget rather than closing, because grep has no edge to follow however much room
 it is given.
 
