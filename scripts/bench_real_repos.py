@@ -532,17 +532,17 @@ def main(argv: list[str] | None = None) -> int:
     summary = []
     for budget in budgets:
         for method in (
-                "repo2graph",
-                "repo2graph-cite",
-                "repo2graph-bm25",
-                "repo2graph-cond",
-                "repo2graph-cond-cite",
-                "repo2graph-vec",
-                "repo2graph-vec-bm25",
-                "repo2graph-vec-cite",
-                "repo2graph-vec-cond",
-                "ripgrep",
-            ):
+            "repo2graph",
+            "repo2graph-cite",
+            "repo2graph-bm25",
+            "repo2graph-cond",
+            "repo2graph-cond-cite",
+            "repo2graph-vec",
+            "repo2graph-vec-bm25",
+            "repo2graph-vec-cite",
+            "repo2graph-vec-cond",
+            "ripgrep",
+        ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
             # The dense rows exist only under --embed; skip rather than divide by
             # zero, so the default run is unchanged.

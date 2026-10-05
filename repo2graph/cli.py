@@ -457,8 +457,8 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
 def _validate_auto_build_out(out, repo_root) -> None:
     """Harden an auto-build output directory, the way `build` hardens its `-o`.
 
-    `build` runs `validate_outdir` before it writes anything. The three
-    *implicit* builds -- `rag <src>`'s and the MCP server's -- did
+    `build` runs `validate_outdir` before it writes anything. The *implicit*
+    builds -- `rag <src>`'s and the MCP server's -- did
     not, even though they finish at the same `dump_all`, whose directory swap
     renames the target aside and then deletes it. `repo2graph rag . -o .`
     therefore deleted the working tree.

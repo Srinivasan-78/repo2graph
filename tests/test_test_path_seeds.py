@@ -102,9 +102,7 @@ def mw_index(tmp_path: Path) -> Index:
     (repo / "impl.py").write_text(IMPL, encoding="utf8")
     (repo / "test_impl.py").write_text(TEST, encoding="utf8")
     for n in range(N_SOURCE_FILES):
-        (repo / f"middleware_{n}.py").write_text(
-            SECONDARY_SOURCE.format(n=n), encoding="utf8"
-        )
+        (repo / f"middleware_{n}.py").write_text(SECONDARY_SOURCE.format(n=n), encoding="utf8")
     for n in range(N_TEST_FILES):
         (repo / f"test_middleware_{n}.py").write_text(
             TEST.replace("test_middleware_chaining", f"test_middleware_chaining_{n}"),
@@ -167,9 +165,13 @@ def test_demotion_lowers_test_scores_and_leaves_source_alone(mw_index: Index) ->
 def test_demotion_is_stable_for_equal_scores(mw_index: Index) -> None:
     """Two candidates the penalty does not separate keep BM25's order."""
     ranked = mw_index.score(QUERY)
-    source_order = [i for _s, i in ranked if not str(mw_index.chunks[i].get("path")).startswith("test_")]
+    source_order = [
+        i for _s, i in ranked if not str(mw_index.chunks[i].get("path")).startswith("test_")
+    ]
     after = mw_index._demote_test_seeds(ranked)
-    after_source = [i for _s, i in after if not str(mw_index.chunks[i].get("path")).startswith("test_")]
+    after_source = [
+        i for _s, i in after if not str(mw_index.chunks[i].get("path")).startswith("test_")
+    ]
     assert source_order == after_source, "relative order of non-test chunks changed"
 
 

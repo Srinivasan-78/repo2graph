@@ -242,6 +242,7 @@ def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
     # does; it is kept as its own label so hops can be tuned separately later.
     return None
 
+
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
 # shared with pack_context's identically valued default: the two mean different
