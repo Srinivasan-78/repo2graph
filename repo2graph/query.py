@@ -24,6 +24,8 @@ from .security import (
 )
 
 __all__ = [
+    "CALLEE_EDGE_DIRS",
+    "CALLER_EDGE_DIRS",
     "Index",
     "SECRET_CONFIG_EXTS",
     "SECRET_DIR_NAMES",
@@ -32,6 +34,8 @@ __all__ = [
     "SECRET_KEYWORDS",
     "SECRET_WORD_RE",
     "_is_secret_path",
+    "classify_query",
+    "edge_dirs_for",
     "format_pack",
     "is_lexical_weak",
     "read_jsonl",
@@ -88,6 +92,91 @@ DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # retrieve() passes this explicitly so that DEFAULT_EDGE_DIRS, which exists for
 # pack_context(), can never narrow what `repo2graph query` has always returned.
 ALL_EDGE_DIRS: dict[str, tuple[str, ...]] = {}
+
+# Direction filters per question shape. `expand()` has accepted `edge_dirs`
+# since it was written, but nothing derived one from the question, so every
+# query got DEFAULT_EDGE_DIRS and `CALLS` was walked both ways at once. With
+# `per_hop` slots to fill, the wrong direction arrives first about half the
+# time: "what calls prepare_request" came back with `cookiejar_from_dict` and
+# `merge_cookies` -- its callees -- and not `Session.request`, its caller, even
+# though that edge sits in the graph at confidence 1.0.
+#
+# `DEFINES` stays "in" throughout: it is how a symbol reaches its enclosing
+# file or class, which is orientation rather than a direction the question
+# chose. `IMPORTS` flips with the question because "what imports X" and "what
+# does X import" are opposite requests.
+CALLER_EDGE_DIRS: dict[str, tuple[str, ...]] = {
+    "CALLS": ("in",),
+    "DEFINES": ("in",),
+    "INHERITS": ("in",),
+    "IMPORTS": ("in",),
+}
+CALLEE_EDGE_DIRS: dict[str, tuple[str, ...]] = {
+    "CALLS": ("out",),
+    "DEFINES": ("in",),
+    "INHERITS": ("out",),
+    "IMPORTS": ("out",),
+}
+
+# Phrases that name a direction. Matched against the lowered query as whole
+# words, longest first, so "what are the callees of X" is not read as a caller
+# question by the bare word "call".
+_CALLEE_PATTERNS = (
+    r"\bcallees?\s+of\b",
+    r"\bdoes\s+\w+\s+(?:call|use|invoke|depend\s+on)\b",
+    r"\bwhat\s+does\s+.+\s+(?:call|use|invoke|depend\s+on)\b",
+    r"\b(?:call|use|invoke)s?\s+what\b",
+)
+_CALLER_PATTERNS = (
+    r"\bcallers?\s+of\b",
+    r"\b(?:what|who|which)\s+(?:\w+\s+){0,3}?(?:calls?|uses?|invokes?|imports?|references?)\b",
+    r"\bwhere\s+is\s+.+\s+(?:used|called|invoked|referenced)\b",
+    r"\bused\s+by\b",
+    r"\bdepends?\s+on\s+\w+\b",
+)
+_TRACE_PATTERNS = (
+    r"\btrace\b",
+    r"\bflows?\s+(?:from|through|to)\b",
+    r"\bfrom\s+.+\s+to\s+.+\b",
+    r"\bend\s+to\s+end\b",
+)
+
+
+def classify_query(query: str) -> str:
+    """What shape of answer the question asks for.
+
+    Returns one of `"callers"`, `"callees"`, `"trace"` or `"concept"`.
+    `"concept"` is the default and the one that changes nothing: a question that
+    named no direction must keep following both, because narrowing it on a guess
+    would lose answers that the old behaviour found.
+
+    Callee phrasings are tested first. "What are the callees of X" contains
+    "call", so a caller pattern would otherwise claim it.
+    """
+    q = " ".join((query or "").lower().split())
+    if not q:
+        return "concept"
+    for pat in _CALLEE_PATTERNS:
+        if re.search(pat, q):
+            return "callees"
+    for pat in _CALLER_PATTERNS:
+        if re.search(pat, q):
+            return "callers"
+    for pat in _TRACE_PATTERNS:
+        if re.search(pat, q):
+            return "trace"
+    return "concept"
+
+
+def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
+    """The traversal filter a question shape implies, or None to keep the default."""
+    if shape == "callers":
+        return CALLER_EDGE_DIRS
+    if shape == "callees":
+        return CALLEE_EDGE_DIRS
+    # "trace" wants to follow a chain outward, which DEFAULT_EDGE_DIRS already
+    # does; it is kept as its own label so hops can be tuned separately later.
+    return None
 
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
@@ -831,13 +920,21 @@ class Index:
                 break
 
         graph_neighbours: list[Record] = []
+        # Follow the direction the question asked for. `retrieve()` keeps
+        # ALL_EDGE_DIRS on purpose, so `repo2graph query` is never narrowed by
+        # this; only the packed-context path routes.
+        shape = classify_query(query)
+        shape_dirs = edge_dirs_for(shape)
         if expand_graph and seeds:
             if precision_first:
                 for seed_chunk in seeds:
                     if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
                         break
                     for nid, etype, direction, src in self.expand(
-                        [seed_chunk["node_id"]], hops=hops, min_confidence=min_confidence
+                        [seed_chunk["node_id"]],
+                        hops=hops,
+                        min_confidence=min_confidence,
+                        edge_dirs=shape_dirs,
                     ):
                         if nid in seen_nodes:
                             continue
@@ -863,7 +960,10 @@ class Index:
                             break
             else:
                 for nid, etype, direction, src in self.expand(
-                    [c["node_id"] for c in seeds], hops=hops, min_confidence=min_confidence
+                    [c["node_id"] for c in seeds],
+                    hops=hops,
+                    min_confidence=min_confidence,
+                    edge_dirs=shape_dirs,
                 ):
                     if nid in seen_nodes:
                         continue
