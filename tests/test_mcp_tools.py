@@ -692,12 +692,16 @@ def test_path_between_paths_limit_is_clamped_in_the_handler(tmp_path, monkeypatc
 
 
 def test_repo_search_forwards_every_advertised_parameter(mini_index):
-    """The dispatcher dropped `neighbours`/`max_neighbours` that the schema advertises.
+    """Whatever the schema advertises must reach the tool.
 
-    A client setting `neighbours="cite"` got full-body neighbours and no error,
-    which made the mode the README benchmarks as the best 8k retriever
-    unreachable over MCP. Asserted against the schema rather than a hand-written
-    list, so a newly advertised parameter that is not forwarded fails here.
+    The dispatcher once dropped `neighbours`/`max_neighbours` while the schema
+    still advertised them, so a client setting `neighbours="cite"` got full-body
+    neighbours and no error. Asserted against the schema rather than a
+    hand-written list, so a newly advertised parameter that is not forwarded
+    fails here.
+
+    Those two parameters are now retired rather than silently dropped: see
+    `test_retired_retrieval_parameters_are_neither_advertised_nor_forwarded`.
     """
     import inspect
 
@@ -720,13 +724,53 @@ def test_repo_search_forwards_every_advertised_parameter(mini_index):
     orig = mcp_mod.tool_repo_search
     try:
         mcp_mod.tool_repo_search = _spy
-        mcp.dispatch(
-            idx,
-            "repo_search",
-            {"query": "gateway", "neighbours": "cite", "max_neighbours": 3},
+        mcp.dispatch(idx, "repo_search", {"query": "gateway", "k": 3, "hops": 2})
+    finally:
+        mcp_mod.tool_repo_search = orig
+
+    # Every advertised parameter the client actually set has to arrive.
+    assert seen.get("k") == 3, seen
+    assert seen.get("hops") == 2, seen
+
+
+def test_retired_retrieval_parameters_are_neither_advertised_nor_forwarded(mini_index):
+    """Citation mode is retired over MCP, and must not be reachable by accident.
+
+    On 40 held-out lexical and 40 held-out structural questions, `cite`
+    neighbours measured -1/-8/-19 pp and -3/-10/-31 pp against the default, and
+    were dominated by turning expansion off entirely -- better recall for fewer
+    tokens. An agent picks its arguments out of the schema, so advertising a
+    dominated mode is how it gets chosen.
+
+    Unadvertised *and* unforwarded is the point. Advertised-but-inert is the
+    defect this file already records having fixed once.
+    """
+    from repo2graph.mcp.schemas import TOOL_SCHEMAS
+
+    mcp = mcp_module()
+    advertised = set(TOOL_SCHEMAS["repo_search"]["properties"])
+    assert "neighbours" not in advertised
+    assert "max_neighbours" not in advertised
+
+    idx = Index(mini_index)
+    seen = {}
+
+    def _spy(index, query, **kw):
+        seen.update(kw)
+        return "ok"
+
+    import repo2graph.mcp as mcp_mod
+
+    orig = mcp_mod.tool_repo_search
+    try:
+        mcp_mod.tool_repo_search = _spy
+        # A client that still sends them must get the default, not an error.
+        out = mcp.dispatch(
+            idx, "repo_search", {"query": "gateway", "neighbours": "cite", "max_neighbours": 3}
         )
     finally:
         mcp_mod.tool_repo_search = orig
 
-    assert seen.get("neighbours") == "cite", seen
-    assert seen.get("max_neighbours") == 3, seen
+    assert out == "ok"
+    assert "neighbours" not in seen, seen
+    assert "max_neighbours" not in seen, seen

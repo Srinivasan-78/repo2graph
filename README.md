@@ -54,7 +54,9 @@ We measured it on 35 questions about Flask, requests, FastAPI and Hono, scored a
 | 4,000 tokens | 37% | **41%** (3,685 tokens) | **61%** (3,873 tokens) |
 | 8,000 tokens | 48% | **52%** (5,460 tokens) | **72%** (7,652 tokens) |
 
-On purely lexical questions where the evidence sits in a single file, text search is grep's optimum. In default full-body expansion, graph neighbours can displace direct lexical hits. With citation-mode neighbours (`--neighbours=cite`), neighbours cost ~15 tokens of signature metadata rather than full chunk bodies, serving as a navigation index that matches or beats BM25 recall at lower token cost (5,460 vs 5,561 mean tokens at 8k).
+On purely lexical questions where the evidence sits in a single file, text search is grep's optimum. In default full-body expansion, graph neighbours can displace direct lexical hits.
+
+> **The `repo2graph-cite` column is a retired configuration.** It won this table, which is why it was once recommended here. Re-measured on a held-out set of 40 lexical and 40 structural questions it lost to the default everywhere (-1/-8/-19 pp lexical, -3/-10/-31 pp structural) and was dominated by simply turning graph expansion off, which returns better recall for fewer tokens. `--neighbours=cite` is now a no-op that warns, and the mode is no longer advertised over MCP. The numbers below are left as measured rather than deleted.
 
 ### Where repo2graph wins: cross-file structural questions
 

@@ -21,7 +21,6 @@ from .guardrails import (
     MCP_MAX_PATH_HOPS,
     MCP_MAX_PATHS,
     MCP_MAX_READ_CONTEXT,
-    MCP_MAX_SEARCH_NEIGHBOURS,
     MCP_NEIGHBOUR_LIMIT,
     MCP_PATH_HOPS,
     MCP_PATH_PATHS,
@@ -198,21 +197,15 @@ TOOL_SCHEMAS = {
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
             },
-            "neighbours": {
-                "type": "string",
-                "enum": ["full", "cite"],
-                "description": (
-                    "Neighbour rendering mode: 'full' (default) emits complete chunk text; "
-                    "'cite' emits one-line signature citations without chunk body."
-                ),
-            },
-            "max_neighbours": {
-                "type": "integer",
-                "description": (
-                    f"Maximum graph neighbour chunks to admit into context (default unbounded, "
-                    f"max {MCP_MAX_SEARCH_NEIGHBOURS})."
-                ),
-            },
+            # `neighbours` and `max_neighbours` were advertised here and are
+            # gone deliberately. Citation mode measured worse than the default
+            # on 40 held-out lexical and 40 held-out structural questions
+            # (-1/-8/-19 pp and -3/-10/-31 pp), and is dominated by turning
+            # expansion off, which costs fewer tokens for better recall. An
+            # agent picks its arguments from this schema, so advertising a
+            # dominated mode is how it gets chosen; leaving it advertised but
+            # inert would repeat the accepted-and-ignored defect that
+            # `tools.py` records having already fixed once.
         },
         "required": ["query"],
     },

@@ -333,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
                 precision_first=True,
                 conditional_expansion=True,
             )
-            vec = vec_bm25 = None
+            vec = vec_bm25 = vec_cite = vec_cond = None
             if embedder is not None:
                 vec = idx.pack_context(
                     t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
@@ -344,6 +344,26 @@ def main(argv: list[str] | None = None) -> int:
                     exclude_secrets=True,
                     embedder=embedder,
                     expand_graph=False,
+                )
+                # Both knobs were only ever measured without vectors, so neither
+                # verdict transferred to the dense configuration. Removing a
+                # public flag on evidence from one configuration would be a guess.
+                vec_cite = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    k=10,
+                    neighbours="cite",
+                    max_neighbours=2,
+                    precision_first=True,
+                )
+                vec_cond = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    conditional_expansion=True,
                 )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
@@ -363,6 +383,16 @@ def main(argv: list[str] | None = None) -> int:
                             "repo2graph-vec-bm25",
                             covered_lines_r2g(vec_bm25, root),
                             vec_bm25["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cite",
+                            covered_lines_r2g(vec_cite, root),
+                            vec_cite["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cond",
+                            covered_lines_r2g(vec_cond, root),
+                            vec_cond["tokens_used"],
                         ),
                     ]
                     if vec is not None and vec_bm25 is not None
@@ -417,7 +447,7 @@ def main(argv: list[str] | None = None) -> int:
                 precision_first=True,
                 conditional_expansion=True,
             )
-            vec = vec_bm25 = None
+            vec = vec_bm25 = vec_cite = vec_cond = None
             if embedder is not None:
                 vec = idx.pack_context(
                     t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
@@ -428,6 +458,26 @@ def main(argv: list[str] | None = None) -> int:
                     exclude_secrets=True,
                     embedder=embedder,
                     expand_graph=False,
+                )
+                # Both knobs were only ever measured without vectors, so neither
+                # verdict transferred to the dense configuration. Removing a
+                # public flag on evidence from one configuration would be a guess.
+                vec_cite = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    k=10,
+                    neighbours="cite",
+                    max_neighbours=2,
+                    precision_first=True,
+                )
+                vec_cond = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    conditional_expansion=True,
                 )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
@@ -447,6 +497,16 @@ def main(argv: list[str] | None = None) -> int:
                             "repo2graph-vec-bm25",
                             covered_lines_r2g(vec_bm25, root),
                             vec_bm25["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cite",
+                            covered_lines_r2g(vec_cite, root),
+                            vec_cite["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cond",
+                            covered_lines_r2g(vec_cond, root),
+                            vec_cond["tokens_used"],
                         ),
                     ]
                     if vec is not None and vec_bm25 is not None
@@ -479,6 +539,8 @@ def main(argv: list[str] | None = None) -> int:
                 "repo2graph-cond-cite",
                 "repo2graph-vec",
                 "repo2graph-vec-bm25",
+                "repo2graph-vec-cite",
+                "repo2graph-vec-cond",
                 "ripgrep",
             ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
@@ -511,6 +573,8 @@ def main(argv: list[str] | None = None) -> int:
                 "repo2graph-cond-cite",
                 "repo2graph-vec",
                 "repo2graph-vec-bm25",
+                "repo2graph-vec-cite",
+                "repo2graph-vec-cond",
                 "ripgrep",
             ):
                 sel = [

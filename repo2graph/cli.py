@@ -489,7 +489,49 @@ def _warn_exclude_secrets_deprecated(args) -> None:
         )
 
 
+#: Retrieval knobs retired after measurement, with the flag that set each one.
+#: Kept parseable so an existing command does not become an argparse error, but
+#: they no longer change anything, and using one says so rather than going quiet
+#: -- an accepted-and-ignored parameter is the exact defect `mcp/tools.py`
+#: documents having already fixed once for `neighbours`.
+#:
+#: Measured on 40 held-out lexical and 40 held-out structural questions:
+#:   neighbours=cite        lexical -1/-8/-19 pp and structural -3/-10/-31 pp
+#:                          against the default, and dominated by
+#:                          `expand_graph=False`, which gets better recall for
+#:                          fewer tokens at nearly every budget.
+#:   conditional_expansion  a no-op with dense vectors -- identical recall and
+#:                          identical token counts -- and -17 pp structural at
+#:                          8k without them.
+#:   precision_first        only ever exercised together with citation mode.
+_RETIRED_RETRIEVAL_FLAGS = {
+    "neighbours": ("--neighbours", "full"),
+    "conditional_expansion": ("--conditional-expansion", False),
+    "precision_first": ("--precision-first", False),
+}
+
+
+def _warn_retired_retrieval_flags(args) -> None:
+    """Emit one event per retired retrieval flag the caller actually set."""
+    from .events import emit
+
+    for attr, (flag, default) in _RETIRED_RETRIEVAL_FLAGS.items():
+        value = getattr(args, attr, default)
+        if value != default:
+            emit(
+                "retired_flag_ignored",
+                level="warning",
+                flag=flag,
+                value=value,
+                reason=(
+                    "retired after measuring worse than the default on the held-out "
+                    "benchmark; see docs/cli.md"
+                ),
+            )
+
+
 def cmd_query(args):
+    _warn_retired_retrieval_flags(args)
     from .query import Index, format_pack
 
     out = Path(args.out)
@@ -517,8 +559,6 @@ def cmd_query(args):
         # caller opts in *now*: an index built with --include-secrets must not
         # hand them to every later plain query.
         exclude_secrets=not getattr(args, "include_secrets", False),
-        neighbours=getattr(args, "neighbours", "full"),
-        conditional_expansion=getattr(args, "conditional_expansion", False),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -677,6 +717,7 @@ def cmd_verify_rag(args):
 
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
+    _warn_retired_retrieval_flags(args)
     from .query import Index
 
     out = _rag_index_dir(args)
@@ -707,9 +748,6 @@ def cmd_rag(args):
         budget_tokens=getattr(args, "budget_tokens", None),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
-        neighbours=getattr(args, "neighbours", "full"),
-        conditional_expansion=getattr(args, "conditional_expansion", False),
-        precision_first=getattr(args, "precision_first", False),
     )
     if args.answer:
         from .answer import stream_answer
@@ -1603,13 +1641,13 @@ def main(argv=None):
         dest="neighbours",
         choices=("full", "cite"),
         default="full",
-        help="neighbour rendering mode: full (default) emits complete chunk text; cite emits one-line signature citations without chunk body",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     q.add_argument(
         "--conditional-expansion",
         action="store_true",
         default=False,
-        help="expand graph neighbours only when lexical evidence is weak or ambiguous",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
@@ -1706,19 +1744,19 @@ def main(argv=None):
         dest="neighbours",
         choices=("full", "cite"),
         default="full",
-        help="neighbour rendering mode: full (default) emits complete chunk text; cite emits one-line signature citations without chunk body",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     r.add_argument(
         "--conditional-expansion",
         action="store_true",
         default=False,
-        help="expand graph neighbours only when lexical evidence is weak or ambiguous",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     r.add_argument(
         "--precision-first",
         action="store_true",
         default=False,
-        help="prioritize direct lexical hits in score order and only admit neighbours cited by an already-admitted chunk",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)

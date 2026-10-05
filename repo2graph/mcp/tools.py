@@ -232,15 +232,14 @@ def dispatch(
             k=args.get("k", 8),
             hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
-            # `neighbours` and `max_neighbours` are advertised in
-            # TOOL_SCHEMAS["repo_search"] and accepted by tool_repo_search, but
-            # were never forwarded here: a client setting either got the default
-            # and no error. That made `neighbours="cite"` unreachable over MCP --
-            # the mode the README's own benchmark table reports as the best
-            # retriever at an 8k budget (5,460 vs 5,561 mean tokens). Defaults
-            # match the function's own, so omitting them stays a no-op.
-            neighbours=args.get("neighbours", "full"),
-            max_neighbours=args.get("max_neighbours"),
+            # `neighbours` and `max_neighbours` are no longer forwarded, and no
+            # longer advertised in TOOL_SCHEMAS["repo_search"] either. They were
+            # once unreachable here by accident, which was a bug; they are
+            # unreachable now on purpose, because citation mode measured worse
+            # than the default on both held-out sets and is dominated by
+            # `expand_graph=False`. A client that still sends either gets the
+            # default, which is now the better configuration rather than an
+            # arbitrary one.
         )
     elif name == "repo_neighbours":
         result = _neighbours(
