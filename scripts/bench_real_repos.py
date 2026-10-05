@@ -18,6 +18,15 @@ definitions that answer it:
 * ``repo2graph-cond-cite``
                       -- conditional expansion plus citation-mode neighbours:
                          the two token-saving mechanisms together.
+* ``repo2graph-vec``  -- the default call plus dense vectors, fused with BM25 by
+                         reciprocal rank. Requires ``--embed``. The ``embed``
+                         path ships in the ``rag`` extra and has never appeared
+                         in a published benchmark, so this row is the first
+                         measurement of whether dense retrieval closes the
+                         lexical gap that BM25 tuning did not.
+* ``repo2graph-vec-bm25``
+                      -- vectors with graph expansion off, to separate what the
+                         vectors add from what the graph adds.
 * ``ripgrep``         -- ``rg`` for the question's words, then read +/-15 lines
                          around the best-scoring hits until the budget is spent.
                          This is the grep-then-read loop a coding agent runs,
@@ -247,11 +256,23 @@ def main(argv: list[str] | None = None) -> int:
         help="structural task file (default: benchmarks/real/tasks_structural.json)",
     )
     ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
+    ap.add_argument(
+        "--embed",
+        action="store_true",
+        help="also embed each index and measure the dense-fusion rows. Needs the `rag` extra; "
+        "downloads nothing if the sentence-transformers model is already cached.",
+    )
     args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
     if shutil.which(rg[0]) is None:
         raise SystemExit("ripgrep (rg) is required for the baseline")
     budgets = [int(b) for b in args.budgets.split(",")]
+
+    embedder = None
+    if args.embed:
+        from repo2graph.embed import default_embedder
+
+        embedder = default_embedder()
 
     repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
     tasks = json.loads(args.tasks.read_text(encoding="utf8"))["tasks"]
@@ -267,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             if cli_main(["build", str(roots[name]), "-o", str(out)]) != 0:
                 raise SystemExit(f"{name}: repo2graph build failed")
+            if args.embed and cli_main(["embed", "-o", str(out)]) != 0:
+                raise SystemExit(f"{name}: repo2graph embed failed")
         indexes[name] = Index(out)
 
     rows = []
@@ -310,6 +333,18 @@ def main(argv: list[str] | None = None) -> int:
                 precision_first=True,
                 conditional_expansion=True,
             )
+            vec = vec_bm25 = None
+            if embedder is not None:
+                vec = idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
+                )
+                vec_bm25 = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    expand_graph=False,
+                )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
@@ -320,6 +355,18 @@ def main(argv: list[str] | None = None) -> int:
                     "repo2graph-cond-cite",
                     covered_lines_r2g(cond_cite, root),
                     cond_cite["tokens_used"],
+                ),
+                *(
+                    [
+                        ("repo2graph-vec", covered_lines_r2g(vec, root), vec["tokens_used"]),
+                        (
+                            "repo2graph-vec-bm25",
+                            covered_lines_r2g(vec_bm25, root),
+                            vec_bm25["tokens_used"],
+                        ),
+                    ]
+                    if vec is not None and vec_bm25 is not None
+                    else []
                 ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
@@ -370,6 +417,18 @@ def main(argv: list[str] | None = None) -> int:
                 precision_first=True,
                 conditional_expansion=True,
             )
+            vec = vec_bm25 = None
+            if embedder is not None:
+                vec = idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
+                )
+                vec_bm25 = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    expand_graph=False,
+                )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
@@ -380,6 +439,18 @@ def main(argv: list[str] | None = None) -> int:
                     "repo2graph-cond-cite",
                     covered_lines_r2g(cond_cite, root),
                     cond_cite["tokens_used"],
+                ),
+                *(
+                    [
+                        ("repo2graph-vec", covered_lines_r2g(vec, root), vec["tokens_used"]),
+                        (
+                            "repo2graph-vec-bm25",
+                            covered_lines_r2g(vec_bm25, root),
+                            vec_bm25["tokens_used"],
+                        ),
+                    ]
+                    if vec is not None and vec_bm25 is not None
+                    else []
                 ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
@@ -406,9 +477,15 @@ def main(argv: list[str] | None = None) -> int:
                 "repo2graph-bm25",
                 "repo2graph-cond",
                 "repo2graph-cond-cite",
+                "repo2graph-vec",
+                "repo2graph-vec-bm25",
                 "ripgrep",
             ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
+            # The dense rows exist only under --embed; skip rather than divide by
+            # zero, so the default run is unchanged.
+            if not sel:
+                continue
             summary.append(
                 {
                     "budget": budget,
@@ -432,11 +509,15 @@ def main(argv: list[str] | None = None) -> int:
                 "repo2graph-bm25",
                 "repo2graph-cond",
                 "repo2graph-cond-cite",
+                "repo2graph-vec",
+                "repo2graph-vec-bm25",
                 "ripgrep",
             ):
                 sel = [
                     r for r in structural_rows if r["budget"] == budget and r["method"] == method
                 ]
+                if not sel:
+                    continue
                 structural_summary.append(
                     {
                         "budget": budget,
