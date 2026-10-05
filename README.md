@@ -57,27 +57,33 @@ definitions that answer them, every retriever held to the same token budget
 grep structurally cannot traverse dependency edges, compute reverse call closures, or follow
 cross-module delegation. On questions whose evidence provably spans a cross-file graph edge:
 
+<!-- bench-table: results_holdout_final.json structural_summary wide=evidence_recall methods=repo2graph,repo2graph-bm25,ripgrep -->
+
 | Budget | repo2graph | lexical search alone | grep, then read around hits |
 |---:|---:|---:|---:|
-| 2,000 tokens | **17%** | 14% | 14% |
-| 4,000 tokens | **38%** | 29% | 21% |
-| 8,000 tokens | **71%** | 43% | 38% |
+| 2,000 tokens | **29%** | 24% | 14% |
+| 4,000 tokens | **60%** | 48% | 21% |
+| 8,000 tokens | **79%** | 55% | 38% |
 
-**The graph is what does it**, and that is the comparison that matters: expansion adds +3/+9/+28 pp
-over the same retriever with expansion switched off. Against grep the margin is +3/+17/+33 pp —
+**The graph is what does it**, and that is the comparison that matters: expansion adds +5/+12/+24 pp
+over the same retriever with expansion switched off. Against grep the margin is +15/+39/+41 pp —
 it widens with budget rather than closing, because grep has no edge to follow however much room
-it is given.
+it is given. It also gets there for **fewer tokens than grep** at every budget, by 7, 7 and 398
+mean tokens, because a cited definition is a smaller thing to return than a window around every
+textual hit.
 
 ### Where grep wins: single-file lexical questions
 
+<!-- bench-table: results_holdout_final.json summary wide=evidence_recall methods=repo2graph,ripgrep -->
+
 | Budget | repo2graph | grep, then read around hits |
 |---:|---:|---:|
-| 2,000 tokens | 16% | **28%** |
-| 4,000 tokens | 26% | **48%** |
-| 8,000 tokens | 43% | **59%** |
+| 2,000 tokens | 17% | **28%** |
+| 4,000 tokens | 29% | **48%** |
+| 8,000 tokens | 45% | **59%** |
 
 On purely lexical questions where the evidence sits in a single file, text search is grep's
-optimum, and this gap is real: −12/−22/−15 pp. We have not closed it. The remaining cause looks
+optimum, and this gap is real: −11/−19/−14 pp. We have not closed it. The remaining cause looks
 like vocabulary mismatch rather than ranking — a question that says "datetime" does not match
 code that says "timestamp" — which is why the
 [dense-vector path](benchmarks/real/README.md#the-dense-result) closes it to −2 pp at 8,000
@@ -91,19 +97,21 @@ model is in the loop — the "agent" is a deterministic policy over real ripgrep
 
 | Task set | Method | Success | Mean turns | Mean tokens | Precision per read |
 |---|---|---:|---:|---:|---:|
-| Structural (40) | repo2graph | **38%** | 3.0 | 2,543 | 15.4% |
-| Structural (40) | ripgrep | 10% | **2.5** | **586** | **29.0%** |
-| Lexical (40) | repo2graph | 18% | **1.0** | 1,962 | 21.5% |
+| Structural (40) | repo2graph | **40%** | **1.9** | 2,590 | 12.0% |
+| Structural (40) | ripgrep | 10% | 2.5 | **586** | **29.0%** |
+| Lexical (40) | repo2graph | **20%** | **1.4** | 2,070 | 21.7% |
 | Lexical (40) | ripgrep | 18% | 3.0 | **740** | **89.1%** |
 
-Nearly four times the structural success rate, and it reaches a lexical answer in one turn where
-grep needs three. It is not cheap: 4.3× grep's tokens on the structural set and 2.6× on the
-lexical one, and **grep wins precision per read on both**. repo2graph buys recall and turns with
-context; the budget-matched comparison is the single-shot tables above.
+Four times the structural success rate, and it reaches an answer in one or two turns where grep
+needs three. The turn count is the number that moved most — structural went 3.1 to 1.9 — because
+sharper seed ranking puts the answer in the *first* pack more often, and a turn saved is worth
+more to an agent than a token saved. It is not cheap: 4.4× grep's tokens on the structural set and
+2.8× on the lexical one, and **grep wins precision per read on both**. repo2graph buys recall and
+turns with context; the budget-matched comparison is the single-shot tables above.
 
 For completeness, the 35+10 question set this page used to report — visible since the first
-version of these tables and therefore a regression set, not evidence — now reads 39/44/56%
-lexical against grep's 35/61/72%, and 20/70/80% structural against grep's 20/20/70%. Those are
+version of these tables and therefore a regression set, not evidence — now reads 44/63/80%
+lexical against grep's 35/61/72%, and 60/80/100% structural against grep's 20/20/70%. Those are
 the better-looking numbers, which is exactly why the held-out set is the one quoted above.
 
 What it does do that grep doesn't:

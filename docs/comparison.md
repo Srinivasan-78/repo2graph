@@ -36,20 +36,21 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
   traversed `INHERITS` or `CO_CHANGE`.)
 - **`CO_CHANGE`**: files that keep changing together, mined from git. No parser can see this.
 - **Zero-infrastructure.** No graph database, no language server, no embedding service, no
-  network call on the default path. This is a deliberate trade and it has a measured price: the
-  optional dense-vector path (`pip install "repo2graph[rag]"`, which does download a model) is
-  worth 14 pp of lexical and 7 pp of structural recall at 8,000 tokens, measured against the
-  default as it stood before the export-alias fix lifted structural recall to 71%
-  ([the dense result](../benchmarks/real/README.md#the-dense-result)). We keep the offline
-  default and publish the numbers for the other choice rather than leading with a configuration
-  most users do not have.
+  network call on the default path. This is a deliberate trade, and its measured price is now
+  smaller than it was and no longer one-directional: the optional dense-vector path
+  (`pip install "repo2graph[rag]"`, which does download a model) is worth **+12 pp of lexical
+  recall at 8,000 tokens and costs 3 pp of structural recall**, because fusing a diffuse topical
+  signal at equal weight dilutes a BM25 ranking that structural questions had already got right
+  ([the dense result](../benchmarks/real/README.md#the-dense-result)). So the offline default is
+  not merely the cheaper choice any more; on structural questions it is the better one.
 
 **Where it is not different:** retrieval quality on lexical questions. On code it did not write,
 and on 40 questions it was not tuned against, repo2graph's cited packs find *less* of the answer
-than grep at the same budget — 16/26/43% against 28/48/59% at 2k/4k/8k tokens
+than grep at the same budget — 17/29/45% against 28/48/59% at 2k/4k/8k tokens
 ([numbers and diagnosis](../benchmarks/real/README.md)). Graph expansion earns its keep on
-cross-file structural questions, where it leads grep by +3/+17/+33 pp over the same budgets and
-by 28 pp over its own lexical-only ablation at 8,000 tokens. If raw recall on ordinary questions
+cross-file structural questions, where it leads grep by +15/+39/+41 pp over the same budgets, by
+24 pp over its own lexical-only ablation at 8,000 tokens, and does it for fewer tokens than grep
+spends. If raw recall on ordinary questions
 is what you need today, a good agent with grep (or Serena, for exact references) is the better
 choice.
 

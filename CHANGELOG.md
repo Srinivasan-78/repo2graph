@@ -15,10 +15,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
-- **Seeds are ranked on whether a chunk can plausibly hold an answer, and repo2graph now beats a
-  grep-then-read baseline at every budget on every benchmark set.** Lexical 30/37/48% ->
-  41/61/76% at 2k/4k/8k against grep's 35/61/72%; structural 20/70/80% -> 60/80/100% against
-  20/20/70%. The 4,000-token lexical cell is a tie, not a win.
+- **Seeds are ranked on whether a chunk can plausibly hold an answer.** On the held-out 40+40,
+  structural recall 19/25/62% -> 29/60/79% at 2k/4k/8k against grep's 14/21/38, and repo2graph
+  now spends *fewer* tokens than grep reaching it. Lexical 14/24/40% -> 17/29/45% against grep's
+  28/48/59: better, still losing. On the published 35+10 (a regression set, visible while these
+  fixes were made) lexical reads 44/63/80% against grep's 35/61/72% and structural 60/80/100%
+  against 20/20/70%.
 
   The cause was never parsing or retrieval. Measured on the 35-question set at 8,000 tokens:
   every one of the 46 evidence definitions was present in some chunk, an oracle packer fit 100%
@@ -34,17 +36,40 @@ makes keeping it current a release-blocking step rather than a good intention.
   scoring `repo2graph query` and the goldens pin. `CONTAINER_SEED_PENALTY` demotes class and
   file-residual chunks, but only above `CONTAINER_PENALTY_MIN_TOKENS`, because the cost is the
   problem and a cheap container has none. `NAME_TERM_BOOST` rewards a chunk whose declared name
-  shares content words with the question, capped at two terms and withheld from containers.
+  shares content words with the question, capped at two terms and withheld from three kinds of
+  guaranteed non-answer: bulky containers, export aliases, and -- unless the question is about
+  tests -- test definitions, which name the behaviour in the question's own words and so collect
+  the boost more reliably than the implementation does.
   `pack_context(rerank_answerability=False)` restores the 2.2 ordering.
 
-- **`benchmarks/real/tasks_holdout.json` — a held-out validation set.** 22 questions across
-  click 8.1.8 and axios 1.7.9, repositories that appear in no other task file, with every line
-  range read off the pinned commit before any retriever ran. `benchmarks/real/README.md` already
-  required that a retrieval fix "be judged on a fresh set of questions, not on these 35", and
-  the ranking change above was developed against those 35. On the held-out set it moves
-  67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58% and 67% -- having never
-  seen it. The benchmark script grew repos/tasks options to point at an alternative set, and
-  `test_the_benchmark_task_files_stay_disjoint` fails if the two sets ever share a repository.
+  Scaling the boost by the *fraction* of query terms a name covers was measured and rejected: it
+  loses 9 of 12 held-out cells. The strong multiplier earns its keep; gating which chunks are
+  eligible for it is what makes it safe.
+
+- **Two held-out sets, holding out different things.**
+  `benchmarks/real/tasks_holdout.json` is 40 lexical questions (plus 40 structural in
+  `tasks_holdout_structural_40.json`) on the same four repositories, so it tests whether a change
+  generalises to questions nobody tuned on. `benchmarks/real/tasks_holdout_repos.json` is 22
+  questions on click 8.1.8 and axios 1.7.9 -- repositories that appear in no other task file, and
+  the suite's only JavaScript -- so it tests whether a change generalises to code it never saw.
+  Every line range was read off the pinned commit before any retriever ran. On the repository set
+  the ranking change moves 67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58%
+  and 67%, having never seen it; the uncomfortable half of the same table is that graph expansion
+  adds **exactly zero** there at every budget while costing tokens. `bench_real_repos.py` grew a
+  repository-set option of its own (a benchmark script argument, not a `repo2graph` CLI flag), and
+  now drops tasks naming an unindexed repository rather than scoring them missed against an index
+  that cannot hold their evidence.
+  `test_the_benchmark_task_files_stay_disjoint` fails if the two corpora ever share a repository.
+
+- **`tests/test_bench_tables_match_artifacts.py` — published numbers are now machine-checked.**
+  Every benchmark table in `README.md`, `benchmarks/real/README.md` and `docs/comparison.md`
+  carries an HTML-comment marker naming the artifact it was read from, and the test fails if any
+  cell disagrees with that artifact, if a benchmark-shaped table carries no marker, or if a
+  referenced artifact was generated from a dirty tree. It exists because a published table had
+  silently been read off an intermediate artifact two phases old, understating two cells by
+  2.4 pp each and recording a round target as missed by 1 pp when it had passed. The 18 existing
+  doc-consistency tests check that links resolve and command lines parse, not that a number
+  matches the JSON beside it.
 
   Four ideas were tried and rejected on the evidence, recorded in that page because each looked
   obviously right beforehand: path-term boosting (worth nothing, slightly negative at 4k),
@@ -254,6 +279,26 @@ makes keeping it current a release-blocking step rather than a good intention.
 - **Escaped `U+2028` and `U+2029` in JSONL artifact writers**: `write_jsonl` escapes Unicode line and
   paragraph separators as `\u2028` and `\u2029`, preventing downstream tools using `str.splitlines()`
   from desynchronizing or tearing records (#376).
+
+### Changed
+
+- **The dense-vector recommendation is now conditional, because the default caught up.** Through
+  2.2, `repo2graph embed` (the `rag` extra) added recall on both question types. Measured again
+  on the held-out 40+40 after this round's seed ranking, it adds **+12 pp of lexical recall at
+  8,000 tokens and costs 3 pp of structural** -- and 10 pp at 4,000. Nothing about the embedder
+  changed; fusing a diffuse topical signal at equal weight now dilutes a BM25 ranking that
+  structural questions, which name their symbol, had already got right. **Turn vectors on for
+  lexical questions, leave them off for structural ones.** The real fix is to pass the
+  `weights=(w_bm25, w_vec)` that `score_rrf` already accepts and `pack_context` never has, keyed
+  off the question-shape classifier that already exists for expansion direction; that is now a
+  priority rather than the speculative parameter search it looked like before.
+
+- **`DEMO_K` 6 -> 8**, matching `pack_context`'s own default and the MCP server's `repo_search`
+  default, so `repo2graph demo` shows what a caller actually gets. Sharper seed ranking promotes
+  specific function bodies over module-level residuals, which is the point of it, and the effect
+  on the demo was that `app/store.py` -- the module answering the "to persistence" half of the
+  fifth starter question -- fell just past a 6-seed cut. The demo's output grew under 1%, because
+  `DEMO_BUDGET_CHARS` is what binds.
 
 ### Fixed — indexing and call resolution
 
