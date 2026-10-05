@@ -996,6 +996,20 @@ class Index:
             nid = c["node_id"]
             if nid in seen_nodes:
                 continue
+            # An export alias is a rename: a correct thing to *cite* when
+            # something points at it, never a place to start reading. Scoring it
+            # down was measured and changed nothing, because the cost is not its
+            # rank -- `export { module as serveStatic }` is one line, so it fits
+            # whatever budget is left after bigger, better-scoring seeds have
+            # already been rejected by `fits()`, and a rank it keeps no matter
+            # what. So it is skipped as a seed outright.
+            #
+            # Deliberately *without* `seen_nodes.add(nid)`: graph expansion must
+            # still reach it, which is how the alias earns its keep --
+            # `utils/url.ts:295-301` enters `ho-struct-hono-03`'s pack as
+            # "CALLS out of query", not as a seed.
+            if c.get("kind") == "alias":
+                continue
             c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
             if exclude_secrets and _is_secret_path(
                 c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs

@@ -231,6 +231,22 @@ makes keeping it current a release-blocking step rather than a good intention.
   structural set this moved recall 36% → 38% at 4k and 69% → 71% at 8k with mean tokens flat,
   which takes the lead over ripgrep to +16.7pp and +33.3pp — past the +15pp target that round
   had recorded as missed by a point. `tests/test_export_aliases.py`.
+- **An export alias is never a seed.** Giving aliases nodes (above) also put a *rename* into seed
+  selection, and `export { module as serveStatic }` is the worst possible seed: its name is an
+  exact match for the question, and its body is one line. The single-shot recall tables could not
+  see the cost — all eighteen held-out rows were byte-identical — but the simulated agent loop
+  could: held-out structural went 15/40 → 14/40, losing *"how does the serveStatic middleware
+  decide the Content-Type header"*, whose answer is the 92-line
+  `middleware/serve-static/index.ts`. Scoring aliases down the way test paths are scored down was
+  tried first and moved nothing, because the cost was never the alias's *rank* — seeds are packed
+  in order while `fits()` holds, so at a 2,000-token budget the bigger, better-scoring seeds are
+  rejected one by one and the one-line alias fits in exactly what they could not use. A cheap
+  chunk slipping through a budget that just rejected better ones is not something a multiplier can
+  reach, so `pack_context` now skips alias chunks as seeds outright. It does **not** mark them
+  seen: graph expansion must still reach them, which is where the whole gain above comes from —
+  `utils/url.ts:295-301` enters the pack as `CALLS out of query`, not as a seed. `retrieve()`, the
+  path `repo2graph query` uses, is deliberately untouched. Restores 15/40.
+  `tests/test_alias_seeds.py`.
 - **No definition is silently dropped.** Same-name definitions in one file (overloads,
   conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
   one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
