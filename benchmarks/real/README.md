@@ -259,7 +259,7 @@ surface makes reachable in a few turns, not what a model would do with it.
 
 | Task set | Method | Success | Mean turns | Mean tokens | Precision per read |
 |---|---|---:|---:|---:|---:|
-| held-out structural, 40 | repo2graph | **15 / 40 (38%)** | 3.0 | 2,543 | 15.4% |
+| held-out structural, 40 | repo2graph | **15 / 40 (38%)** | 3.1 | 2,550 | 15.3% |
 | | ripgrep | 4 / 40 (10%) | **2.5** | **586** | **29.0%** |
 | held-out lexical, 40 | repo2graph | 7 / 40 (18%) | **1.0** | 1,962 | 21.5% |
 | | ripgrep | 7 / 40 (18%) | 3.0 | **740** | **89.1%** |
@@ -340,13 +340,31 @@ turned out to be misdiagnosed.**
   multi-range citations and real surgery in the packer. Since the premise is now known to be
   partly false, that work should not start until the diagnosis is rewritten from measurement.
 
+- **D7 — export aliases were not symbols, and fixing it took two changes.** `utils/url.ts`
+  declared `const _getQueryParam` (indexed) and `export const getQueryParam: (...) =
+  _getQueryParam as (...)` (not indexed), so the name consumers import had no node. Same shape in
+  `hono-base.ts`: `class Hono` indexed, its `export { Hono as HonoBase }` alias — which `hono.ts`
+  imports — not. This affects any library with a public façade over private implementations.
+  Indexing both forms moved held-out structural recall 36% → 38% at 4k and 69% → 71% at 8k.
+
+  **The second change is the one worth reading, because the recall tables could not see it.**
+  An alias node is a rename: one line whose *name* is an exact match for the question. Putting it
+  in the index put it into seed selection, and all eighteen held-out recall rows stayed
+  byte-identical while the simulated agent loop went 15/40 → 14/40 — it lost *"how does the
+  serveStatic middleware decide the Content-Type header"*, whose answer is the 92-line
+  `middleware/serve-static/index.ts`. Scoring aliases down the way test paths are scored down was
+  tried first and changed not one number, because the cost was never the alias's *rank*: seeds are
+  packed in order while `fits()` holds, so at a small budget the bigger, better-scoring seeds are
+  rejected one by one and the one-line alias fits in exactly what they could not use. So aliases
+  are skipped as seeds outright — but deliberately left reachable by expansion, which is where the
+  recall gain above actually arrives: `utils/url.ts:295-301` enters the pack as
+  `CALLS out of query`. Loop back to 15/40.
+
+  The transferable lesson: **a retrieval change can be invisible to a single-shot recall
+  benchmark and still cost a real answer.** Any change touching what *seeds* needs both tables.
+
 ### Still open
 
-- **D7 — export aliases are not symbols.** `utils/url.ts` declares `const _getQueryParam`
-  (indexed) and `export const getQueryParam: (...) = _getQueryParam as (...)` (not indexed), so
-  the name consumers import has no node. Same shape in `hono-base.ts`: `class Hono` is indexed
-  and its `export { Hono as HonoBase }` alias, which `hono.ts` imports, is not. This affects any
-  library with a public façade over private implementations. Not yet fixed.
 - **D4 — neighbours arrive signature-compressed once seeds have eaten the budget**, so they
   locate the answer without containing it, and the scorer requires containing it.
 
