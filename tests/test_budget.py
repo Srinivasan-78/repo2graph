@@ -128,3 +128,108 @@ def test_budget_tokens_rejects_a_negative(big_index, capsys):
     err = capsys.readouterr().err
     assert "--budget-tokens" in err, err
     assert "must be >= 0" in err, err
+
+
+# --------------------------------------------------------------------------
+# `retrieve`'s character budget has to measure what it serves
+#
+# The headroom test read the *stored* chunk length while `used` accumulated the
+# *served* one, and `redact_content` replaces a secret with a longer
+# `[REDACTED:...]` marker -- 37 characters longer on a two-assignment module. So
+# every redacted chunk overshot `budget_chars` by its own growth, silently and
+# cumulatively. `pack_context` already redacted before it measured; only
+# `retrieve` did it in the other order.
+#
+# The secrets sit in ordinary `.py` modules on purpose: `exclude_secrets` drops a
+# chunk whose *path* is secret-shaped, so a `.env` would never reach redaction at
+# all. Growth only happens where the file is kept and its contents rewritten.
+# --------------------------------------------------------------------------
+
+CHAR_BUDGETS = [300, 700, 1200, 2500]
+
+
+def _secretful_index(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(8):
+        (repo / f"settings{i}.py").write_text(
+            f'TOKEN_{i} = "s3cr3tValue{i}9"\n'
+            f'API_KEY_{i} = "Zm9vYmFy{i}23456"\n\n'
+            f"def load_settings_{i}():\n"
+            f'    """Return the configured token and api key."""\n'
+            f"    return TOKEN_{i}, API_KEY_{i}\n",
+            encoding="utf8",
+            newline="\n",
+        )
+    # `--secret-policy warn-only` is what leaves the *stored* chunk text
+    # unredacted, so `Index._served` is the thing that rewrites it and the served
+    # bytes are longer than the stored ones. Under the default `redact-match` the
+    # redaction has already happened by the time chunks.jsonl is written and
+    # `_served` is a no-op, which is why the growth is invisible there.
+    out = tmp_path / "idx"
+    main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--formats",
+            "jsonl,overview",
+            "--include-secrets",
+            "--secret-policy",
+            "warn-only",
+        ]
+    )
+    return Index(out)
+
+
+def test_redaction_actually_grows_these_chunks(tmp_path):
+    """Guard the fixture: with no growth the budget test below proves nothing."""
+    idx = _secretful_index(tmp_path)
+    grew = [
+        c["id"]
+        for c in idx.chunks
+        if len(idx._served(c).get("text") or "") > len(c.get("text") or "")
+    ]
+    assert grew, "no chunk grew under redaction; the fixture needs real secrets"
+
+
+@pytest.mark.parametrize("budget", CHAR_BUDGETS)
+def test_retrieve_char_budget_holds_after_redaction_growth(tmp_path, budget):
+    """Served length, accumulated in order, must never pass the budget.
+
+    The first pick is exempt by design -- `if picked and ...` admits one chunk
+    however large, so a budget smaller than any single chunk still answers.
+    Every pick after it has to fit.
+    """
+    idx = _secretful_index(tmp_path)
+    hits = idx.retrieve(
+        "configured token and api key",
+        k=20,
+        hops=0,
+        budget_chars=budget,
+        exclude_secrets=True,
+    )
+    assert hits, "the fixture returned nothing to measure"
+    running = 0
+    for n, c in enumerate(hits):
+        running += len(c.get("text") or "")
+        if n:
+            assert running <= budget, (
+                f"budget {budget} overshot at pick {n + 1}: {running} chars served"
+            )
+
+
+@pytest.mark.parametrize("budget", CHAR_BUDGETS)
+def test_retrieve_serves_redacted_text_within_budget(tmp_path, budget):
+    """What it counted and what it returned must be the same bytes."""
+    idx = _secretful_index(tmp_path)
+    hits = idx.retrieve(
+        "configured token and api key",
+        k=20,
+        hops=0,
+        budget_chars=budget,
+        exclude_secrets=True,
+    )
+    for c in hits:
+        assert "s3cr3tValue" not in (c.get("text") or ""), "a secret was served in clear"

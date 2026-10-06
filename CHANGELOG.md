@@ -126,7 +126,9 @@ makes keeping it current a release-blocking step rather than a good intention.
   `docs/`: `test_the_shipped_doc_set_is_the_documented_one` pins `docs/` to its five reference
   pages precisely to keep roadmap trackers and outreach material out of it, and that invariant is
   worth more than the convenience of putting them there.
-- **Four new MCP tools**, taking the surface from six to ten
+- **Four new MCP tools**, taking the surface from six to ten — and then to **nine**, once
+  `repo_impact` was removed later in this same window (see **Removed**); `docs/mcp.md` is written
+  against the nine that ship
   ([#384](https://github.com/Srinivasan-78/repo2graph/issues/384),
   [#385](https://github.com/Srinivasan-78/repo2graph/issues/385),
   [#386](https://github.com/Srinivasan-78/repo2graph/issues/386),
@@ -173,6 +175,38 @@ makes keeping it current a release-blocking step rather than a good intention.
   `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
   `ParseError` when supported files were found and no grammar loaded for any of them, and the
   message names the cause and the fix rather than leaving it looking like an empty repository.
+- **…and the guard above now also holds for files read in slices.** A file over
+  `max_file_bytes` is parsed by `_chunk_and_parse`, which carried `used_cpp` and
+  `undecodable_slices` out of its slice loop but not `grammar_unavailable`, so the assembled
+  `ChunkedParsedFile` inherited the field's `False` default. Such a file was counted in
+  `stats["parsed"]` with zero symbols, and the total-failure check — which fires only on
+  `_unavailable and not parsed` — could never see it. A repository whose only supported sources
+  are large (an amalgamated single-header library, a big generated file) therefore still exited 0
+  with an empty graph, and `--incremental` still cached it: exactly the failure the entry above
+  exists to prevent, reachable through the one code path that did not report the flag.
+  `tests/test_grammar_availability.py` covers the chunked path on both sides — grammar present
+  and grammar gone — with a fixture assertion that the file really exceeds the limit, so the test
+  cannot silently stop exercising the chunked reader.
+- **A credential-shaped *expression* is no longer redacted as a credential.** The unquoted-value
+  rule had an escape hatch for values that are only code, written as
+  `not _json_secret_value_ok(value) and <identifier-shaped>`. The first conjunct cancelled the
+  second for precisely the values the hatch was for: a mixed-case dotted attribute path has
+  lower, upper and — because the dots count as symbol — three of the four character classes, so
+  `_json_secret_value_ok` called it a real credential and the hatch never opened. `const apiKey =
+  process.env.API_KEY;`, `secret = settings.SECRET_KEY` and `api_key = os.environ["API_KEY"]`
+  shipped as `[REDACTED:CREDENTIAL_UNQUOTED]` into chunks, `nodes.jsonl`, `graph.html`, GraphML
+  and Cypher under the default `redact-match` — and since signatures and docstrings now route
+  through `redact_content` too, into five surfaces at once. The shape test (`_CODE_SHAPED_VALUE_RE`)
+  now stands alone. Digits stay out of that class deliberately: every generated credential carries
+  one, so `hunter2xyz`, `s3cr3tValue` and base64 key material still redact.
+
+  A second case fell outside it for that reason — `password = hashlib.sha256(raw).hexdigest()`
+  captured `hashlib.sha256`, which has digits. The value class already excluded `(` on the stated
+  grounds that no credential carries an unquoted paren, but excluding the *character* only
+  truncated the match at the paren instead of rejecting it, so the rule fired on the function name
+  it had just cut. A value sitting immediately before `(` is now read as a callee name. Checked on
+  the following character rather than by admitting digits to the class, which would also admit a
+  dotted high-entropy value such as a bare JWT. `tests/test_secret_coverage_gaps.py`.
 - **`doctor`'s grammar check can now fail.** It reported `len(LANG_CFG)` grammars "configured"
   and returned `ok`; `LANG_CFG` is a dict literal, so the number was a property of the source
   code and the check could not detect the thing it was named after. It now calls `parser_for()`
@@ -359,7 +393,52 @@ makes keeping it current a release-blocking step rather than a good intention.
   count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
 - **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
   said 50); the request is kept as `cochange_requested_commits`.
+- **`edges_dropped` counts distinct edges lost, not attempts.** `Graph.add_edge` recorded a key in
+  `_edge_seen` only after the `max_edges` ceiling let the edge through, so an edge the ceiling had
+  already rejected was never remembered and every re-proposal of it was counted again. The number
+  is published in `stats.json` and read as how many edges the graph is missing, so it overstated
+  the loss for any edge discovered more than once — the normal case for `IMPORTS` and `CO_CHANGE`.
+  The key is now recorded before the ceiling test: `_edge_seen` means "already decided", which is
+  what both of its readers want. `tests/test_resource_limits.py` pins the repeat-of-a-dropped-edge
+  path alongside the existing repeat-of-an-added-edge one.
+- **A chunked file's nested definitions keep their real parent.** Re-keying across the slices of an
+  oversized file tracked seen `(name, start_line)` pairs in a set, so a symbol skipped as a
+  duplicate had no entry in the `rekeyed` map. A later child whose `symbol_parent_key` named it
+  then resolved through `rekeyed.get(old_parent, old_parent)` to a slice-local key that no longer
+  existed file-wide, `build` fell back to `owner = fid`, and the child's `DEFINES` edge came from
+  the *file* instead of its parent — silently, in the one case nothing else distinguishes. `seen`
+  is now a dict carrying the winning definition's global key, so a skipped duplicate is still
+  rekeyable.
 - `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
+
+### Fixed — retrieval and budgets
+
+- **`conditional_expansion` works on the hybrid path.** `is_lexical_weak`'s floors are absolute
+  BM25 magnitudes (`min_top_score=18.0`), but both callers handed it `score_rrf`'s output. With
+  vectors or an embedder supplied, those are reciprocal-rank scores — `w/(60 + rank)`, about 0.016
+  at rank 1 — so `top_score` sat below every floor and the answer was unconditionally "weak".
+  Expansion suppression therefore did nothing at all whenever dense retrieval was in play, while
+  working as documented on the lexical path: a silent difference in behaviour between the two.
+  `Index._lexical_for_weakness` now re-scores lexically for that test, and returns the ranking
+  unchanged when there is nothing fused to undo, so the lexical path does not score twice. The
+  docstring states the precondition the floors imply.
+- **`retrieve`'s character budget measures what it serves.** The headroom test read the *stored*
+  chunk length while `used` accumulated the *served* one, and `redact_content` replaces a secret
+  with a longer `[REDACTED:…]` marker, so `budget_chars` was overshot by the growth of every
+  redacted chunk, cumulatively. Redaction now happens before the measurement, as it already did in
+  `pack_context`. `tests/test_budget.py` checks the served bytes against four budgets, with a
+  fixture guard asserting the chunks really do grow under redaction — otherwise the budget
+  assertion would pass for the wrong reason.
+- **A question can ask about tests *and* ask a direction.** The test-seed penalty and the
+  answerability boost both read `classify_query`, which returns one label and tests the caller
+  patterns first — and `(what|who|which)\s+(\w+\s+){0,3}?uses?` claims "which tests use the
+  parser" before the test patterns are reached. The shape came back `callers`, so the 0.6 penalty
+  fired on exactly the chunks such a question asks for and the name boost was withheld from them.
+  "What tests cover X" escaped only because `cover` is not in the verb list. Reordering the two
+  loops would have traded the bug the other way, since `\btests?\b` also matches "what calls the
+  test runner". The two questions are independent and are now asked separately: the new
+  `asks_about_tests` drives the penalty and the boost, `classify_query` still drives the direction
+  filter, so "which tests use the parser" gets both. `tests/test_test_path_seeds.py`.
 
 ### Fixed — CLI and MCP
 
@@ -375,6 +454,18 @@ makes keeping it current a release-blocking step rather than a good intention.
   `PYTHONIOENCODING` is respected).
 - **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
   in JSON).
+- **`repo_read` serves the lines it cites.** `_chunk_body_lines` derived the generated header's
+  length by subtracting the citation range from the line count, which is off by one for every
+  non-final part of a split chunk: such a part ends with its last body line's newline, so
+  `split("\n")` yields a trailing `""` that is not a body line, and the window started a line
+  late. `repo_read("m.py", 1, 3)` answered with lines 2–4 under a citation that said 1–3, dropping
+  the `def` of a long symbol — in the one tool an agent uses to go and *verify* a citation. The
+  range was never a reliable line count anyway: an over-long line is cut into several parts that
+  all sit on one source line, and redaction can change the count. The header is now measured by its
+  own shape via `_header_len`, the same way `query._excerpt_record` reads it. The chunk records
+  were already correct, which is why the chunk-level fidelity tests could not see this;
+  `tests/test_cite_fidelity.py` now asserts the invariant through the tool, across part boundaries
+  rather than only inside the first part, where the shift was smallest.
 - **`demo` question 4 shows the direct caller** via `explain node`.
 - Smaller: `rag`/`query` accept `--min-confidence`, `explain` accepts `--min-conf`;
   `explain retrieval` defaults to `-k 8` like `rag`; `doctor` lists the files with parse
@@ -386,7 +477,8 @@ makes keeping it current a release-blocking step rather than a good intention.
   `repo2graph/impact.py`, the `impact` CLI command, the `repo_impact` MCP tool and its schema,
   `.github/workflows/pr-impact.yml`, and the `pr-impact` inputs and outputs of the Action. With it
   go the `--base`, `--head`, `--diff`, `--max-depth`, `--min-conf`, `--fail-on` and `--write` flags
-  of that command.
+  of that command, and the `impact-analysis` PyPI keyword, which was still advertising the removed
+  surface on the project's listing page.
 
   This narrows the project to one thing: retrieval. The measurements that prompted it are in
   `benchmarks/real/` — the graph earns its keep in retrieval (on 40 held-out structural questions
@@ -501,6 +593,47 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed — repository tooling and stale references
 
+- **The five committed examples now say which analyser produced them.** Each
+  `examples/<id>/README.md` recorded the upstream commit it indexed but not the repo2graph version
+  that did the indexing, and all five were built by **1.6.0**. A pinned commit fixes the *source*
+  and says nothing about the *analyser*, so two minor versions of call-resolution changes — the
+  untyped-receiver fix in `b98fc46b` above all — left the published figures describing behaviour
+  the package no longer has. It is plainly visible in the committed `overview.md` files: Kubernetes'
+  most-called-symbols ranking is led by the Go builtins `len` and `append` attributed to arbitrary
+  in-repo files, VS Code's by `DisposableMap.get` at 5,397 incoming calls from map lookups, and
+  Django's by five separate `.create` methods at ~2,140 each — exactly the fan-out `b98fc46b`
+  removed. `scripts/generate_examples.py` already captured `R2G_VERSION` for `results.json`; its
+  README template simply never printed it, which is why the staleness had no visible marker. The
+  template now emits the version beside the commit and explains why both halves are load-bearing,
+  and the five existing pages carry an explicit note until
+  `python scripts/generate_examples.py --all` is re-run.
+- **`docs/architecture.md`'s module table was stale in 26 of 36 rows.** Sizes are prose that no test
+  checks, and they had drifted badly: `query.py` read 1,039 against an actual 1,620, `doctor.py` 254
+  against 382, `graph.py` 2,117 against 2,333. Every row is now recomputed, `doctor.py` moved to
+  keep the Support table in descending order, and the `mcp/` total corrected to 2,387.
+- **`benchmarks/README.md` described the retrieval benchmark as it was two rounds ago** — "35
+  lexical and 10 cross-file structural questions about four pinned third-party repositories" — when
+  `real/` had grown the two held-out sets and two more repositories. The index page now carries the
+  same three-set table as `real/README.md` (35/40/22 lexical, 10/40 structural; click and axios in
+  the held-out repository set) and repeats the instruction to quote the held-out numbers, so the
+  summary cannot imply a smaller, easier benchmark than the one that ran.
+- **The changelog flag guard was running against a dead subcommand.**
+  `test_unreleased_changelog_does_not_advertise_flags_that_do_not_exist` builds its set of real
+  flags by running `repo2graph <cmd> --help` for each name in `_CLI_COMMANDS`, a deliberately
+  hand-maintained tuple — and it still listed `impact`. That invocation exits as `invalid choice: 'impact'` and
+  contributes nothing, so the guard ran against a set missing a command's worth of flags while
+  printing an argparse error into every test run. The entry is removed; the tuple stays explicit,
+  for the reason its own comment gives.
+- **A test comment pointed at a file deleted with the translations.**
+  `tests/test_doc_consistency.py` explained that `LANGUAGE_TOKENS` sits at module level so
+  `tests/test_i18n_consistency.py` could reuse it against the five translated READMEs. Both that
+  test and `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` were removed in `b98fc46b`; the mapping now has
+  exactly one reader and guards `README.md` alone. The comment says so, keeping the reason the
+  mapping was shared in the first place — the language list had drifted in all six files at once.
+- **The unreleased notes claimed ten MCP tools while `docs/mcp.md` documented nine.** `repo_impact`
+  was removed later in the same window, so "taking the surface from six to ten" was true of the
+  addition and false of the release; it now states the net. The `impact-analysis` PyPI keyword went
+  with it.
 - **The incremental parse cache survived a grammar upgrade (E43).** `PARSE_CACHE_FORMAT` is bumped
   by hand, so it catches every change to *our* extraction and none to the grammars that feed it. A
   tree-sitter upgrade changes what the same bytes parse to while nothing in this repository

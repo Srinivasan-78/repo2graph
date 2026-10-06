@@ -34,6 +34,7 @@ __all__ = [
     "SECRET_KEYWORDS",
     "SECRET_WORD_RE",
     "_is_secret_path",
+    "asks_about_tests",
     "classify_query",
     "is_test_path",
     "edge_dirs_for",
@@ -291,6 +292,23 @@ def classify_query(query: str) -> str:
     return "concept"
 
 
+def asks_about_tests(query: str) -> bool:
+    """Whether the question is asking *about* the tests.
+
+    Deliberately independent of `classify_query`, because the two answers are:
+    "which tests use the parser" is a caller question *and* a question about
+    tests, and it needs the caller direction filter and the test seeds left
+    alone. Reading it off the single shape gave it neither -- the caller pattern
+    `(what|who|which)\\s+(\\w+\\s+){0,3}?uses?` claims "which tests use X"
+    before `_TEST_PATTERNS` is reached, so `classify_query` answered "callers"
+    and the demotion below fired on exactly the chunks the question asked for.
+    Reordering the loops would have traded the bug the other way, since
+    `\\btests?\\b` matches "what calls the test runner" too.
+    """
+    q = " ".join((query or "").lower().split())
+    return bool(q) and any(re.search(pat, q) for pat in _TEST_PATTERNS)
+
+
 def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
     """The traversal filter a question shape implies, or None to keep the default."""
     if shape == "callers":
@@ -396,6 +414,12 @@ def is_lexical_weak(
     2. The top-ranked BM25 score is below `min_top_score` (no strong keyword matches).
     3. The score distribution across the top-k is flat (`top_score / s_k < flat_ratio`),
        indicating ambiguity among candidates rather than a clear winner.
+
+    `min_top_score` is an absolute BM25 magnitude, so `ranked_scores` must be a
+    *lexical* ranking. Fused reciprocal-rank scores (`score_rrf` with vectors or
+    an embedder) are around 0.016 at rank 1 and sit below every floor, which
+    makes the answer unconditionally True; callers on the hybrid path go through
+    `Index._lexical_for_weakness` for that reason.
 
     Args:
         ranked_scores: Ranked (score, index) pairs from BM25/lexical scoring.
@@ -762,6 +786,30 @@ class Index:
             if names & idents or {n.lower() for n in names} & lowered:
                 acc[i] *= IDENT_BOOST
 
+    def _lexical_for_weakness(
+        self,
+        query: str,
+        ranked: list[tuple[float, int]],
+        vectors: Mapping[Any, Vector] | None,
+        embedder: "Embedder | None",
+    ) -> list[tuple[float, int]]:
+        """The BM25 ranking `is_lexical_weak` has to see, given a possibly fused one.
+
+        `is_lexical_weak`'s floors are absolute BM25 magnitudes
+        (`min_top_score=18.0`). Reciprocal-rank fusion scores are `w/(60+rank)`
+        -- about 0.016 at rank 1 -- so handing it `score_rrf` output whenever
+        vectors or an embedder were supplied put `top_score` below every floor
+        and made the answer unconditionally "weak". `conditional_expansion`
+        therefore suppressed nothing at all on the hybrid path, silently, while
+        working as documented on the lexical one.
+
+        `score_rrf` returns the lexical list unchanged when there is nothing to
+        fuse with, so that case reuses `ranked` rather than scoring twice.
+        """
+        if vectors is None and embedder is None:
+            return ranked
+        return self.score(query)
+
     def score_rrf(
         self,
         query: str,
@@ -1014,21 +1062,29 @@ class Index:
             nid = c["node_id"]
             if nid in seen_nodes_set or _secret(c, nid):
                 continue
+            # Redact first, then measure. The headroom test used to read the
+            # stored length while `used` accumulated the served one, and
+            # `redact_content` replaces a secret with a longer `[REDACTED:...]`
+            # marker, so `budget_chars` was overshot by the growth of every
+            # redacted chunk. `pack_context` already redacts before it measures.
+            if exclude_secrets:
+                c = self._served(c)
             chunk_len = len(c.get("text") or "")
             # Verify budget headroom before appending to avoid overshooting:
             if picked and used + chunk_len > budget_chars:
                 break
             seen_nodes_set.add(nid)
             seen_nodes_list.append(nid)
-            if exclude_secrets:
-                c = self._served(c)
-                chunk_len = len(c.get("text") or "")
             picked.append({**c, "score": round(s, 3), "why": "lexical"})
             used += chunk_len
             if len(picked) >= k or used >= budget_chars:
                 break
         # Bound the expansion pass by both count and budget:
-        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+        if conditional_expansion and not is_lexical_weak(
+            self._lexical_for_weakness(query, ranked, vectors, embedder),
+            k=k,
+            num_chunks=len(self.chunks),
+        ):
             return picked
         max_total = k * 2
         for nid, etype, direction, src in self.expand(
@@ -1140,17 +1196,25 @@ class Index:
         bounded = budget > 0
 
         ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
-        if conditional_expansion and not is_lexical_weak(ranked, k=k, num_chunks=len(self.chunks)):
+        if conditional_expansion and not is_lexical_weak(
+            self._lexical_for_weakness(query, ranked, vectors, embedder),
+            k=k,
+            num_chunks=len(self.chunks),
+        ):
             expand_graph = False
         # One classification drives all three adjustments below: which chunks are
         # answer-shaped, which seeds win slots, and which direction expansion
         # follows.
         shape = classify_query(query)
+        # Whether the question is about tests is asked separately from the shape:
+        # a caller pattern claims "which tests use X" first, so reading it off
+        # `shape` demoted the very chunks such a question asks for.
+        asks_tests = asks_about_tests(query)
         # Answerability re-rank, before seeds are taken. `is_lexical_weak` above
         # reads the *lexical* distribution and so must see the unadjusted list.
         if rerank_answerability:
             terms = self.query_content_terms(query)
-            boost_tests = shape == "tests"
+            boost_tests = asks_tests
             ranked = (
                 sorted(
                     (
@@ -1169,7 +1233,7 @@ class Index:
         seen_nodes: set[str] = set()
         seed_limit = k if precision_first else k * 3
         seed_window = ranked[:seed_limit]
-        if shape != "tests":
+        if not asks_tests:
             seed_window = self._demote_test_seeds(seed_window)
         for s, i in seed_window:
             c = self.chunks[i]

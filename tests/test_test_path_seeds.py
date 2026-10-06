@@ -31,7 +31,7 @@ import pytest
 
 from conftest import build_mini_index  # type: ignore[import-not-found]
 
-from repo2graph.query import Index, classify_query
+from repo2graph.query import Index, asks_about_tests, classify_query
 
 IMPL = '''"""Middleware chaining."""
 
@@ -200,3 +200,79 @@ def test_tests_remain_reachable_as_neighbours(mw_index: Index) -> None:
     assert "test_impl.py" in paths, (
         f"the test became unreachable rather than merely demoted: {sorted(paths)}"
     )
+
+
+# --------------------------------------------------------------------------
+# A question can be about tests *and* ask a direction.
+#
+# `classify_query` returns one label and tests `_CALLER_PATTERNS` first, and
+# `(what|who|which)\s+(\w+\s+){0,3}?(calls?|uses?|...)` claims "which tests use
+# the parser" -- "which" + one filler word + "use". So the shape came back
+# "callers", `shape != "tests"` was true, and the 0.6 penalty fired on exactly
+# the chunks the question asked for, while `_answerability` withheld the name
+# boost from them too.
+#
+# "What tests cover X" escaped only because `cover` is not in the verb list.
+#
+# Reordering the two loops would trade the bug the other way: `\btests?\b`
+# matches "what calls the test runner", which would lose the caller direction
+# filter. The two questions are independent, so they are now asked separately --
+# `asks_about_tests` for the penalty, `classify_query` for the direction.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "which tests use the parser",
+        "what tests call compose_middleware",
+        "which specs import the router",
+        "what tests cover compose_middleware",
+        "which test exercises middleware chaining",
+    ],
+)
+def test_a_question_about_tests_is_recognised_whatever_its_direction(query: str) -> None:
+    assert asks_about_tests(query), f"not recognised as a question about tests: {query!r}"
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "how are middleware handlers chained together",
+        "what calls compose_middleware",
+        "where is the router defined",
+    ],
+)
+def test_a_question_not_about_tests_is_not_claimed(query: str) -> None:
+    assert not asks_about_tests(query), f"wrongly read as a question about tests: {query!r}"
+
+
+def test_the_direction_survives_a_question_about_tests() -> None:
+    """The reason this is a separate predicate: both answers must be available."""
+    assert classify_query("which tests use the parser") == "callers"
+    assert asks_about_tests("which tests use the parser")
+
+
+def test_a_caller_shaped_test_question_still_gets_the_tests(mw_index: Index) -> None:
+    """The defect, end to end: the penalty must not fire on this question."""
+    query = "which tests use compose_middleware"
+    assert classify_query(query) == "callers", "fixture assumes the caller pattern claims it"
+    pack = mw_index.pack_context(query, budget_tokens=4000)
+    seeds = _seeds(pack)
+    assert any(p.startswith("test_") for p in seeds), (
+        f"a caller-shaped question about tests got no test seeds: {seeds}"
+    )
+
+
+def test_a_question_mentioning_tests_keeps_source_for_a_non_test_question(
+    mw_index: Index,
+) -> None:
+    """The penalty must still fire for a question that is not about tests."""
+    ranked = mw_index.score(QUERY)
+    assert not asks_about_tests(QUERY)
+    after = {i: s for s, i in mw_index._demote_test_seeds(ranked)}
+    before = {i: s for s, i in ranked}
+    demoted = [i for i in before if str(mw_index.chunks[i].get("path") or "").startswith("test_")]
+    assert demoted, "the fixture produced no test candidates"
+    for i in demoted:
+        assert after[i] < before[i]

@@ -113,6 +113,70 @@ def test_a_short_symbol_keeps_its_full_range(tmp_path: Path) -> None:
     assert _first_code_line(short[0]["text"]) == "def after_it():"
 
 
+# --------------------------------------------------------------------------
+# The same invariant one level up: `repo_read` is the tool an agent uses to go
+# and check a citation, so it has to serve the line it says it is serving.
+#
+# The chunk records were already correct here -- `_chunk_body_lines` derived the
+# header length by subtracting the citation range from the line count, and every
+# non-final part of a split chunk ends with its last body line's newline, so
+# `split("\n")` produced one extra empty element and the window started one line
+# late. `repo_read(path, 1, 3)` answered with lines 2-4 under a citation that
+# said 1-3, silently dropping the `def`. Only `_aux`'s reader was wrong, which is
+# why the chunk-level tests above could not see it.
+# --------------------------------------------------------------------------
+
+
+def _read_index(tmp_path: Path, name: str, source: str):
+    """Build `source` into a real on-disk index and open it."""
+    from conftest import build_mini_index
+    from repo2graph.query import Index
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / name).write_text(source, encoding="utf8", newline="\n")
+    return Index(build_mini_index(repo, tmp_path / "idx"))
+
+
+def _served_lines(out: str) -> list[str]:
+    """The source lines `tool_repo_read` returned, without its citation header."""
+    return [ln for ln in out.split("\n") if ln.strip() and not ln.startswith(("###", "_note"))]
+
+
+def test_repo_read_serves_the_lines_it_cites_across_a_split_symbol(tmp_path: Path) -> None:
+    """Every single-line read must return that exact source line."""
+    from repo2graph.mcp.retrieval import tool_repo_read
+
+    index = _read_index(tmp_path, "m.py", LONG_PY)
+    source = LONG_PY.split("\n")
+
+    parts = [c for c in index.chunks if c.get("qualname") == "long_function"]
+    assert len(parts) > 1, "fixture must split, or this proves nothing"
+
+    offenders = []
+    # Across part boundaries, not just inside the first part: the shift grew by
+    # one line per part, so part one hid it least.
+    for lineno in (1, 2, 3, 20, 60, 90, 120, len(source) - 3):
+        want = source[lineno - 1]
+        if not want.strip():
+            continue
+        got = _served_lines(tool_repo_read(index, "m.py", lineno, lineno, context=0))
+        if not got or got[0].rstrip("\r") != want.rstrip("\r"):
+            offenders.append(
+                f"line {lineno}: asked for {want!r}, got {(got[0] if got else None)!r}"
+            )
+    assert not offenders, "repo_read served lines it did not cite:\n  " + "\n  ".join(offenders)
+
+
+def test_repo_read_keeps_the_def_line_of_a_split_symbol(tmp_path: Path) -> None:
+    """The reported symptom, pinned on its own: line 1 is the `def`."""
+    from repo2graph.mcp.retrieval import tool_repo_read
+
+    index = _read_index(tmp_path, "m.py", LONG_PY)
+    got = _served_lines(tool_repo_read(index, "m.py", 1, 3, context=0))
+    assert got[0] == "def long_function(a, b, c):"
+
+
 LONG_TS = (
     "class C {\n"
     + "\n".join(f"  m{i}() {{ return {i} /* {_PAD} */ }}" for i in range(80))

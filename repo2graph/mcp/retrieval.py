@@ -14,6 +14,7 @@ from ..query import (
     QUALNAME_SEP_RE,
     Index,
     _fit_lines,
+    _header_len,
     count_tokens,
 )
 from .guardrails import (
@@ -153,11 +154,23 @@ def _chunk_body_lines(c: dict[str, Any]) -> list[str] | None:
     if not isinstance(start, int) or not isinstance(end, int) or end < start:
         return None
     lines = (c.get("text") or "").split("\n")
-    body_len = end - start + 1
-    header_len = len(lines) - body_len
-    if header_len < 0:
+    # Count the generated header by its own shape rather than deriving it from
+    # the citation range. `len(lines) - (end - start + 1)` was off by one for
+    # every non-final part of a split chunk: such a part ends with the newline
+    # of its last body line, so `split("\n")` yields a trailing "" that is not
+    # a body line, and the window started one line late -- `repo_read` served
+    # line 2 onward under a citation that said line 1, dropping the `def`.
+    # The range is not a reliable line count either: an over-long line is cut
+    # into several parts that all sit on one source line, and redaction can
+    # change the count. Only the header's shape is dependable, which is why
+    # `query._excerpt_record` reads it the same way.
+    header_len = _header_len(lines)
+    body = lines[header_len:]
+    if body and body[-1] == "":
+        body.pop()
+    if not body:
         return None
-    return lines[header_len:]
+    return body
 
 
 def _aux(index: Index) -> dict[str, Any]:

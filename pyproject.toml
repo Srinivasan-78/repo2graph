@@ -10,7 +10,7 @@ authors = [{name = "Srinivasan Vijayaraghavan", email = "srinivasan.shyam2000@gm
 keywords = ["mcp", "model-context-protocol", "code-graph", "graphrag", "rag",
             "tree-sitter", "static-analysis", "codebase-search", "coding-agent",
             "claude-code", "cursor", "code-navigation", "code-understanding",
-            "onboarding", "impact-analysis", "citations"]
+            "onboarding", "citations"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

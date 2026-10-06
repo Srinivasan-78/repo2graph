@@ -75,6 +75,23 @@ NOT_SECRETS = {
     "api_key_header_name": "api_key_header = X-Api-Key\n",
     "length_constant": "secret_length = 32\n",
     "policy_reference": "password_policy = strict_policy\n",
+    # A *mixed-case* dotted path. The escape hatch for code-shaped values read
+    # `not _json_secret_value_ok(value) and <identifier>`, and the first conjunct
+    # cancelled the second for exactly these: an attribute path has lower, upper
+    # and -- because the dots count -- symbol, three of the four classes, so
+    # `_json_secret_value_ok` said "real credential" and the hatch never opened.
+    # Every case below shipped as `[REDACTED:CREDENTIAL_UNQUOTED]` into
+    # chunks.jsonl, nodes.jsonl, graph.html, GraphML and Cypher under the default
+    # `redact-match` policy, and this PR additionally routes every signature and
+    # docstring through `redact_content`.
+    "env_attribute_path": "const apiKey = process.env.API_KEY;\n",
+    "settings_attribute": "secret = settings.SECRET_KEY\n",
+    "environ_subscript": 'api_key = os.environ["API_KEY"]\n',
+    "module_constant": "token = auth.DEFAULT_TOKEN\n",
+    # Digits put this one outside the identifier class, so the call it opens is
+    # what marks it as code -- the value class already excludes `(`, but that
+    # only truncated the match at the paren instead of rejecting it.
+    "dotted_call": "password = hashlib.sha256(raw).hexdigest()\n",
 }
 
 

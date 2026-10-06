@@ -261,6 +261,13 @@ class Graph:
         key = (src, dst, etype)
         if key in self._edge_seen:
             return
+        # Recorded before the ceiling test, so a *dropped* edge proposed a second
+        # time is not counted twice. `edges_dropped` is published in stats.json
+        # and read as the number of distinct edges the graph is missing; leaving
+        # the key unrecorded here counted attempts instead and overstated the
+        # loss for every edge discovered more than once. `_edge_seen` means
+        # "already decided", which is what both callers of it want.
+        self._edge_seen.add(key)
         # Checked after the duplicate test, so a repeated edge is not counted as
         # one the ceiling dropped. Discovery order is deterministic (see
         # CONTRIBUTING's "Deterministic Discovery Order"), so the same build
@@ -274,7 +281,6 @@ class Graph:
                 f"further edges are dropped and the graph is partial",
             )
             return
-        self._edge_seen.add(key)
         # Every edge leaves here carrying the standard trust metadata, whatever
         # the caller remembered to pass. Normalising at the one chokepoint is
         # what stops a newly added edge type shipping as a bare triple, which
@@ -774,6 +780,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     total_parse_errors = 0
     used_cpp = False
     undecodable_slices = 0
+    grammar_unavailable = False
     # The #377 `.h` sniff, on the one path that never holds the whole file:
     # this reader streams slices, so the sniff runs against the first decodable
     # one instead of the full bytes `_read_and_parse` has. A header's C++
@@ -851,10 +858,27 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             total_parse_errors += pf.parse_errors
             if pf.used_cpp:
                 used_cpp = True
+            # Carried out of the slice loop, like `used_cpp`. Without it the
+            # `ChunkedParsedFile` below inherited the field's False default, so
+            # a file too large to parse whole counted as `parsed` with zero
+            # symbols and the total-failure guard in `build` -- which fires only
+            # on `_unavailable and not parsed` -- could never see it. A repo
+            # whose only supported sources exceed `max_file_bytes` (an
+            # amalgamated single-header library, a big generated file) then
+            # exited 0 with an empty graph and `--incremental` cached it.
+            if pf.grammar_unavailable:
+                grammar_unavailable = True
 
             line_offset += buf.count(b"\n")
 
-    seen = set()
+    # `(name, start_line)` -> the global key the winning definition was given.
+    # A value, not just membership, because a symbol skipped as a duplicate still
+    # has to be rekeyable: recording nothing for it left a later child whose
+    # `symbol_parent_key` named it resolving through
+    # `rekeyed.get(old_parent, old_parent)` to a slice-local key that no longer
+    # exists file-wide, and `build` then fell back to `owner = fid` -- the
+    # child's DEFINES edge came from the file instead of its parent, silently.
+    seen: dict[tuple[str, int], str] = {}
     deduped_symbols = []
     # Each slice was keyed on its own; re-key across the whole file with the
     # same `@L<line>` scheme `parse_source` uses, so a chunked file and a
@@ -873,11 +897,13 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             old_parent = symbol_parent_key(sym)
             seen_key = (sym.name, sym.start_line)
             if seen_key in seen:
+                rekeyed[old_key] = seen[seen_key]
                 continue
-            seen.add(seen_key)
 
             sym.key = disambiguate_key(sym.qualname, sym.start_line, used_keys)
-            rekeyed[old_key] = symbol_key(sym)
+            new_key = symbol_key(sym)
+            seen[seen_key] = new_key
+            rekeyed[old_key] = new_key
             if old_parent is not None:
                 new_parent = rekeyed.get(old_parent, old_parent)
                 sym.parent_key = "" if new_parent == sym.parent else new_parent
@@ -892,6 +918,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
         used_cpp=used_cpp,
         is_chunked=True,
         undecodable_slices=undecodable_slices,
+        grammar_unavailable=grammar_unavailable,
     )
 
     return rel, lang, (total_bytes, newlines + 1, pf, hasher.hexdigest())

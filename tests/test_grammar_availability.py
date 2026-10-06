@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from repo2graph.doctor import check_tree_sitter
 from repo2graph.graph import build
-from repo2graph.parse import ParseError, parse_source
+from repo2graph.parse import BuildConfig, ParseError, parse_source
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -146,6 +146,75 @@ def test_partial_grammar_loss_is_counted_without_failing(tmp_path, monkeypatch):
     g = build(repo)
     assert g.stats.get("grammar_unavailable", 0) == 1
     assert g.stats["parsed"] >= 2
+
+
+# --------------------------------------------------------------------------
+# ... including through the chunked reader
+#
+# A file over `max_file_bytes` is read by `_chunk_and_parse`, which parses it in
+# slices and assembles a `ChunkedParsedFile`. It carried `used_cpp` and
+# `undecodable_slices` out of that loop but not `grammar_unavailable`, so the
+# result inherited the field's `False` default. Such a file was then counted in
+# `stats["parsed"]` with zero symbols, and the total-failure guard -- which fires
+# only on `_unavailable and not parsed` -- could never see a repository whose
+# only supported sources are large: an amalgamated single-header library, or any
+# big generated file. The build exited 0 with an empty graph and `--incremental`
+# cached it, which is the exact failure this module exists to prevent.
+# --------------------------------------------------------------------------
+
+_CHUNK_LIMIT = 4096
+
+
+def _write_oversized_repo(tmp_path):
+    """One Python file comfortably past `_CHUNK_LIMIT`, so it must be chunked."""
+    repo = tmp_path / "big"
+    repo.mkdir()
+    body = "\n".join(f"def f{i}():\n    return {i}\n" for i in range(600))
+    (repo / "big.py").write_text(body, encoding="utf8", newline="\n")
+    assert (repo / "big.py").stat().st_size > _CHUNK_LIMIT, "fixture must exceed the limit"
+    return repo
+
+
+def _chunking_config(**kw):
+    return BuildConfig(max_file_bytes=_CHUNK_LIMIT, chunk_large_files=True, **kw)
+
+
+def test_a_chunked_file_parses_normally_when_the_grammar_loads(tmp_path):
+    """Guard the fixture: it must really take the chunked path and find symbols."""
+    g = build(_write_oversized_repo(tmp_path), config=_chunking_config())
+    assert g.stats.get("grammar_unavailable", 0) == 0
+    assert g.stats["parsed"] == 1
+    assert any(n.get("type") == "symbol" for n in g.nodes.values()), "chunked parse found nothing"
+
+
+def test_a_chunked_file_reports_its_grammar_as_unavailable(tmp_path, monkeypatch):
+    """The flag must survive `_chunk_and_parse`, not be lost to the default."""
+    repo = _write_oversized_repo(tmp_path)
+    _break_all_grammars(monkeypatch)
+    with pytest.raises(ParseError) as exc:
+        build(repo, config=_chunking_config())
+    assert "no tree-sitter grammar could be loaded" in str(exc.value)
+
+
+def test_a_chunked_file_is_not_counted_as_parsed_when_its_grammar_is_gone(tmp_path, monkeypatch):
+    """The mechanism behind the guard: counted as unavailable, never as parsed.
+
+    Asserted on a repo that also holds a small parseable file, so `build`
+    reaches the end instead of raising and the two counters can be read.
+    """
+    repo = _write_oversized_repo(tmp_path)
+    (repo / "keep.go").write_bytes(b"package main\n\nfunc Run() {}\n")
+    from repo2graph import parse as parse_mod
+
+    real = parse_mod.parser_for
+    monkeypatch.setattr(
+        "repo2graph.parse.parser_for", lambda lang: None if lang == "python" else real(lang)
+    )
+    g = build(repo, config=_chunking_config())
+    assert g.stats.get("grammar_unavailable", 0) == 1, (
+        "the oversized file's unloadable grammar was not reported"
+    )
+    assert g.stats["parsed"] == 1, "the unparseable file was counted as parsed"
 
 
 # --------------------------------------------------------------------------

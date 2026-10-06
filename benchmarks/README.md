@@ -5,7 +5,7 @@ each other.
 
 | Directory | Question it answers | Written by |
 |---|---|---|
-| [`real/`](real/README.md) | Does repo2graph put the answering code in an agent's context more often than grep, at the same token budget? | third parties (Flask, requests, FastAPI, Hono) |
+| [`real/`](real/README.md) | Does repo2graph put the answering code in an agent's context more often than grep, at the same token budget? | third parties (Flask, requests, FastAPI, Hono; click and axios in the held-out repository set) |
 | [`corpus/`](corpus/README.md) | Did a change break parsing or retrieval on patterns we already handle? | this project |
 | `results.json` + [`methodology.md`](methodology.md) | How big is the graph, and how long does a build take, on large public repositories? | third parties (django, kubernetes, tensorflow, vscode, linux) |
 
@@ -34,11 +34,23 @@ The per-repository `examples/<id>/` directories come out of the same run;
 
 ## Retrieval results (`real/`)
 
-35 lexical and 10 cross-file structural questions about four pinned third-party repositories,
-scored against the definitions that answer them at 2k/4k/8k token budgets, against a
-grep-then-read baseline. repo2graph loses the lexical set and wins the structural one.
-[`real/README.md`](real/README.md) has the tables, the diagnosis of why it loses, the corrections
-log, and what the benchmark does not measure.
+Questions about six pinned third-party repositories, scored against the definitions that answer
+them at 2k/4k/8k token budgets, against a grep-then-read baseline. repo2graph loses the lexical
+sets and wins the structural ones.
+
+Three sets, holding out different things — **quote the held-out numbers**, which are uniformly
+harder:
+
+| | Published (regression) | Held-out questions | Held-out repositories |
+|---|---|---|---|
+| Lexical | 35 | 40 | 22 |
+| Structural | 10 | 40 | — |
+| Repositories | Flask, requests, FastAPI, Hono | the same four | click, axios |
+
+The published set has been visible since this page's first version and several fixes were
+diagnosed against it, so it can show that a change broke something, never that a change is good.
+[`real/README.md`](real/README.md) has the tables, the diagnosis of why it loses the lexical sets,
+the corrections log, and what the benchmark does not measure.
 
 ## Regression gate (`corpus/`)
 

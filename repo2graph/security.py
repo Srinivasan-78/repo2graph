@@ -446,6 +446,14 @@ _NON_SECRET_SUFFIX_RE = re.compile(
 #: `{{ secret }}`, `<your-token>`, `%(pw)s`, `********`, `xxxxxxxx`.
 _JSON_PLACEHOLDER_RE = re.compile(r"^(?:\$\{.*|\{\{.*|<.*>|%\(.*|(.)\1*)$")
 
+#: A value that is only *code*: a bare identifier, a dotted attribute path, or
+#: one with a subscript opened on it -- `os.environ[`, because
+#: `_UNQUOTED_VALUE_CHAR` stops the value at the quote that follows. Digits are
+#: deliberately absent from the class: every generated credential carries one,
+#: so `hunter2xyz`, `s3cr3tValue` and base64 key material all fail this test and
+#: stay redacted, while `process.env.API_KEY` and `settings.SECRET_KEY` do not.
+_CODE_SHAPED_VALUE_RE = re.compile(r"[A-Za-z_][A-Za-z_.\[\]]*")
+
 
 def _json_secret_value_ok(value: str) -> bool:
     """True if a JSON value under a secret-ish key looks like a real credential.
@@ -686,7 +694,28 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
         # `s3cr3tValue` and base64 key material. A purely alphabetic unquoted
         # password is the accepted cost; the quoted rules still catch it when it
         # is written as a literal.
-        if not _json_secret_value_ok(value) and re.fullmatch(r"[A-Za-z_][A-Za-z_.]*", value):
+        #
+        # This test must stand alone. It used to be `not _json_secret_value_ok(value)
+        # and <identifier>`, and the first conjunct cancelled the second for exactly
+        # the dotted paths named above: a mixed-case attribute path has lower, upper
+        # and -- because the dots count -- symbol, which is three of four classes, so
+        # `_json_secret_value_ok` returned True and the escape hatch never opened.
+        # `const apiKey = process.env.API_KEY;` therefore shipped as
+        # `const apiKey = [REDACTED:CREDENTIAL_UNQUOTED];` into chunks, nodes,
+        # graph.html, GraphML and Cypher under the default `redact-match` policy.
+        if _CODE_SHAPED_VALUE_RE.fullmatch(value):
+            continue
+        # A value sitting immediately before `(` is a call, so what matched is a
+        # callee name: `password = hashlib.sha256(raw).hexdigest()` captured
+        # `hashlib.sha256`, which carries digits and so is not identifier-shaped
+        # by the test above. The value class already excludes parentheses on the
+        # stated grounds that "no credential carries an unquoted paren" -- but
+        # excluding the character only truncated the value instead of rejecting
+        # the match, so the rule fired on the function name it had just cut.
+        # Checked on the following character rather than by admitting digits to
+        # the class above, which would also admit a dotted high-entropy value
+        # such as a bare JWT.
+        if text[m.end("value") : m.end("value") + 1] == "(":
             continue
         findings.append(("CREDENTIAL_UNQUOTED", m.start("value"), m.end("value")))
 

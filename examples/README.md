@@ -5,6 +5,14 @@ reproduction command for every one. This is evidence, not a demo: every number b
 actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json), never typed in
 by hand.
 
+> **These runs were made by repo2graph 1.6.0** (`repo2graph_version` in that file, 2026-09-22);
+> the package is now at 2.2.0. A pinned upstream commit fixes the *source* but not the *analyser*,
+> and call resolution has changed since: `b98fc46b` stopped binding builtin method calls on untyped
+> receivers to in-repo methods, which moves `CALLS` totals, ambiguous-call counts and — most
+> visibly — the most-called-symbols ranking in each `overview.md`, where collection and builtin
+> method names still outrank the repositories' own hot functions. Treat the tables as a 1.6.0
+> record until `--all` is re-run; each example repeats this note.
+
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
 [`../scripts/generate_examples.py`](../scripts/generate_examples.py). See
 [`../docs/architecture.md`](../docs/architecture.md) for how the pipeline works and

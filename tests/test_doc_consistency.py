@@ -40,15 +40,16 @@ def _pyproject_version() -> str:
     return m.group("v")
 
 
-# Map internal grammar keys to the exact token the READMEs use for them
+# Map internal grammar keys to the exact token README.md uses for them
 # (JS/TS/TSX are documented abbreviated). One regex per LANG_CFG key: every
 # family repo2graph actually parses must have a matching entry here.
 #
-# Module-level rather than local to test_languages_documented() because
-# tests/test_i18n_consistency.py runs the same check against the five
-# translated READMEs -- the language list drifted in all six files at once
-# (all said 16 grammars / 28 extensions after Lua landed), so one mapping
-# guarding one file was exactly the gap.
+# This guarded six files at once while `docs/i18n/README_{de,es,fr,ja,zh-CN}.md`
+# existed -- the language list had drifted in all six (every one said 16
+# grammars / 28 extensions after Lua landed), which is why the mapping was
+# shared rather than local. Those READMEs and `tests/test_i18n_consistency.py`
+# were removed in b98fc46b, so English is the only language shipped and this
+# now guards README.md alone.
 LANGUAGE_TOKENS = {
     "python": r"\bPython\b",
     "javascript": r"\bJS\b",
@@ -106,14 +107,13 @@ def test_languages_documented():
 
     readme_text = README_PATH.read_text(encoding="utf-8")
 
-    families = LANGUAGE_TOKENS
-
-    assert set(families) == set(LANG_CFG), (
-        f"families mapping is out of sync with LANG_CFG: "
-        f"missing={set(LANG_CFG) - set(families)}, extra={set(families) - set(LANG_CFG)}"
+    assert set(LANGUAGE_TOKENS) == set(LANG_CFG), (
+        f"LANGUAGE_TOKENS is out of sync with LANG_CFG: "
+        f"missing={set(LANG_CFG) - set(LANGUAGE_TOKENS)}, "
+        f"extra={set(LANGUAGE_TOKENS) - set(LANG_CFG)}"
     )
 
-    for key, pattern in families.items():
+    for key, pattern in LANGUAGE_TOKENS.items():
         assert re.search(pattern, readme_text), (
             f"Language '{key}' (pattern {pattern!r}) missing from README.md"
         )
@@ -510,7 +510,6 @@ _CLI_COMMANDS = (
     "build",
     "query",
     "rag",
-    "impact",
     "github",
     "embed",
     "map",

@@ -315,52 +315,52 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `graph.py` | 2,117 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; entrypoint marking. |
-| `parse.py` | 1,943 | File discovery (`discover`, `_git_files`, `_walk_files`, `explain_path`), the language table (`LANG_CFG`, `EXT_LANG`), tree-sitter invocation, symbol and import extraction, `_callee_name`. |
-| `export.py` | 1,440 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
-| `query.py` | 1,039 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
+| `graph.py` | 2,333 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; entrypoint marking. |
+| `parse.py` | 2,114 | File discovery (`discover`, `_git_files`, `_walk_files`, `explain_path`), the language table (`LANG_CFG`, `EXT_LANG`), tree-sitter invocation, symbol and import extraction, `_callee_name`. |
+| `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
+| `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
 | `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
-| `chunks.py` | 331 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
+| `chunks.py` | 397 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
 
 ### Surfaces
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `cli.py` | 1,985 | Argument parsing and every subcommand. The widest module by fan-out. |
-| `mcp/` | 2,421 | The MCP server, split by concern — see below. |
-| `answer.py` | 521 | `rag --answer` only — the one network path in the package. |
-| `explain.py` | 364 | `explain edge` / `node` / `retrieval`. |
+| `cli.py` | 1,924 | Argument parsing and every subcommand. The widest module by fan-out. |
+| `mcp/` | 2,387 | The MCP server, split by concern — see below. |
+| `answer.py` | 609 | `rag --answer` only — the one network path in the package. |
+| `explain.py` | 363 | `explain edge` / `node` / `retrieval`. |
 
 ### `mcp/` package
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `traversal.py` | 377 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
-| `schemas.py` | 408 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
-| `server.py` | 340 | Server lifecycle, stdio connection, SDK version gate. |
-| `retrieval.py` | 314 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
-| `tools.py` | 290 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
-| `indexes.py` | 123 | Index open/reopen, per-directory locking, auto-build. |
-| `guardrails.py` | 113 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
+| `traversal.py` | 373 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
+| `schemas.py` | 374 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
+| `server.py` | 479 | Server lifecycle, stdio connection, SDK version gate. |
+| `retrieval.py` | 367 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
+| `tools.py` | 286 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
+| `indexes.py` | 131 | Index open/reopen, per-directory locking, auto-build. |
+| `guardrails.py` | 114 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
 | `nodes.py` | 96 | Node labelling and staleness helpers both retrieval and traversal need. |
 
 ### Support
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `security.py` | 771 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
-| `demo.py` | 660 | The bundled demo repository and its five starter questions. |
-| `status.py` | 613 | `repo2graph index-status` and the shared freshness computation. |
-| `integrity.py` | 556 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
-| `bugreport.py` | 395 | The redacted diagnostic bundle. |
-| `fetch.py` | 368 | `repo2graph github` — clone, build, clean up. |
+| `security.py` | 933 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
+| `demo.py` | 669 | The bundled demo repository and its five starter questions. |
+| `status.py` | 601 | `repo2graph index-status` and the shared freshness computation. |
+| `integrity.py` | 575 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
+| `bugreport.py` | 397 | The redacted diagnostic bundle. |
+| `doctor.py` | 382 | Environment and artifact diagnostics. |
+| `fetch.py` | 374 | `repo2graph github` — clone, build, clean up. |
 | `exclusions.py` | 311 | The named exclusion groups and their glob/reason tables. |
 | `embed.py` | 307 | Vectors, and a stdlib-only `.npy` reader/writer. |
 | `lock.py` | 299 | Build locking and stale-lock recovery. A leaf. |
-| `audit.py` | 274 | Audit log sink. |
-| `schema.py` | 269 | The record shapes the artifacts promise. |
-| `tasks.py` | 268 | Background `--async-build` state. |
-| `doctor.py` | 254 | Environment and artifact diagnostics. |
+| `audit.py` | 288 | Audit log sink. |
+| `schema.py` | 273 | The record shapes the artifacts promise. |
+| `tasks.py` | 263 | Background `--async-build` state. |
 | `changelog.py` | 239 | The per-push structural graph diff in `human/CHANGELOG.md`. |
 | `cache.py` | 223 | The MCP result cache. A leaf. |
 | `events.py` | 160 | Structured event sink. |

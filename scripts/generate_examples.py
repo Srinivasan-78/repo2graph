@@ -260,7 +260,15 @@ def _write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
 
 ## Revision
 
-Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}.
+Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}
+by repo2graph {R2G_VERSION}.
+
+Both halves of that line matter. The upstream commit says which *source* produced these
+numbers; the repo2graph version says which *analyser* did. Call resolution has changed
+across minor versions before — `b98fc46b` stopped binding builtin method calls on untyped
+receivers to in-repo methods, which moved `CALLS`, ambiguous-call counts and the
+most-called-symbols ranking below — so a figure here is only comparable to a run from the
+same version.
 
 ## Why this repository?
 

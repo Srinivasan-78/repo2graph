@@ -104,6 +104,34 @@ def test_a_dropped_duplicate_is_not_counted_against_the_ceiling(repo, tmp_path):
     assert "edges_dropped" not in g.limits_hit
 
 
+def test_a_duplicate_of_a_dropped_edge_is_also_counted_once(repo, tmp_path):
+    """`edges_dropped` counts distinct edges lost, not attempts.
+
+    The sibling test above covers a repeat of an edge that *was* added -- the
+    dedupe check sees it and returns before the ceiling. A repeat of an edge the
+    ceiling already rejected took the other path: `_edge_seen.add(key)` sat after
+    the ceiling's `return`, so the key was never recorded and every re-proposal
+    was counted again. `edges_dropped` is published in stats.json and read as the
+    number of edges the graph is missing, so counting attempts overstated the
+    loss for any edge discovered more than once -- which is the normal case for
+    IMPORTS and CO_CHANGE.
+    """
+    g = build(repo, config=BuildConfig(), jobs=1, max_edges=4)
+    assert len(g.edges) == 4, "the ceiling must already bind for this to be the drop path"
+    before = g.limits_hit.get("edges_dropped", 0)
+
+    g.add_edge("file:novel_a.py", "file:novel_b.py", "IMPORTS")
+    once = g.limits_hit["edges_dropped"]
+    assert once == before + 1, "the first attempt must count as one dropped edge"
+
+    g.add_edge("file:novel_a.py", "file:novel_b.py", "IMPORTS")
+    assert g.limits_hit["edges_dropped"] == once, (
+        "the same dropped edge was counted twice; edges_dropped must count "
+        "distinct edges, not attempts"
+    )
+    assert len(g.edges) == 4, "nothing may be appended past the ceiling"
+
+
 def test_max_bytes_stops_at_a_prefix_of_discovery_order(repo, tmp_path):
     """The budget keeps a prefix, never a best-fit selection.
 
