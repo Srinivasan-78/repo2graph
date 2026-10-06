@@ -1,6 +1,6 @@
 [project]
 name = "repo2graph"
-version = "2.2.0"
+version = "3.0.0"
 description = "Give coding agents cited, budget-bounded answers about any codebase — code graph + MCP server"
 requires-python = ">=3.10"
 license = "MIT"

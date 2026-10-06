@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [3.0.0] — 2026-10-06
+
 ### Added
 
 - **Seeds are ranked on whether a chunk can plausibly hold an answer.** On the held-out 40+40,
