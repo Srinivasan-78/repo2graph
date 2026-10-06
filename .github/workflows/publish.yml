@@ -96,8 +96,23 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install uv and tooling
-        run: pip install uv
+      # The locked dev+mcp set, not just uv. Two consumers now: bump_version.py
+      # shells out to `uv lock`, so uv has to be on PATH, and the gate in the
+      # next step runs the test suite against the bumped tree before anything
+      # is committed or tagged -- which needs pytest and pytest-xdist here, in
+      # the same locked-and-hashed form the `pypi` job installs. uv is pinned
+      # for the same reason every other tool in this file is: an unpinned
+      # `pip install uv` resolves whatever PyPI serves at the moment of a
+      # release run.
+      - name: Install uv and the locked dependency set
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install "uv==0.12.15"
+          uv export --locked --no-emit-project --extra dev --extra mcp \
+            -o "$RUNNER_TEMP/requirements-prepare.txt"
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/requirements-prepare.txt"
+          python -m pip install -e . --no-deps
 
       # Fail before anything is bumped, committed or tagged.
       #
@@ -148,6 +163,24 @@ jobs:
           version=$(python -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           tag="v$version"
           branch="release/v$version"
+
+          # Gate the *bumped* tree, before anything is committed, pushed, PR'd
+          # or tagged. Both of these already ran in this pipeline -- but only
+          # after the tag was cut (check_version.py further down, the suite in
+          # the `pypi` job), which is the wrong side of the irreversible step.
+          #
+          # Anything version-coupled is invisible until the bump exists and
+          # then fails on a tree that is already tagged and already merged.
+          # That is how 3.0.0 aborted: tests/test_export_hardening.py asserted
+          # the static `__version__` fallback equalled "2.2.0", a claim only
+          # the bump could falsify, so the first run that could see it was the
+          # `pypi` job -- `1 failed, 2073 passed`, with v3.0.0 pushed and the
+          # bump PR merged. Recovering that means force-moving a published tag
+          # or burning a version number. Thirty seconds here instead.
+          echo "::group::Gating the bumped tree for $version"
+          python scripts/check_version.py
+          python -m pytest -q -n auto
+          echo "::endgroup::"
 
           bot_name="${APP_SLUG:-prod-igy}[bot]"
           if [ -n "${APP_ID:-}" ]; then
@@ -242,6 +275,46 @@ jobs:
 
           if [ "$merged" != "true" ]; then
             echo "::error::PR $pr_url could not be merged after 30 attempts (60 minutes)."
+            exit 1
+          fi
+
+          # MERGED is not proof of green, so do not tag on the strength of it.
+          # The loop above only ever merges on CLEAN/HAS_HOOKS, but it also
+          # accepts `state == MERGED` however that happened -- and anyone
+          # holding ruleset bypass (RepositoryRole 5 is a bypass actor on
+          # `default-branch-protection`, i.e. every admin, i.e. the only human
+          # on this repo) can merge the release PR by hand while its required
+          # checks are red. Waiting out the 60-minute poll is exactly the
+          # situation that invites it.
+          #
+          # 3.0.0: all 13 "Test Suite" contexts on PR #468 reported FAILURE at
+          # 09:55, the PR was merged by hand at 10:18, the loop read MERGED and
+          # cut the tag. The pipeline's own CI had already said no; nothing
+          # asked it again before the irreversible step. This does.
+          #
+          # Fails closed, including on a `gh` or API error: a release that
+          # stops here has a merged bump commit and no tag, which is the
+          # cheaper of the two bad states to be in.
+          echo "Re-checking the release PR's required checks before tagging..."
+          checks_ok=false
+          for attempt in 1 2 3; do
+            set +e
+            gh pr checks "$pr_url" --required
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              checks_ok=true
+              break
+            fi
+            # 8 is `gh`'s "still pending" exit; anything else is a real answer.
+            if [ "$rc" -ne 8 ]; then
+              break
+            fi
+            echo "Required checks still pending (attempt $attempt/3); waiting 30s..."
+            sleep 30
+          done
+          if [ "$checks_ok" != "true" ]; then
+            echo "::error::$pr_url is merged but its required checks are not green -- refusing to tag $tag"
             exit 1
           fi
 

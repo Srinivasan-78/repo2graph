@@ -1236,7 +1236,7 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
         # lockfile.yml is deliberately absent -- its checkout now sets
         # `persist-credentials` explicitly, so it needs no ignore.
         ("publish.yml", 85): ("actions/checkout@", 1),
-        ("publish.yml", 435): ("actions/checkout@", 1),
+        ("publish.yml", 508): ("actions/checkout@", 1),
         # dangerous-triggers: reported against the `on:` mapping, not the trigger.
         ("prod-igy.yml", 16): ("pull_request_target:", 8),
         # self-repository: jobs that run this repo's own composite action

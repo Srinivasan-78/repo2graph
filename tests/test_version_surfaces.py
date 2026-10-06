@@ -13,6 +13,7 @@ recomputed by the code under test: the expected version comes from
 strings.
 """
 
+import ast
 import re
 import subprocess
 import sys
@@ -233,3 +234,41 @@ def test_major_surfaces_carry_only_the_major():
             assert not re.search(r"\\d\+\\\.", surface.pattern), surface.pattern
         else:
             assert surface.expected("4.5.6") == "4.5.6"
+
+
+def test_no_assertion_in_the_suite_spells_out_the_current_version():
+    """A test that hardcodes the version under release is red the moment the
+    bump lands -- and the first run that can see it is publish.yml's `pypi`
+    job, which tests the already-tagged commit.
+
+    The bug: tests/test_export_hardening.py asserted the static `__version__`
+    fallback equalled `"2.2.0"`. Nothing could fail that until a bump rewrote
+    the literal it was shadowing, so it passed every PR and aborted the 3.0.0
+    release after the tag was cut and the bump PR merged. The fix is to read
+    the surface -- `declared_version()` here, or the literal in
+    `repo2graph/__init__.py` -- never to copy its value.
+
+    Only `assert` statements count, which is why this walks the AST instead of
+    grepping: prose about a past release ("regressed in 2.1.0", and the
+    docstring above naming 2.2.0) is history, and history must survive every
+    bump untouched. Non-test surfaces are check_version.py's job.
+    """
+    version = declared_version()
+    offenders = []
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assert):
+                continue
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Constant) and sub.value == version:
+                    # Deduped: `assert x == "3.0.0"` reaches the same line twice
+                    # when both sides of the comparison are the literal.
+                    where = f"{path.relative_to(REPO_ROOT)}:{sub.lineno}"
+                    if where not in offenders:
+                        offenders.append(where)
+    assert not offenders, (
+        f"these assertions hardcode the current version ({version}), so the next "
+        f"bump breaks them inside the release pipeline: {offenders}. Read the "
+        f"version from pyproject.toml or repo2graph/__init__.py instead."
+    )
