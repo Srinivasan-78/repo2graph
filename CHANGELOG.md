@@ -576,6 +576,25 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Known issues
 
+- **A bare call to a builtin *function* still binds to a same-named in-repo method, at confidence
+  1.0.** `b98fc46b` priced down builtin *method* names on untyped receivers (`x.get()`), and its
+  gate requires `receiver == "other"` — so `self.get()`, `this.get()` and a bare `get()` are
+  documented as unaffected, on the reasoning that a bare call to a name the repository defines is
+  probably calling it. That reasoning does not hold for a name Python itself defines as a free
+  function. `super()` is the clearest case: in the regenerated Django example,
+  `django/template/loader_tags.py::BlockNode.super` — a template method for `{{ block.super }}` —
+  carries **1,805 incoming `CALLS` edges at confidence 1.0**, sourced from
+  `db/models/fields/__init__.py` (92), `forms/fields.py` (44), `db/models/expressions.py` (36) and
+  other ORM and forms modules that have nothing to do with block inheritance. It is rank 2 of that
+  repository's most-called-symbols list, immediately below a real result.
+
+  Left unfixed here deliberately, because the fix is a *measured* change rather than a one-line
+  one: it needs a per-language set of builtin free functions (`super`, `len`, `isinstance`, `type`,
+  `getattr`, `sorted`, `enumerate`, …), and it moves `CALLS` edges — which `test_compat.py` pins
+  byte-identical against a stored baseline, and which the published and both held-out retrieval
+  sets are scored on. Landing it unmeasured at the end of an unrelated round is exactly how a
+  tuned recall number regresses silently. `UNTYPED_RECEIVER_BUILTIN_METHODS` in `graph.py` is where
+  the companion set belongs.
 - **`explain-path` misreports a filename-rule verdict for a path spelled with a trailing `..`,
   on Windows.** Found by the new property tests and left unfixed deliberately, pinned by a strict
   platform-conditional xfail so a fix cannot land unnoticed. `parse.explain_path` normalizes only
@@ -620,6 +639,15 @@ makes keeping it current a release-blocking step rather than a good intention.
   figures, all five at 2.2.0: Django 56,074 nodes / 301,017 edges, Kubernetes 15,174 / 117,066,
   TensorFlow 24,730 / 145,790, VS Code 114,070 / 664,312, Linux 185,496 / 310,854 — `results.json`
   and `examples/README.md`'s table carry the same numbers.
+- **Each example page described five uncommitted files as if they shipped.** The generator's
+  README template listed `nodes.jsonl.gz`, `edges.jsonl.gz`, `graph.html`, `manifest.json`,
+  `stats.json` and `flows/` under "Generated graph" and named only `chunks.jsonl` as not committed
+  — true before `4e96b628`, wrong after it, and flatly contradicted by `examples/README.md`, which
+  says only `README.md` and `overview.md` are committed. Three places pointed a reader at `flows/`
+  for "each query's real results", and a clone has no `flows/` directory to look in. The section now
+  leads with what is committed and frames the rest as what the generator writes locally;
+  `chunks.jsonl` is described as discarded rather than merely uncommitted, which is what step 4 of
+  the pipeline actually does with it.
 - **The purged example artifacts had nothing stopping them coming back.** `4e96b628` removed ~28 MB
   of generated graphs from `examples/<id>/` and left only `README.md` and `overview.md` committed,
   but no ignore rule matched them, so any `git add -A` after a regeneration would have re-added
