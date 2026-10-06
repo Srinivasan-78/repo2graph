@@ -393,6 +393,39 @@ makes keeping it current a release-blocking step rather than a good intention.
   count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
 - **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
   said 50); the request is kept as `cochange_requested_commits`.
+- **A bare call to a builtin *function* no longer binds to a same-named in-repo method at
+  confidence 1.0.** `b98fc46b` priced down builtin *method* names on untyped receivers (`x.get()`),
+  and its gate requires `receiver == "other"` — so a bare call was documented as unaffected, on the
+  reasoning that a bare call to a name the repository defines is probably calling it. That holds for
+  a name the repository owns and not for one the language owns. `super()` was the clearest case: in
+  Django, `template/loader_tags.py::BlockNode.super` — the helper behind `{{ block.super }}` —
+  carried **1,805 incoming `CALLS` edges at confidence 1.0**, sourced from
+  `db/models/fields/__init__.py` (92), `forms/fields.py` (44), `db/models/expressions.py` (36) and
+  other ORM and forms modules that never touch block inheritance. It ranked **second** in that
+  repository's most-called-symbols list, directly under a real result.
+
+  `BUILTIN_FREE_FUNCTIONS` (Python builtins, Go builtins, and the JS/TS globals reached as bare
+  calls) is the companion to `UNTYPED_RECEIVER_BUILTIN_METHODS`, and the new gate fires only when
+  the name resolved **globally**: `edgemeta.SCOPED_CALL_KINDS` is exactly the set of tiers that
+  found the definition in the calling file, its class, a base, or an import by name, and any of
+  those is a real target that happens to shadow a builtin. A project with its own `filter()`,
+  called where it is defined or imported where it is used, is untouched; what is demoted is a
+  cross-file name collision with a builtin, which is a coincidence rather than a call. The edge is
+  kept and flagged `shadowed_builtin`, priced at `UNTYPED_RECEIVER_CONFIDENCE` for the same reason
+  its sibling is — "kept as a possibility, not asserted" — and `edgemeta.counts_as_call` now
+  excludes both flags, which is what removes it from the repo map ranking.
+
+  **Measured before and after on identical harnesses, with the fix stashed for the baseline:
+  recall did not move on any set.** Published 35 + 10, held-out 40 + 40, and the held-out
+  repository set (22 on click and axios) produced **zero** differences in `evidence_recall`,
+  `fully_answered` or `any_evidence`; the held-out repository run was byte-identical. The only
+  deltas anywhere were `mean_tokens_used` shifts from changed confidence annotations — ≤8 tokens on
+  the held-out sets, ≤260 on one published row. The corpus regression gate stayed at 25/25 (100%).
+  So this buys back the repo map's ranking without touching retrieval quality, which is why the
+  committed benchmark artifacts are left as the clean-tree measurements they already are rather
+  than regenerated for sub-token noise. `tests/test_scoped_resolution.py` adds five cases: the
+  cross-file demotion, its exclusion from the ranking, and three guards — a same-file definition,
+  an imported one, and a non-builtin name — that must keep confidence 1.0.
 - **`edges_dropped` counts distinct edges lost, not attempts.** `Graph.add_edge` recorded a key in
   `_edge_seen` only after the `max_edges` ceiling let the edge through, so an edge the ceiling had
   already rejected was never remembered and every re-proposal of it was counted again. The number
@@ -576,25 +609,6 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Known issues
 
-- **A bare call to a builtin *function* still binds to a same-named in-repo method, at confidence
-  1.0.** `b98fc46b` priced down builtin *method* names on untyped receivers (`x.get()`), and its
-  gate requires `receiver == "other"` — so `self.get()`, `this.get()` and a bare `get()` are
-  documented as unaffected, on the reasoning that a bare call to a name the repository defines is
-  probably calling it. That reasoning does not hold for a name Python itself defines as a free
-  function. `super()` is the clearest case: in the regenerated Django example,
-  `django/template/loader_tags.py::BlockNode.super` — a template method for `{{ block.super }}` —
-  carries **1,805 incoming `CALLS` edges at confidence 1.0**, sourced from
-  `db/models/fields/__init__.py` (92), `forms/fields.py` (44), `db/models/expressions.py` (36) and
-  other ORM and forms modules that have nothing to do with block inheritance. It is rank 2 of that
-  repository's most-called-symbols list, immediately below a real result.
-
-  Left unfixed here deliberately, because the fix is a *measured* change rather than a one-line
-  one: it needs a per-language set of builtin free functions (`super`, `len`, `isinstance`, `type`,
-  `getattr`, `sorted`, `enumerate`, …), and it moves `CALLS` edges — which `test_compat.py` pins
-  byte-identical against a stored baseline, and which the published and both held-out retrieval
-  sets are scored on. Landing it unmeasured at the end of an unrelated round is exactly how a
-  tuned recall number regresses silently. `UNTYPED_RECEIVER_BUILTIN_METHODS` in `graph.py` is where
-  the companion set belongs.
 - **`explain-path` misreports a filename-rule verdict for a path spelled with a trailing `..`,
   on Windows.** Found by the new property tests and left unfixed deliberately, pinned by a strict
   platform-conditional xfail so a fix cannot land unnoticed. `parse.explain_path` normalizes only

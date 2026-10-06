@@ -20,7 +20,11 @@ def counts_as_call(e: dict[str, Any]) -> bool:
     Returns:
         True if the edge represents a scoped or sufficiently confident call.
     """
-    if e.get("untyped_receiver"):
+    # Both flags mean "an in-repo name collided with one the language defines":
+    # a builtin method on a receiver of unknown type, or a bare call to a builtin
+    # free function. Neither is evidence of a call, so neither belongs in the
+    # repo map's most-called ranking -- which is what this gate feeds.
+    if e.get("untyped_receiver") or e.get("shadowed_builtin"):
         return False
     if e.get("resolution_kind") in SCOPED_CALL_KINDS:
         return True

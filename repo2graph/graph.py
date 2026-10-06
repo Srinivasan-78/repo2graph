@@ -15,6 +15,7 @@ from .edgemeta import (
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
+    SCOPED_CALL_KINDS,
     counts_as_call,
     evidence as make_evidence,
     normalize as normalize_edge,
@@ -120,6 +121,46 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
     }
 )  # fmt: skip
 UNTYPED_RECEIVER_CONFIDENCE = 0.2
+
+# The same problem for *free* functions. A bare `super()`, `len()` or `sorted()`
+# names the language's builtin, not a method the repository happens to define
+# under that name -- but the set above only fires on a receiver
+# (`receiver == "other"`), and a bare call has none, so these stayed at
+# confidence 1.0. On Django that gave `template/loader_tags.py::BlockNode.super`
+# -- the helper behind `{{ block.super }}` -- 1,805 incoming CALLS edges sourced
+# from `db/models/fields/`, `forms/fields.py` and `db/models/expressions.py`,
+# none of which touch block inheritance, and second place in the repo map's
+# most-called list.
+#
+# Applied only when the name resolved *globally*. A definition in the calling
+# file, in its class, in a base, or one the file imports by name is a real
+# target that happens to shadow a builtin, and `edgemeta.SCOPED_CALL_KINDS` is
+# exactly that set -- so a project with its own `filter()` helper, called bare
+# where it is defined or imported where it is used, is untouched. What is left
+# is a cross-file global name match, which for one of these names is a
+# coincidence rather than a call.
+BUILTIN_FREE_FUNCTIONS = frozenset(
+    {
+        # Python builtins
+        "abs", "aiter", "all", "anext", "any", "ascii", "bin", "bool", "breakpoint",
+        "bytearray", "bytes", "callable", "chr", "classmethod", "compile", "complex",
+        "delattr", "dict", "dir", "divmod", "enumerate", "eval", "exec", "filter",
+        "float", "format", "frozenset", "getattr", "globals", "hasattr", "hash",
+        "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter",
+        "len", "list", "locals", "map", "max", "memoryview", "min", "next",
+        "object", "oct", "open", "ord", "pow", "print", "property", "range",
+        "repr", "reversed", "round", "set", "setattr", "slice", "sorted",
+        "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
+        # Go builtins (`len`, `max`, `min`, `print` overlap with the above)
+        "append", "cap", "clear", "close", "copy", "delete", "imag", "make",
+        "new", "panic", "println", "real", "recover",
+        # JS/TS globals reached as bare calls
+        "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
+        "isFinite", "isNaN", "parseFloat", "parseInt", "queueMicrotask",
+        "require", "setInterval", "setTimeout", "structuredClone",
+    }
+)  # fmt: skip
+
 # Tiers that reached the candidate through the calling file's own imports.
 IMPORT_RESOLUTION_KINDS = ("import_alias", "imported_symbol")
 # File stems that stand for their directory (`pkg/__init__.py` is `pkg`).
@@ -1977,6 +2018,21 @@ def build(
                     )
                 )
 
+                # The free-function half of the same problem: a bare call to a
+                # name the language itself defines. Gated on a *global* match
+                # (see BUILTIN_FREE_FUNCTIONS) so a shadowing definition this
+                # file owns, inherits or imports by name keeps confidence 1.0;
+                # what is left is a cross-file name collision with a builtin.
+                shadowed_builtin = (
+                    bool(chosen_cands)
+                    and callee in BUILTIN_FREE_FUNCTIONS
+                    and res_kind not in SCOPED_CALL_KINDS
+                    # every call of the name is bare -- `x.len()` is a method
+                    # call and the receiver rules above own it
+                    and all(cd.get("receiver") == "none" for cd in details.get(callee, [{}]))
+                )
+                guessed_call = untyped_builtin or shadowed_builtin
+
                 # Add edges
                 if not chosen_cands:
                     eid = f"external:{callee}"
@@ -1999,7 +2055,7 @@ def build(
                         confidence=1.0,
                     )
                     g.stats["calls_external"] += 1
-                elif len(chosen_cands) == 1 and not untyped_builtin:
+                elif len(chosen_cands) == 1 and not guessed_call:
                     g.add_edge(
                         sid,
                         chosen_cands[0],
@@ -2019,9 +2075,16 @@ def build(
                         g.stats["calls_scoped"] += 1
                 else:
                     limit = min(len(chosen_cands), max_call_candidates)
-                    ceiling = UNTYPED_RECEIVER_CONFIDENCE if untyped_builtin else 1.0
+                    # Both guesses are priced at the same magnitude on purpose:
+                    # each means "kept as a possibility, not asserted", and
+                    # `edgemeta.counts_as_call` excludes both from the repo map.
+                    ceiling = UNTYPED_RECEIVER_CONFIDENCE if guessed_call else 1.0
                     conf = round(ceiling / limit, 3) if limit > 0 else 0.0
-                    extra = {"untyped_receiver": True} if untyped_builtin else {}
+                    extra: dict[str, bool] = {}
+                    if untyped_builtin:
+                        extra["untyped_receiver"] = True
+                    if shadowed_builtin:
+                        extra["shadowed_builtin"] = True
                     for c in chosen_cands[:limit]:
                         g.add_edge(
                             sid,
@@ -2042,6 +2105,8 @@ def build(
                     g.stats["ambiguous_calls"] += 1
                     if untyped_builtin:
                         g.stats["calls_untyped_receiver"] += 1
+                    if shadowed_builtin:
+                        g.stats["calls_shadowed_builtin"] += 1
 
             # Inheritance resolution
             base_details_map = {bd["name"]: bd for bd in getattr(sym, "base_details", [])}
