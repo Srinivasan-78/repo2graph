@@ -34,6 +34,22 @@ def _declared_pyproject_version() -> str:
     return m.group(1)
 
 
+def _static_literal_version() -> str:
+    """The one quoted `__version__` literal in repo2graph/__init__.py.
+
+    Read, never hardcoded: that literal is a release surface
+    (scripts/version_surfaces.py rewrites it on every bump), so a copy of it
+    spelled out in a test is red from the moment the bump commit lands --
+    inside publish.yml's `pypi` job, which runs the suite against the already
+    tagged release commit. Spelling it `"2.2.0"` failed the 3.0.0 release
+    exactly there, after the tag was cut and the bump PR merged.
+    """
+    content = (REPO_ROOT / "repo2graph" / "__init__.py").read_text(encoding="utf8")
+    m = re.search(r'(?m)^__version__\s*=\s*"([^"]+)"', content)
+    assert m is not None, "no quoted __version__ literal in repo2graph/__init__.py"
+    return m.group(1)
+
+
 # ---------------------------------------------------------------------------
 # #340 -- source checkout must be authoritative over a stale installed
 # dist-info; the installed-package path must still work when there is no
@@ -81,7 +97,12 @@ def test_version_falls_back_to_static_literal_when_nothing_resolves(monkeypatch)
         raise repo2graph.importlib.metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr(repo2graph.importlib.metadata, "version", _raise)
-    assert repo2graph._resolve_version() == "2.2.0"
+    literal = _static_literal_version()
+    # Both halves matter: the literal is what answers, and the bump keeps it
+    # equal to pyproject's version (scripts/check_version.py is the other side
+    # of that), so neither assertion carries a version number of its own.
+    assert repo2graph._resolve_version() == literal
+    assert literal == _declared_pyproject_version()
 
 
 def test_pyproject_version_ignores_a_pyproject_naming_a_different_project(tmp_path):

@@ -144,13 +144,13 @@ Cursor's index and Claude Code's own search, including when to use those instead
 - uses: actions/checkout@v4
   with: { fetch-depth: 0 }   # full history, so CO_CHANGE edges are meaningful
 
-- uses: Srinivasan-78/repo2graph@v2
+- uses: Srinivasan-78/repo2graph@v3
   with:
     git-history: "500"
     commit-branch: graph     # optional: publish graph.html to a browsable branch
 ```
 
-`@v2` follows every 2.x release; pin an exact tag (`@v2.2.0`) to upgrade by hand. The Action never
+`@v3` follows every 3.x release; pin an exact tag (`@v3.0.0`) to upgrade by hand. The Action never
 calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 
 ## Commands
