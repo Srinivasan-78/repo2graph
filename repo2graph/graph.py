@@ -15,6 +15,7 @@ from .edgemeta import (
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
+    SCOPED_CALL_KINDS,
     counts_as_call,
     evidence as make_evidence,
     normalize as normalize_edge,
@@ -43,26 +44,20 @@ PARALLEL_MIN_FILES = 64
 # every path in it. Co-change signal saturates long before this, so cap the
 # window and record when we did.
 MAX_COCHANGE_COMMITS = 5000
-# Independent of MAX_COCHANGE_COMMITS (ISS-82): that bounds how many commits
-# are requested, but a single pathological commit -- a vendor import touching
+# Independent of MAX_COCHANGE_COMMITS: that bounds how many commits
+# are requested, but a single commit -- e.g. a vendor import touching
 # hundreds of thousands of files -- can still emit an unbounded blob of paths
-# within that commit count. Enforced during the read, not after a full
-# capture_output() buffer has already grown past it: `add_cochange` streams the
-# pipe and stops at this many bytes, then kills git (ISS-236).
+# within that commit count. Enforced during the read: `add_cochange` streams the
+# pipe and stops at this many bytes, then terminates git.
 MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
-# Wall clock for the whole `git log` read. `subprocess.run(timeout=...)` used to
-# provide this; a streamed read has to enforce it itself.
+# Wall clock for the whole `git log` read.
 COCHANGE_TIMEOUT = 120
 # One read() per block. Big enough that a 10 MB cap is ~160 reads, small enough
 # that the buffer never jumps far past the cap.
 _COCHANGE_READ_BLOCK = 64 * 1024
 # How long to wait for a killed child (and the thread reading it) to go away.
-# Only a kernel in trouble takes this long; the build carries on regardless.
 _COCHANGE_REAP_TIMEOUT = 10
-# max_files bounds file count and is opt-in; nobody has to remember to pass
-# it. This is not a hard cap (ISS-85 asks for a soft one) -- past this many
-# nodes or edges a build just tells the operator on stderr, once, that memory
-# use is growing unbounded and how to bound it.
+# Soft warning threshold -- past this many nodes or edges a build alerts on stderr.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
 # confidence. Overridable per build (`build(max_call_candidates=)`, the
@@ -70,6 +65,17 @@ LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # not of repo2graph -- which is why the Graph carries the value it was built
 # with and manifest.json reports that value rather than this default (#245).
 DEFAULT_MAX_CALL_CANDIDATES = 5
+
+# What happens when `--max-edges` or `--max-bytes` binds. Both policies cut at
+# the limit -- a bound that does not bound is not one -- and both record the cut
+# in `stats.json`. They differ only in whether the cut is announced on stderr.
+# `warn` is the default because a partial index that looks complete is the
+# expensive failure here: the next reader cannot tell a repository with no
+# callers of `f` from one whose caller was dropped at the ceiling. `truncate` is
+# for callers that have already decided to bound the build and do not want the
+# noise on every run.
+LIMIT_POLICIES = ("warn", "truncate")
+DEFAULT_LIMIT_POLICY = "warn"
 # Method names of the built-in collection, string and promise types across the
 # indexed languages. `x.get()` on a receiver whose type the parser cannot see is
 # far more often `dict.get` / `Map.get` than the repository's own `get`, so an
@@ -91,6 +97,9 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
         "join", "split", "strip", "lstrip", "rstrip", "replace", "format",
         "startswith", "endswith", "startsWith", "endsWith", "lower", "upper",
         "trim", "encode", "decode", "toString", "toLowerCase", "toUpperCase",
+        # I/O, streams, regex, concurrency
+        "read", "write", "close", "flush", "start", "stop", "end",
+        "group", "groups", "seek", "tell", "poll", "terminate", "kill",
         # promises / objects
         "then", "catch", "finally", "equals", "hashCode",
         # JVM / Kotlin / Swift collections and strings
@@ -107,10 +116,51 @@ UNTYPED_RECEIVER_BUILTIN_METHODS = frozenset(
         "Enqueue", "Dequeue", "CopyTo", "ToString", "Equals", "GetHashCode",
         "Split", "Join", "Trim", "Replace", "StartsWith", "EndsWith", "ToLower",
         "ToUpper", "Substring", "Format", "Wait", "ContinueWith",
-        "ConfigureAwait", "GetAwaiter",
+        "ConfigureAwait", "GetAwaiter", "Read", "Write", "Close", "Flush",
+        "Start", "Stop",
     }
 )  # fmt: skip
 UNTYPED_RECEIVER_CONFIDENCE = 0.2
+
+# The same problem for *free* functions. A bare `super()`, `len()` or `sorted()`
+# names the language's builtin, not a method the repository happens to define
+# under that name -- but the set above only fires on a receiver
+# (`receiver == "other"`), and a bare call has none, so these stayed at
+# confidence 1.0. On Django that gave `template/loader_tags.py::BlockNode.super`
+# -- the helper behind `{{ block.super }}` -- 1,805 incoming CALLS edges sourced
+# from `db/models/fields/`, `forms/fields.py` and `db/models/expressions.py`,
+# none of which touch block inheritance, and second place in the repo map's
+# most-called list.
+#
+# Applied only when the name resolved *globally*. A definition in the calling
+# file, in its class, in a base, or one the file imports by name is a real
+# target that happens to shadow a builtin, and `edgemeta.SCOPED_CALL_KINDS` is
+# exactly that set -- so a project with its own `filter()` helper, called bare
+# where it is defined or imported where it is used, is untouched. What is left
+# is a cross-file global name match, which for one of these names is a
+# coincidence rather than a call.
+BUILTIN_FREE_FUNCTIONS = frozenset(
+    {
+        # Python builtins
+        "abs", "aiter", "all", "anext", "any", "ascii", "bin", "bool", "breakpoint",
+        "bytearray", "bytes", "callable", "chr", "classmethod", "compile", "complex",
+        "delattr", "dict", "dir", "divmod", "enumerate", "eval", "exec", "filter",
+        "float", "format", "frozenset", "getattr", "globals", "hasattr", "hash",
+        "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter",
+        "len", "list", "locals", "map", "max", "memoryview", "min", "next",
+        "object", "oct", "open", "ord", "pow", "print", "property", "range",
+        "repr", "reversed", "round", "set", "setattr", "slice", "sorted",
+        "staticmethod", "str", "sum", "super", "tuple", "type", "vars", "zip",
+        # Go builtins (`len`, `max`, `min`, `print` overlap with the above)
+        "append", "cap", "clear", "close", "copy", "delete", "imag", "make",
+        "new", "panic", "println", "real", "recover",
+        # JS/TS globals reached as bare calls
+        "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent",
+        "isFinite", "isNaN", "parseFloat", "parseInt", "queueMicrotask",
+        "require", "setInterval", "setTimeout", "structuredClone",
+    }
+)  # fmt: skip
+
 # Tiers that reached the candidate through the calling file's own imports.
 IMPORT_RESOLUTION_KINDS = ("import_alias", "imported_symbol")
 # File stems that stand for their directory (`pkg/__init__.py` is `pkg`).
@@ -164,7 +214,7 @@ COMMON_STDLIB_BASES = frozenset(
 
 
 class GraphLimitExceeded(RuntimeError):
-    """Raised when the graph exceeds a configured resource limit (ISS-85, ISS-156)."""
+    """Raised when the graph exceeds a configured resource limit."""
 
     pass
 
@@ -176,9 +226,19 @@ class Graph:
         name: str,
         max_files: int = 0,
         max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
+        max_edges: int = 0,
+        limit_policy: str = DEFAULT_LIMIT_POLICY,
     ):
         self.root, self.name = root, name
         self.max_files = max_files
+        self.max_edges = max_edges
+        self.limit_policy = limit_policy
+        # Which resource limits actually bound this build, and by how much.
+        # Recorded whatever the policy is: `truncate` chooses to stay quiet on
+        # stderr, never to produce an index that cannot say it is partial. An
+        # artifact that was cut and does not admit it is the failure every other
+        # bound in this file is written to avoid.
+        self.limits_hit: dict[str, int] = {}
         # The ambiguous-call fan-out limit this graph was resolved under.
         # Carried on the Graph purely so the writers can report it: export's
         # manifest.json describes the artifacts it ships beside, and a manifest
@@ -213,10 +273,11 @@ class Graph:
         # and a hit/miss count differs by construction between the two.
         self.incremental: dict[str, int] | None = None
         self._warned_large = False
+        self._limits_announced: set[str] = set()
 
     def add_node(self, nid: str, **attrs):
         if nid in self.nodes:
-            # ISS-11: preserve legitimate 0 and False values on re-add
+            # Preserve legitimate 0 and False values on re-add:
             self.nodes[nid].update(
                 {
                     k: v
@@ -241,7 +302,33 @@ class Graph:
         key = (src, dst, etype)
         if key in self._edge_seen:
             return
+        # Recorded before the ceiling test, so a *dropped* edge proposed a second
+        # time is not counted twice. `edges_dropped` is published in stats.json
+        # and read as the number of distinct edges the graph is missing; leaving
+        # the key unrecorded here counted attempts instead and overstated the
+        # loss for every edge discovered more than once. `_edge_seen` means
+        # "already decided", which is what both callers of it want.
+        #
+        # The cost is that past the ceiling this set keeps growing, one tuple per
+        # distinct *rejected* edge, where before it only ever held accepted ones.
+        # That is inherent -- counting distinct losses means remembering them --
+        # and it is the cheaper half of the pair: a retained key is three pointers
+        # against the full attribute dict `self.edges` would have held, so
+        # `--max-edges` still bounds the thing it was added to bound.
         self._edge_seen.add(key)
+        # Checked after the duplicate test, so a repeated edge is not counted as
+        # one the ceiling dropped. Discovery order is deterministic (see
+        # CONTRIBUTING's "Deterministic Discovery Order"), so the same build
+        # with the same limit keeps the same edges -- which is what lets
+        # `test_max_edges_truncation_is_deterministic` compare two runs.
+        if self.max_edges > 0 and len(self.edges) >= self.max_edges:
+            self.limits_hit["edges_dropped"] = self.limits_hit.get("edges_dropped", 0) + 1
+            self._note_limit(
+                "edges",
+                f"repo2graph: warning: edge ceiling reached at {self.max_edges} edges; "
+                f"further edges are dropped and the graph is partial",
+            )
+            return
         # Every edge leaves here carrying the standard trust metadata, whatever
         # the caller remembered to pass. Normalising at the one chokepoint is
         # what stops a newly added edge type shipping as a bare triple, which
@@ -249,6 +336,20 @@ class Graph:
         self.edges.append(normalize_edge(dict(src=src, dst=dst, type=etype, **attrs)))
         self.stats[f"edge:{etype}"] += 1
         self._warn_if_large()
+
+    def _note_limit(self, which: str, message: str) -> None:
+        """Announce a limit the first time it binds, if the policy says to.
+
+        Once per limit per build, not once per dropped item: a ceiling reached
+        early would otherwise print a line for every remaining edge and bury
+        the build's real output.
+        """
+        if self.limit_policy != "warn":
+            return
+        if which in self._limits_announced:
+            return
+        self._limits_announced.add(which)
+        print(message, file=sys.stderr)
 
     def _warn_if_large(self) -> None:
         if self._warned_large:
@@ -396,7 +497,7 @@ def resolve_import(
         else:
             base = target.replace(".", "/")
             cands = [f"{base}.py", f"{base}/__init__.py"]
-            cands += [str(src_dir / c) for c in list(cands)]
+            cands += [(src_dir / c).as_posix() for c in list(cands)]
             # also try src/ and package-rooted layouts
             cands += [f"src/{c}" for c in [f"{base}.py", f"{base}/__init__.py"]]
             tail = base.split("/")[-1]
@@ -408,8 +509,12 @@ def resolve_import(
             # only after every submodule-file candidate above.
             if "/" in base:
                 parent = base.rsplit("/", 1)[0]
-                cands.append(f"{parent}.py")
-                cands.append(f"{parent}/__init__.py")
+                parent_cands = [f"{parent}.py", f"{parent}/__init__.py"]
+                cands += parent_cands
+                cands += [(src_dir / c).as_posix() for c in parent_cands]
+                cands += [f"src/{c}" for c in parent_cands]
+                parent_tail = parent.split("/")[-1]
+                cands += [p for p in by_name.get(f"{parent_tail}.py", []) if "/" in p][:1]
     elif lang in ("javascript", "typescript", "tsx"):
         if target.startswith("."):
             base = Path(src_dir, target).as_posix()
@@ -690,7 +795,7 @@ _UTF8_MAX_SEQ = 4
 def _incomplete_utf8_tail(buf: bytes) -> int:
     """Length of the *truncated* UTF-8 sequence at the end of `buf`, else 0.
 
-    ISS-196: slices are taken at raw byte offsets, so a multi-byte character can
+    Slices are taken at raw byte offsets, so a multi-byte character can
     straddle a boundary -- its lead byte ends slice N and its continuation bytes
     begin slice N+1. Both then fail to decode and *both* were dropped, losing up
     to 2 x max_file_bytes of source with nothing recording it. Reporting the
@@ -723,6 +828,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     total_parse_errors = 0
     used_cpp = False
     undecodable_slices = 0
+    grammar_unavailable = False
     # The #377 `.h` sniff, on the one path that never holds the whole file:
     # this reader streams slices, so the sniff runs against the first decodable
     # one instead of the full bytes `_read_and_parse` has. A header's C++
@@ -737,7 +843,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
     # file for the digest and the line count, so the one path max_file_bytes
-    # exists to bound had no memory bound at all (ISS-196). sha256 over the raw
+    # exists to bound had no memory bound at all. sha256 over the raw
     # bytes in file order and a running newline count are exactly the values the
     # buffered version produced, byte for byte.
     hasher = hashlib.sha256()
@@ -800,10 +906,27 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             total_parse_errors += pf.parse_errors
             if pf.used_cpp:
                 used_cpp = True
+            # Carried out of the slice loop, like `used_cpp`. Without it the
+            # `ChunkedParsedFile` below inherited the field's False default, so
+            # a file too large to parse whole counted as `parsed` with zero
+            # symbols and the total-failure guard in `build` -- which fires only
+            # on `_unavailable and not parsed` -- could never see it. A repo
+            # whose only supported sources exceed `max_file_bytes` (an
+            # amalgamated single-header library, a big generated file) then
+            # exited 0 with an empty graph and `--incremental` cached it.
+            if pf.grammar_unavailable:
+                grammar_unavailable = True
 
             line_offset += buf.count(b"\n")
 
-    seen = set()
+    # `(name, start_line)` -> the global key the winning definition was given.
+    # A value, not just membership, because a symbol skipped as a duplicate still
+    # has to be rekeyable: recording nothing for it left a later child whose
+    # `symbol_parent_key` named it resolving through
+    # `rekeyed.get(old_parent, old_parent)` to a slice-local key that no longer
+    # exists file-wide, and `build` then fell back to `owner = fid` -- the
+    # child's DEFINES edge came from the file instead of its parent, silently.
+    seen: dict[tuple[str, int], str] = {}
     deduped_symbols = []
     # Each slice was keyed on its own; re-key across the whole file with the
     # same `@L<line>` scheme `parse_source` uses, so a chunked file and a
@@ -822,11 +945,13 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
             old_parent = symbol_parent_key(sym)
             seen_key = (sym.name, sym.start_line)
             if seen_key in seen:
+                rekeyed[old_key] = seen[seen_key]
                 continue
-            seen.add(seen_key)
 
             sym.key = disambiguate_key(sym.qualname, sym.start_line, used_keys)
-            rekeyed[old_key] = symbol_key(sym)
+            new_key = symbol_key(sym)
+            seen[seen_key] = new_key
+            rekeyed[old_key] = new_key
             if old_parent is not None:
                 new_parent = rekeyed.get(old_parent, old_parent)
                 sym.parent_key = "" if new_parent == sym.parent else new_parent
@@ -841,6 +966,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
         used_cpp=used_cpp,
         is_chunked=True,
         undecodable_slices=undecodable_slices,
+        grammar_unavailable=grammar_unavailable,
     )
 
     return rel, lang, (total_bytes, newlines + 1, pf, hasher.hexdigest())
@@ -850,7 +976,7 @@ _ORIGINAL_READ_BYTES = Path.read_bytes
 
 
 def _safe_read_bytes(path: Path) -> bytes:
-    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races (ISS-87).
+    """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races.
 
     On POSIX systems, O_NOFOLLOW causes open() to fail if the trailing component is a
     symlink (protecting against an attacker replacing a discovered regular file with a
@@ -876,7 +1002,7 @@ def _safe_read_bytes(path: Path) -> bytes:
 
 
 def _safe_open(path: Path, mode: str = "rb"):
-    """Open a file with O_NOFOLLOW where supported (ISS-87).
+    """Open a file with O_NOFOLLOW where supported.
 
     Like _safe_read_bytes, but returns a file object for chunked reading
     (used by _chunk_and_parse for files larger than config.max_file_bytes).
@@ -896,6 +1022,28 @@ def _safe_open(path: Path, mode: str = "rb"):
                 pass
             raise
     return open(path, mode)  # noqa: SIM115
+
+
+def _redact_metadata(text: str, g) -> str:
+    """Redact secrets in a signature or docstring before it enters the graph.
+
+    These two fields are copied into chunk headers, `nodes.jsonl`, `graph.html`,
+    GraphML and Cypher without passing through the chunk-body scan, so this is
+    the one place that covers every consumer. `warn-only` and `off` deliberately
+    leave the text alone, matching what those policies mean for chunk bodies --
+    `Index._served` is the serve-time net for them.
+    """
+    if not text:
+        return text
+    policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
+    if policy not in ("redact-match", "exclude-file"):
+        return text
+    from .security import redact_content
+
+    redacted, n = redact_content(text, policy="redact-match")
+    if n and hasattr(g, "stats"):
+        g.stats["redacted_secret_metadata"] += n
+    return redacted
 
 
 def _read_and_parse(item):
@@ -956,7 +1104,7 @@ def _read_and_parse(item):
 # a field would otherwise reconstruct with a silently wrong default, and a wrong
 # symbol is exactly the "wrong in a way nothing detects" failure this feature
 # was cut for in the first place.
-# 2: chunked entries gained "undecodable_slices" (ISS-196). A cache written by
+# 2: chunked entries gained "undecodable_slices". A cache written by
 # format 1 has no way to report it, and an incremental build restoring one would
 # report a 0 where a full build reports the real count -- the one thing an
 # incremental build is not allowed to do.
@@ -987,7 +1135,12 @@ def _read_and_parse(item):
 # PHP `Foo::bar()` calls, so an incremental build would disagree with a full one.
 # Chunked files also re-key children per slice (a duplicate's children used to
 # attach to the first same-name definition), which changes cached parent_key.
-PARSE_CACHE_FORMAT = 8
+# 9: JS/TS export aliases are symbols of kind "alias" (`export const public =
+# _private as T`, `export { Hono as HonoBase }`). A format-8 entry has none of
+# them, so an incremental build would restore a file with fewer nodes than a
+# full build gives it -- and every call to the aliased name would stay
+# unresolved on the incremental side only.
+PARSE_CACHE_FORMAT = 9
 
 # Languages where a bare call inside a method is a call on the implicit
 # `this` (`g()` inside `A.g` is `this.g()`). Elsewhere (Python, JS, Go, Rust,
@@ -1253,7 +1406,7 @@ def parse_all(files, jobs: int, config=None):
     import concurrent.futures
 
     try:
-        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests (NC-6)
+        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests:
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=jobs, initializer=silence_worker_io
         ) as pool:
@@ -1273,6 +1426,45 @@ def parse_all(files, jobs: int, config=None):
         return [_read_and_parse(i) for i in items]
 
 
+def _within_byte_budget(files, budget: int, g: "Graph"):
+    """The leading files whose cumulative size fits in `budget` bytes.
+
+    Stops at the first file that would exceed the budget rather than skipping
+    it and continuing: skipping would make the selection depend on the sizes of
+    files *after* the one that did not fit, so inserting a large file in the
+    middle of a repository could silently change which small files at the end
+    were indexed. Stopping keeps the selection a prefix of the discovery order,
+    which is the property that makes it reproducible.
+
+    A single file larger than the whole budget therefore yields nothing, which
+    is correct and is why the limit is announced: a budget too small to admit
+    the first file is a misconfiguration, not an empty repository.
+    """
+    kept = []
+    used = 0
+    for rel, absolute in files:
+        try:
+            size = absolute.stat().st_size
+        except OSError:
+            # Unreadable here means unparseable later; let the normal path
+            # record it rather than charging it against the budget.
+            kept.append((rel, absolute))
+            continue
+        if used + size > budget:
+            dropped = len(files) - len(kept)
+            g.limits_hit["files_dropped_over_max_bytes"] = dropped
+            g._note_limit(
+                "bytes",
+                f"repo2graph: warning: byte budget reached at {used} of {budget} bytes; "
+                f"{dropped} discovered file(s) were not indexed and the graph is partial",
+            )
+            break
+        used += size
+        kept.append((rel, absolute))
+    g.stats["bytes_indexed"] = used
+    return kept
+
+
 # ---------- build ----------
 def build(
     root: Path,
@@ -1285,6 +1477,9 @@ def build(
     max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
     config=None,
     cochange_min: int = 3,
+    max_bytes: int = 0,
+    max_edges: int = 0,
+    limit_policy: str = DEFAULT_LIMIT_POLICY,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1304,6 +1499,15 @@ def build(
             clamped value is recorded on the returned Graph so the writers can
             state the limit this build actually used.
         config: BuildConfig
+        max_bytes: When positive, stop adding files once their cumulative
+            on-disk size would exceed this many bytes. Applied over the
+            deterministic discovery order, so the same repository and the same
+            limit select the same files.
+        max_edges: When positive, the graph holds at most this many edges;
+            later ones are dropped.
+        limit_policy: `warn` (default) announces a bound on stderr the first
+            time it binds; `truncate` cuts silently. Both record the cut in
+            `stats.json` -- see `LIMIT_POLICIES`.
 
     Returns:
         The populated Graph. `parse_cache` holds the cache for the *next*
@@ -1311,7 +1515,16 @@ def build(
     """
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    g = Graph(root, root.name, max_files=max_files, max_call_candidates=max_call_candidates)
+    if limit_policy not in LIMIT_POLICIES:
+        raise ValueError(f"limit_policy must be one of {LIMIT_POLICIES}, not {limit_policy!r}")
+    g = Graph(
+        root,
+        root.name,
+        max_files=max_files,
+        max_call_candidates=max_call_candidates,
+        max_edges=max_edges,
+        limit_policy=limit_policy,
+    )
     g.config = config
     g.include_globs = list(include) if include else None
     g.exclude_globs = list(exclude) if exclude else None
@@ -1321,6 +1534,8 @@ def build(
     files = list(discover(root, include, exclude, stats=g.stats, config=config))
     if max_files > 0:  # a negative limit must not become files[:-n] and drop the tail
         files = files[:max_files]
+    if max_bytes > 0:
+        files = _within_byte_budget(files, max_bytes, g)
     file_index = {rel for rel, _ in files}
     ctx = repo_context(root)
     ctx.update(path_index(file_index))
@@ -1380,6 +1595,13 @@ def build(
 
         if pf is None:
             continue
+        if getattr(pf, "grammar_unavailable", False):
+            # Counted, not parsed: a supported language whose grammar would not
+            # load contributed no symbols and no edges. Tallied separately so the
+            # total-failure check below can tell an empty graph caused by a broken
+            # install from one caused by an empty repository.
+            g.stats["grammar_unavailable"] += 1
+            continue
         parsed[rel] = pf
         g.stats["parsed"] += 1
         g.stats["parse_errors"] += pf.parse_errors
@@ -1387,7 +1609,7 @@ def build(
             g.stats["files_with_parse_errors"] += 1
         if getattr(pf, "used_cpp", False):
             g.stats["cpp_fallback_files"] += 1
-        # ISS-196: a chunked file whose slices do not decode still gets a node,
+        # A chunked file whose slices do not decode still gets a node,
         # a `chunked: true` flag and a correct line count, so the index looks
         # healthy while the file is simply unqueryable. This is the only signal
         # that any of it was lost.
@@ -1399,6 +1621,15 @@ def build(
         file_keys = {symbol_key(s_) for s_ in pf.symbols}
         for sym in pf.symbols:
             sid = f"sym:{rel}::{symbol_key(sym)}"
+            # Signatures and docstrings are secret-bearing text like any other,
+            # and only the chunk *body* was ever scanned. A credential in a
+            # docstring or a default argument therefore shipped verbatim in five
+            # places at once: the `# doc:` line of every chunk header
+            # (chunks.py), `nodes.jsonl`, the JSON payload embedded in
+            # `graph.html` (viz.py), GraphML, and Cypher -- none of which redact.
+            # Redacting here, at the one point the fields enter the graph, fixes
+            # all five rather than four of them; `redact_content` is
+            # line-preserving, so citation line numbers are unaffected.
             g.add_node(
                 sid,
                 type="symbol",
@@ -1409,8 +1640,8 @@ def build(
                 lang=lang,
                 start_line=sym.start_line,
                 end_line=sym.end_line,
-                signature=sym.signature,
-                docstring=sym.docstring,
+                signature=_redact_metadata(sym.signature, g),
+                docstring=_redact_metadata(sym.docstring, g),
             )
             g.stats[f"symbol:{sym.kind}"] += 1
             # A Go method / Kotlin extension names a receiver type that may be
@@ -1461,6 +1692,27 @@ def build(
                         evidence=imp_evidence,
                     )
                     g.stats["imports_unresolved"] += 1
+
+    # ----- grammars did not load at all: fail, do not publish an empty graph -----
+    # A build that discovered supported source files but could obtain a grammar for
+    # none of them is a broken environment, not a repository with nothing in it.
+    # Left alone it exited 0 with a graph of files and directories and zero code
+    # edges, `doctor` reported ok, `impact` rated every PR LOW because nothing was
+    # reachable, and `--incremental` cached the empty result so the next build
+    # reproduced it without even retrying. This is the one parse failure that is
+    # never best-effort: the tool did not do its job.
+    _unavailable = g.stats.get("grammar_unavailable", 0)
+    if _unavailable and not parsed:
+        raise ParseError(
+            f"no tree-sitter grammar could be loaded for any of the {_unavailable} "
+            "supported source file(s) found, so the graph would contain no symbols, "
+            "calls or imports. This is an installation or network problem, not a "
+            "property of the repository.\n"
+            "       Check it with `repo2graph doctor`, and reinstall grammars with "
+            "`pip install -U 'tree-sitter-language-pack>=0.7,<1.0'` -- the 1.x line "
+            "ships a loader that downloads grammars on first use, which cannot work "
+            "offline or behind a restricted proxy."
+        )
 
     # ----- name index for call/inheritance resolution -----
     imported_files: dict[str, set[str]] = defaultdict(set)
@@ -1766,6 +2018,21 @@ def build(
                     )
                 )
 
+                # The free-function half of the same problem: a bare call to a
+                # name the language itself defines. Gated on a *global* match
+                # (see BUILTIN_FREE_FUNCTIONS) so a shadowing definition this
+                # file owns, inherits or imports by name keeps confidence 1.0;
+                # what is left is a cross-file name collision with a builtin.
+                shadowed_builtin = (
+                    bool(chosen_cands)
+                    and callee in BUILTIN_FREE_FUNCTIONS
+                    and res_kind not in SCOPED_CALL_KINDS
+                    # every call of the name is bare -- `x.len()` is a method
+                    # call and the receiver rules above own it
+                    and all(cd.get("receiver") == "none" for cd in details.get(callee, [{}]))
+                )
+                guessed_call = untyped_builtin or shadowed_builtin
+
                 # Add edges
                 if not chosen_cands:
                     eid = f"external:{callee}"
@@ -1788,7 +2055,7 @@ def build(
                         confidence=1.0,
                     )
                     g.stats["calls_external"] += 1
-                elif len(chosen_cands) == 1 and not untyped_builtin:
+                elif len(chosen_cands) == 1 and not guessed_call:
                     g.add_edge(
                         sid,
                         chosen_cands[0],
@@ -1808,9 +2075,16 @@ def build(
                         g.stats["calls_scoped"] += 1
                 else:
                     limit = min(len(chosen_cands), max_call_candidates)
-                    ceiling = UNTYPED_RECEIVER_CONFIDENCE if untyped_builtin else 1.0
+                    # Both guesses are priced at the same magnitude on purpose:
+                    # each means "kept as a possibility, not asserted", and
+                    # `edgemeta.counts_as_call` excludes both from the repo map.
+                    ceiling = UNTYPED_RECEIVER_CONFIDENCE if guessed_call else 1.0
                     conf = round(ceiling / limit, 3) if limit > 0 else 0.0
-                    extra = {"untyped_receiver": True} if untyped_builtin else {}
+                    extra: dict[str, bool] = {}
+                    if untyped_builtin:
+                        extra["untyped_receiver"] = True
+                    if shadowed_builtin:
+                        extra["shadowed_builtin"] = True
                     for c in chosen_cands[:limit]:
                         g.add_edge(
                             sid,
@@ -1831,6 +2105,8 @@ def build(
                     g.stats["ambiguous_calls"] += 1
                     if untyped_builtin:
                         g.stats["calls_untyped_receiver"] += 1
+                    if shadowed_builtin:
+                        g.stats["calls_shadowed_builtin"] += 1
 
             # Inheritance resolution
             base_details_map = {bd["name"]: bd for bd in getattr(sym, "base_details", [])}
@@ -1878,9 +2154,15 @@ def build(
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
-    g.stats["parse_errors_summary"] = (
-        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  ({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"  # type: ignore[assignment]
+    # `stats` is a Counter so the 18 `stats[k] += 1` sites get a 0 default, and
+    # this is the one entry that holds prose rather than a count. Retyping it as
+    # `dict[str, Any]` would take that default away from every one of them, so
+    # the narrower suppression is the cheaper trade.
+    parse_errors_summary = (
+        f"Files with parse errors: {g.stats.get('files_with_parse_errors', 0)}  "
+        f"({g.stats.get('cpp_fallback_files', 0)} C/C++ files used cpp fallback)"
     )
+    g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
 
 
@@ -1951,8 +2233,7 @@ def _read_capped(stream, limit: int) -> tuple[bytes, bool]:
 
     Reads one byte past the cap deliberately: that byte is the only way to tell
     "the output was exactly `limit` bytes" from "the output was larger and we
-    stopped early" without reading the rest of it -- and not reading the rest of
-    it is the entire point (ISS-236).
+    stopped early" without reading the rest of it.
     """
     buf = bytearray()
     while len(buf) <= limit:
@@ -2017,17 +2298,14 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         # Popen, not run(capture_output=True): run() reads the child's stdout to
         # EOF before it returns, so a byte cap applied to its result bounds only
         # the decode and the pair counting -- the blob is already resident by
-        # then (ISS-236). Streaming the pipe is what makes MAX_COCHANGE_BYTES a
+        # then. Streaming the pipe is what makes MAX_COCHANGE_BYTES a
         # memory bound rather than a post-hoc trim.
         #
         # -c core.quotepath=false: without it git backslash-escapes any
         # non-ASCII path ("caf\303\251.py"), which never matches file_index and
         # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
-        # as UTF-8 ourselves, exactly as walker._git_files does, so a non-ASCII
-        # path cannot raise UnicodeDecodeError under a cp1252 locale.
-        # stdin=DEVNULL for the same reason as parse._git_files: without it git
-        # inherits *our* stdin, and a git that blocks on the MCP server's
-        # JSON-RPC pipe stalls until the timeout and can eat client frames.
+        # as UTF-8 ourselves, so a non-ASCII path cannot raise UnicodeDecodeError.
+        # stdin=DEVNULL: prevents git from inheriting server stdin.
         proc = subprocess.Popen(
             [
                 "git",
@@ -2076,18 +2354,12 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     # means nothing. Only a read that reached EOF can report a real git failure.
     if not capped and proc.returncode not in (0, None):
         return
-    # ISS-82: MAX_COCHANGE_COMMITS bounds how many commits are requested, not
-    # how many bytes a single pathological commit's file list can still emit
-    # within that count. Record that the cap bound -- same "cap and record when
-    # we did" idiom as MAX_COCHANGE_COMMITS above. The value is the number of
-    # bytes read, i.e. the cap itself: how large the output would have been is
-    # exactly the thing we no longer pay to find out.
+    # MAX_COCHANGE_COMMITS bounds how many commits are requested, not
+    # how many bytes a single commit's file list can emit.
     if capped:
         g.stats["cochange_output_capped"] = len(stdout)
         # Drop the trailing partial commit: git log delimits commits with a blank
-        # line ("\n\n" or "\r\n\r\n"). Stopping at an arbitrary byte count cuts into the oldest
-        # commit block, and flushing whatever is in current at end-of-input can turn
-        # a >25 file noise commit into a small (<25) co-change signal.
+        # line ("\n\n" or "\r\n\r\n").
         m = None
         for m in re.finditer(rb"(\r?\n){2}", stdout):
             pass
@@ -2097,7 +2369,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     sampled = 0
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
-    # in two so it never matches file_index (same bug class as ISS-22).
+    # in two so it never matches file_index.
     for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
         line = line.rstrip("\r")
         if not line:

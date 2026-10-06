@@ -6,7 +6,7 @@ from typing import Any
 MAX_CHARS = 4000
 OVERLAP_LINES = 8
 
-# ISS-26: Context caps for headers
+# Context caps for headers
 MAX_CALLERS = 12
 MAX_CALLEES = 12
 MAX_EXT_CALLS = 12
@@ -20,7 +20,7 @@ def _process_chunk_content(
 ) -> tuple[str | None, int]:
     """Apply secret scanning and redaction policy to chunk text."""
     if policy == "exclude-file":
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         if scan_content_secrets(text):
             if hasattr(g, "stats"):
@@ -28,7 +28,7 @@ def _process_chunk_content(
             return None, 0
         return text, 0
     elif policy == "redact-match":
-        from .secrets import redact_content
+        from .security import redact_content
 
         redacted, r_count = redact_content(text, policy=policy)
         if r_count > 0 and hasattr(g, "stats"):
@@ -36,7 +36,7 @@ def _process_chunk_content(
         return redacted, r_count
     elif policy == "warn-only":
         from .events import emit
-        from .secrets import scan_content_secrets
+        from .security import scan_content_secrets
 
         findings = scan_content_secrets(text)
         if findings:
@@ -55,8 +55,8 @@ def _lines(src: str) -> list[str]:
     """Split source the way tree-sitter counts rows: on "\\n" only.
 
     str.splitlines() also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c, which
-    tree-sitter's row numbers do not; using it here slices every later symbol's
-    chunk from the wrong lines (ISS-22). Drop a trailing "\\r" per line so
+    tree-sitter's row numbers do not; using it here slices symbol chunks
+    from incorrect lines. Drop a trailing "\\r" per line so
     CRLF files still index cleanly.
     """
     return [ln[:-1] if ln.endswith("\r") else ln for ln in src.split("\n")]
@@ -67,8 +67,8 @@ def _keepends_lf(text: str) -> list[str]:
 
     str.splitlines(keepends=True) also breaks on U+2028/U+2029/U+0085/\\x0b/\\x0c,
     which tree-sitter does not treat as row breaks; splitting a chunk there makes
-    its pieces depend on whichever stray separators the source happens to hold
-    (the ISS-22 bug class). Same "\\n"-only rule as _lines, but lossless.
+    its pieces depend on whichever stray separators the source happens to hold.
+    Same "\\n"-only rule as _lines, but lossless.
     """
     parts = text.split("\n")
     lines = [p + "\n" for p in parts[:-1]]
@@ -78,24 +78,54 @@ def _keepends_lf(text: str) -> list[str]:
 
 
 def _split(text: str, max_chars: int = MAX_CHARS):
+    """The parts of `_split_spans`, without their line offsets."""
+    return [part for part, _lo, _hi in _split_spans(text, max_chars)]
+
+
+def _split_spans(text: str, max_chars: int = MAX_CHARS) -> list[tuple[str, int, int]]:
+    """Split on line boundaries, each part with the lines it covers.
+
+    Returns `(part, first, last)` per part, where `first` and `last` are
+    inclusive 0-based offsets into the *body's* lines. Callers turn those into
+    source line numbers, because only they know where the body started.
+
+    Every part used to be emitted carrying its parent's whole range, so a
+    243-line function became three chunks all citing `encoders.py:102-344`,
+    two of which begin mid-body with no `def` line in them. `[cite: ...]` is
+    how an agent goes and checks an answer, so a range that does not describe
+    the text beside it is worse than no citation.
+
+    Two details make the offsets less obvious than counting newlines:
+    parts deliberately overlap by `OVERLAP_LINES`, so their spans overlap too;
+    and a single line longer than `max_chars` is cut into several parts that
+    all sit on that one source line.
+    """
     if len(text) <= max_chars:
-        return [text]
+        lines = _keepends_lf(text)
+        return [(text, 0, max(0, len(lines) - 1))]
     lines = _keepends_lf(text)
-    # ISS-153: a single line longer than max_chars (minified JS/CSS, a long SVG
+    # A single line longer than max_chars (minified JS/CSS, a long SVG
     # path, base64, one-line JSON, ...) can't be shrunk by grouping on line
     # boundaries alone -- the packer below would emit it whole, unbounded.
     # Break any such line into max_chars-sized pieces first so every entry the
     # packer sees is already within budget; "".join(pieces) still == the
     # original line, so no text is lost or reordered.
+    # `owner[k]` is the body line that piece `k` belongs to. Without it, a
+    # minified line cut into ten pieces would look like ten source lines.
+    owner: list[int] = list(range(len(lines)))
     if any(len(ln) > max_chars for ln in lines):
         bounded: list[str] = []
-        for ln in lines:
+        owner = []
+        for idx, ln in enumerate(lines):
             if len(ln) > max_chars:
-                bounded.extend(ln[j : j + max_chars] for j in range(0, len(ln), max_chars))
+                for j in range(0, len(ln), max_chars):
+                    bounded.append(ln[j : j + max_chars])
+                    owner.append(idx)
             else:
                 bounded.append(ln)
+                owner.append(idx)
         lines = bounded
-    out: list[str] = []
+    out: list[tuple[str, int, int]] = []
     buf: list[str] = []
     size = 0
     i = 0
@@ -106,7 +136,7 @@ def _split(text: str, max_chars: int = MAX_CHARS):
             buf.append(lines[i])
             size += len(lines[i])
             i += 1
-        out.append("".join(buf))
+        out.append(("".join(buf), owner[start], owner[i - 1]))
         if i < len(lines):
             i = max(start + 1, i - OVERLAP_LINES)
     return out
@@ -231,11 +261,33 @@ def iter_chunks(g, include_files: bool = True):
         if ext:
             header.append(f"# calls (outside the repo): {', '.join(ext)}")
         if n.get("docstring"):
+            # Already redacted at graph-build time (`graph._redact_metadata`), so
+            # this is the stored value and not a second, unscanned copy.
             header.append("# doc: " + n["docstring"].replace("\n", " ")[:300])
-        for i, part in enumerate(_split(body)):
-            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
-            if proc_part is None:
-                continue
+        # Scan and redact the whole body *before* splitting. Per-slice scanning
+        # let any secret longer than the split escape: `_pem_spans` pairs a
+        # BEGIN with the next END within the text it is handed, so a private key
+        # straddling the 4,000-character boundary left the first slice matching
+        # only its `-----BEGIN ...-----` header line, and the second slice -- the
+        # base64 body plus the END line -- matching nothing at all. Under
+        # `redact-match` the key shipped almost entirely in clear; under
+        # `exclude-file` only the slice holding the BEGIN was dropped while the
+        # body was kept. Redaction is line-preserving, so splitting afterwards
+        # keeps every citation line number intact, and `exclude-file` now drops
+        # the whole symbol instead of one arbitrary slice of it.
+        proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
+        body_spans = _split_spans(proc_body) if proc_body is not None else []
+        for i, (part, lo, hi) in enumerate(body_spans):
+            # The body starts at the symbol's first line, so a body offset maps
+            # straight onto a source line. Clamp to the symbol's own end: a
+            # redaction that changed the line count must not push a citation
+            # past the definition it names.
+            p_start = min(n["end_line"], n["start_line"] + lo)
+            p_end = min(n["end_line"], n["start_line"] + hi)
+            part_header = list(header)
+            part_header[1] = (
+                f"# {n['kind']}: {n['qualname']}  (lines {p_start}-{p_end}, {n['lang']})"
+            )
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -245,8 +297,8 @@ def iter_chunks(g, include_files: bool = True):
                 "lang": n["lang"],
                 "name": n["name"],
                 "qualname": n["qualname"],
-                "start_line": n["start_line"],
-                "end_line": n["end_line"],
+                "start_line": p_start,
+                "end_line": p_end,
                 "entrypoint": bool(n.get("entrypoint")),
                 "callers": callers,
                 "callees": callees,
@@ -254,7 +306,7 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": caller_edges,
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
-                "text": "\n".join(header) + "\n" + proc_part,
+                "text": "\n".join(part_header) + "\n" + part,
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
@@ -283,16 +335,23 @@ def iter_chunks(g, include_files: bool = True):
             if cur <= len(lines):
                 keep += lines[cur - 1 :]
                 line_indices.extend(range(cur, len(lines) + 1))
-            body = "\n".join(keep).strip()
+            joined = "\n".join(keep)
+            body = joined.strip()
             if len(body) < 40:
                 continue
             label_kind = "file_residual"
-            # ISS-23: emit real span for residual chunks
-            span_start = line_indices[0] if line_indices else None
-            span_end = line_indices[-1] if line_indices else None
+            # A residual is the file with its symbols cut out, so its lines are
+            # not contiguous and `line_indices` is the only way back to source
+            # line numbers. `.strip()` above drops leading blank lines, which
+            # shifts that correspondence by however many it removed.
+            lead = joined[: len(joined) - len(joined.lstrip())].count("\n")
+            line_map = line_indices[lead:]
+            span_start = line_map[0] if line_map else None
+            span_end = line_map[-1] if line_map else None
         else:
             body, label_kind = src, "file"
             span_start, span_end = 1, n.get("lines", 0)
+            line_map = list(range(1, body.count("\n") + 2))
         imports = [e.get("target", "") for e in out_edges[nid] if e["type"] == "IMPORTS"][
             :MAX_IMPORTS
         ]
@@ -306,11 +365,16 @@ def iter_chunks(g, include_files: bool = True):
             header.append(f"# imports: {', '.join(i for i in imports if i)}")
         if defines:
             header.append(f"# defines: {', '.join(defines)}")
-        # ISS-141: same id rule as symbols — chunk 0 is unsuffixed `nid`.
-        for i, part in enumerate(_split(body)):
-            proc_part, _ = _process_chunk_content(part, nid, n["path"], policy, g)
-            if proc_part is None:
-                continue
+        # Whole-body scan before the split, for the same reason as the symbol
+        # pass above: a secret longer than one slice escaped detection entirely.
+        proc_body, _ = _process_chunk_content(body, nid, n["path"], policy, g)
+        body_spans = _split_spans(proc_body) if proc_body is not None else []
+        for i, (part, lo, hi) in enumerate(body_spans):
+            if line_map:
+                p_start = line_map[min(lo, len(line_map) - 1)]
+                p_end = line_map[min(hi, len(line_map) - 1)]
+            else:
+                p_start, p_end = span_start, span_end
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -320,8 +384,8 @@ def iter_chunks(g, include_files: bool = True):
                 "lang": n.get("lang"),
                 "name": n["name"],
                 "qualname": n["path"],
-                "start_line": span_start,
-                "end_line": span_end,
+                "start_line": p_start,
+                "end_line": p_end,
                 "entrypoint": False,
                 "callers": [],
                 "callees": [],
@@ -329,5 +393,5 @@ def iter_chunks(g, include_files: bool = True):
                 "caller_edges": [],
                 "callee_edges": [],
                 "base_edges": [],
-                "text": "\n".join(header) + "\n" + proc_part,
+                "text": "\n".join(header) + "\n" + part,
             }

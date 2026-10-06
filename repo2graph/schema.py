@@ -104,7 +104,7 @@ class EdgeRecord(TypedDict, total=False):
     `src`/`dst`/`type` are on every edge, and so are `method`, `confidence` and
     `evidence` — `Graph.add_edge` runs every edge through `edgemeta.normalize`,
     which is the chokepoint that makes those three unconditional (see the
-    AGENTS.md rule on edge evidence). `evidence: None` is a real answer for
+    CONTRIBUTING.md rule on edge evidence). `evidence: None` is a real answer for
     `CONTAINS` and `CO_CHANGE` rather than a missing value.
 
     Everything below that is edge-type-specific — see `export.EDGE_TYPES` for
@@ -152,7 +152,7 @@ class NeighbourEdge(_NeighbourEdgeRequired, total=False):
     see `chunks._neighbour_edge`. `confidence` is present only when the edge
     is an ambiguous `CALLS` edge scoring below 1.0; `IMPORTS`/`DEFINES`/
     `INHERITS` neighbours never carry it (they have no `confidence` key to
-    read in the first place — see the `min_confidence` note in `AGENTS.md`).
+    read in the first place — see the `min_confidence` note in CONTRIBUTING.md).
     """
 
     confidence: float
@@ -266,4 +266,8 @@ class ManifestRecord(TypedDict, total=False):
 StatsRecord = dict[str, Any]
 """`stats.json`'s shape: dynamic `Counter` keys plus `export._stats_extra`'s
 fixed keys (`top_hub_nodes`, `languages`, `has_vectors`, `index_schema_version`,
-optionally `built_at_commit`, `co_change_hotspots`)."""
+`limits_hit`, optionally `built_at_commit`, `co_change_hotspots`).
+
+`limits_hit` is always present and is `{}` when no resource ceiling bound the
+build. A consumer deciding whether an index is complete reads it rather than
+inferring from counts -- see `graph.LIMIT_POLICIES`."""

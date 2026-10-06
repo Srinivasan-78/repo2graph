@@ -1,60 +1,60 @@
 {
-  "generated_at": "2026-09-22T08:12:20Z",
+  "generated_at": "2026-10-06T08:15:30Z",
   "results": [
     {
       "repository": "https://github.com/django/django",
-      "commit": "dd6f6b1531984823e3dc56740dfa93f3ceb09357",
-      "repo2graph_version": "1.6.0",
-      "files": 5629,
-      "nodes": 55810,
-      "edges": 303339,
-      "clone_seconds": 4.6,
-      "build_seconds": 33.9,
-      "generated_at": "2026-09-22T08:07:53Z"
+      "commit": "08e4c0d8e7db6343567e7b02e25da8ea2226a7e0",
+      "repo2graph_version": "2.2.0",
+      "files": 5630,
+      "nodes": 56074,
+      "edges": 301017,
+      "clone_seconds": 63.1,
+      "build_seconds": 133.5,
+      "generated_at": "2026-10-06T08:00:32Z"
     },
     {
       "repository": "https://github.com/kubernetes/kubernetes",
-      "commit": "50b66f3c122cb1553cd4d46d4eba81a101e05b50",
-      "repo2graph_version": "1.6.0",
-      "files": 1084,
-      "nodes": 14451,
-      "edges": 110246,
-      "clone_seconds": 2.8,
-      "build_seconds": 12.6,
-      "generated_at": "2026-09-22T08:08:15Z"
+      "commit": "35fc3af13807e70534fb11736bcccc013631efde",
+      "repo2graph_version": "2.2.0",
+      "files": 1085,
+      "nodes": 15174,
+      "edges": 117066,
+      "clone_seconds": 24.2,
+      "build_seconds": 38.5,
+      "generated_at": "2026-10-06T08:02:24Z"
     },
     {
       "repository": "https://github.com/tensorflow/tensorflow",
-      "commit": "9edd58f895c58c3db484a9e39ab2e953baca4bca",
-      "repo2graph_version": "1.6.0",
+      "commit": "c18cff96cf94b76c8318a0e826d93a1e65ecb4dc",
+      "repo2graph_version": "2.2.0",
       "files": 1022,
-      "nodes": 21380,
-      "edges": 115984,
-      "clone_seconds": 2.6,
-      "build_seconds": 15.8,
-      "generated_at": "2026-09-22T08:08:40Z"
+      "nodes": 24730,
+      "edges": 145790,
+      "clone_seconds": 27.0,
+      "build_seconds": 50.9,
+      "generated_at": "2026-10-06T08:03:52Z"
     },
     {
       "repository": "https://github.com/microsoft/vscode",
-      "commit": "a11ec079d98444803ad16ce48bf7ccc4ecafca7d",
-      "repo2graph_version": "1.6.0",
+      "commit": "e759f6a0d030d83e9340a808993227a6d6bef5cb",
+      "repo2graph_version": "2.2.0",
       "files": 6000,
-      "nodes": 113080,
-      "edges": 656158,
-      "clone_seconds": 8.3,
-      "build_seconds": 71.3,
-      "generated_at": "2026-09-22T08:10:35Z"
+      "nodes": 114070,
+      "edges": 664312,
+      "clone_seconds": 179.1,
+      "build_seconds": 237.2,
+      "generated_at": "2026-10-06T08:11:29Z"
     },
     {
       "repository": "https://github.com/torvalds/linux",
-      "commit": "f0100363d8c374bd8e9ea7c9ba02744f0b802ca4",
-      "repo2graph_version": "1.6.0",
+      "commit": "2c3418fffa9d037b2038a6db48be63f9e2291806",
+      "repo2graph_version": "2.2.0",
       "files": 3660,
-      "nodes": 136219,
-      "edges": 256413,
-      "clone_seconds": 3.3,
-      "build_seconds": 77.5,
-      "generated_at": "2026-09-22T08:12:19Z"
+      "nodes": 185496,
+      "edges": 310854,
+      "clone_seconds": 56.9,
+      "build_seconds": 152.5,
+      "generated_at": "2026-10-06T08:15:27Z"
     }
   ]
 }

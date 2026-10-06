@@ -21,7 +21,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PATH="/opt/venv/bin:$PATH"
 
 # git, because repo2graph shells out to it rather than reimplementing it:
-# `walker.discover` prefers `git ls-files` and only falls back to `os.walk`,
+# `parse.discover` prefers `git ls-files` and only falls back to `os.walk`,
 # which does not honour .gitignore, so without git the image indexes a
 # different set of files than every other way of running the same build.
 # `--git-history` (CO_CHANGE) and `repo2graph github` need it outright, and

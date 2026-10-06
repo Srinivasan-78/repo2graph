@@ -30,7 +30,7 @@ class ImportDetail:
     # 1-based line of the import statement, for the IMPORTS edge's `evidence`.
     # tree-sitter's Point.row advances on a newline only -- the same convention
     # chunks._lines() slices by -- so this indexes the same line the reader
-    # sees. See AGENTS.md on splitlines().
+    # sees. See CONTRIBUTING.md on splitlines().
     line: int | None = None
 
 
@@ -125,6 +125,18 @@ LANG_CFG: dict[str, LangConfig] = {
             "method_definition": "method",
             "class_declaration": "class",
             "variable_declarator": "maybe_function",
+            # `class C { json = (body) => ... }` defines C.json as surely as
+            # `json() {}` does, and the idiom is everywhere in modern JS/TS
+            # because a field-bound arrow captures `this`. Without this entry the
+            # whole form produced no symbol: Hono's `context.ts` indexed its
+            # constructor and getters and not one method a caller invokes.
+            # `maybe_function` is what keeps `limit = 42` out.
+            "field_definition": "maybe_function",
+            # `export { Hono as HonoBase }` binds HonoBase, and HonoBase is the
+            # name consumers import. `maybe_alias` is what keeps the bare
+            # `export { Hono }` -- already indexed under that name -- and the
+            # `from './mod'` re-exports out. See _export_specifier_alias.
+            "export_specifier": "maybe_alias",
         },
         "call_types": {"call_expression", "new_expression"},
         "import_types": {"import_statement", "export_statement"},
@@ -267,6 +279,9 @@ LANG_CFG["typescript"]["kind_map"] = dict(
     type_alias_declaration="type",
     enum_declaration="enum",
     abstract_class_declaration="class",
+    # TypeScript's grammar names the class-field node differently from
+    # JavaScript's `field_definition`, so inheriting the map is not enough.
+    public_field_definition="maybe_function",
 )
 LANG_CFG["tsx"] = LANG_CFG["typescript"]
 LANG_CFG["cpp"] = cast(LangConfig, dict(LANG_CFG["c"]))
@@ -467,7 +482,7 @@ def _count_gitignored(root: Path) -> int:
     `_git_files` already applies `--exclude-standard` itself, so these files
     never reach `discover()`'s loop below and this never changes what is
     yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
-    decoded with surrogateescape (never text=True -- see AGENTS.md), bounded
+    decoded with surrogateescape (never text=True -- see CONTRIBUTING.md), bounded
     timeout.
     """
     try:
@@ -599,7 +614,7 @@ def discover(
             continue
         rp = rel.as_posix()
         if not config.include_secrets:
-            from .secrets import _is_secret_path
+            from .security import _is_secret_path
 
             if _is_secret_path(
                 rp,
@@ -620,20 +635,79 @@ def discover(
         yield rp, abspath
 
 
-_get_parser: Callable[[str], Parser] | None
+# `Callable[..., Parser]`, not `Callable[[str], Parser]`: the two supported
+# language-pack lines type this differently. 0.x declares `get_parser` over a
+# `Literal[...]` of every known language name, 1.x over a plain `str`. A `[str]`
+# parameter list is incompatible with the Literal one (parameters are
+# contravariant), so pinning the narrower signature made mypy fail against the
+# version actually in `uv.lock`. `parser_for` validates the name at run time by
+# catching the failure, which is the only check that holds across both.
+_get_parser: Callable[..., Parser] | None
 try:
     from tree_sitter_language_pack import get_parser as _get_parser
 except ImportError:  # pragma: no cover
     _get_parser = None
 
 
+@lru_cache(maxsize=1)
+def grammar_fingerprint() -> str:
+    """Identity of the installed grammars, for the incremental parse cache key.
+
+    `PARSE_CACHE_FORMAT` is bumped by hand whenever *our* extraction changes, so
+    it catches every change we make and none that we don't. A tree-sitter
+    grammar upgrade is the second kind: the same source, parsed by a newer
+    grammar, can yield different node types and therefore different symbols,
+    calls and qualnames -- with `PARSE_CACHE_FORMAT` untouched, because nothing
+    in this repository changed. `--incremental` would then reuse entries
+    produced by the old grammar for every file whose bytes did not change, and
+    the resulting index would be a silent mix of two grammar versions that no
+    full rebuild could reproduce. Determinism is the property the incremental
+    path is tested against (`test_incremental_is_byte_identical_to_a_full_rebuild`),
+    and that test cannot see this because it never changes grammars mid-run.
+
+    Both distributions matter: `tree-sitter-language-pack` ships the grammars and
+    `tree-sitter` is the runtime that walks them. An unknown version reads as
+    "unknown" rather than raising -- a cache that cannot be keyed is one that
+    must not be trusted, and an "unknown" token simply never matches a recorded
+    one, so the next build is a full build.
+    """
+    from importlib.metadata import version as _dist_version
+
+    parts: list[str] = []
+    for dist in ("tree-sitter", "tree-sitter-language-pack"):
+        try:
+            parts.append(f"{dist}={_dist_version(dist)}")
+        except Exception:  # noqa: BLE001 - any lookup failure is "unknown"; see docstring
+            parts.append(f"{dist}=unknown")
+    return " ".join(parts)
+
+
 @lru_cache(maxsize=None)
 def parser_for(lang: str):
+    """The parser for `lang`, or None if one cannot be obtained for any reason.
+
+    The except clause is deliberately broad. It used to name
+    `(LookupError, ValueError, ImportError, AttributeError)`, which covers what
+    tree-sitter-language-pack 0.x raises but not 1.x: that line raises its own
+    `DownloadError`, `ChecksumMismatchError`, `CacheLockError`,
+    `DynamicLoadError`, `ParserSetupError` and friends, all deriving from a
+    private `tree_sitter_language_pack.exceptions.Error` rather than from
+    anything in the tuple. Offline, every one of those escaped `parser_for`
+    instead of answering None -- so the caller could not tell "no grammar" from
+    "no symbols", and the file was dropped without ever being counted as
+    unparsed.
+
+    Catching the base class by import would couple us to a private module, and
+    narrowing the tuple again would re-break on the next exception they add.
+    Every failure here means exactly one thing to every caller -- there is no
+    parser -- so collapse them all to None and let the `grammar_unavailable`
+    tally in `parse_source` make the condition loud upstream.
+    """
     if _get_parser is None:
         return None
     try:
         return _get_parser(lang)
-    except (LookupError, ValueError, ImportError, AttributeError):
+    except Exception:  # noqa: BLE001 - any failure means "no parser"; see docstring
         return None
 
 
@@ -703,6 +777,12 @@ class ParsedFile:
     parse_errors: int = 0
     used_cpp: bool = False
     is_chunked: bool = False
+    # True when no grammar could be obtained for `lang`, so this file was never
+    # actually parsed. Without it, the unavailable-grammar case is byte-identical
+    # to "parsed fine, genuinely declares nothing" -- both are an empty
+    # ParsedFile -- and a build with every grammar missing reported
+    # stats["parsed"] == stats["files"] and exited 0 with an empty graph.
+    grammar_unavailable: bool = False
     import_details: list[ImportDetail] = field(default_factory=list)
     # 1-based line per entry of `imports`, index-aligned with it by
     # construction (both are appended in the same step of the walk). The
@@ -782,7 +862,7 @@ def _callee_name(src: bytes, node) -> str | None:
     # Strip wrapping parens for function-pointer / expression invocations e.g. (*fn)(arg) or (cb)(arg)
     while txt.startswith("(") and txt.endswith(")") and len(txt) >= 2:
         txt = txt[1:-1].strip()
-    # ISS-159: resolve the rightmost member-access segment *before* stripping
+    # Resolve the rightmost member-access segment *before* stripping
     # "(" / "<" noise. A chained call's `function` field text is the whole
     # member expression, e.g. `obj.get_user().save` for `obj.get_user().save()`
     # — the "(" that closes the inner `get_user()` call sits in the middle of
@@ -797,7 +877,7 @@ def _callee_name(src: bytes, node) -> str | None:
         if sep in txt:
             txt = txt.split(sep)[-1]
     txt = txt.split("(")[0].split("<")[0]
-    # ISS-05: Strip only leading pointer/deref and trailing macro !
+    # Strip only leading pointer/deref and trailing macro !
     txt = txt.strip().lstrip("*& \t\n").removesuffix("!").strip()
     return txt or None
 
@@ -876,6 +956,14 @@ def _classify_receiver(
     lang: str = "",
     static: bool = False,
 ) -> str:
+    """Classify what a call is made on: "none", "self" or "other".
+
+    "none" is a bare call (`helper()`), "self" is a call on the calling object
+    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
+    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
+    drops the receiver, so without this `graph.build` cannot tell `self.get()`
+    from `some_dict.get()`.
+    """
     if not head:
         return "none"
     if head in _SELF_RECEIVERS or head in self_names or head.startswith("super("):
@@ -903,18 +991,6 @@ def _receiver_fields(
     if static:
         out["receiver_static"] = True
     return out
-
-
-def _receiver_kind(src: bytes, node) -> str:
-    """Classify what a call is made on: "none", "self" or "other".
-
-    "none" is a bare call (`helper()`), "self" is a call on the calling object
-    (`self.x()`, `this.x()`, `super().x()`), and "other" is a call on anything
-    else (`d.get()`, `os.environ.get()`, `self.cache.get()`). `_callee_name`
-    drops the receiver, so without this `graph.build` cannot tell
-    `self.get()` from `some_dict.get()`.
-    """
-    return _classify_receiver(_receiver_of(src, node)[0])
 
 
 def _go_receiver_name(src: bytes, node) -> str | None:
@@ -989,7 +1065,7 @@ def _docstring(src: bytes, node, lang: str) -> str:
             if first.type == "expression_statement" and first.named_child_count:
                 first = first.named_children[0]
             if first.type == "string":
-                # ISS-03: Strip only the matching outer quote delimiter (handling r/u/b prefixes)
+                # Strip only the matching outer quote delimiter (handling r/u/b prefixes)
                 raw = _text(src, first).strip()
                 pfx = 0
                 while pfx < len(raw) and raw[pfx] in "rRuUbB":
@@ -1018,6 +1094,83 @@ def _signature(src: bytes, node) -> str:
     body = node.child_by_field_name("body")
     end = body.start_byte if body is not None else min(node.end_byte, node.start_byte + 300)
     return src[node.start_byte : end].decode("utf8", "replace").strip()[:300]
+
+
+# ---------- JS/TS export aliases ----------
+# A library with a private implementation behind a public façade binds the
+# public name in a second statement, and the name consumers import is the alias:
+#
+#   const _getQueryParam = (url, key) => { ... }
+#   export const getQueryParam: (...) = _getQueryParam as (...)
+#   export { Hono as HonoBase }
+#
+# Neither form produced a symbol, so `request.ts`'s `getQueryParam(this.url,
+# key)` named a callee with no node and the edge was dropped. See D7 in
+# `benchmarks/real/README.md` and `tests/test_export_aliases.py`.
+
+# `as` and `satisfies` keep the aliased expression as their first named child;
+# a parenthesised or non-null expression has only that child.
+_ALIAS_WRAPPERS = frozenset(
+    {"as_expression", "satisfies_expression", "parenthesized_expression", "non_null_expression"}
+)
+# A value that is only a *reference* renames something. Anything else -- a
+# literal, a call, a template -- is data or a computation, and `export const
+# LIMIT = 42` must stay out for the same reason `limit = 42` does.
+_ALIAS_REFERENCES = frozenset({"identifier", "member_expression", "nested_identifier"})
+
+
+def _alias_target(src: bytes, value) -> str | None:
+    """The name an exported binding's value refers to, or None if it is not a reference."""
+    # Bounded rather than recursive: `((x as T)!)` nests, but only a little, and
+    # a malformed tree must not spin here.
+    for _ in range(8):
+        if value is None:
+            return None
+        if value.type in _ALIAS_REFERENCES:
+            return _text(src, value).strip() or None
+        if value.type in _ALIAS_WRAPPERS:
+            value = value.named_children[0] if value.named_children else None
+            continue
+        return None
+    return None
+
+
+def _exported_declarator_alias(src: bytes, node) -> str | None:
+    """The target of `export const NAME = TARGET`, or None.
+
+    Only a declarator whose own statement carries the `export` keyword counts.
+    A file-local `const b = a` renames nothing a consumer can reach, and the
+    direct parent chain -- never an ancestor search -- is what keeps the fields
+    of an `export class C { foo = bar }` out of this path.
+    """
+    parent = node.parent
+    if parent is None or parent.type not in ("lexical_declaration", "variable_declaration"):
+        return None
+    grandparent = parent.parent
+    if grandparent is None or grandparent.type != "export_statement":
+        return None
+    return _alias_target(src, node.child_by_field_name("value"))
+
+
+def _export_specifier_alias(src: bytes, node) -> str | None:
+    """The new name bound by `export { TARGET as NAME }`, or None.
+
+    `export { x as y } from './mod'` is excluded: nothing is defined at that
+    line, and a barrel file of them would become dozens of one-line nodes
+    bidding against real definitions. Resolving a re-export to the file it
+    forwards to is a separate feature.
+    """
+    alias = node.child_by_field_name("alias")
+    if alias is None:
+        return None
+    stmt = node.parent
+    for _ in range(3):
+        if stmt is None or stmt.type == "export_statement":
+            break
+        stmt = stmt.parent
+    if stmt is not None and stmt.child_by_field_name("source") is not None:
+        return None
+    return _text(src, alias).strip() or None
 
 
 # Node types that hold a class's supertypes. Grammars differ: some expose them
@@ -1475,7 +1628,17 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
-        return ParsedFile(lang=lang, symbols=[], imports=[])
+        # `cfg is None` means the language is not one we extract from -- an
+        # ordinary, expected outcome. `parser is None` with a cfg present means a
+        # grammar we *do* support could not be loaded, which is an environment
+        # fault and must stay distinguishable from a file that simply declares
+        # nothing. See `grammar_unavailable` on ParsedFile.
+        return ParsedFile(
+            lang=lang,
+            symbols=[],
+            imports=[],
+            grammar_unavailable=cfg is not None and parser is None,
+        )
     tree = parser.parse(source)
 
     def _count_errors(node):
@@ -1507,15 +1670,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         # Never pass text=True to a subprocess reading git/cpp output on
                         # Windows -- it decodes with the cp1252 locale and raises
                         # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                        # tree-sitter's parser.parse() wants bytes anyway (AGENTS.md).
+                        # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
                         cpp_bytes = out.stdout
                         if len(cpp_bytes) <= 2 * len(source):
                             cpp_tree = parser.parse(cpp_bytes)
                             cpp_errors = _count_errors(cpp_tree.root_node)
                             if cpp_errors < errors:
-                                # ISS-126 (approach a): do not adopt cpp_bytes
-                                # or cpp_tree. cpp is invoked with -P, which
-                                # strips `# <linenum> "<file>"` markers, so
+                                # Do not adopt cpp_bytes or cpp_tree.
+                                # cpp is invoked with -P, which strips
+                                # `# <linenum> "<file>"` markers, so
                                 # preprocessed row numbers cannot be mapped
                                 # back to the on-disk file. chunks.py always
                                 # slices the original, and storing cpp rows
@@ -1582,7 +1745,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
-            # so drop them here rather than accumulating dead data (ISS-02).
+            # so drop them here rather than accumulating dead data.
             if callee and owner is not None:
                 call_kind = "static"
                 if ntype in ("macro_invocation", "macro_call"):
@@ -1612,9 +1775,17 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     "function",
                     "function_expression",
                 ):
-                    kind = None
+                    # Not a function, but an exported binding whose value is a
+                    # bare reference is an alias for an existing definition and
+                    # is the name consumers import.
+                    kind = "alias" if _exported_declarator_alias(source, node) else None
                 else:
                     kind = "function"
+            elif kind == "maybe_alias":
+                alias_name = _export_specifier_alias(source, node)
+                # The specifier's `name` field is the target; the symbol is the
+                # alias, so `name` has to be replaced, not just the kind.
+                name, kind = (alias_name, "alias") if alias_name else (name, None)
             if kind and lang == "kotlin" and ntype == "class_declaration":
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"
@@ -1877,7 +2048,7 @@ def explain_path(
 
     # Step 7: Secret detection
     if not config.include_secrets:
-        from .secrets import _is_secret_path
+        from .security import _is_secret_path
 
         if _is_secret_path(
             rel_str,

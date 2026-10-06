@@ -129,7 +129,7 @@ def parse_ref(ref: str) -> str:
 
 
 def _redact(msg: str, token: str | None) -> str:
-    """Strip the token, its base64 'basic' form, and URL-encoded form from user-facing text (SH-3)."""
+    """Strip the token, its base64 'basic' form, and URL-encoded form from user-facing text."""
     if not token:
         return msg
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -143,22 +143,22 @@ def _redact(msg: str, token: str | None) -> str:
 def _auth_env(token: str | None) -> dict:
     """Environment carrying the clone credential out of band.
 
-    The token must never be an argv element (ISS-16): it would be visible in
+    The token must never be an argv element: it would be visible in
     `ps`/`/proc` to every other user. git reads http.extraheader from
     GIT_CONFIG_* for this one invocation only, so nothing lands on disk either.
     """
     env = dict(os.environ)
-    # NC-4: Prevent git from hanging on a terminal credential prompt
+    # Prevent git from hanging on a terminal credential prompt
     env["GIT_TERMINAL_PROMPT"] = "0"
     if not token:
         return env
 
-    # SH-2: GIT_CONFIG_* requires git >= 2.31
+    # GIT_CONFIG_* requires git >= 2.31
     if _git_version() < (2, 31):
         raise RuntimeError("git >= 2.31 is required for token-authenticated clone")
 
     basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    # NC-5: preserve any existing GIT_CONFIG_COUNT set by the caller
+    # Preserve any existing GIT_CONFIG_COUNT set by the caller
     try:
         count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
     except ValueError:
@@ -174,19 +174,18 @@ def clone(
 ) -> Path:
     """Clone a GitHub repo into dest/<repo>. depth=0 means full history."""
     owner, repo = parse_spec(spec)
-    # Validate before anything else runs: the acceptance condition for ISS-237 is
-    # that a hostile ref is refused without git ever being spawned, and _auth_env
-    # below can itself shell out to `git --version`.
+    # Validate before anything else runs: ensure a hostile ref is refused
+    # without git ever being spawned.
     if ref:
         parse_ref(ref)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     url = f"https://github.com/{owner}/{repo}.git"
     target = Path(dest) / repo
 
-    # ISS-21: detect an existing checkout and reuse it
+    # Detect an existing checkout and reuse it
     if target.is_dir() and (target / ".git").exists():
         if ref:
-            # ISS-149: fetch ref before checkout in case existing checkout is shallow or missing ref
+            # Fetch ref before checkout in case existing checkout is shallow or missing ref
             fetch_ok = False
             try:
                 # The "--" is belt-and-braces over parse_ref: git fetch treats
@@ -277,7 +276,7 @@ def clone(
     except (OSError, subprocess.SubprocessError) as e:
         raise RuntimeError(f"git clone failed: {e}") from None
     if proc.returncode != 0:
-        # SH-3: redact both the raw token and the base64 basic credential
+        # Redact both the raw token and the base64 basic credential
         raise RuntimeError(f"git clone failed: {_redact((proc.stderr or '').strip(), token)}")
     return target
 
@@ -315,6 +314,9 @@ def index_github(
     max_call_candidates: int = 5,
     no_chunks: bool = False,
     cochange_min: int = 3,
+    max_bytes: int = 0,
+    max_edges: int = 0,
+    limit_policy: str = "warn",
 ) -> dict:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
@@ -337,6 +339,9 @@ def index_github(
             config=config,
             max_call_candidates=max_call_candidates,
             cochange_min=cochange_min,
+            max_bytes=max_bytes,
+            max_edges=max_edges,
+            limit_policy=limit_policy,
         )
         g.name = f"{owner}/{repo}"
         # The clone is deleted below, so there is no local tree for

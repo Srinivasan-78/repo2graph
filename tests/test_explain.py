@@ -154,7 +154,7 @@ def test_cli_explain_commands(indexed_repo: Path, capsys):
 
 # Every module carries a module-level table so its *file* node gets a chunk:
 # chunks.py drops a file_residual under 40 characters, and a file node with no
-# chunk can be neither a seed nor a retrievable neighbour (AGENTS.md).
+# chunk can be neither a seed nor a retrievable neighbour (CONTRIBUTING.md).
 _TRACE_UTIL = '''\
 HELPER_TABLE = {"alpha": 1, "beta": 2, "gamma": 3, "delta": 4, "epsilon": 5}
 

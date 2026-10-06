@@ -10,7 +10,7 @@ authors = [{name = "Srinivasan Vijayaraghavan", email = "srinivasan.shyam2000@gm
 keywords = ["mcp", "model-context-protocol", "code-graph", "graphrag", "rag",
             "tree-sitter", "static-analysis", "codebase-search", "coding-agent",
             "claude-code", "cursor", "code-navigation", "code-understanding",
-            "onboarding", "impact-analysis", "citations"]
+            "onboarding", "citations"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -25,7 +25,25 @@ classifiers = [
 ]
 dependencies = [
     "tree-sitter>=0.23",
-    "tree-sitter-language-pack>=0.7",
+    # Capped below 1.0 deliberately, and this is a security boundary rather than a
+    # compatibility one. 0.x ships every grammar compiled into the wheel (0.13.0 is
+    # a 33 MB wheel); 1.x ships a 2.5 MB wheel and a 89 KB sdist and fetches the
+    # grammars -- roughly 21 MB of unsigned native code -- from the network on first
+    # `get_parser()`, into the process that is holding the user's source and, in CI,
+    # their tokens.
+    #
+    # That breaks three things this project promises. The README and
+    # .github/SECURITY.md both state that building, querying and the MCP server make
+    # no network calls, with `rag --answer` and `github` named as the only
+    # exceptions. `uv.lock` and the SBOM stop describing what actually executes,
+    # because the hashed artefact is a loader rather than the grammars. And the
+    # documented read-only container and egress-restricted CI simply cannot work.
+    #
+    # 1.x exposes no offline switch: `PackConfig` carries only `cache_dir`,
+    # `languages` and `groups`, all of which are pre-*download* controls, so there is
+    # no configuration that makes 1.x satisfy the no-network claim. Raising this cap
+    # therefore means either dropping the claim or vendoring grammars first.
+    "tree-sitter-language-pack>=0.7,<1.0",
 ]
 
 [project.urls]
@@ -55,10 +73,18 @@ include = ["repo2graph*"]
 # database or fixture state, so it parallelises almost linearly -- 134s serial
 # down to 36s on 16 cores, 49s on a 4-vCPU runner. `[tool.coverage.run]` below
 # already sets `parallel = true`, which is what lets the workers' data combine.
+# hypothesis: tests/test_properties.py only. Capped below 7 for the same reason
+# the other caps here exist -- a major bump is the untested thing. Hypothesis
+# ships behaviour changes (new health checks, strategy shrinking, deprecations
+# promoted to errors) that turn a green property suite red without a line of
+# this repository changing, and the floor is 6.100 because the profile that
+# file registers uses `derandomize` together with `suppress_health_check`,
+# which is what keeps the run reproducible across the 12-cell CI matrix.
 dev = [
     "pytest>=7",
     "pytest-cov>=4",
     "pytest-xdist>=3.5",
+    "hypothesis>=6.100,<7",
     "ruff>=0.5",
     "mypy>=1.11",
     "pre-commit>=3.5",
@@ -66,17 +92,23 @@ dev = [
 ]
 # Strictly optional: the GraphRAG layer falls back to BM25 + the identifier
 # boost with zero extra dependencies when these are not installed.
+# numpy is declared but never imported by repo2graph -- embed.py writes and
+# reads vectors.npy by hand with `struct` precisely so the runtime needs no
+# array library. It is here because the file is a real NPY v1.0 and is meant to
+# be openable with `numpy.load`, so `[rag]` ships what you need to *use* the
+# output. Do not delete it as unused; it is a deliberate consumer-side
+# declaration (and sentence-transformers pulls it in regardless).
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
 # first `tools/call` on the parallel path
-# (test_iss90_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
+# (test_tools_call_over_serve_completes_on_the_parallel_path), deterministic,
 # ~4 minutes to time out. serve() drove 1.x's decorator API
 # (`hasattr(Server, "list_tools")`) only to work around that generation, and the
 # workaround was untested -- CI always resolved 2.x from PyPI. The lower bound is
 # now 2.0, matching what is actually exercised. The upper bound stays `<3.0`: an
 # unreleased 3.x is the thing that has not been tested, not 2.x. Keep this in
-# sync with `SDK_SPEC` in repo2graph/mcp.py.
+# sync with `SDK_SPEC` in repo2graph/mcp/server.py.
 mcp = ["mcp>=2.0,<3.0"]
 # Shell tab completion via argcomplete
 completion = ["argcomplete>=3.0"]
@@ -87,7 +119,9 @@ testpaths = ["tests"]
 
 # branch=True is the point of measuring at all here: statement coverage counts
 # an `if` as covered when only the taken side ever ran, which is exactly the
-# question the suite could not answer about auth.py's refusal paths.
+# question the suite could not answer about the refusal paths in security.py's
+# redaction or the clamps in mcp/guardrails.py -- the branch that *declines*
+# is the one worth proving runs.
 [tool.coverage.run]
 source = ["repo2graph"]
 branch = true
@@ -138,19 +172,31 @@ ignore_missing_imports = true
 # target and the pre-commit hook both check the whole package and defer to it,
 # so removing a module here is the one edit that tightens the check everywhere.
 #
-# 179 errors remain, concentrated in mcp (40), graph (39), parse (27) and
-# cli (23). query.py and export.py are done -- they were taken first because
-# everything else imports them, so their `Any` returns were what made callers
-# unprovable. See docs/BACKLOG.md for the ranked plan.
+# query.py and export.py are done -- they were taken first because everything
+# else imports them, so their `Any` returns were what made callers unprovable.
+# See .github/CONTRIBUTING.md for the ranked plan.
 follow_imports = "silent"
+
+# numpy ships stubs that use PEP 695 `type` statements, which mypy refuses to
+# parse under `python_version = "3.10"` -- it reports a *syntax* error in
+# numpy/__init__.pyi and then stops, so `make typecheck` fails before checking a
+# single line of this package. CI never caught it because CI does not install
+# the `rag` extra; anyone who ran `make install` (which does) saw the whole
+# typecheck target break. `python_version` stays at 3.10 because that is the
+# declared floor in `requires-python`, so the fix is to stop following numpy's
+# stubs rather than to raise the floor. `skip`, not `silent`: `silent` still
+# parses the file.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 module = [
     "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
     "repo2graph.embed", "repo2graph.fetch",
-    "repo2graph.graph", "repo2graph.mcp", "repo2graph.parse",
-    "repo2graph.viz", "repo2graph.langs",
-    "repo2graph.layout", "repo2graph.walker",
+    "repo2graph.graph", "repo2graph.mcp", "repo2graph.mcp.*", "repo2graph.parse",
+    "repo2graph.viz",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false

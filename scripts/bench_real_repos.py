@@ -9,6 +9,24 @@ definitions that answer it:
                          (k=8, hops=1, secrets excluded).
 * ``repo2graph-bm25`` -- the same call with ``expand_graph=False``: the BM25
                          seeds alone, so the difference is what the graph adds.
+* ``repo2graph-cond`` -- the same call with ``conditional_expansion=True``, so
+                         `is_lexical_weak` decides per question whether the
+                         graph is consulted at all. Every other row fixes that
+                         decision in advance; this one is the only row where
+                         the tool chooses, which is what the shipped default
+                         would do if the flag were on.
+* ``repo2graph-cond-cite``
+                      -- conditional expansion plus citation-mode neighbours:
+                         the two token-saving mechanisms together.
+* ``repo2graph-vec``  -- the default call plus dense vectors, fused with BM25 by
+                         reciprocal rank. Requires ``--embed``. The ``embed``
+                         path ships in the ``rag`` extra and has never appeared
+                         in a published benchmark, so this row is the first
+                         measurement of whether dense retrieval closes the
+                         lexical gap that BM25 tuning did not.
+* ``repo2graph-vec-bm25``
+                      -- vectors with graph expansion off, to separate what the
+                         vectors add from what the graph adds.
 * ``ripgrep``         -- ``rg`` for the question's words, then read +/-15 lines
                          around the best-scoring hits until the budget is spent.
                          This is the grep-then-read loop a coding agent runs,
@@ -39,6 +57,7 @@ import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -53,7 +72,7 @@ STOPWORDS = frozenset(
     "a an and are as at be by does do for from get gets how in into is it its like "
     "of on or the their then to up what when where which who why with".split()
 )
-RG_TYPES = {"python": "py", "typescript": "ts"}
+RG_TYPES = {"python": "py", "typescript": "ts", "javascript": "js"}
 
 
 def source_version(root: Path = ROOT) -> str:
@@ -98,7 +117,7 @@ def source_commit(root: Path = ROOT) -> dict:
             return None
         if res.returncode != 0:
             return None
-        # bytes + surrogateescape, never text=True (AGENTS.md)
+        # bytes + surrogateescape, never text=True (CONTRIBUTING.md)
         return res.stdout.decode("utf8", "surrogateescape").strip()
 
     sha = _git("rev-parse", "HEAD")
@@ -219,20 +238,52 @@ def found(evidence: list[dict], lines: dict[str, set[int]]) -> list[bool]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--cache", type=Path, default=Path(tempfile.gettempdir()) / "r2g-bench-real")
     ap.add_argument("--budgets", default="2000,4000,8000")
     ap.add_argument("--out", type=Path, default=BENCH / "results.json")
+    ap.add_argument(
+        "--tasks",
+        type=Path,
+        default=BENCH / "tasks.json",
+        help="lexical task file (default: benchmarks/real/tasks.json). Point this at a "
+        "held-out set to judge a retrieval change without tuning against the published one.",
+    )
+    ap.add_argument(
+        "--structural-tasks",
+        type=Path,
+        default=BENCH / "tasks_structural.json",
+        help="structural task file (default: benchmarks/real/tasks_structural.json)",
+    )
     ap.add_argument("--rg", default="rg", help="ripgrep command, shell-split (default: rg)")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--embed",
+        action="store_true",
+        help="also embed each index and measure the dense-fusion rows. Needs the `rag` extra; "
+        "downloads nothing if the sentence-transformers model is already cached.",
+    )
+    ap.add_argument(
+        "--repos",
+        type=Path,
+        default=BENCH / "repos.json",
+        help="repository set (default: benchmarks/real/repos.json). A held-out *repository* set "
+        "is a stronger test than held-out questions on the same repositories.",
+    )
+    args = ap.parse_args(argv)
     rg = shlex.split(args.rg)
     if shutil.which(rg[0]) is None:
         raise SystemExit("ripgrep (rg) is required for the baseline")
     budgets = [int(b) for b in args.budgets.split(",")]
 
-    repos = {r["name"]: r for r in json.loads((BENCH / "repos.json").read_text())["repos"]}
-    tasks = json.loads((BENCH / "tasks.json").read_text())["tasks"]
+    embedder = None
+    if args.embed:
+        from repo2graph.embed import default_embedder
+
+        embedder = default_embedder()
+
+    repos = {r["name"]: r for r in json.loads(args.repos.read_text(encoding="utf8"))["repos"]}
+    tasks = json.loads(args.tasks.read_text(encoding="utf8"))["tasks"]
     args.cache.mkdir(parents=True, exist_ok=True)
 
     indexes: dict[str, Index] = {}
@@ -245,20 +296,137 @@ def main() -> int:
         with contextlib.redirect_stdout(io.StringIO()):
             if cli_main(["build", str(roots[name]), "-o", str(out)]) != 0:
                 raise SystemExit(f"{name}: repo2graph build failed")
+            if args.embed and cli_main(["embed", "-o", str(out)]) != 0:
+                raise SystemExit(f"{name}: repo2graph embed failed")
         indexes[name] = Index(out)
 
     rows = []
+    structural_tasks_path = args.structural_tasks
+    structural_tasks = (
+        json.loads(structural_tasks_path.read_text(encoding="utf8"))["tasks"]
+        if structural_tasks_path.exists()
+        else []
+    )
+
+    # A task set and a repository set are chosen independently, so a task can
+    # name a repository this run did not index -- running the default structural
+    # set against `--repos repos_holdout.json` is the obvious way in. Scoring it
+    # anyway would mark every such question missed against an index that never
+    # contained its evidence, which reads as a retrieval regression. Drop them
+    # instead, and say so: a silently smaller denominator is the other way this
+    # goes wrong.
+    def for_indexed_repos(ts: list[dict[str, Any]], label: str) -> list[dict[str, Any]]:
+        keep = [t for t in ts if t["repo"] in repos]
+        if len(keep) != len(ts):
+            dropped = sorted({t["repo"] for t in ts if t["repo"] not in repos})
+            print(
+                f"note: {len(ts) - len(keep)} of {len(ts)} {label} tasks skipped -- "
+                f"not in {args.repos.name}: {', '.join(dropped)}",
+                file=sys.stderr,
+            )
+        return keep
+
+    tasks = for_indexed_repos(tasks, "lexical")
+    structural_tasks = for_indexed_repos(structural_tasks, "structural")
+    structural_rows = []
+
     for t in tasks:
         repo, idx, root = repos[t["repo"]], indexes[t["repo"]], roots[t["repo"]]
         for budget in budgets:
             full = idx.pack_context(t["query"], budget_tokens=budget, exclude_secrets=True)
+            cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+            )
             bm25 = idx.pack_context(
                 t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
             )
+            cond = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                conditional_expansion=True,
+            )
+            cond_cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+                conditional_expansion=True,
+            )
+            vec = vec_bm25 = vec_cite = vec_cond = None
+            if embedder is not None:
+                vec = idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
+                )
+                vec_bm25 = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    expand_graph=False,
+                )
+                # Both knobs were only ever measured without vectors, so neither
+                # verdict transferred to the dense configuration. Removing a
+                # public flag on evidence from one configuration would be a guess.
+                vec_cite = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    k=10,
+                    neighbours="cite",
+                    max_neighbours=2,
+                    precision_first=True,
+                )
+                vec_cond = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    conditional_expansion=True,
+                )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
                 ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
+                ("repo2graph-cond", covered_lines_r2g(cond, root), cond["tokens_used"]),
+                (
+                    "repo2graph-cond-cite",
+                    covered_lines_r2g(cond_cite, root),
+                    cond_cite["tokens_used"],
+                ),
+                *(
+                    [
+                        ("repo2graph-vec", covered_lines_r2g(vec, root), vec["tokens_used"]),
+                        (
+                            "repo2graph-vec-bm25",
+                            covered_lines_r2g(vec_bm25, root),
+                            vec_bm25["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cite",
+                            covered_lines_r2g(vec_cite, root),
+                            vec_cite["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cond",
+                            covered_lines_r2g(vec_cond, root),
+                            vec_cond["tokens_used"],
+                        ),
+                    ]
+                    if vec is not None and vec_bm25 is not None
+                    else []
+                ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)
@@ -276,10 +444,139 @@ def main() -> int:
                     }
                 )
 
+    for t in structural_tasks:
+        repo, idx, root = repos[t["repo"]], indexes[t["repo"]], roots[t["repo"]]
+        for budget in budgets:
+            full = idx.pack_context(t["query"], budget_tokens=budget, exclude_secrets=True)
+            cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+            )
+            bm25 = idx.pack_context(
+                t["query"], budget_tokens=budget, exclude_secrets=True, expand_graph=False
+            )
+            cond = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                conditional_expansion=True,
+            )
+            cond_cite = idx.pack_context(
+                t["query"],
+                budget_tokens=budget,
+                exclude_secrets=True,
+                k=10,
+                neighbours="cite",
+                max_neighbours=2,
+                precision_first=True,
+                conditional_expansion=True,
+            )
+            vec = vec_bm25 = vec_cite = vec_cond = None
+            if embedder is not None:
+                vec = idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, embedder=embedder
+                )
+                vec_bm25 = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    expand_graph=False,
+                )
+                # Both knobs were only ever measured without vectors, so neither
+                # verdict transferred to the dense configuration. Removing a
+                # public flag on evidence from one configuration would be a guess.
+                vec_cite = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    k=10,
+                    neighbours="cite",
+                    max_neighbours=2,
+                    precision_first=True,
+                )
+                vec_cond = idx.pack_context(
+                    t["query"],
+                    budget_tokens=budget,
+                    exclude_secrets=True,
+                    embedder=embedder,
+                    conditional_expansion=True,
+                )
+            rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
+            for method, lines, used in (
+                ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
+                ("repo2graph-cite", covered_lines_r2g(cite, root), cite["tokens_used"]),
+                ("repo2graph-bm25", covered_lines_r2g(bm25, root), bm25["tokens_used"]),
+                ("repo2graph-cond", covered_lines_r2g(cond, root), cond["tokens_used"]),
+                (
+                    "repo2graph-cond-cite",
+                    covered_lines_r2g(cond_cite, root),
+                    cond_cite["tokens_used"],
+                ),
+                *(
+                    [
+                        ("repo2graph-vec", covered_lines_r2g(vec, root), vec["tokens_used"]),
+                        (
+                            "repo2graph-vec-bm25",
+                            covered_lines_r2g(vec_bm25, root),
+                            vec_bm25["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cite",
+                            covered_lines_r2g(vec_cite, root),
+                            vec_cite["tokens_used"],
+                        ),
+                        (
+                            "repo2graph-vec-cond",
+                            covered_lines_r2g(vec_cond, root),
+                            vec_cond["tokens_used"],
+                        ),
+                    ]
+                    if vec is not None and vec_bm25 is not None
+                    else []
+                ),
+                ("ripgrep", rg_lines, count_tokens(rg_text)),
+            ):
+                hit = found(t["evidence"], lines)
+                structural_rows.append(
+                    {
+                        "task": t["id"],
+                        "repo": t["repo"],
+                        "kind": t["kind"],
+                        "budget": budget,
+                        "method": method,
+                        "tokens_used": used,
+                        "found": sum(hit),
+                        "evidence": len(hit),
+                        "missed": [ev["symbol"] for ev, h in zip(t["evidence"], hit) if not h],
+                    }
+                )
+
     summary = []
     for budget in budgets:
-        for method in ("repo2graph", "repo2graph-bm25", "ripgrep"):
+        for method in (
+            "repo2graph",
+            "repo2graph-cite",
+            "repo2graph-bm25",
+            "repo2graph-cond",
+            "repo2graph-cond-cite",
+            "repo2graph-vec",
+            "repo2graph-vec-bm25",
+            "repo2graph-vec-cite",
+            "repo2graph-vec-cond",
+            "ripgrep",
+        ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
+            # The dense rows exist only under --embed; skip rather than divide by
+            # zero, so the default run is unchanged.
+            if not sel:
+                continue
             summary.append(
                 {
                     "budget": budget,
@@ -293,22 +590,62 @@ def main() -> int:
                     "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
                 }
             )
+
+    structural_summary = []
+    if structural_rows:
+        for budget in budgets:
+            for method in (
+                "repo2graph",
+                "repo2graph-cite",
+                "repo2graph-bm25",
+                "repo2graph-cond",
+                "repo2graph-cond-cite",
+                "repo2graph-vec",
+                "repo2graph-vec-bm25",
+                "repo2graph-vec-cite",
+                "repo2graph-vec-cond",
+                "ripgrep",
+            ):
+                sel = [
+                    r for r in structural_rows if r["budget"] == budget and r["method"] == method
+                ]
+                if not sel:
+                    continue
+                structural_summary.append(
+                    {
+                        "budget": budget,
+                        "method": method,
+                        "evidence_recall": round(
+                            sum(r["found"] for r in sel) / sum(r["evidence"] for r in sel), 3
+                        ),
+                        "tasks_fully_answered": sum(r["found"] == r["evidence"] for r in sel),
+                        "tasks_any_evidence": sum(r["found"] > 0 for r in sel),
+                        "tasks": len(sel),
+                        "mean_tokens_used": round(sum(r["tokens_used"] for r in sel) / len(sel)),
+                    }
+                )
+
     provenance = source_commit()
+    out_data = {
+        "repo2graph_version": source_version(),
+        "repo2graph_commit": provenance["commit"],
+        "repo2graph_dirty": provenance["dirty"],
+        "summary": summary,
+        "rows": rows,
+    }
+    if structural_summary:
+        out_data["structural_summary"] = structural_summary
+        out_data["structural_rows"] = structural_rows
+
     args.out.write_text(
-        json.dumps(
-            {
-                "repo2graph_version": source_version(),
-                "repo2graph_commit": provenance["commit"],
-                "repo2graph_dirty": provenance["dirty"],
-                "summary": summary,
-                "rows": rows,
-            },
-            indent=1,
-        )
-        + "\n",
+        json.dumps(out_data, indent=1) + "\n",
         encoding="utf8",
         newline="\n",
     )
+    # Name the file that was actually read: a held-out run printing
+    # "tasks.json, 35 tasks" is how a held-out number gets pasted into a table
+    # as if it were the published one.
+    print(f"=== Lexical Benchmark ({args.tasks.name}, {len(tasks)} tasks) ===")
     print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
     print("|---:|---|---:|---:|---:|---:|")
     for s in summary:
@@ -317,6 +654,20 @@ def main() -> int:
             f"{s['tasks_fully_answered']}/{s['tasks']} | {s['tasks_any_evidence']}/{s['tasks']} | "
             f"{s['mean_tokens_used']:,} |"
         )
+
+    if structural_summary:
+        print(
+            f"\n=== Structural Benchmark ({structural_tasks_path.name}, "
+            f"{len(structural_tasks)} tasks) ==="
+        )
+        print("| budget | method | evidence recall | fully answered | any evidence | mean tokens |")
+        print("|---:|---|---:|---:|---:|---:|")
+        for s in structural_summary:
+            print(
+                f"| {s['budget']:,} | {s['method']} | {s['evidence_recall']:.0%} | "
+                f"{s['tasks_fully_answered']}/{s['tasks']} | {s['tasks_any_evidence']}/{s['tasks']} | "
+                f"{s['mean_tokens_used']:,} |"
+            )
     return 0
 
 

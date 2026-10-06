@@ -1,8 +1,8 @@
-"""Change 2 -- the stdio MCP server. AC-26 .. AC-33.
+"""Change 2 -- the stdio MCP server. verification.
 
 The `mcp` SDK is an optional extra and is deliberately never imported here:
 `repo2graph.mcp`'s three handlers are plain functions taking an `Index`, so
-AC-26..AC-31 need no SDK at all, and AC-33 blocks the import on purpose to
+tests need no SDK at all, and SDK absence guard blocks the import on purpose to
 assert the error message a user without the extra actually sees.
 """
 
@@ -39,7 +39,7 @@ def _has_mcp():
     installed, every test gated on it silently skipped forever. Detector:
     reverting this to the old hasattr check makes
     test_stdio_roundtrip_against_a_repo_with_no_index and
-    test_ac34_stdio_server_roundtrip skip again against this repo's own
+    test_stdio_server_roundtrip skip again against this repo's own
     installed SDK.
     """
     try:
@@ -65,7 +65,7 @@ HAS_REAL_MCP = _has_mcp()
 def _has_any_mcp():
     """Any `mcp` SDK is importable at all, supported or not.
 
-    Only `test_iss90_...parallel_path` uses this -- it exercises `serve()`'s
+    Only `test_tools_call_over_serve_completes_on_the_parallel_path` uses this -- it exercises `serve()`'s
     own real behaviour (including refusing an unsupported SDK), so it must
     run whenever *some* SDK is installed, not only a supported one.
     """
@@ -94,19 +94,19 @@ def tokens(text: str) -> int:
 
 
 # ==========================================================================
-# AC-26 -- repo_map
+# the golden baseline6 -- repo_map
 # ==========================================================================
 
 
-def test_ac26_repo_map_is_exactly_map_prepend(mini_index):
-    """AC-26: no reformatting, no truncation, no query argument."""
+def test_repo_map_is_exactly_map_prepend(mini_index):
+    """Verify no reformatting, no truncation, no query argument."""
     mcp = mcp_module()
     idx = Index(mini_index)
     assert mcp.tool_repo_map(idx) == idx.map_prepend()
     assert idx.map_prepend().strip(), "the fixture produced an empty map"
 
 
-def test_iss383_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_index):
+def test_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_index):
     """#383: an index whose tree has not moved reports no staleness note --
     the check must not become a false positive on every call."""
     mcp = mcp_module()
@@ -114,7 +114,7 @@ def test_iss383_repo_map_is_silent_when_the_tree_is_unchanged(mini_repo, mini_in
     assert "index may be stale" not in mcp.tool_repo_map(idx)
 
 
-def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
+def test_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
     """#383: `_index_mtime`/`open_index`'s reload check both compare the index
     against itself at an earlier moment -- neither ever looks at the source
     tree, so a long-running server answered from a stale graph indefinitely
@@ -125,7 +125,7 @@ def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index
 
     Detector: reverting `tool_repo_map` to `index.map_prepend()` (its
     pre-#383 body) makes this fail while
-    test_iss383_repo_map_is_silent_when_the_tree_is_unchanged keeps passing.
+    test_repo_map_is_silent_when_the_tree_is_unchanged keeps passing.
     """
     import os
     import time
@@ -149,12 +149,12 @@ def test_iss383_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index
 
 
 # ==========================================================================
-# AC-27 / AC-28 -- repo_search and its hard budget ceiling
+# the golden baseline7 / the budget limit -- repo_search and its hard budget ceiling
 # ==========================================================================
 
 
-def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
-    """AC-27: at least one `### [cite: path:start-end]` header, and the result
+def test_repo_search_returns_cited_markdown_within_the_default_budget(big_index):
+    """Verify at least one `### [cite: path:start-end]` header, and the result
     measures no more than MCP_BUDGET_TOKENS.
 
     `big_index` packs to well over the default budget when unbounded, so the
@@ -176,8 +176,8 @@ def test_ac27_repo_search_returns_cited_markdown_within_the_default_budget(big_i
 
 
 @pytest.mark.parametrize("budget", [10**9, 10**6, 100000])
-def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
-    """AC-28: the ceiling is enforced, not advisory."""
+def test_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
+    """Verify the ceiling is enforced, not advisory."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=budget)
@@ -190,8 +190,8 @@ def test_ac28_an_absurd_budget_is_clamped_to_the_ceiling(big_index, budget):
 
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9)])
-def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
-    """AC-28: no crash, no traceback, and still a bounded string."""
+def test_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
+    """Verify no crash, no traceback, and still a bounded string."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=budget)
@@ -199,31 +199,31 @@ def test_ac28_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budge
     assert tokens(out) <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_ac28_ceiling_is_above_the_default(big_index):
-    """AC-28 (guard): the two constants are ordered the way the plan says."""
+def test_ceiling_is_above_the_default(big_index):
+    """Verify the two constants are ordered the way the plan says."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_BUDGET_TOKENS <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_ac28_truncation_happens_on_a_line_boundary(big_index):
-    """AC-28: a clamped result is still parseable markdown -- no half line."""
+def test_truncation_happens_on_a_line_boundary(big_index):
+    """Verify a clamped result is still parseable markdown -- no half line."""
     mcp = mcp_module()
     idx = Index(big_index)
     out = mcp.tool_repo_search(idx, MINI_QUERY, k=20, budget_tokens=10**9)
     full = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)["markdown"]
-    full_lines = set(full.split("\n"))  # never splitlines(): see AGENTS.md
+    full_lines = set(full.split("\n"))  # never splitlines(): see CONTRIBUTING.md
     body = out.split("\n")
     for line in body[:-1]:
         assert line in full_lines, line[:120]
 
 
 # ==========================================================================
-# AC-29 -- secrets never leave through an agent tool
+# the secret filter rule -- secrets never leave through an agent tool
 # ==========================================================================
 
 
-def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
-    """AC-29: the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
+def test_repo_search_never_returns_a_secret_chunk(mini_index):
+    """Verify the fixture's `.env` chunk is BM25 rank 1 for SECRET_QUERY and
     still must not appear; the same query with exclude_secrets=False does
     return it, which is what makes this a real test."""
     mcp = mcp_module()
@@ -245,8 +245,8 @@ def test_ac29_repo_search_never_returns_a_secret_chunk(mini_index):
     assert "abc123deadbeef" not in out
 
 
-def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
-    """AC-29 (b): the other two tools must not become the leak instead."""
+def test_repo_map_and_neighbours_also_exclude_secrets(mini_index):
+    """Verify the other two tools must not become the leak instead."""
     mcp = mcp_module()
     idx = Index(mini_index)
     for text in (mcp.tool_repo_map(idx), mcp.tool_repo_neighbours(idx, "file:.env")):
@@ -255,12 +255,12 @@ def test_ac29_repo_map_and_neighbours_also_exclude_secrets(mini_index):
 
 
 # ==========================================================================
-# AC-30 -- repo_neighbours
+# repo_neighbours
 # ==========================================================================
 
 
-def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
-    """AC-30: route_request -> audit_event over CALLS out is in the fixture
+def test_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
+    """Verify route_request -> audit_event over CALLS out is in the fixture
     graph, so it must be named, with its edge type and its direction."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -277,8 +277,8 @@ def test_ac30_neighbours_names_a_reachable_node_its_edge_and_direction(mini_inde
     assert "out" in out, out
 
 
-def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
-    """AC-30 (b): not found, not a traceback, and not a wall of text."""
+def test_an_unknown_node_id_returns_a_short_message(mini_index):
+    """Verify not found, not a traceback, and not a wall of text."""
     mcp = mcp_module()
     idx = Index(mini_index)
     out = mcp.tool_repo_neighbours(idx, "sym:nowhere.py::nothing")
@@ -287,8 +287,8 @@ def test_ac30_an_unknown_node_id_returns_a_short_message(mini_index):
     assert len(out) <= 400, len(out)
 
 
-def test_ac30_neighbours_respects_its_limit(mini_index):
-    """AC-30 (c): an agent-facing tool must be bounded here too."""
+def test_neighbours_respects_its_limit(mini_index):
+    """Verify an agent-facing tool must be bounded here too."""
     mcp = mcp_module()
     idx = Index(mini_index)
     short = mcp.tool_repo_neighbours(idx, SYM_ROUTE, limit=1)
@@ -297,12 +297,12 @@ def test_ac30_neighbours_respects_its_limit(mini_index):
 
 
 # ==========================================================================
-# AC-31 -- tool descriptions are context an agent pays for every session
+# tool descriptions are context an agent pays for every session
 # ==========================================================================
 
 
-def test_ac31_tool_descriptions_stay_under_budget():
-    """AC-31: the published tool set, capped under a combined character budget.
+def test_tool_descriptions_stay_under_budget():
+    """Verify the published tool set, capped under a combined character budget.
 
     The character budget balances agent context overhead against Glama TDQS
     (Tool Definition Quality Standard) requirements. Tool descriptions are loaded
@@ -314,16 +314,18 @@ def test_ac31_tool_descriptions_stay_under_budget():
     repo_path_between, repo_blast_radius) to the original six, each of which
     needs its own sibling cross-references and when/when-not guidance to pass
     the tests below -- so the combined budget below is deliberately raised
-    from the original 3000 (six tools) to 6000 (ten tools, actual total is
-    ~5590 as of this writing): the per-tool [100, 800] cap is unchanged and
-    is what actually keeps any *one* description honest.
+    from the original 3000 (six tools) to 6000: the per-tool [100, 800] cap is
+    unchanged and is what actually keeps any *one* description honest.
+
+    `repo_impact` was removed with the rest of the diff-analysis surface, so
+    the set is nine. The combined budget is left at 6000 rather than tightened
+    to fit, because it exists to stop descriptions growing, not to pin a total.
     """
     mcp = mcp_module()
     assert set(mcp.TOOL_DESCRIPTIONS) == {
         "repo_map",
         "repo_search",
         "repo_neighbours",
-        "repo_impact",
         "repo_find_symbol",
         "repo_read",
         "repo_path_between",
@@ -340,9 +342,6 @@ def test_ac31_tool_descriptions_stay_under_budget():
     assert total <= 6000, f"Combined tool descriptions ({total} chars) exceed 6000-char budget"
 
 
-test_ac31_tool_descriptions_stay_under_600_chars = test_ac31_tool_descriptions_stay_under_budget
-
-
 def test_tool_descriptions_contain_usage_guidance_and_siblings():
     """Glama TDQS: Every tool description must contain explicit usage guidance
     ('when to use' or 'use when') and cross-reference alternative sibling tools
@@ -355,11 +354,13 @@ def test_tool_descriptions_contain_usage_guidance_and_siblings():
         "repo_map": {"repo_search", "repo_neighbours"},
         "repo_search": {"repo_map", "repo_neighbours"},
         "repo_neighbours": {"repo_search", "repo_map"},
-        "repo_impact": {"repo_search"},
         "repo_find_symbol": {"repo_search", "repo_map"},
         "repo_read": {"repo_search", "repo_neighbours"},
         "repo_path_between": {"repo_neighbours", "repo_search"},
-        "repo_blast_radius": {"repo_impact", "repo_search"},
+        # `repo_blast_radius` pointed at `repo_impact` for diff-level work; with
+        # that tool removed it points at the two it can actually be confused
+        # with -- an open-ended search, and reading a symbol's own body.
+        "repo_blast_radius": {"repo_read", "repo_search"},
         "repo_cache_stats": {"repo_map", "repo_search"},
         "repo_build_status": {"repo_search", "repo_map"},
     }
@@ -492,7 +493,7 @@ def test_list_tools_returns_quality_annotations():
 
 
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
-def test_iss292_annotations_are_honest_about_auto_build():
+def test_annotations_are_honest_about_auto_build():
     """#292: a client inspecting annotations must not be told a tool is
     read-only when its first call, on a server that can auto-build, may
     parse the whole repository, run git, and write `.r2g/**` to disk.
@@ -527,7 +528,7 @@ def test_iss292_annotations_are_honest_about_auto_build():
             )
 
 
-def test_iss292_repo_build_status_is_the_only_non_build_capable_tool():
+def test_repo_build_status_is_the_only_non_build_capable_tool():
     """Pins BUILD_CAPABLE_TOOLS against `run_tool`'s own special case, so a
     future tool added to TOOL_DESCRIPTIONS without updating the annotation
     set fails loudly here rather than silently miscategorising a new tool.
@@ -537,7 +538,7 @@ def test_iss292_repo_build_status_is_the_only_non_build_capable_tool():
 
 
 # ==========================================================================
-# AC-32 / AC-33 -- packaging and the console entry point
+# Packaging and the console entry point
 # ==========================================================================
 
 
@@ -563,8 +564,8 @@ def requirement_names(specs):
     return out
 
 
-def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
-    """AC-32: `mcp` extra + `repo2graph-mcp` entry point."""
+def test_mcp_is_an_optional_extra_with_a_console_script():
+    """Verify `mcp` extra + `repo2graph-mcp` entry point."""
     data = load_pyproject()
     extras = data["project"]["optional-dependencies"]
     assert "mcp" in extras, sorted(extras)
@@ -574,8 +575,8 @@ def test_ac32_mcp_is_an_optional_extra_with_a_console_script():
     assert scripts.get("repo2graph") == "repo2graph.cli:main", scripts
 
 
-def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
-    """AC-32: a bare `pip install repo2graph` brings in nothing new."""
+def test_runtime_dependencies_are_still_only_tree_sitter():
+    """Verify a bare `pip install repo2graph` brings in nothing new."""
     data = load_pyproject()
     assert requirement_names(data["project"]["dependencies"]) == {
         "tree-sitter",
@@ -583,8 +584,8 @@ def test_ac32_runtime_dependencies_are_still_only_tree_sitter():
     }
 
 
-def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
-    """AC-33: a user without the extra gets an actionable message and a
+def test_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeypatch):
+    """Verify a user without the extra gets an actionable message and a
     non-zero exit, never an ImportError traceback."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
@@ -595,8 +596,8 @@ def test_ac33_entry_point_without_the_sdk_explains_the_extra(mini_index, monkeyp
     assert exc.value.code not in (0, None)
 
 
-def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
-    """AC-33 (b): the guard lives at the import site, not only in main()."""
+def test_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monkeypatch):
+    """Verify the guard lives at the import site, not only in main()."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
     with pytest.raises(SystemExit) as exc:
@@ -604,8 +605,8 @@ def test_ac33_serve_without_the_sdk_raises_the_same_systemexit(mini_index, monke
     assert 'pip install "repo2graph[mcp]"' in str(exc.value)
 
 
-def test_ac33_open_index_caches_one_index_per_directory(mini_index):
-    """AC-33 (c): the server must not re-read the whole index per tool call."""
+def test_open_index_caches_one_index_per_directory(mini_index):
+    """Verify the server must not re-read the whole index per tool call."""
     mcp = mcp_module()
     first = mcp.open_index(mini_index)
     second = mcp.open_index(mini_index)
@@ -614,13 +615,13 @@ def test_ac33_open_index_caches_one_index_per_directory(mini_index):
 
 
 # ==========================================================================
-# AC-34 -- live stdio server round-trip
+# live stdio server round-trip
 # ==========================================================================
 
 
 @pytest.mark.skipif(not HAS_REAL_MCP, reason="needs repo2graph[mcp] (mcp>=2.0,<3.0)")
-def test_ac34_stdio_server_roundtrip(mini_index):
-    """AC-34: automated round-trip against the live stdio server."""
+def test_stdio_server_roundtrip(mini_index):
+    """Verify automated round-trip against the live stdio server."""
     proc = subprocess.Popen(
         [sys.executable, "-m", "repo2graph.mcp", "--out", str(mini_index)],
         stdin=subprocess.PIPE,
@@ -962,7 +963,7 @@ def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
     assert mcp._require_sdk() is fake
 
 
-def test_iss407_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
+def test_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
     """#407: mcp 1.x hangs on the server's first tool call rather than
     erroring, deterministically (~4 min timeout under 1.30.0). Dropping 1.x
     support (#291) means the version is checked here, at startup, instead of
@@ -983,7 +984,7 @@ def test_iss407_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
 
 def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
     """R-8 (e): absent and unusable are different problems with different
-    instructions; the new branch must not swallow AC-33's."""
+    instructions; the new branch must not swallow SDK absence guard's."""
     mcp = mcp_module()
     monkeypatch.setitem(sys.modules, "mcp", None)
     with pytest.raises(SystemExit) as exc:
@@ -1007,7 +1008,7 @@ def test_r8_the_extra_is_bounded_below_the_unsupported_major():
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9), 1])
 def test_r10_a_floor_clamped_budget_explains_itself(big_index, budget):
-    """R-10 (a): AC-28 only requires "no crash"; an empty tool result reads to
+    """R-10 (a): the budget limit only requires "no crash"; an empty tool result reads to
     an agent exactly like "no such code", so say which it was."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -1325,7 +1326,7 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
         target, attr = mod, "run"
         run = lambda: mod._git_files(tmp_path)
     else:
-        # Popen, not run: since ISS-236 add_cochange streams the log so the byte
+        # Popen, not run: since log streaming add_cochange streams the log so the byte
         # cap can bind during the read. The stdin=DEVNULL requirement is the
         # same either way -- capture_output was never what redirected it.
         from repo2graph import graph as mod
@@ -1363,9 +1364,7 @@ POOL_PROBE_TIMEOUT = 180
 SERVE_TIMEOUT = 240
 
 
-def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
-    wide_repo, tmp_path, monkeypatch
-):
+def test_auto_build_reaches_the_pool_and_detaches_its_workers(wide_repo, tmp_path, monkeypatch):
     """The pin is gone: above PARALLEL_MIN_FILES the auto-build really forks
     out, and the pool it builds carries the stdio initializer.
 
@@ -1400,7 +1399,7 @@ def test_iss90_auto_build_reaches_the_pool_and_detaches_its_workers(
     assert "sym:widepkg/mod0.py::dispatch_0" in idx.nodes
 
 
-def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
+def test_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
     """The mechanism itself, in a child process whose stdio is a pipe.
 
     `_pool_stdio_probe.py` starts a pool with the exact kwargs `parse_all`
@@ -1446,8 +1445,8 @@ def test_iss90_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
 
 
 @pytest.mark.skipif(not HAS_ANY_MCP, reason="needs the mcp extra (either SDK major)")
-def test_iss90_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
-    """AC-2, end to end: a real `serve()` over real pipes against a repo above
+def test_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_path):
+    """the golden baseline, end to end: a real `serve()` over real pipes against a repo above
     PARALLEL_MIN_FILES answers its first tool call.
 
     The marker file is what makes this about the *parallel* path: the launcher
@@ -1574,14 +1573,6 @@ def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
     )
 
 
-def test_both_transports_agree_on_the_version():
-    """Coherence: stdio and HTTP must not describe themselves differently."""
-    from repo2graph import __version__
-    from repo2graph.http_server import server_metadata
-
-    assert server_metadata(None, False, ["none"])["version"] == __version__
-
-
 # ==========================================================================
 # R-9: string arguments (query, node_id, task_id) had no length ceiling.
 # Every numeric MCP argument was clamped in the handler, but a model can hand
@@ -1622,19 +1613,38 @@ def test_r9_dispatch_caps_query_too(mini_index):
     assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS
 
 
-def test_r9_an_absurdly_long_node_id_does_not_raise(mini_index):
+def test_an_absurdly_long_node_id_is_clamped_before_it_reaches_the_error(mini_index):
+    """The ceiling has to bind, not merely fail to crash.
+
+    `_str` clamps by slicing, so a 10 MB id produces a `str` and a "node not
+    found" either way -- asserting only those two things passed with the clamp
+    deleted. The refusal echoes the id it looked up, so the clamped length is
+    observable in the output.
+    """
     mcp = mcp_module()
     idx = Index(mini_index)
     huge = "sym:" + "z" * 10_000_000
     out = mcp.dispatch(idx, "repo_neighbours", {"node_id": huge})
-    assert isinstance(out, str) and "node not found" in out
+    assert "node not found" in out
+    echoed = out.split("node not found: ", 1)[1].split("'")[1]
+    assert len(echoed) == mcp.MCP_MAX_NODE_ID_CHARS, len(echoed)
 
 
-def test_r9_an_absurdly_long_task_id_does_not_raise():
+def test_an_absurdly_long_task_id_is_clamped_before_it_reaches_the_error():
+    """Same ceiling, same reasoning, on the task-id path.
+
+    A real (empty) TaskManager is needed to reach the branch that echoes the id:
+    with `tasks=None` the server answers "builds synchronously" and never looks
+    at the id at all, which is why the previous `isinstance(out, str)` assertion
+    could not see the clamp.
+    """
+    from repo2graph.tasks import TaskManager
+
     mcp = mcp_module()
     huge = "t" * 10_000_000
-    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge})
-    assert isinstance(out, str)
+    out = mcp.dispatch(None, "repo_build_status", {"task_id": huge}, tasks=TaskManager())
+    echoed = out.split("no build task with id ", 1)[1].split("'")[1]
+    assert len(echoed) == mcp.MCP_MAX_TASK_ID_CHARS, len(echoed)
 
 
 def test_r9_sane_string_arguments_are_left_alone(mini_index):
@@ -1653,7 +1663,7 @@ def test_r9_sane_string_arguments_are_left_alone(mini_index):
     assert seen["query"] == MINI_QUERY
 
 
-def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
+def test_mcp_open_index_detects_external_rebuild(tmp_path):
     """Issue 125: open_index detects when index was rebuilt externally and reloads."""
     import os
     import time
@@ -1688,7 +1698,7 @@ def test_iss125_mcp_open_index_detects_external_rebuild(tmp_path):
     assert cache.get("test_key") is None
 
 
-def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
+def test_repo_neighbours_explores_dir_file_and_calls(mini_index):
     """Issue 124: repo_neighbours explores CONTAINS edges for dirs and files, and includes low-confidence calls."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -1713,7 +1723,7 @@ def test_iss124_repo_neighbours_explores_dir_file_and_calls(mini_index):
 # ==========================================================================
 
 
-def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
+def test_concurrent_open_index_builds_the_index_exactly_once(
     mini_index, mini_repo, tmp_path, monkeypatch
 ):
     """Two simultaneous first calls must cost one build and share one Index.
@@ -1774,295 +1784,6 @@ def test_iss235_concurrent_open_index_builds_the_index_exactly_once(
     assert not failures, failures
     assert len(builds) == 1, f"_build_index ran {len(builds)} times, expected 1"
     assert results[0] is results[1], "each caller loaded its own Index of the same directory"
-
-
-# ==========================================================================
-# Issue 203 -- --http-only must imply an HTTP transport, and tear down once
-# ==========================================================================
-
-
-def test_iss203_http_only_without_a_port_refuses_instead_of_serving_stdio(mini_repo, monkeypatch):
-    """The flag names what to omit, so alone it asks for no transport at all.
-
-    The test used to live inside the block that builds the HTTP transport, so
-    with no --http-port that block never ran, the flag was never read, and main
-    fell through to the stdio `serve()` -- precisely the transport --http-only
-    exists to suppress, and with no diagnostic.
-    """
-    mcp = mcp_module()
-    monkeypatch.setattr(
-        mcp,
-        "serve",
-        lambda *a, **kw: pytest.fail("--http-only fell through to the stdio transport"),
-    )
-
-    with pytest.raises(SystemExit) as exc:
-        mcp.main([str(mini_repo), "--http-only"])
-
-    message = str(exc.value)
-    assert "--http-only" in message, message
-    assert "--http-port" in message, message
-
-
-def test_iss203_http_only_closes_the_audit_logger_on_the_way_out(mini_repo, monkeypatch):
-    """The long-lived path is the one that must not leak the audit fd.
-
-    `audit.close()` used to sit only in the `finally:` of the `serve()` call,
-    which the --http-only branch's own `return 0` jumped straight over. Both
-    exit paths now share one teardown; this pins that the HTTP-only one runs it.
-    """
-    from repo2graph import audit as audit_mod
-    from repo2graph import http_server as http_mod
-
-    mcp = mcp_module()
-    closed = []
-    stopped = []
-
-    class RecordingAudit:
-        def __init__(self, config):
-            self.config = config
-
-        def close(self):
-            closed.append("closed")
-
-    class FakeTransport:
-        # No thread to join, so the --http-only branch runs straight to its
-        # return and the teardown is the only thing left to observe.
-        _thread = None
-
-        def __init__(self, *a, **kw):
-            pass
-
-        def start(self):
-            pass
-
-        def stop(self):
-            stopped.append("stopped")
-
-    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
-    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
-    monkeypatch.setattr(
-        mcp, "serve", lambda *a, **kw: pytest.fail("--http-only served stdio anyway")
-    )
-
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
-    assert closed == ["closed"], "audit.close() must run on the --http-only exit path"
-    assert stopped == ["stopped"], "the transport must still be stopped"
-
-
-@pytest.mark.parametrize(
-    ("argv_extra", "expected"),
-    [([], False), (["--audit-log-fsync"], True)],
-)
-def test_iss244_audit_log_fsync_is_opt_in_from_the_command_line(
-    mini_repo, monkeypatch, argv_extra, expected
-):
-    """The per-record disk sync is a flag, and it is off unless asked for.
-
-    ISS-244 made `_LockedAppender.write` flush rather than fsync, because the
-    sync was taken while holding both the thread lock and the OS-level file
-    lock -- on the threaded HTTP transport that serialised every request behind
-    a disk sync, and stderr already carries every record. Durability for the
-    file copy is still available; it just has to be chosen. The default is the
-    half worth pinning: a config that quietly went back to syncing would
-    reintroduce the throughput ceiling with nothing failing.
-    """
-    from repo2graph import audit as audit_mod
-    from repo2graph import http_server as http_mod
-
-    mcp = mcp_module()
-    seen = []
-
-    class RecordingAudit:
-        def __init__(self, config):
-            seen.append(config)
-
-        def close(self):
-            pass
-
-    class FakeTransport:
-        _thread = None
-
-        def __init__(self, *a, **kw):
-            pass
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(audit_mod, "AuditLogger", RecordingAudit)
-    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
-    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
-
-    argv = [str(mini_repo), "--http-port", "0", "--http-only", *argv_extra]
-    assert mcp.main(argv) == 0
-    assert len(seen) == 1
-    assert seen[0].fsync is expected
-
-
-def test_http_auto_build_disabled_by_default(mini_repo, monkeypatch):
-    """HTTP mode disables auto-build by default unless --allow-auto-build is passed (#265)."""
-    mcp = mcp_module()
-    from repo2graph import http_server as http_mod
-
-    seen_repos = []
-
-    class FakeTransport:
-        _thread = None
-
-        def __init__(self, index_dir, repo=None, *a, **kw):
-            seen_repos.append(repo)
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
-    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
-
-    # Default in HTTP mode: repo is None (disabled)
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
-    assert seen_repos[-1] is None
-
-    # Explicit --allow-auto-build: repo is passed
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--allow-auto-build"]) == 0
-    assert seen_repos[-1] == mini_repo
-
-
-# ==========================================================================
-# Task 3 -- CLI wiring for http_server.py's #264/#267 flags
-# ==========================================================================
-
-
-def _fake_http_transport(monkeypatch, mini_repo):
-    """Patch http_server.HTTPTransport with a recorder, and serve() to fail
-    loudly if it is ever reached -- the shape every Task-3 test below shares.
-    """
-    mcp = mcp_module()
-    from repo2graph import http_server as http_mod
-
-    calls: list[dict] = []
-
-    class FakeTransport:
-        _thread = None
-
-        def __init__(self, index_dir, repo=None, **kw):
-            calls.append(kw)
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    monkeypatch.setattr(http_mod, "HTTPTransport", FakeTransport)
-    monkeypatch.setattr(mcp, "serve", lambda *a, **kw: pytest.fail("served stdio"))
-    return mcp, calls
-
-
-def test_iss267_http_insecure_ok_reaches_the_transport(mini_repo, monkeypatch):
-    """--http-insecure-ok -> HTTPTransport(insecure_transport_ack=True)."""
-    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
-    assert calls[-1]["insecure_transport_ack"] is False
-
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only", "--http-insecure-ok"]) == 0
-    assert calls[-1]["insecure_transport_ack"] is True
-
-
-def test_iss267_trust_proxy_and_trusted_proxies_reach_the_transport(mini_repo, monkeypatch):
-    """--trust-proxy/--trusted-proxies -> HTTPTransport(trust_proxy=, trusted_proxies=[...])."""
-    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
-    assert calls[-1]["trust_proxy"] is False
-    assert calls[-1]["trusted_proxies"] == []
-
-    assert (
-        mcp.main(
-            [
-                str(mini_repo),
-                "--http-port",
-                "0",
-                "--http-only",
-                "--trust-proxy",
-                "--trusted-proxies",
-                "10.0.0.1, 10.0.0.2",
-            ]
-        )
-        == 0
-    )
-    assert calls[-1]["trust_proxy"] is True
-    assert calls[-1]["trusted_proxies"] == ["10.0.0.1", "10.0.0.2"]
-
-
-def test_iss264_no_rate_limit_flags_leaves_the_default_config(mini_repo, monkeypatch):
-    """Naming none of the --rate-limit-*/--max-* flags must not fabricate a
-    RateLimitConfig -- HTTPTransport's own default (RateLimitConfig()) is
-    what applies, not a second copy of its field defaults duplicated in
-    mcp.py that could silently drift from it."""
-    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
-    assert mcp.main([str(mini_repo), "--http-port", "0", "--http-only"]) == 0
-    assert calls[-1]["rate_limit_config"] is None
-
-
-def test_iss264_rate_limit_flags_reach_the_transport(mini_repo, monkeypatch):
-    """Each --rate-limit-*/--max-* flag lands on the RateLimitConfig field of
-    the same shape passed to HTTPTransport."""
-    from repo2graph.http_server import RateLimitConfig
-
-    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
-    assert (
-        mcp.main(
-            [
-                str(mini_repo),
-                "--http-port",
-                "0",
-                "--http-only",
-                "--rate-limit-requests",
-                "10",
-                "--rate-limit-window",
-                "30",
-                "--max-concurrent-requests",
-                "5",
-                "--max-queue-size",
-                "6",
-                "--max-concurrent-builds",
-                "2",
-                "--max-response-bytes",
-                "1024",
-            ]
-        )
-        == 0
-    )
-    cfg = calls[-1]["rate_limit_config"]
-    assert isinstance(cfg, RateLimitConfig)
-    assert cfg.requests_per_window == 10
-    assert cfg.window_seconds == 30
-    assert cfg.max_concurrent_requests == 5
-    assert cfg.max_queue_size == 6
-    assert cfg.max_concurrent_builds == 2
-    assert cfg.max_response_bytes == 1024
-
-
-def test_iss264_one_rate_limit_flag_still_builds_a_config(mini_repo, monkeypatch):
-    """Passing just one flag must not require naming all six -- the untouched
-    fields keep RateLimitConfig()'s own defaults."""
-    from repo2graph.http_server import RateLimitConfig
-
-    mcp, calls = _fake_http_transport(monkeypatch, mini_repo)
-    assert (
-        mcp.main(
-            [str(mini_repo), "--http-port", "0", "--http-only", "--max-response-bytes", "2048"]
-        )
-        == 0
-    )
-    cfg = calls[-1]["rate_limit_config"]
-    assert cfg.max_response_bytes == 2048
-    assert cfg.requests_per_window == RateLimitConfig().requests_per_window
 
 
 # ==========================================================================
@@ -2141,29 +1862,96 @@ def test_repo_build_status_problems_are_tool_errors(mini_index):
         assert json.loads(out)["error"]
 
 
-def test_repo_impact_rejects_text_that_is_not_a_diff(mini_index):
-    mcp = mcp_module()
-    out = mcp.dispatch(Index(mini_index), "repo_impact", {"diff": "not a diff at all"})
-    assert isinstance(out, mcp.ToolError)
-    assert "not a unified diff" in out
-    assert "LOW" not in out
-
-
-def test_repo_impact_sarif_is_sarif_and_unknown_formats_are_errors(mini_index):
-    mcp = mcp_module()
-    idx = Index(mini_index)
-    diff = "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -1,0 +1,1 @@\n+y = 1\n"
-    sarif = json.loads(mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "sarif"}))
-    assert sarif["version"] == "2.1.0" and "runs" in sarif
-    bad = mcp.dispatch(idx, "repo_impact", {"diff": diff, "format": "html"})
-    assert isinstance(bad, mcp.ToolError)
-    for fmt in ("markdown", "json", "sarif", "pr-comment"):
-        assert fmt in bad
-    assert "sarif" in mcp.TOOL_SCHEMAS["repo_impact"]["properties"]["format"]["enum"]
-
-
 def test_tool_call_failed_exception():
     mcp = mcp_module()
     err = mcp.ToolCallFailed("something went wrong")
     assert isinstance(err, Exception)
     assert str(err) == "something went wrong"
+
+
+# --------------------------------------------------------------------------
+# Audit logging reaches the tool-call path
+# --------------------------------------------------------------------------
+
+
+def test_run_tool_writes_one_audit_record_per_call(mini_index, tmp_path):
+    """The --audit-log flags have to produce records, not just be accepted.
+
+    `serve()` built an `AuditLogger`, closed it, and never handed it to the
+    tool-call path, so `record()` was unreachable in production while its own
+    583 lines of tests passed. An operator pointing --audit-log at a file got an
+    empty file. Nothing covered serve() -> record(), which is why it survived.
+    """
+    import json
+
+    from repo2graph.audit import AuditConfig, AuditLogger
+    from repo2graph.mcp.server import run_tool
+
+    log_path = tmp_path / "audit.jsonl"
+    audit = AuditLogger(AuditConfig(level="all", path=str(log_path)))
+    try:
+        out = run_tool(mini_index, None, "repo_map", {}, audit=audit)
+    finally:
+        audit.close()
+
+    assert "# Repo map:" in out, out[:200]
+    lines = [ln for ln in log_path.read_text(encoding="utf-8").split("\n") if ln.strip()]
+    assert len(lines) == 1, lines
+    record = json.loads(lines[0])
+    assert record["event"] == "tool_call"
+    assert record["tool"] == "repo_map"
+    assert record["outcome"] == "success"
+    assert record["duration_ms"] >= 1
+    assert "error" not in record or record["error"] is None
+
+
+def test_an_audit_record_is_written_when_the_tool_fails(mini_index, tmp_path):
+    """A failure is the case an audit trail exists for, so it must be recorded.
+
+    `errors` level keeps only non-success outcomes, which makes this the exact
+    configuration an operator would run in and the one that must not be silent.
+    """
+    import json
+
+    from repo2graph.audit import AuditConfig, AuditLogger
+    from repo2graph.mcp.server import run_tool
+
+    log_path = tmp_path / "audit.jsonl"
+    audit = AuditLogger(AuditConfig(level="errors", path=str(log_path)))
+    try:
+        # No index at this path and no repo to build one from: open_index exits,
+        # which run_tool turns into a ToolError rather than killing the server.
+        out = run_tool(tmp_path / "absent", None, "repo_map", {}, audit=audit)
+    finally:
+        audit.close()
+
+    assert "no repo2graph index found" in out
+    record = json.loads(log_path.read_text(encoding="utf-8").strip())
+    assert record["tool"] == "repo_map"
+    assert record["outcome"] == "error"
+    assert "SystemExit" in record["error"]
+
+
+def test_a_missing_index_mid_session_costs_one_call_not_the_server(tmp_path):
+    """One bad request must not take the stdio server down.
+
+    `open_index` raises SystemExit when it has no index and no repo, which is
+    right for the startup preflight and for a direct call. On the per-request
+    path it meant an index deleted while the server ran killed the process and
+    the client saw a closed pipe instead of an error. SystemExit is a
+    BaseException, so an ordinary `except Exception` around the handler does not
+    hold it -- this pins the conversion explicitly.
+    """
+    from repo2graph.mcp.server import ToolError, run_tool
+
+    out = run_tool(tmp_path / "gone", None, "repo_map", {})
+    assert isinstance(out, ToolError)
+    assert "no repo2graph index found" in out
+
+
+def test_audit_logging_is_off_by_default(mini_index):
+    """No logger means no record and no cost -- the default stays silent."""
+    from repo2graph.mcp.server import run_tool
+
+    out = run_tool(mini_index, None, "repo_map", {}, audit=None)
+    assert "# Repo map:" in out

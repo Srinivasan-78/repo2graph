@@ -228,14 +228,14 @@ def _n(x) -> str:
     return f"{x:,}" if isinstance(x, int) else str(x)
 
 
-def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
+def _write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
     lang_table = "\n".join(f"- {lang}" for lang in entry["language_focus"])
     query_list = "\n".join(f"- {q}" for q in entry["queries"])
     scope_note = (
         "The full repository at the pinned commit was indexed — no `--include`/`--exclude` narrowing."
         if entry["scope"] == "full"
         else "Only the subtrees listed below were cloned and indexed (a **scoped benchmark**, "
-        "not the whole repository) — see [docs/limitations.md](../../docs/limitations.md#extreme-scale)."
+        "not the whole repository) — see [docs/architecture.md](../../docs/architecture.md#3-indexing-behaviour)."
     )
     include_block = ""
     if entry.get("include"):
@@ -260,7 +260,15 @@ def write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
 
 ## Revision
 
-Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}.
+Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}
+by repo2graph {R2G_VERSION}.
+
+Both halves of that line matter. The upstream commit says which *source* produced these
+numbers; the repo2graph version says which *analyser* did. Call resolution has changed
+across minor versions before — `b98fc46b` stopped binding builtin method calls on untyped
+receivers to in-repo methods, which moved `CALLS`, ambiguous-call counts and the
+most-called-symbols ranking below — so a figure here is only comparable to a run from the
+same version.
 
 ## Why this repository?
 
@@ -300,12 +308,14 @@ Commit `{meta["commit"]}` on `{entry["ref"]}`, analyzed {meta["generated_at"]}.
 
 ## Example queries
 
-These are real `repo2graph query` runs against this index (see `flows/`), not invented text:
+These are real `repo2graph query` runs against this index, not invented text — the generator
+records each one under `flows/`, which it writes locally and does not commit (see below):
 
 {query_list}
 
-`flows/` holds each query's real results as citations (node id, path, line range, why it matched)
-with the source text stripped out. To run these queries yourself against a live, queryable index —
+Those files hold each query's real results as citations (node id, path, line range, why it
+matched) with the source text stripped out. To run these queries yourself against a live,
+queryable index —
 i.e. one that still has `chunks.jsonl` and can return actual source text — clone the repository at
 the commit above and build it directly:
 
@@ -318,23 +328,29 @@ repo2graph query "{entry["queries"][0]}" -o .r2g
 
 ## Generated graph
 
+**Only this page and `overview.md` are committed.** `4e96b628` dropped the rest — about 28 MB of
+generated binary and boilerplate that every clone of this repository had to carry — and
+`.gitignore` keeps them out, so a regeneration cannot quietly put them back. Everything below is
+what the generator writes into this directory when you run it yourself.
+
+- `overview.md` — the prose repo map: languages, most depended-on files, most called symbols
 - `nodes.jsonl.gz` / `edges.jsonl.gz` — the graph structure (identifiers, paths, line ranges; no
   source text), gzipped — JSON lines compress 4-9x and there is no reason to commit that redundancy
   raw; `gunzip -k nodes.jsonl.gz` to read it
 - `graph.html` — the interactive map (self-contained, opens in any browser, no network needed), capped
   to the {meta.get("viz_nodes", 300)} best-connected nodes
-- `overview.md` — the prose repo map: languages, most depended-on files, most called symbols
 - `manifest.json` — what every field in the other files means
 - `stats.json` — the raw counters above
 - `flows/` — citation-only results of the example queries above
 
-`chunks.jsonl` (the retrieval index, which embeds source text per symbol) is **not** committed —
+`chunks.jsonl` (the retrieval index, which embeds source text per symbol) is discarded by the
+generator rather than merely left uncommitted —
 see [ATTRIBUTIONS.md](../ATTRIBUTIONS.md#why-chunksjsonl-is-not-committed).
 
 ## Limitations
 
 Call edges are matched by name, not by type — see
-[docs/limitations.md](../../docs/limitations.md). Unresolved / ambiguous calls for this example:
+[docs/architecture.md](../../docs/architecture.md). Unresolved / ambiguous calls for this example:
 {_n(meta["stats"].get("ambiguous_calls", 0))} out of {_n(meta["stats"].get("edge:CALLS", 0))} total CALLS edges.
 
 ## Reproduce
@@ -345,12 +361,12 @@ python scripts/generate_examples.py --repo {entry["id"]}
 
 This clones `{entry["url"]}` at `{entry["ref"]}` (pinned to the commit above only via
 `examples/repositories.yaml`; re-running against a moving ref will get a newer commit and
-different numbers — see [docs/benchmarks.md](../../docs/benchmarks.md#staleness)).
+different numbers — see [docs/architecture.md](../../docs/architecture.md#3-indexing-behaviour)).
 """
     (repo_dir / "README.md").write_text(readme, encoding="utf8", newline="\n")
 
 
-def generate_one(entry: dict, results: dict) -> dict:
+def _generate_one(entry: dict, results: dict) -> dict:
     repo_id = entry["id"]
     print(f"[{repo_id}] cloning {entry['url']}@{entry['ref']} ...", file=sys.stderr)
     workdir = Path(tempfile.mkdtemp(prefix=f"r2g-example-{repo_id}-"))
@@ -424,7 +440,7 @@ def generate_one(entry: dict, results: dict) -> dict:
         (repo_dir / "metadata.json").write_text(
             json.dumps(meta, indent=2) + "\n", encoding="utf8", newline="\n"
         )
-        write_readme(entry, meta, repo_dir)
+        _write_readme(entry, meta, repo_dir)
 
         problems = validate_example(repo_dir, meta, workdir)
         if problems:
@@ -469,7 +485,7 @@ def main() -> int:
 
     results_by_id = {}
     for entry in selected:
-        generate_one(entry, results_by_id)
+        _generate_one(entry, results_by_id)
 
     results_path = Path(args.results)
     results_path.parent.mkdir(parents=True, exist_ok=True)

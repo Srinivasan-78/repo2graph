@@ -1,0 +1,231 @@
+{
+  "_comment": "Extension set: 25 further held-out cross-file structural questions, authored against the commits pinned in repos.json without running repo2graph. Evidence line ranges read off the checked-out source.",
+  "tasks": [
+    {
+      "id": "ho-struct2-flask-01",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what calls Flask.do_teardown_request when a request context is being popped",
+      "evidence": [
+        {"path": "flask/ctx.py", "symbol": "RequestContext.pop", "lines": [396, 431]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-02",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "where does flask's jinja Environment get the loader that also searches blueprint template folders",
+      "evidence": [
+        {"path": "flask/sansio/app.py", "symbol": "App.create_global_jinja_loader", "lines": [523, 534]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-03",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what calls Blueprint.register when a blueprint is attached to an application",
+      "evidence": [
+        {"path": "flask/sansio/app.py", "symbol": "App.register_blueprint", "lines": [570, 595]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-04",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "where does the logger object returned by the Flask.logger property actually get configured",
+      "evidence": [
+        {"path": "flask/logging.py", "symbol": "create_logger", "lines": [58, 79]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-05",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what does Flask.process_response call at the end of a request to write the session back out as a cookie",
+      "evidence": [
+        {"path": "flask/sessions.py", "symbol": "SecureCookieSessionInterface.save_session", "lines": [351, 399]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-06",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "which class does Flask.make_config instantiate to hold app.config and what does its constructor require",
+      "evidence": [
+        {"path": "flask/config.py", "symbol": "Config.__init__", "lines": [94, 100]}
+      ]
+    },
+    {
+      "id": "ho-struct2-flask-07",
+      "repo": "flask",
+      "kind": "structural",
+      "query": "what calls Flask.ensure_sync to wrap a class-based view's HTTP method handler before invoking it",
+      "evidence": [
+        {"path": "flask/views.py", "symbol": "MethodView.dispatch_request", "lines": [182, 191]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-01",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does PreparedRequest.prepare_auth build when the auth argument is a plain username and password tuple",
+      "evidence": [
+        {"path": "requests/auth.py", "symbol": "HTTPBasicAuth", "lines": [76, 96]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-02",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what calls extract_cookies_to_jar while requests is following a chain of redirects",
+      "evidence": [
+        {"path": "requests/sessions.py", "symbol": "SessionRedirectMixin.resolve_redirects", "lines": [159, 280]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-03",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does Response.json use to detect the byte order mark encoding of the body before decoding it",
+      "evidence": [
+        {"path": "requests/utils.py", "symbol": "guess_json_utf", "lines": [947, 976]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-04",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does Session.send use to run the user's registered response hooks",
+      "evidence": [
+        {"path": "requests/hooks.py", "symbol": "dispatch_hook", "lines": [22, 33]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-05",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "what does PreparedRequest.prepare_body use to work out the length of a file-like body",
+      "evidence": [
+        {"path": "requests/utils.py", "symbol": "super_len", "lines": [136, 204]}
+      ]
+    },
+    {
+      "id": "ho-struct2-requests-06",
+      "repo": "requests",
+      "kind": "structural",
+      "query": "which exception type does Response.raise_for_status raise on a 404 and what does that class derive from",
+      "evidence": [
+        {"path": "requests/exceptions.py", "symbol": "HTTPError", "lines": [55, 56]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-01",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does FastAPI.add_api_route forward to so the path operation ends up registered",
+      "evidence": [
+        {"path": "routing.py", "symbol": "APIRouter.add_api_route", "lines": [957, 1037]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-02",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does APIRoute use to turn a declared response_model into a field it can validate against",
+      "evidence": [
+        {"path": "utils.py", "symbol": "create_model_field", "lines": [63, 106]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-03",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what object does the fastapi Depends() helper actually construct and return",
+      "evidence": [
+        {"path": "params.py", "symbol": "Depends", "lines": [764, 774]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-04",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does OAuth2PasswordBearer raise when the Authorization header is missing and auto_error is on",
+      "evidence": [
+        {"path": "exceptions.py", "symbol": "HTTPException", "lines": [9, 65]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-05",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "what does FastAPI.setup use to render the interactive documentation page served at /docs",
+      "evidence": [
+        {"path": "openapi/docs.py", "symbol": "get_swagger_ui_html", "lines": [26, 158]}
+      ]
+    },
+    {
+      "id": "ho-struct2-fastapi-06",
+      "repo": "fastapi",
+      "kind": "structural",
+      "query": "which middleware does FastAPI.build_middleware_stack add on top of starlette's to close dependencies that use yield",
+      "evidence": [
+        {"path": "middleware/asyncexitstack.py", "symbol": "AsyncExitStackMiddleware", "lines": [8, 18]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-01",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does HonoRequest.parseBody delegate to for reading multipart and urlencoded form bodies",
+      "evidence": [
+        {"path": "utils/body.ts", "symbol": "parseBody", "lines": [94, 111]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-02",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does the hono basicAuth middleware use to compare submitted credentials without leaking timing",
+      "evidence": [
+        {"path": "utils/buffer.ts", "symbol": "timingSafeEqual", "lines": [29, 45]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-03",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "how does the serveStatic middleware decide the Content-Type header for the file it is about to serve",
+      "evidence": [
+        {"path": "utils/mime.ts", "symbol": "getMimeType", "lines": [6, 20]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-04",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does the hono etag middleware call to hash the response body stream into a tag value",
+      "evidence": [
+        {"path": "middleware/etag/digest.ts", "symbol": "generateDigest", "lines": [11, 38]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-05",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what turns the options passed to hono's setCookie helper into the Set-Cookie attribute string",
+      "evidence": [
+        {"path": "utils/cookie.ts", "symbol": "serialize", "lines": [224, 231]},
+        {"path": "utils/cookie.ts", "symbol": "_serialize", "lines": [141, 222]}
+      ]
+    },
+    {
+      "id": "ho-struct2-hono-06",
+      "repo": "hono",
+      "kind": "structural",
+      "query": "what does TrieRouter.add hand the method path and handler to in order to store the route",
+      "evidence": [
+        {"path": "router/trie-router/node.ts", "symbol": "Node.insert", "lines": [37, 78]}
+      ]
+    }
+  ]
+}

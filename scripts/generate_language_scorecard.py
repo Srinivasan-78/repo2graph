@@ -5,11 +5,16 @@ Audits language parser coverage, symbol extraction breadth, call resolution,
 import resolution, test-to-implementation linking, and framework-specific edge
 capabilities across all supported tree-sitter languages.
 
+The default Markdown table is the one embedded in `docs/architecture.md` between its
+`BEGIN/END GENERATED: language-scorecard` markers. Scores are derived from `LANG_CFG`
+by introspection, so adding or extending a language moves them: regenerate and paste
+the table back, or `test_doc_consistency.py::test_language_scorecard_matches_the_generator`
+fails.
+
 Usage:
-    python scripts/generate_language_scorecard.py
+    python scripts/generate_language_scorecard.py          # the table in docs/architecture.md
     python scripts/generate_language_scorecard.py --json
     python scripts/generate_language_scorecard.py --detail
-    python scripts/generate_language_scorecard.py --output docs/LANGUAGE_SCORECARD.json
 """
 
 from __future__ import annotations
@@ -123,11 +128,15 @@ def audit_test_coverage(tests_dir: Path) -> dict[str, dict[str, Any]]:
                 func_name = m.group(1)
                 func_lower = func_name.lower()
                 for lang in parse_mod.LANG_CFG:
-                    # Match exact language token in test name
+                    # Match the language as a whole `_`-delimited token, never as
+                    # a bare prefix. `f"test_{lang}" in name` credited C with every
+                    # test whose name merely began "test_c" -- test_cli_*,
+                    # test_cache_*, test_citation_* -- and put 123 "C tests" in a
+                    # published table. The leading-token form needs `test_c_`.
                     if (
                         f"_{lang}_" in func_lower
                         or func_lower.endswith(f"_{lang}")
-                        or f"test_{lang}" in func_lower
+                        or func_lower.startswith(f"test_{lang}_")
                     ):
                         coverage[lang]["files"].add(path.name)
                         coverage[lang]["test_funcs"].append(func_name)

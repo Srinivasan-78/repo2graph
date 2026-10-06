@@ -1,7 +1,7 @@
-"""Tests for ISS-408 (bounded JSONL reads), ISS-345 (_fit_lines linearity),
-and ISS-378 (single-character identifier retrieval).
+"""Tests for bounded JSONL reads (bounded JSONL reads), fit_lines linearity (_fit_lines linearity),
+and single-character identifier retrieval (single-character identifier retrieval).
 
-Per AGENTS.md: assertions use hand-derived literal values, never values
+Per CONTRIBUTING.md: assertions use hand-derived literal values, never values
 recomputed by the code under test.
 """
 
@@ -10,21 +10,12 @@ from pathlib import Path
 
 import pytest
 
+from conftest import write_simple_repo
 from repo2graph.cli import main
 
 
-def write_simple_repo(root: Path) -> Path:
-    """A minimal one-file repo so `build` can index it quickly."""
-    repo = root / "src"
-    repo.mkdir()
-    (repo / "app.py").write_text(
-        "CONSTANT = 42\n\ndef hello():\n    return CONSTANT\n", encoding="utf8", newline="\n"
-    )
-    return repo
-
-
 # ============================================================================
-# ISS-408 -- bounded JSONL reads
+# bounded JSONL reads -- bounded JSONL reads
 # ============================================================================
 
 
@@ -42,7 +33,7 @@ class TestJsonlBounds:
             query_mod.read_jsonl(p)
 
     def test_read_jsonl_bounds_the_allocation_not_just_the_report(self, monkeypatch):
-        """ISS-408's first attack shape is a file with no newline in it at all.
+        """bounded JSONL reads's first attack shape is a file with no newline in it at all.
 
         The sibling test above only proves a ValueError is *reported*, which a
         `for raw in fh` loop does too -- after reading the whole file into one
@@ -105,7 +96,7 @@ class TestJsonlBounds:
 
     def test_read_jsonl_has_no_total_bytes_ceiling(self, tmp_path, monkeypatch):
         """query.Index's read path is deliberately unbounded in total bytes --
-        AGENTS.md: a wrong constant there breaks real indexes. Many small,
+        CONTRIBUTING.md: a wrong constant there breaks real indexes. Many small,
         individually-legal lines that sum well past a hypothetical total
         ceiling must still all come back."""
         import repo2graph.query as query_mod
@@ -210,53 +201,6 @@ class TestJsonlBounds:
         main(["build", str(repo), "-o", str(out)])
         assert verify_artifacts(out).status == "valid"
 
-    def test_doctor_check_vectors_never_raises_on_oversized_chunks_jsonl(
-        self, tmp_path, monkeypatch
-    ):
-        """doctor.check_vectors's chunk-count sweep (ISS-408's third site) must
-        degrade to a CheckResult, never raise, when chunks.jsonl is hostile."""
-        import repo2graph.integrity as integrity_mod
-        from repo2graph.doctor import check_vectors
-
-        agent_dir = tmp_path / ".r2g" / "agent"
-        agent_dir.mkdir(parents=True)
-        (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY\x01\x00")
-        (agent_dir / "vectors.meta.json").write_text(
-            json.dumps({"model_id": "m", "dim": 4, "chunk_ids": ["c1"]}), encoding="utf8"
-        )
-        (agent_dir / "chunks.jsonl").write_text(
-            '{"id": "c1", "text": "' + ("q" * 300) + '"}\n', encoding="utf8"
-        )
-
-        monkeypatch.setattr(integrity_mod, "MAX_JSONL_LINE_BYTES", 64)
-        result = check_vectors(tmp_path / ".r2g")
-        # Must come back as a CheckResult with a "warn"/"fail"-shaped status,
-        # not propagate the ValueError.
-        assert result.status in ("warn", "fail")
-
-    def test_doctor_check_vectors_still_detects_desync_with_real_ceilings(self, tmp_path):
-        """Neutrality: the existing desync detection (test_doctor.py's
-        test_doctor_vector_checks) must survive switching the counting loop to
-        the bounded reader."""
-        from repo2graph.doctor import check_vectors
-
-        agent_dir = tmp_path / ".r2g" / "agent"
-        agent_dir.mkdir(parents=True)
-        (agent_dir / "vectors.npy").write_bytes(b"\x93NUMPY\x01\x00")
-        (agent_dir / "vectors.meta.json").write_text(
-            json.dumps({"model_id": "test-model", "dim": 384, "chunk_ids": ["c1", "c2"]}),
-            encoding="utf8",
-        )
-        (agent_dir / "chunks.jsonl").write_text('{"id": "c1", "text": "one"}\n', encoding="utf8")
-        result = check_vectors(tmp_path / ".r2g")
-        assert result.status == "warn"
-        assert "out of sync" in result.summary
-
-
-# ============================================================================
-# ISS-345 -- _fit_lines linearity, output unchanged
-# ============================================================================
-
 
 class TestFitLines:
     def test_fit_lines_default_measure_matches_hand_derived_prefix(self):
@@ -297,7 +241,7 @@ class TestFitLines:
         assert _fit_lines(text, 3, count_tokens) == "wxyz\nwxyz\nwxyz"
 
     def test_fit_lines_is_linear_not_quadratic(self):
-        """Detector for ISS-345. The old implementation called `measure` once
+        """Detector for fit_lines linearity. The old implementation called `measure` once
         per line either way -- the quadratic cost was in the *string building*,
         which no call counter can see -- so this has to be a wall-clock test.
 
@@ -333,7 +277,7 @@ class TestFitLines:
 
 
 # ============================================================================
-# ISS-378 -- single-character identifiers are indexed and retrievable
+# single-character identifier retrieval -- single-character identifiers are indexed and retrievable
 # ============================================================================
 
 

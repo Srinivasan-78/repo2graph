@@ -9,11 +9,12 @@ body:
         filed against behaviour that is working as documented. Two minutes of the checks below
         saves a round trip.
 
-        **Read [docs/limitations.md](../../docs/limitations.md) first.** A missing edge is expected
-        — not a bug — when the call goes through dynamic dispatch, reflection, a dependency-injection
-        container, a computed import, or a language boundary crossed by generated bindings. An
-        `INHERITS` edge landing on an interface rather than the injected implementation is also
-        documented behaviour, not a defect.
+        **Read [What it can't do](../../README.md#what-it-cant-do) first.** A missing edge is
+        expected — not a bug — when the call goes through dynamic dispatch, reflection, a
+        dependency-injection container, a computed import, or a language boundary crossed by
+        generated bindings. An `INHERITS` edge landing on an interface rather than the injected
+        implementation is also documented behaviour, not a defect. The resolution rules themselves
+        are in [docs/architecture.md](../../docs/architecture.md).
 
         An *ambiguous* `CALLS` edge is likewise by design: name-based resolution fans a tie out to
         up to five candidates at `confidence = 1/n`. Check the `confidence` value before filing.

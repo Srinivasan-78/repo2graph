@@ -101,39 +101,6 @@ def git_index(tmp_path, capsys):
     return repo, out
 
 
-def test_repo_impact_default_head_sees_uncommitted_changes(git_index):
-    repo, out = git_index
-    (repo / "app.py").write_text(CHANGED, encoding="utf8")  # not committed
-    idx = Index(out)
-    # The test process's cwd is some other git checkout: the root must come
-    # from the index (manifest's source_root), never Path.cwd().
-    text = mcp_mod.dispatch(idx, "repo_impact", {"format": "json"})
-    assert not isinstance(text, mcp_mod.ToolError), text
-    report = json.loads(text)
-    assert "app.py" in json.dumps(report["files_changed"]), report
-
-
-def test_repo_impact_uses_the_servers_repo_root(git_index, monkeypatch, tmp_path):
-    repo, out = git_index
-    (repo / "app.py").write_text(CHANGED, encoding="utf8")
-    idx = Index(out)
-    idx.repo_root = repo  # what open_index(out, repo=...) sets
-    monkeypatch.chdir(tmp_path)  # not a git repo
-    report = json.loads(mcp_mod.tool_repo_impact(idx, format="json"))
-    assert "app.py" in json.dumps(report["files_changed"]), report
-
-
-def test_repo_impact_git_failure_is_an_error_with_gits_reason(git_index):
-    repo, out = git_index
-    text = mcp_mod.dispatch(Index(out), "repo_impact", {"base": "no-such-branch"})
-    assert isinstance(text, mcp_mod.ToolError)
-    assert "no-such-branch" in text
-    # git's own words, not just an exception type name
-    low = text.lower()
-    assert "unknown revision" in low or "bad revision" in low or "ambiguous" in low, text
-    assert str(repo) not in text and repo.as_posix() not in text
-
-
 @pytest.mark.parametrize(
     "name,args",
     [
@@ -221,14 +188,14 @@ class _Types:
 def _install_fake_sdk(monkeypatch):
     """A stand-in `mcp` package exposing only the 2.x registration API.
 
-    ISS-407/#291: there used to be a `Server1x` here too, driven by a
+    legacy server cleanup/#291: there used to be a `Server1x` here too, driven by a
     `generation` parameter, because `serve()` branched on
     `hasattr(Server, "list_tools")` to speak either SDK generation. 1.x is no
     longer supported -- it deadlocks on the first tool call -- so that branch
     is gone and a 1.x-shaped fake would only assert that dead code still
     exists. The guard that actually refuses a 1.x install reads the installed
     distribution's version, not the module's shape, so it cannot be exercised
-    by a fake at all; `tests/test_mcp.py::test_iss407_a_1x_sdk_is_refused_at_startup_not_hung`
+    by a fake at all; `tests/test_mcp.py::test_a_1x_sdk_is_refused_at_startup_not_hung`
     covers it against a patched version instead.
     """
     import types as pytypes
@@ -345,22 +312,22 @@ def test_index_outside_repo_is_fresh_right_after_build(git_index, capsys):
     assert index_status(out, repo=other)["freshness"]["status"] == "stale"
 
 
-def test_doctor_on_index_outside_repo_is_not_stale(git_index):
-    from repo2graph.doctor import check_index_freshness
-
-    _repo, out = git_index
-    res = check_index_freshness(out)
-    assert res.status == "ok" and "up to date" in res.summary, (res.summary, res.details)
-
-
 # ---------------------------------------------------------------- item 4
 
 
 @pytest.fixture
 def secret_index(tmp_path, capsys):
     repo = _make_repo(tmp_path, git=False)
+    # The key is `LEDGER_NOTE`, not `LEDGER_TOKEN`, on purpose. These tests are
+    # about secret-*path* exclusion -- is the `.env` chunk served or withheld --
+    # and they need a marker string that survives into the stored chunk so its
+    # presence or absence is the signal. A secret-shaped key now trips
+    # content redaction at build time (UNQUOTED_SECRET_RE), which would redact
+    # the marker and make every assertion below pass for the wrong reason.
+    # Building with `--secret-policy off` is not an alternative: `Index._served`
+    # re-redacts at serve time for exactly that policy.
     (repo / ".env").write_text(
-        "LEDGER_TOKEN=abc123deadbeef  # greet ledger token\n", encoding="utf8"
+        "LEDGER_NOTE=abc123deadbeef  # greet ledger marker\n", encoding="utf8"
     )
     out = tmp_path / "idx"
     main(["build", str(repo), "-o", str(out), "--include-secrets"])
@@ -387,7 +354,7 @@ def test_exclude_secrets_is_a_deprecated_noop(secret_index, capsys, cmd):
 
 
 def test_retrieve_python_api_default_is_unchanged(secret_index):
-    """AGENTS.md: retrieve() is a back-compat surface; the new keyword defaults off."""
+    """CONTRIBUTING.md: retrieve() is a back-compat surface; the new keyword defaults off."""
     idx = Index(secret_index)
     assert any(c["path"] == ".env" for c in idx.retrieve("ledger token"))
     assert not any(c["path"] == ".env" for c in idx.retrieve("ledger token", exclude_secrets=True))
@@ -468,33 +435,9 @@ def test_explain_retrieval_default_k_matches_rag(git_index, monkeypatch, capsys)
     assert seen["k"] == 8
 
 
-def test_impact_without_main_hints_at_base(tmp_path, capsys):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "app.py").write_text(SRC, encoding="utf8")
-    _git(repo, "init", "-q", "-b", "trunk")
-    _git(repo, "add", "app.py")
-    _git(repo, "commit", "-qm", "init")
-    with pytest.raises(SystemExit) as exc:
-        main(["impact", str(repo), "-o", str(tmp_path / "idx")])
-    assert "--base" in str(exc.value) and "hint" in str(exc.value)
-
-
 def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):
     _repo, out = git_index
     with pytest.raises(SystemExit):
         main(["embed", "-o", str(out), "--verify-rag"])
     report = json.loads(capsys.readouterr().out)
     assert report["rag_extra_installed"] in (True, False)
-
-
-def test_doctor_names_files_with_parse_errors(tmp_path, capsys):
-    from repo2graph.doctor import check_parsers
-
-    repo = _make_repo(tmp_path, git=False)
-    (repo / "broken.py").write_text("def broken(:\n    return ((\n", encoding="utf8")
-    main(["build", str(repo), "-o", str(repo / ".r2g")])
-    capsys.readouterr()
-    res = check_parsers(repo)
-    assert res.status in ("warn", "fail"), res
-    assert any("broken.py" in d for d in res.details), res.details

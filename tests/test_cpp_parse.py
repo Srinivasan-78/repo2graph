@@ -47,7 +47,7 @@ def test_cpp_parse_pass_2(mock_run):
     mock_run.side_effect = mock_run_impl
 
     pf = parse_source(source, "c", filepath="test.c")
-    # used_cpp records that the preprocessed parse was cleaner. ISS-126
+    # used_cpp records that the preprocessed parse was cleaner. cpp citation accuracy
     # stopped adopting that tree, so parse_errors may still be Pass 1's
     # count; the flag itself is unchanged.
     assert pf.used_cpp
@@ -56,7 +56,7 @@ def test_cpp_parse_pass_2(mock_run):
 
 @patch("subprocess.run")
 def test_cpp_parse_pass_2_non_ascii_output(mock_run):
-    # ISS-164: cpp's stdout can contain raw UTF-8 bytes (e.g. a Unicode string
+    # raw UTF-8 bytes handling: cpp's stdout can contain raw UTF-8 bytes (e.g. a Unicode string
     # literal or non-ASCII comment preserved by -P). Previously `subprocess.run`
     # was called with text=True, which decodes using the platform locale (cp1252
     # on Windows) and raises UnicodeDecodeError on bytes like b"\xc3\xa9" (an
@@ -118,7 +118,7 @@ def test_cpp_parse_cpp_too_large(mock_run, caplog):
 # at preprocessed rows 2-4; those same row numbers in the *original* file are
 # the DECLARE / blank / FOREACH lines — not `real_fn`. Restoring
 # `source = cpp_bytes` without translating rows fails the slice assertions.
-_ISS126_MACRO_C = """\
+_MACRO_C = """\
 #define FOREACH_ITEM(X) X(a) X(b) X(c)
 #define DECLARE(x) int x;
 
@@ -144,7 +144,7 @@ def _require_working_cpp(path: Path) -> None:
     the Xcode toolchain), and the two spawns `parse_source` makes -- the
     `cpp --version` probe on a 5s timeout, then `cpp -w -P -undef` on a 10s one
     -- can each fail or time out on a loaded runner. Both failures are
-    swallowed into `used_cpp=False`, so the assertion below reported "ISS-126
+    swallowed into `used_cpp=False`, so the assertion below reported "cpp citation accuracy
     regressed" for an environment that simply could not preprocess. One macOS
     cell failed on a commit touching neither parse.py nor the test, while the
     other two Python versions on the same image passed, and a plain re-run went
@@ -169,17 +169,17 @@ def _require_working_cpp(path: Path) -> None:
         pytest.skip(f"cpp exited {probe.returncode} on the fixture")
     # parse_source discards output over 2x the input; a cpp that ignores -P and
     # emits line markers can cross that, and then the fallback never engages.
-    if len(probe.stdout) > 2 * len(_ISS126_MACRO_C.encode("utf8")):
+    if len(probe.stdout) > 2 * len(_MACRO_C.encode("utf8")):
         pytest.skip("cpp output exceeds the size parse_source will accept")
 
 
-def test_iss126_cpp_fallback_line_numbers_match_original(tmp_path):
-    """ISS-126: used_cpp=True must still cite the on-disk file, not cpp -P rows."""
+def test_cpp_fallback_line_numbers_match_original(tmp_path):
+    """Verify used_cpp=True must still cite the on-disk file, not cpp -P rows."""
     path = tmp_path / "macro.c"
-    path.write_text(_ISS126_MACRO_C, encoding="utf8")
+    path.write_text(_MACRO_C, encoding="utf8")
     _require_working_cpp(path)
 
-    orig_lines = _lines(_ISS126_MACRO_C)
+    orig_lines = _lines(_MACRO_C)
     # Fixture is a detector only if the preprocessed span (rows 2-4) is not
     # the function in the original file. Hand-counted, not from parse_source.
     trap = "\n".join(orig_lines[1:4])
@@ -228,7 +228,7 @@ def _cpp_calls(mock_run):
 
 
 @patch("subprocess.run")
-def test_iss239_the_cpp_version_probe_runs_once_across_many_erroring_files(mock_run):
+def test_the_cpp_version_probe_runs_once_across_many_erroring_files(mock_run):
     """#239: `cpp --version` answers the same thing for the life of the
     process, so a macro-heavy tree must not pay a second spawn per file. The
     count asserted is a hand-derived literal -- one probe, one preprocess per
@@ -250,7 +250,7 @@ def test_iss239_the_cpp_version_probe_runs_once_across_many_erroring_files(mock_
 
 
 @patch("subprocess.run")
-def test_iss239_a_failed_probe_is_retried_rather_than_cached(mock_run):
+def test_a_failed_probe_is_retried_rather_than_cached(mock_run):
     """#239: only a *successful* probe is memoized, exactly as
     fetch._git_version does it. A transient fd-exhaustion or fork failure must
     not disable the cpp fallback for the rest of the process's life -- which is
@@ -279,7 +279,7 @@ def test_iss239_a_failed_probe_is_retried_rather_than_cached(mock_run):
 
 
 @patch("subprocess.run")
-def test_iss240_both_cpp_invocations_close_stdin(mock_run):
+def test_both_cpp_invocations_close_stdin(mock_run):
     """#240: capture_output redirects the child's stdout and stderr only, so
     without stdin=DEVNULL cpp inherits ours -- under repo2graph-mcp on stdio
     that handle is the client's JSON-RPC pipe. Asserted at the call site as

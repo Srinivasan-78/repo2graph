@@ -1,6 +1,6 @@
 """`human/CHANGELOG.md`: a per-push structural diff of the graph.
 
-Per AGENTS.md's "tests must pin values, not compare the implementation to
+Per CONTRIBUTING.md's "tests must pin values, not compare the implementation to
 itself": every assertion below is a literal string hand-derived from the
 fixture source, never a value recomputed by `repo2graph.changelog` itself.
 """
@@ -60,7 +60,7 @@ def test_changelog_only_written_for_human_facing_builds(tmp_path):
 
 
 def test_jsonl_rebuild_does_not_load_previous_state(tmp_path, monkeypatch):
-    """ISS-205: a jsonl-only rebuild must not snapshot the previous graph.
+    """Verify a jsonl-only rebuild must not snapshot the previous graph.
 
     `previous_state` reads whole `agent/nodes.jsonl` and `agent/edges.jsonl`
     into lists of dicts. That cost is paid only when CHANGELOG.md will be
@@ -86,7 +86,7 @@ def test_jsonl_rebuild_does_not_load_previous_state(tmp_path, monkeypatch):
 
 
 def test_overview_rebuild_still_snapshots_and_diffs(tmp_path, monkeypatch):
-    """ISS-205: an overview rebuild still reads the previous graph and diffs it.
+    """Verify an overview rebuild still reads the previous graph and diffs it.
 
     The snapshot must happen before dump_all overwrites the on-disk jsonl.
     """
@@ -179,7 +179,7 @@ def test_unchanged_repo_produces_no_delta_sections(tmp_path):
         assert heading not in text
 
 
-def test_iss144_changelog_registered_in_manifest(tmp_path, capsys):
+def test_changelog_registered_in_manifest(tmp_path, capsys):
     """Issue 144: CHANGELOG.md is registered in manifest.json and CLI report written list."""
     repo = write_repo(tmp_path)
     out = tmp_path / "idx"
@@ -193,3 +193,26 @@ def test_iss144_changelog_registered_in_manifest(tmp_path, capsys):
     captured = capsys.readouterr()
     report = json.loads(captured.out)
     assert "human/CHANGELOG.md" in report["written"]
+
+
+def test_a_section_longer_than_max_items_is_truncated_with_a_count():
+    """The "... and N more" line is the only signal that a section was cut.
+
+    Nothing exercised the ceiling, so a changelog that silently dropped
+    everything past the 50th item would have read as a complete one.
+    """
+    from repo2graph.changelog import MAX_ITEMS, _section
+
+    assert MAX_ITEMS == 50
+
+    lines = [f"- item {i}" for i in range(63)]
+    out = _section(lines, 63)
+    assert len(out) == MAX_ITEMS + 1
+    assert out[:2] == ["- item 0", "- item 1"]
+    assert out[MAX_ITEMS - 1] == "- item 49"
+    assert out[-1] == "... and 13 more"
+
+    # Exactly at the ceiling nothing is cut and no marker is added.
+    exact = _section(lines[:MAX_ITEMS], MAX_ITEMS)
+    assert len(exact) == MAX_ITEMS
+    assert not any("and" in line and "more" in line for line in exact)

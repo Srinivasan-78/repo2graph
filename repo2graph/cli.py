@@ -192,6 +192,9 @@ def cmd_build(args):
                 max_call_candidates=args.max_call_candidates,
                 config=config,
                 cochange_min=getattr(args, "cochange_min", 3),
+                max_bytes=getattr(args, "max_bytes", 0),
+                max_edges=getattr(args, "max_edges", 0),
+                limit_policy=getattr(args, "limit_policy", "warn"),
             )
             chunks = None if args.no_chunks else iter_chunks(g)
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
@@ -279,6 +282,9 @@ def cmd_github(args):
                 max_call_candidates=args.max_call_candidates,
                 no_chunks=args.no_chunks,
                 cochange_min=getattr(args, "cochange_min", 3),
+                max_bytes=getattr(args, "max_bytes", 0),
+                max_edges=getattr(args, "max_edges", 0),
+                limit_policy=getattr(args, "limit_policy", "warn"),
             )
     except LockTimeoutError as exc:
         raise SystemExit(f"error: {exc}") from None
@@ -448,6 +454,32 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
     }
 
 
+def _validate_auto_build_out(out, repo_root) -> None:
+    """Harden an auto-build output directory, the way `build` hardens its `-o`.
+
+    `build` runs `validate_outdir` before it writes anything. The *implicit*
+    builds -- `rag <src>`'s and the MCP server's -- did
+    not, even though they finish at the same `dump_all`, whose directory swap
+    renames the target aside and then deletes it. `repo2graph rag . -o .`
+    therefore deleted the working tree.
+
+    No `force` parameter: `build --force` exists because a human typed both the
+    path and the override. Nothing is typed here, so there is no override to
+    honour -- the caller should run `build` explicitly if they mean it.
+    """
+    from .integrity import validate_outdir
+
+    try:
+        validate_outdir(out, repo_root=repo_root)
+    except ValueError as exc:
+        raise SystemExit(
+            f"error: {exc}\n"
+            "       This directory would have been replaced by an automatically built "
+            "index. Point -o at a dedicated index directory (e.g. -o .r2g), or run "
+            "`repo2graph build` yourself if you really mean this path."
+        ) from None
+
+
 def _warn_exclude_secrets_deprecated(args) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
@@ -457,7 +489,49 @@ def _warn_exclude_secrets_deprecated(args) -> None:
         )
 
 
+#: Retrieval knobs retired after measurement, with the flag that set each one.
+#: Kept parseable so an existing command does not become an argparse error, but
+#: they no longer change anything, and using one says so rather than going quiet
+#: -- an accepted-and-ignored parameter is the exact defect `mcp/tools.py`
+#: documents having already fixed once for `neighbours`.
+#:
+#: Measured on 40 held-out lexical and 40 held-out structural questions:
+#:   neighbours=cite        lexical -1/-8/-19 pp and structural -3/-10/-31 pp
+#:                          against the default, and dominated by
+#:                          `expand_graph=False`, which gets better recall for
+#:                          fewer tokens at nearly every budget.
+#:   conditional_expansion  a no-op with dense vectors -- identical recall and
+#:                          identical token counts -- and -17 pp structural at
+#:                          8k without them.
+#:   precision_first        only ever exercised together with citation mode.
+_RETIRED_RETRIEVAL_FLAGS = {
+    "neighbours": ("--neighbours", "full"),
+    "conditional_expansion": ("--conditional-expansion", False),
+    "precision_first": ("--precision-first", False),
+}
+
+
+def _warn_retired_retrieval_flags(args) -> None:
+    """Emit one event per retired retrieval flag the caller actually set."""
+    from .events import emit
+
+    for attr, (flag, default) in _RETIRED_RETRIEVAL_FLAGS.items():
+        value = getattr(args, attr, default)
+        if value != default:
+            emit(
+                "retired_flag_ignored",
+                level="warning",
+                flag=flag,
+                value=value,
+                reason=(
+                    "retired after measuring worse than the default on the held-out "
+                    "benchmark; see docs/cli.md"
+                ),
+            )
+
+
 def cmd_query(args):
+    _warn_retired_retrieval_flags(args)
     from .query import Index, format_pack
 
     out = Path(args.out)
@@ -519,6 +593,12 @@ def _rag_index_dir(args) -> Path:
             output_dir=str(out),
         )
         g = build(tpath, config=cfg)
+        # `build` validates its own `-o` (cli.py:130); this auto-build path did
+        # not, so an implicit build could stage an index over any directory the caller
+        # named -- and `dump_all`'s directory swap renames the target aside and
+        # deletes it. No `--force` here on purpose: nobody typed this path, so
+        # there is no intent to override.
+        _validate_auto_build_out(out, tpath)
         dump_all(g, iter_chunks(g), out, {"jsonl", "overview"})
         return out
     from .fetch import index_github, parse_spec
@@ -637,6 +717,7 @@ def cmd_verify_rag(args):
 
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
+    _warn_retired_retrieval_flags(args)
     from .query import Index
 
     out = _rag_index_dir(args)
@@ -981,7 +1062,7 @@ def cmd_explain(args) -> int:
 
 
 def _git_ref_exists(repo: Path, ref: str) -> bool:
-    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see AGENTS.md)."""
+    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see CONTRIBUTING.md)."""
     import subprocess
 
     try:
@@ -994,116 +1075,6 @@ def _git_ref_exists(repo: Path, ref: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         return True  # cannot tell: do not claim it is missing
     return proc.returncode == 0
-
-
-def cmd_impact(args):
-    """Analyze PR / branch diff impact against a base branch using the code graph."""
-    from .impact import (
-        analyze_diff_impact,
-        format_json,
-        format_markdown,
-        format_pr_comment,
-        format_sarif,
-        get_git_diff,
-    )
-    from .query import Index
-
-    out = Path(args.out)
-    repo_path = Path(args.repo or ".")
-
-    # `--no-auto-build` can only mean something if building is the default, and
-    # the default is what makes a first run work at all: unlike `query`, there is
-    # no shipped-index case here. The diff's line numbers are head-side, so the
-    # index this needs is one of the tree that is already checked out -- exactly
-    # what there is to build. Progress goes to stderr because the report itself
-    # is on stdout and is often piped into a file or `jq`.
-    if getattr(args, "auto_build", True) and not artifact_path(out, "chunks.jsonl").is_file():
-        if not repo_path.is_dir():
-            raise SystemExit(
-                f"error: repository directory does not exist or is not a directory: {repo_path}"
-            )
-        sys.stderr.write(f"no index at {out}: building one from {repo_path}\n")
-        graph = build(repo_path)
-        dump_all(graph, iter_chunks(graph), out, {"jsonl", "overview"})
-
-    _require_index(out, "chunks.jsonl")
-    _require_index(out, "nodes.jsonl")
-    _require_index(out, "edges.jsonl")
-
-    try:
-        idx = Index(out)
-    except ValueError as exc:
-        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
-
-    if getattr(args, "diff", None):
-        if args.diff == "-":
-            # `git diff main...HEAD | repo2graph impact --diff -`, the form
-            # docs/pr-impact.md documents and CI wants: no temp file to write, clean
-            # up, or leak. Read the raw bytes and decode them the way every
-            # other reader of git output here does -- a piped diff carries
-            # whatever encoding the paths and hunks are in, and a cp1252 stdin
-            # on Windows would otherwise raise before the diff is even parsed.
-            diff_text = sys.stdin.buffer.read().decode("utf8", "surrogateescape")
-        else:
-            diff_file = Path(args.diff)
-            if not diff_file.exists():
-                raise SystemExit(f"error: diff file {diff_file} does not exist")
-            diff_text = diff_file.read_text(encoding="utf-8", errors="replace")
-        from .impact import parse_unified_diff
-
-        if diff_text.strip() and not parse_unified_diff(diff_text):
-            # Non-empty text with no file header is not "a PR that changed
-            # nothing"; answering LOW RISK for it is a confident wrong result.
-            raise SystemExit(
-                "error: --diff input is not a unified diff (no `diff --git a/<path> "
-                "b/<path>` file header found); pass the output of `git diff`"
-            )
-    else:
-        try:
-            diff_text = get_git_diff(repo_path, base=args.base, head=getattr(args, "head", None))
-        except Exception as exc:
-            hint = ""
-            if args.base == "main" and not _git_ref_exists(repo_path, "main"):
-                hint = (
-                    "\nhint: this repository has no 'main' ref; pass the branch to "
-                    "compare against, e.g. --base master or --base origin/develop"
-                )
-            raise SystemExit(f"error: failed to retrieve git diff: {exc}{hint}") from None
-
-    fmt = "json" if getattr(args, "json", False) else getattr(args, "format", "markdown")
-    if getattr(args, "sarif", False):
-        fmt = "sarif"
-
-    report = analyze_diff_impact(
-        idx,
-        diff_text,
-        base=args.base,
-        head=getattr(args, "head", None) or "HEAD",
-        max_depth=getattr(args, "max_depth", 2),
-        min_confidence=getattr(args, "min_confidence", None),
-        # Excluded by default, as `rag`/`query` do and as `repo_impact` over
-        # MCP always does: a changed `.env` must not be listed by path.
-        exclude_secrets=not getattr(args, "include_secrets", False),
-    )
-
-    if fmt == "json":
-        rendered = format_json(report)
-    elif fmt == "sarif":
-        rendered = json.dumps(format_sarif(report), indent=2)
-    elif fmt == "pr-comment":
-        rendered = format_pr_comment(report)
-    else:
-        rendered = format_markdown(report)
-
-    if getattr(args, "write", None):
-        target = Path(args.write)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(rendered, encoding="utf-8")
-        if sys.stderr.isatty():
-            sys.stderr.write(f"Wrote impact report to {target}\n")
-    else:
-        _emit(rendered)
-    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -1293,6 +1264,27 @@ def main(argv=None):
         help="minimum co-edits across git history required to emit a CO_CHANGE edge (default: 3)",
     )
     common.add_argument("--max-files", type=_nonneg, default=0)
+    common.add_argument(
+        "--max-bytes",
+        type=_nonneg,
+        default=0,
+        help="stop indexing once discovered files exceed N bytes in total (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-edges",
+        type=_nonneg,
+        default=0,
+        help="keep at most N edges; later ones are dropped (0 = no limit)",
+    )
+    common.add_argument(
+        "--limit-policy",
+        choices=("warn", "truncate"),
+        default="warn",
+        help=(
+            "what a reached limit does: 'warn' (default) says so on stderr, "
+            "'truncate' cuts quietly. Both record the cut in stats.json"
+        ),
+    )
     common.add_argument(
         "--jobs",
         type=_nonneg,
@@ -1529,6 +1521,20 @@ def main(argv=None):
         default=False,
         help="deprecated no-op: secret-looking files are excluded by default",
     )
+    q.add_argument(
+        "--neighbours",
+        "--neighbors",
+        dest="neighbours",
+        choices=("full", "cite"),
+        default="full",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
+    )
+    q.add_argument(
+        "--conditional-expansion",
+        action="store_true",
+        default=False,
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
+    )
     _add_vector_flags(q)
     q.set_defaults(func=cmd_query)
 
@@ -1617,6 +1623,26 @@ def main(argv=None):
         dest="extra_secret_dirs",
         metavar="DIR",
         help="additional directory name to exclude as secret path (repeatable)",
+    )
+    r.add_argument(
+        "--neighbours",
+        "--neighbors",
+        dest="neighbours",
+        choices=("full", "cite"),
+        default="full",
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
+    )
+    r.add_argument(
+        "--conditional-expansion",
+        action="store_true",
+        default=False,
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
+    )
+    r.add_argument(
+        "--precision-first",
+        action="store_true",
+        default=False,
+        help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(r)
     r.set_defaults(func=cmd_rag)
@@ -1866,93 +1892,6 @@ def main(argv=None):
     )
     exp_ret.add_argument("--json", action="store_true", help="output explanation as JSON")
     exp_ret.set_defaults(func=cmd_explain)
-
-    imp = sub.add_parser(
-        "impact",
-        help="analyze PR / branch diff impact against a base branch using the code graph",
-    )
-    imp.add_argument(
-        "repo",
-        nargs="?",
-        default=".",
-        help="repository directory (default: current directory)",
-    )
-    imp.add_argument(
-        "-o",
-        "-i",
-        "--out",
-        "--index",
-        dest="out",
-        default=".r2g",
-        help="path to index directory (default: .r2g)",
-    )
-    imp.add_argument(
-        "--base",
-        default="main",
-        help="base ref or branch to compare against (default: main)",
-    )
-    imp.add_argument(
-        "--head",
-        default=None,
-        help="head ref or branch to compare (default: current working tree)",
-    )
-    imp.add_argument(
-        "--diff",
-        default=None,
-        metavar="FILE",
-        help="path to unified diff file (overrides git diff)",
-    )
-    imp.add_argument(
-        "--format",
-        choices=["markdown", "json", "sarif", "pr-comment"],
-        default="markdown",
-        help="output format (default: markdown)",
-    )
-    imp.add_argument("--json", action="store_true", help="output report as JSON")
-    imp.add_argument(
-        "--sarif",
-        action="store_true",
-        help="output report as SARIF v2.1.0 for Code Scanning",
-    )
-    imp.add_argument(
-        "--max-depth",
-        type=_nonneg,
-        default=2,
-        help="traversal hops for caller impact (default: 2)",
-    )
-    imp.add_argument(
-        "--min-confidence",
-        type=float,
-        default=None,
-        help="minimum confidence threshold for CALLS edges",
-    )
-    imp.add_argument(
-        "--min-conf",
-        dest="min_confidence",
-        type=float,
-        default=argparse.SUPPRESS,
-        help="alias of --min-confidence",
-    )
-    imp.add_argument(
-        "--include-secrets",
-        action="store_true",
-        default=False,
-        help="report changes to secret-looking paths (.env, keys, credentials) too "
-        "(default: excluded from the report, as rag/query and MCP repo_impact do)",
-    )
-    imp.add_argument(
-        "--no-auto-build",
-        dest="auto_build",
-        action="store_false",
-        help="do not build index if missing",
-    )
-    imp.add_argument(
-        "--write",
-        metavar="FILE",
-        default=None,
-        help="write report to FILE instead of stdout",
-    )
-    imp.set_defaults(func=cmd_impact)
 
     if argv is None:
         try:

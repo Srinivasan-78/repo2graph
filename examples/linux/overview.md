@@ -1,7 +1,7 @@
 # Repo map: linux
 
-files: 3660  nodes: 136219  edges: 256413
-languages: c=3573, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=1, debug=1, bc=1
+files: 3660  nodes: 185496  edges: 310854
+languages: c=3285, cpp=288, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=1, debug=1, bc=1
 
 ## Most depended-on files
 - include/linux/ceph/types.h (in=804)
@@ -31,28 +31,28 @@ languages: c=3573, config=9, freezer=1, hz=1, kexec=1, locks=1, preempt=1, bash=
 - include/linux/gpio/regmap.h (in=80)
 
 ## Most called symbols
-- include/linux/err.h::IS_ERR (function, in=686)
-- kernel/locking/mutex.c::mutex_unlock (function, in=614)
-- kernel/locking/rtmutex_api.c::mutex_unlock (function, in=612)
-- include/linux/err.h::ERR_PTR (function, in=603)
-- include/linux/mutex.h::mutex_lock (function, in=583)
-- include/linux/err.h::PTR_ERR (function, in=481)
-- kernel/locking/mutex.c::mutex_lock (function, in=434)
-- kernel/locking/rtmutex_api.c::mutex_lock (function, in=432)
+- include/linux/err.h::IS_ERR (function, in=687)
+- kernel/locking/mutex.c::mutex_unlock (function, in=613)
+- kernel/locking/rtmutex_api.c::mutex_unlock (function, in=611)
+- include/linux/err.h::ERR_PTR (function, in=605)
+- include/linux/err.h::PTR_ERR (function, in=484)
 - fs/ext4/ext4.h::EXT4_SB (function, in=412)
-- include/linux/rcupdate.h::rcu_read_lock (function, in=397)
-- include/linux/rcupdate.h::rcu_read_unlock (function, in=393)
-- include/linux/list.h::list_empty (function, in=323)
-- include/linux/atomic/atomic-instrumented.h::atomic_read (function, in=285)
+- include/linux/list.h::list_empty (function, in=324)
+- include/linux/atomic/atomic-instrumented.h::atomic_read (function, in=286)
 - include/linux/instrumented.h::instrument_atomic_read_write (function, in=243)
 - fs/ext4/ext4.h::EXT4_I (function, in=230)
-- include/linux/list.h::INIT_LIST_HEAD (function, in=228)
+- include/linux/list.h::INIT_LIST_HEAD (function, in=229)
 - kernel/bpf/verifier.c::verbose (function, in=180)
-- include/linux/spinlock.h::spin_unlock (function, in=179)
-- include/linux/spinlock.h::spin_lock (function, in=171)
-- kernel/sched/core.c::cpu_rq (function, in=171)
-- include/linux/list.h::list_del (function, in=153)
+- include/linux/spinlock.h::spin_unlock (function, in=177)
+- kernel/sched/core.c::cpu_rq (function, in=173)
+- include/linux/spinlock.h::spin_lock (function, in=169)
+- include/linux/list.h::list_del (function, in=154)
+- include/linux/mutex.h::mutex_lock (function, in=151)
 - include/linux/spinlock_rt.h::spin_unlock (function, in=150)
 - include/linux/atomic/atomic-instrumented.h::atomic_inc (function, in=146)
 - include/linux/spinlock_rt.h::spin_lock (function, in=143)
 - include/linux/cpumask.h::cpumask_test_cpu (function, in=137)
+- include/linux/list.h::list_add (function, in=137)
+- include/linux/list.h::list_add_tail (function, in=130)
+- include/linux/rseq_entry.h::__rseq_grant_slice_extension.scoped_guard (function, in=130)
+- include/linux/list.h::list_del_init (function, in=129)

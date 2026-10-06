@@ -2,19 +2,15 @@
 
 `repo2graph-mcp` is a stdio [MCP](https://modelcontextprotocol.io) server over an
 existing `.r2g` index, so an agent can ask the map questions itself instead of you
-pasting a pack into a chat window. This page is its full contract: the ten tools,
+pasting a pack into a chat window. This page is its full contract: the nine tools,
 their argument bounds, the server's own flags, and a config block per client.
 
 It is an *additional* surface, not a replacement: every tool is a thin call into
 `repo2graph.query.Index`, the same object the CLI and the GitHub Action use, over
 the same artifacts.
 
-> **Before exposing the HTTP transport**, read
-> [docs/THREAT_MODEL.md §3.5](THREAT_MODEL.md#35-the-http-mcp-surface) — it names what the server
-> defends against, what it does not yet (TLS enforcement, rate limiting), and why the intended
-> shape is a loopback bind behind a reverse proxy. The hardened invocations are in
-> [docs/secure-configuration.md](secure-configuration.md). Stdio mode, the default, has no
-> listening socket and none of this applies to it.
+> **Note**: Stdio mode is the primary transport for local AI developer tooling.
+> Stdio mode has no listening socket.
 
 > **Note**: `repo2graph-mcp` needs the `mcp` SDK (`mcp>=2.0,<3.0`), which ships as
 > an optional extra: `pip install "repo2graph[mcp]"`. The CLI, the Action and the
@@ -43,7 +39,7 @@ Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
 Prefer `npx`? [`repo2graph-mcp` on npm](https://www.npmjs.com/package/repo2graph-mcp) is a thin
 launcher that resolves `uvx` (falling back to an installed `repo2graph-mcp`, then `pipx`) and hands
 off to it — the server itself is still this same Python package, not a port. See
-[`npm/README.md`](../npm/README.md) for the resolution order and what it does when none of those is
+[`npm/architecture.md`](architecture.md) for the resolution order and what it does when none of those is
 on `PATH`.
 
 ```json
@@ -185,50 +181,9 @@ runtime argument — see [`server.json`](../server.json).
 | --- | --- | --- |
 | `-o`, `--out` | `<repo>/.r2g` | Index directory to serve. |
 | `--no-auto-build` | off | Never build. Exit at startup unless the index already exists. |
-| `--allow-auto-build` | off | Allow auto-building a missing index on tool calls in HTTP mode. (In HTTP mode, auto-build is disabled by default to prevent read-only network tool requests from initiating background builds without explicit authorization). |
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
-
-> **Auto-build in stdio vs HTTP mode:** In local stdio mode, a missing index is automatically built on the first tool call for developer convenience. In HTTP mode, auto-build is disabled by default — tool calls against an unindexed directory return a 503 error with build instructions unless `--allow-auto-build` is explicitly enabled.
-
-**HTTP transport** — stdio carries no headers, so authentication requires this.
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--http-port` | off | Serve JSON-RPC on this port in addition to stdio. |
-| `--http-host` | `127.0.0.1` | Bind address. Binding beyond loopback with no authentication is **refused at startup**, not merely discouraged. |
-| `--http-only` | off | Serve HTTP without the stdio transport. |
-| `--well-known-port` | off | Alias for `--http-port`; the discovery documents are served by the same transport. |
-| `--http-allow-hosts` | none | Extra hostnames accepted in the `Host`/`Origin` headers on `POST /mcp`, for a deliberate deployment behind a reverse proxy. Loopback and `--http-host` are always accepted; anything else is refused with 403. |
-| `--http-insecure-ok` | off | Acknowledge that this server does not terminate TLS (#267) and silence the startup warning emitted when `--http-host` is non-loopback with authentication configured. Pass only when a TLS-terminating reverse proxy already sits in front. |
-| `--trust-proxy` | off | Honour `X-Forwarded-For` for rate-limit client identity (#267), but only from a peer also named in `--trusted-proxies` — both must hold. Never affects authentication. |
-| `--trusted-proxies` | none | Comma-separated peer addresses allowed to set `X-Forwarded-For` when `--trust-proxy` is also set. |
-
-**Rate limiting** — #264. Always on for HTTP; these flags retune it, none disable it.
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--rate-limit-requests` | `300` | Requests one client identity may make per `--rate-limit-window` before being throttled. |
-| `--rate-limit-window` | `60` | Width of the rate-limit sliding window, in seconds. |
-| `--max-concurrent-requests` | `64` | Server-wide in-flight tool calls admitted at once. |
-| `--max-queue-size` | `128` | Requests allowed to wait for a concurrency slot once `--max-concurrent-requests` is saturated, before being refused immediately as overloaded. |
-| `--max-concurrent-builds` | `4` | Server-wide concurrent auto-builds (index opens that may trigger a build) admitted at once. |
-| `--max-response-bytes` | `8388608` (8 MiB) | A JSON-RPC success response larger than this is replaced with a bounded error rather than sent. |
-
-Naming none of these keeps `RateLimitConfig()`'s own defaults from
-`http_server.py`; naming one does not require naming the rest — the others
-still default.
-
-**Authentication**
-
-| Flag | Default | What it does |
-| --- | --- | --- |
-| `--auth-token` | no auth | Require `Authorization: Bearer <TOKEN>` on every HTTP tool call. Prefer the `R2G_AUTH_TOKEN` environment variable — this flag's value is visible to other local users through `ps`/procfs. The flag wins when both are set. |
-| `--auth-oidc-issuer` | off | Validate bearer tokens as JWTs against this OIDC issuer's JWKS, enforcing `iss`, `aud` and `exp`. |
-| `--auth-audience` | unchecked | Expected `aud` claim for `--auth-oidc-issuer` tokens. |
-| `--auth-jwks-ttl` | `300` | Seconds a fetched JWKS is trusted before refetch. |
-| `--auth-cimd` | off | Publish an RFC 7591 client metadata document at `/.well-known/oauth-client-metadata`. |
 
 **Audit logging**
 
@@ -237,11 +192,6 @@ still default.
 | `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
 | `--audit-log-level` | `all` | `none`, `errors` or `all` — which tool calls produce a record. |
 | `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
-
-`--auth-oidc-issuer` is the only one of these that makes a network call, and only
-to that one issuer's JWKS endpoint. Container hardening, TLS termination and the
-deployment checklist that goes with the HTTP shape:
-[docs/ENTERPRISE_DEPLOYMENT.md](ENTERPRISE_DEPLOYMENT.md).
 
 ## Tools
 
@@ -253,7 +203,6 @@ deployment checklist that goes with the HTTP shape:
 | `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |
-| `repo_impact` | optional `base`, `head`, `diff`, `max_depth`, `format` | PR and git diff impact analysis: changed symbols, affected public APIs, callers, tests, and blast radius. |
 | `repo_blast_radius` | `node_id`, optional `max_hops`, `include_cochange`, `limit` | Reverse reachability from a node_id: callers, subclasses, importers and co-changed files, by hop distance. |
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
@@ -264,19 +213,19 @@ and are never served from the cache — a cached cache-stats or progress reading
 the one answer guaranteed to be out of date.
 
 > **Naming note:** an earlier design for `repo_blast_radius` called it
-> `repo_impact` — but that name already belongs to the PR/diff-impact tool
-> above, a fully built, different, existing feature. It ships as
-> `repo_blast_radius` instead so neither tool breaks the other; do not
-> confuse the two when reading an older issue or draft that used the old name.
+> `repo_impact`, which at the time was taken by the PR/diff-impact tool. That
+> tool has since been removed, but `repo_blast_radius` keeps its name: it
+> answers a graph question ("what depends on this symbol") rather than a diff
+> question, and renaming it now would break every client that already calls it.
 
 ### Tool annotations are honest about auto-build (#292)
 
 MCP's `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` are
 answered once, in `tools/list`, for the server's whole lifetime — there is no
 per-call variant. So they can only be as honest as *this server instance*
-allows, and that differs by mode:
+allows:
 
-- **An already-built index, any transport, or `--no-auto-build`.** No tool
+- **An already-built index or `--no-auto-build`.** No tool
   call can write anything. Every tool is genuinely read-only, and the stdio
   server (`get_tools(auto_build=False)`, the default) says so.
 - **stdio with a repo to build from, auto-build not disabled.** The first
@@ -287,16 +236,6 @@ allows, and that differs by mode:
   None)` to `get_tools()`, so a server started this way reports
   `readOnlyHint: false` for those tools, not the same flat annotation an
   already-indexed server sends.
-- **HTTP.** Auto-build defaults to **off** regardless of this flag (#265):
-  `main()` only sets `build_from` from `--allow-auto-build`, and without it
-  a missing index is a plain error, not a build. An HTTP deployment that has
-  not opted into `--allow-auto-build` is in the first, fully-read-only case
-  above. One residual gap: `http_server.py`'s own `tools/list` handler
-  builds its response from the flat `TOOL_ANNOTATIONS` constant directly
-  rather than calling `get_tools(auto_build=...)`, so an operator who *does*
-  pass `--allow-auto-build` for HTTP currently gets the same
-  always-read-only annotations regardless — this doc and `--allow-auto-build`
-  itself are the prominent disclosure of that side effect in the meantime.
 
 ### Argument bounds
 
@@ -306,8 +245,7 @@ here raises on a bad value; a value below the minimum is raised to it, one above
 the maximum is lowered to it, and a non-number (`"abc"`, `null` excepted,
 non-finite) takes the default **and the reply starts with a one-line
 `_note: k='abc' is not an integer; used the default 8._`** so the substitution is
-visible (for `repo_impact`, only in the `markdown` and `pr-comment` formats -- a
-prefix would stop `json`/`sarif` parsing). `budget_tokens` also treats zero or
+visible. `budget_tokens` also treats zero or
 negative as "not a budget anyone means": it takes the **default** with a note.
 
 | Argument | Tool | Default | Minimum | Maximum |
@@ -325,9 +263,6 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | nodes visited | `repo_path_between` | — | — | 4 000 (both frontiers combined) |
 | `max_hops` | `repo_blast_radius` | 3 | 1 | 6 |
 | nodes visited | `repo_blast_radius` | — | — | 4 000 per section (callers/subclasses/importers) |
-| `max_depth` | `repo_impact` | 2 | 1 | 4 |
-| `diff` (length) | `repo_impact` | — | — | 1 000 000 chars |
-| output (tokens) | `repo_impact` | — | — | 12 000 |
 | `query` (length) | `repo_search` | — | — | 4 000 chars |
 | `node_id` (length) | `repo_neighbours`, `repo_path_between`, `repo_blast_radius` | — | — | 2 000 chars |
 | `path` (length) | `repo_read` | — | — | 2 000 chars |
@@ -339,7 +274,7 @@ project uses: `file:<path>`, `sym:<path>::<qualname>`, `dir:<path>`. Hand any
 of them something else and it says so instead of returning nothing.
 
 `repo_path_between`'s hop and visited-node ceilings are deliberately their own
-constants, not a reuse of `repo_search`/`repo_neighbours`/`repo_impact`'s
+constants, not a reuse of `repo_search`/`repo_neighbours`'s
 `MCP_MAX_HOPS` (4) — a bidirectional path search does roughly `max_hops / 2`
 layers of real work on each side, not `max_hops` deep on one, so the same
 number does not mean the same cost.
@@ -347,7 +282,7 @@ number does not mean the same cost.
 ### Errors are flagged, not just worded
 
 A call the server cannot answer — a missing `query` or `node_id`, a `node_id`
-that is not in the graph, an unknown tool name, a `repo_impact` whose `git diff`
+that is not in the graph, an unknown tool name, a traversal whose `git diff`
 failed, whose `diff` text is not a unified diff or whose `format` is not one of
 `markdown`/`json`/`sarif`/`pr-comment`, a `repo_build_status` with no or an
 unknown `task_id` (or on a server without `--async-build`, whose error body is
@@ -387,11 +322,17 @@ returns `[]`, not an error. Secret-excluded paths never appear.
 
 **Purpose:** Widen a `[cite: path:start-end]` citation -- the anchor every
 other tool's output is built around -- with no filesystem access. Read from
-`chunks.jsonl`, not disk: chunks have already passed secret-path exclusion and
-content redaction, the filesystem has not, and a served index may have no
-source tree beside it at all (the `graph` branch / GitHub Action artifact
-case). This is what makes the tool safe and correct over the HTTP transport,
-from a different machine, with nothing shared but the index.
+`chunks.jsonl`, not disk: those chunks have passed secret-path exclusion, the
+filesystem has not, and a served index may have no source tree beside it at all
+(the `graph` branch / GitHub Action artifact case). This is what makes the tool
+correct when the index is all you have.
+
+Content redaction is applied **at serve time**, to the lines actually returned,
+exactly as `repo_search` gets it from `Index._served`. Build-time redaction
+cannot be relied on here: `--secret-policy off` and `warn-only` deliberately
+store the text unredacted, and this tool previously handed that straight back
+while `repo_search` over the same bytes redacted it. If the index manifest
+cannot be read, the tool redacts rather than guessing.
 
 **Input parameters:**
 
@@ -408,7 +349,7 @@ boundary if it would exceed that.
 
 A span not covered by any chunk answers **"not indexed"** rather than falling
 back to disk -- this includes the `file_residual` under-40-character case
-(AGENTS.md) and, more generally, any `file_residual` chunk at all: such a
+([the invariants](../.github/CONTRIBUTING.md#architecture--os-compatibility-invariants)) and, more generally, any `file_residual` chunk at all: such a
 chunk concatenates the *non-contiguous* spans left over after every symbol was
 carved out of a file, so there is no reliable way to map a requested line
 range onto it without risking a wrong line. `repo_read` refuses that trade
@@ -458,9 +399,9 @@ impact radius of changing the scheduler?"* deserved and did not have: the
 reverse of `repo_neighbours`' one hop in both directions, specifically the
 reverse *closure*, by hop distance.
 
-> Ships under this name rather than `repo_impact`, which is already the
-> PR/diff-impact tool documented above -- see the naming note near the top of
-> this page.
+> Named `repo_blast_radius` rather than `repo_impact` because that name
+> belonged to the PR/diff-impact tool, since removed -- see the naming note
+> near the top of this page.
 
 **Input parameters:**
 
@@ -485,43 +426,6 @@ Each of `callers`/`subclasses`/`importers` is its own bounded reverse walk (up
 to 4 000 visited nodes and `limit` rows), so a hub symbol that would reach
 most of the graph reports `summary.truncated: true` rather than a partial set
 presented as complete. `exclude_secrets` is unconditional, as everywhere else.
-
-### `repo_impact`
-
-**Purpose:** Analyze PR or git diff impact against a base branch using the code graph. Detects changed symbols, affected public APIs, impacted callers across depth hops, test coverage, and blast radius with grounded citations.
-
-**Input parameters:**
-
-| Parameter | Type | Meaning |
-|---|---|---|
-| `base` | string (optional) | Base branch or commit ref to compare against (default `"main"`). |
-| `head` | string (optional) | Head branch or commit ref. Omitted: the **working tree** (committed and uncommitted changes) is compared against `base`, exactly like `repo2graph impact`. Given: the three-dot `base...head` comparison of two refs. |
-| `diff` | string (optional) | Raw unified diff text. If provided, overrides git diff. |
-| `max_depth` | integer (optional) | Caller traversal depth (default 2, clamped to 1-4). |
-| `format` | string (optional) | Output format: `"markdown"` (default), `"pr-comment"`, `"json"` or `"sarif"` (SARIF v2.1.0). Anything else is an `isError` result listing these. |
-
-`git diff` runs in the server's indexed repository — the `--repo` it was started
-for, else the source root recorded in the index's `manifest.json`, else the index
-directory's parent — never in the server process's working directory. When git
-fails, git's own message is relayed (with every absolute path replaced by
-`<repo>`/`<path>`) as an `isError` result; a repository whose default branch is
-not `main` needs `base`.
-
-Unconditionally filters secrets (`exclude_secrets=True`) and clamps numeric inputs. Detailed schemas, CLI flags, and CI recipes are documented in [PR_IMPACT.md](pr-impact.md).
-
-**Output is bounded too, not just the inputs.** The report grows with the number
-of impacted symbols rather than with `max_depth`, so a wide diff could render far
-past the 12 000-token ceiling `repo_search` holds itself to. Over that ceiling:
-
-- `markdown` and `pr-comment` are cut on a line boundary and end with a
-  `_[truncated to 12000 tokens…]_` note.
-- `json` and `sarif` are **not** cut — a line-boundary cut would stop being parseable. It is
-  replaced by a valid document carrying `"truncated": true`, a `reason`, and the
-  scalar summary (`risk_level`, `blast_radius_score`, `metrics`), with the
-  per-symbol lists omitted.
-
-Run `repo2graph impact` for the full, unbounded report; the ceiling exists
-because this tool's output lands directly in an agent's context window.
 
 ### `repo_cache_stats`
 
@@ -634,3 +538,376 @@ called, and answers from a stale graph are still served in the meantime: a
 may hold different code. Treat a staleness note as "rebuild before trusting
 citations," and `repo2graph index-status -o <out>` for the full diff of what
 changed.
+
+## Per-client setup
+
+### Claude Code
+
+The first-supported client. Everything here is verified against Claude Code's
+`claude mcp` command and the stdio server in `repo2graph/mcp/`.
+
+- [Install](#install)
+- [Verify it worked](#verify-it-worked)
+- [The nine tools](#the-nine-tools)
+- [First questions worth asking](#first-questions-worth-asking)
+- [Telling the agent how to use it](#telling-the-agent-how-to-use-it)
+- [Troubleshooting](#troubleshooting)
+- [What not to rely on](#what-not-to-rely-on)
+
+---
+
+#### Install
+
+One command. `--` separates Claude Code's flags from the server's.
+
+```bash
+claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /absolute/path/to/project
+```
+
+Three details account for most failed setups, and `repo2graph doctor` checks
+all three for you:
+
+| Detail | Why it matters |
+|---|---|
+| `--from "repo2graph[mcp]"` | Without the `[mcp]` extra the server has no SDK to start against. `uvx --from repo2graph repo2graph-mcp` installs and then exits telling the client to install an SDK, which the client reports only as "server failed to start". |
+| An **absolute** path | MCP clients launch servers from an unspecified working directory. A relative path resolves somewhere you did not mean. |
+| Valid JSON, if editing a config file by hand | A trailing comma also surfaces as "server failed to start", with no mention of JSON. |
+
+### Scope
+
+`claude mcp add` defaults to local (this project only). To make it available
+across projects:
+
+```bash
+claude mcp add --scope user repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /absolute/path/to/project
+```
+
+A user-scope server is pinned to **one** repository path. If you work across
+several repositories, add one server per repo with distinct names
+(`repo2graph-api`, `repo2graph-web`) rather than trying to make one serve all
+of them — the server indexes the path it was given.
+
+### If you installed with pip instead of uv
+
+```bash
+pip install "repo2graph[mcp]"
+claude mcp add repo2graph -- repo2graph-mcp /absolute/path/to/project
+```
+
+### No pre-build needed
+
+The server builds its own index on the first tool call if one does not exist.
+On a large repository that first call takes as long as a build would
+(see [benchmarks](architecture.md): 34s for Django's 5,629 files), and the
+client may time it out. Two ways to avoid that:
+
+```bash
+### Build ahead of time
+repo2graph build /absolute/path/to/project -o /absolute/path/to/project/.r2g
+
+### Or let the server build in the background and poll
+claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp /path --async-build
+```
+
+With `--async-build` the first call returns a task id; `repo_build_status`
+reports progress. Use `--no-auto-build` if you would rather the server refuse
+than build unasked.
+
+#### Verify it worked
+
+```bash
+claude mcp list
+```
+
+Then, in Claude Code:
+
+> Use repo_map to summarise this repository.
+
+If that returns languages and hub files, the wiring is good. If anything is
+off, one command tells you which of the three failure modes you hit:
+
+```bash
+repo2graph doctor .
+```
+
+Its **MCP Client Configuration** check reads Claude Code's own config, finds
+the repo2graph entry, and names the problem — command not on `PATH`, missing
+`[mcp]` extra, relative or non-existent path, or unparseable JSON. It never
+echoes an entry's `env` values.
+
+#### The nine tools
+
+| Tool | Use it for | Bounds |
+|---|---|---|
+| `repo_map` | orientation: languages, hub files, entry points | — |
+| `repo_search` | "where is X handled?" — BM25 seeds expanded one hop through the graph | `k` ≤ 50, `hops` ≤ 4, budget ≤ 12,000 tokens (default 6,000) |
+| `repo_neighbours` | "what calls this?" — from a known `node_id` | `hops` ≤ 4, `limit` ≤ 50 |
+| `repo_find_symbol` | name → `node_id`, when you already know what you're looking for | `limit` ≤ 50 |
+| `repo_read` | widen a `[cite: path:start-end]` citation into more source lines | `context` ≤ 500 lines each side |
+| `repo_path_between` | "how does X reach Y" — a bounded, bidirectional path search | `max_hops` ≤ 8, `max_paths` ≤ 10 |
+| `repo_blast_radius` | reverse reachability from a `node_id` — what depends on it | `max_hops` ≤ 6, `limit` ≤ 50 |
+| `repo_cache_stats` | diagnostics: cache hits/misses | — |
+| `repo_build_status` | progress of an `--async-build` index | — |
+
+Every numeric argument is clamped **in the handler**, so a model that asks for
+`hops: 99` gets 4 rather than an error or a 200,000-character reply. Every tool
+that reads repository content passes `exclude_secrets=True` unconditionally: a
+human running the CLI can choose to see a `.env`, an agent tool returning one
+is a different class of problem.
+
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius`
+were added after the original six to close round-trips the first set left an
+agent doing by hand: looking up a `node_id` by name instead of a `repo_search`
+detour, widening a citation without touching the filesystem, tracing a call
+chain between two known symbols, and reverse-closure "what breaks if I change
+this" in one call instead of walking `repo_neighbours` repeatedly.
+
+### The output is markdown, not JSON
+
+Every tool returns a string. There is no per-result `path` field to parse — the
+citation is in the text, in a stable form:
+
+```
+- CALLS in: `check_index_freshness` (repo2graph/doctor.py:1051) [sym:repo2graph/doctor.py::check_index_freshness]  -- at repo2graph/doctor.py:1075
+```
+
+Three things in that line, and the distinction matters:
+
+- `(repo2graph/doctor.py:1051)` — where the **neighbour** is defined.
+- `[sym:...]` — the node id, which is the argument for the next
+  `repo_neighbours` call.
+- `-- at repo2graph/doctor.py:1075` — where the **call is written**. For "what
+  calls this", this is the line you actually want to open.
+
+An edge repo2graph is unsure of says so:
+
+```
+- CALLS out: `ResultCache.get` (repo2graph/cache.py:128) [sym:...]  -- at repo2graph/status.py:124, AMBIGUOUS 0.5 of 3 candidates
+```
+
+That is a `.get()` on a dictionary that matched three methods named `get`.
+Treat an `AMBIGUOUS` edge as a lead, not a fact.
+
+#### First questions worth asking
+
+Paste any of these into Claude Code once the server is connected. They are the
+same five the bundled `repo2graph demo` answers, so you can see each one
+working on a fixture before trying it on your own code.
+
+| Ask | What the graph adds over a text search |
+|---|---|
+| `Where is authentication enforced?` | the guard itself, plus the routes that call it |
+| `What calls <function>?` | CALLS edges into it, each with a confidence score |
+| `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
+| `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (`repo_neighbours`) |
+| `Trace <a request> from route to persistence.` | a path across modules, each block cited to file and line |
+
+```bash
+uvx repo2graph demo    # watch all five answered, no repo needed
+```
+
+#### Telling the agent how to use it
+
+Adding the server makes the tools available; it does not tell the agent when to
+prefer them. A short `CLAUDE.md` block does, and it is the difference between
+an agent that uses the graph and one that keeps grepping:
+
+```markdown
+#### Code navigation
+
+Use grep to locate code; use the repo2graph MCP tools for relationships:
+
+- `repo_search` for a cited, budget-bounded pack when a question spans several files.
+- `repo_neighbours` for "what calls this" / "what would this break" — pass the
+  `[sym:...]` node id from a previous result.
+- Cite the `path:line` from the tool output in your answer. If a tool marks an
+  edge `AMBIGUOUS`, say so rather than asserting the target.
+- An absent edge is not proof of an absent call: dynamic dispatch, reflection
+  and DI containers produce no edges. Fall back to grep for those.
+```
+
+That last line matters more than it looks. Without it, an agent that trusts the
+graph completely will confidently report "nothing calls this" about a function
+reached through a plugin registry.
+
+#### Troubleshooting
+
+| Symptom | Likely cause | Check |
+|---|---|---|
+| "server failed to start" | missing `[mcp]` extra, or invalid JSON in the config | `repo2graph doctor .` → MCP Client Configuration |
+| Tools listed but return nothing | the server's path argument does not exist, or is relative | same check; it validates the path |
+| First call times out | auto-build on a large repo | pre-build, or add `--async-build` |
+| Answers cite code you deleted | stale index | `repo2graph index-status -o .r2g` |
+| Answers are vague and repetitive | generated code dominating retrieval | `repo2graph doctor .` → Generated / Vendored Code prints the `--exclude-group` flags |
+| A whole language returns no symbols | grammar not loading | `repo2graph doctor .` → Parser Coverage |
+
+Still stuck? `repo2graph bug-report --category answer-unhelpful` assembles a
+bundle that is safe to paste into a public issue: no file content, no
+environment variable values, no absolute paths, and no file paths at all unless
+you pass `--include-paths`.
+
+#### What not to rely on
+
+- **Completeness of callers.** Call resolution is name-based. Across the five
+  benchmark repositories, 4.6%–21.3% of `CALLS` edges are ambiguous
+  ([limitations](architecture.md)). No edge does not prove no call.
+- **Freshness.** The index is a snapshot and nothing watches the filesystem.
+  The server rebuilds when the index is missing, not when it is stale.
+- **Generated code being marked.** It is indexed exactly like hand-written
+  code.
+- **The graph as a substitute for running the code.** An edge says a name
+  resolves; it does not say the line executes.
+
+Full list: [architecture.md](architecture.md).
+
+#### See also
+
+- [Cursor](#cursor) — the same server, different config file
+- [docs/architecture.md](architecture.md) — what `confidence` and `evidence` mean
+
+### Cursor
+
+The second-supported client. Same server, same nine tools, same output — the
+differences are the config file, the scope model, and how Cursor decides to call
+a tool.
+
+Read [Claude Code](#claude-code) first if you have not: the tool reference,
+the five starter questions and the "what not to rely on" list are there and are
+not repeated here.
+
+- [Install](#install)
+- [Verify it worked](#verify-it-worked)
+- [What differs from Claude Code](#what-differs-from-claude-code)
+- [Telling Cursor when to use it](#telling-cursor-when-to-use-it)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+#### Install
+
+Cursor reads MCP servers from a JSON file. Project scope:
+
+**`.cursor/mcp.json`** in the repository root
+
+```json
+{
+  "mcpServers": {
+    "repo2graph": {
+      "command": "uvx",
+      "args": ["--from", "repo2graph[mcp]", "repo2graph-mcp", "/absolute/path/to/project"]
+    }
+  }
+}
+```
+
+For every project, use `~/.cursor/mcp.json` with the same block — but note that
+the path argument pins the server to one repository, so a global entry is only
+useful if you mostly work in one codebase. Otherwise prefer project scope, one
+entry per repo.
+
+The same three failure modes as any MCP client apply, and are worth repeating
+because Cursor surfaces all of them as the same red dot:
+
+- `--from "repo2graph[mcp]"`, not `--from repo2graph` — without the extra the
+  server exits asking for an SDK.
+- An **absolute** path. Cursor launches servers from an unspecified working
+  directory.
+- Valid JSON. A trailing comma in `.cursor/mcp.json` is the single most common
+  cause of "server failed to start".
+
+`repo2graph doctor .` checks all three, and it reads `.cursor/mcp.json` at both
+project and user scope.
+
+### If you committed `.cursor/mcp.json`
+
+An absolute path in a committed config is wrong for every other contributor —
+and on a public repo it leaks your directory layout. Either:
+
+- add `.cursor/mcp.json` to `.gitignore` and let each contributor point it at
+  their own checkout, or
+- commit it with a placeholder path and a line in `CONTRIBUTING.md` telling
+  people to substitute theirs.
+
+There is no repo-relative form that works here; the server needs a real path at
+launch.
+
+#### Verify it worked
+
+Cursor Settings → MCP should list `repo2graph` with its tools. Then in the chat
+panel, with Agent mode on:
+
+> Use repo_map to summarise this repository.
+
+If the tool list is empty, the server did not start. If the tools are listed but
+calls return nothing, the path argument is the usual cause — `repo2graph doctor .`
+validates it.
+
+#### What differs from Claude Code
+
+| | Claude Code | Cursor |
+|---|---|---|
+| Config | `claude mcp add` (CLI) | `.cursor/mcp.json` (hand-edited) |
+| Scope | `--scope local` / `user` / `project` | project file, or `~/.cursor/mcp.json` |
+| Tool invocation | reliably calls tools described in `CLAUDE.md` | needs Agent mode; a plain chat turn may not call tools at all |
+| Steering file | `CLAUDE.md` | `.cursor/rules/*.mdc` |
+| Visible failure | names the server and error | a red dot in Settings → MCP |
+
+The practical consequence: **Cursor needs more explicit steering.** Claude Code
+will follow a prose instruction in `CLAUDE.md` to prefer a tool; Cursor's
+built-in codebase search is good enough that, without a rule, it will often
+answer from its own index and never call repo2graph at all. That is not a
+defect in either tool — but it means the rules file below is load-bearing here
+in a way the `CLAUDE.md` block is not.
+
+#### Telling Cursor when to use it
+
+**`.cursor/rules/repo2graph.mdc`**
+
+```markdown
+---
+description: Prefer repo2graph's graph tools for call-relationship questions
+alwaysApply: true
+---
+
+Cursor's own codebase search is good at "find text like X". It does not model
+call relationships. For those, use the repo2graph MCP tools:
+
+- "what calls this" / "what would break if I change this" -> `repo_neighbours`,
+  passing the `[sym:...]` node id from a previous result.
+- "where is X handled" -> `repo_search`. It returns cited source, not file paths.
+- Blast radius of a symbol -> `repo_blast_radius`, which walks the reverse
+  closure of a node. There is no diff-level tool: that surface was removed.
+
+Quote the `path:line` from the tool output. If the output marks an edge
+`AMBIGUOUS`, report it as uncertain rather than asserting the target.
+
+An absent edge is not proof of an absent call: dynamic dispatch, reflection and
+DI containers produce no edges. Use Cursor's own search for those.
+```
+
+The division of labour that works: **Cursor's semantic search for "find me
+something like this", repo2graph for "what is connected to this".** Framing the
+rule as a split rather than a replacement gets it followed more often, and it is
+also the honest description — `repo_search` runs BM25 as its first step and does
+not claim to beat an embedding index at fuzzy recall.
+
+#### Troubleshooting
+
+Everything in the [Claude Code troubleshooting table](#troubleshooting)
+applies. Cursor-specific:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Tools listed, never called | no rules file, or Agent mode off | add `.cursor/rules/repo2graph.mdc`; enable Agent mode |
+| Works for you, broken for a teammate | absolute path in a committed `.cursor/mcp.json` | gitignore it, or use a documented placeholder |
+| Red dot, no detail | Cursor does not surface the server's stderr | run the command by hand: `uvx --from "repo2graph[mcp]" repo2graph-mcp /path` — the error appears there |
+| Server starts, first call hangs | auto-build on a large repo | pre-build, or add `--async-build` to `args` |
+
+Running the server by hand is the fastest diagnostic Cursor gives you, because
+it shows the stderr the UI hides. A healthy server starts and waits silently on
+stdin; press Ctrl-C.
+
+#### See also
+
+- [Claude Code](#claude-code) — the tool reference and the starter questions
+- [docs/architecture.md](architecture.md) — what the citations and confidence values mean

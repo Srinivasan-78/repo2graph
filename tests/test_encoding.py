@@ -1,7 +1,7 @@
 """Console output must never raise, whatever the platform decided stdout is.
 
 Every historical regression in this project is a Windows encoding bug
-(ISS-06/17/22/27), and they share a shape: code assumes stdout can represent
+, and they share a shape: code assumes stdout can represent
 what it was handed. It usually can. Under a redirected Windows stdout it is a
 cp1252 TextIOWrapper, and under Git Bash a *piped* one carries
 `errors='surrogateescape'` -- which still raises on any character cp1252 lacks
@@ -23,10 +23,10 @@ import pytest
 from repo2graph.events import SAFE_ERRORS, encodable, write_safe
 
 # Characters outside cp1252, each from a different failure report.
-ARROW = "→"  # U+2192, the one that started ISS-17
+ARROW = "→"  # U+2192, the one that started unicode arrow handling
 ACCENT = "é"  # U+00E9, inside cp1252 -- the control case
 CJK = "中"  # U+4E2D, outside every single-byte codec
-LINE_SEP = " "  # the splitlines() hazard from AGENTS.md
+LINE_SEP = " "  # the splitlines() hazard from CONTRIBUTING.md
 LONE_SURROGATE = "\udce9"  # what surrogateescape produces from a stray byte
 
 TRICKY = (ARROW, ACCENT, CJK, LINE_SEP, LONE_SURROGATE)
@@ -80,8 +80,8 @@ class StrictStream(FakeStream):
 # only on the UTF codecs and raises on all four narrow ones.
 #
 # The cost of keeping it is about 0.2s of a 35s suite. The cost of getting it
-# wrong is the bug class AGENTS.md calls the source of every historical
-# regression in this repo (ISS-06/17/22/27), which is why the product is
+# wrong is the bug class CONTRIBUTING.md calls the source of every historical
+# regression in this repo , which is why the product is
 # enumerated rather than sampled.
 @pytest.mark.parametrize("encoding", ["cp1252", "ascii", "utf8", "cp932", "latin-1"])
 @pytest.mark.parametrize(

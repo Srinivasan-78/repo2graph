@@ -388,6 +388,55 @@ def test_a_future_cache_format_is_ignored(tmp_path):
     assert load_parse_cache(out) == {}
 
 
+def test_a_grammar_upgrade_invalidates_the_cache(tmp_path, recorder):
+    """A tree-sitter upgrade must force a full re-parse, not a silent mix.
+
+    `PARSE_CACHE_FORMAT` is bumped by hand and so only ever catches changes to
+    *our* extraction. A grammar upgrade changes what the same bytes parse to
+    while nothing in this repository changes, so the format constant stays put
+    and `--incremental` would reuse every entry for every unmodified file. The
+    index would then be half old-grammar and half new, and
+    `test_incremental_is_byte_identical_to_a_full_rebuild` cannot see it because
+    it never changes grammars mid-run.
+    """
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    build(repo, out)
+    assert load_parse_cache(out), "precondition: the cache is usable before the upgrade"
+
+    path = make_paths(out, "parse.cache.json")[0]
+    data = json.loads(path.read_text(encoding="utf8"))
+    assert data["grammars"], "the cache must record the grammars that produced it"
+    data["grammars"] = data["grammars"] + "+upgraded"
+    path.write_text(json.dumps(data), encoding="utf8")
+
+    assert load_parse_cache(out) == {}
+
+    recorder.calls.clear()
+    build(repo, out, incremental=True)
+    assert len(recorder.calls) == len(FILES), (
+        "every file must be re-parsed after the grammars that produced the cache changed"
+    )
+
+
+def test_a_cache_written_before_grammars_were_keyed_is_ignored(tmp_path):
+    """Entries from an older repo2graph carry no `grammars` key.
+
+    They were produced by a grammar version that was never recorded, so there is
+    no way to tell whether they are reproducible. Absent must read as a miss,
+    not as "no constraint".
+    """
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    build(repo, out)
+    path = make_paths(out, "parse.cache.json")[0]
+    data = json.loads(path.read_text(encoding="utf8"))
+    del data["grammars"]
+    path.write_text(json.dumps(data), encoding="utf8")
+
+    assert load_parse_cache(out) == {}
+
+
 def test_same_bytes_different_language_is_a_cache_miss(tmp_path, recorder):
     """A rename that changes the language must not reuse the old parse.
 
@@ -437,7 +486,7 @@ ALIAS_CALL = (
 def entry_calls(out):
     """The `(src, dst, type, resolution_kind)` tuples `entry` emits on disk."""
     # split("\n"), never splitlines(): U+2028 and friends are legal in a JSONL
-    # payload and would split a record in half (AGENTS.md).
+    # payload and would split a record in half (CONTRIBUTING.md).
     lines = artifact(out, "edges.jsonl").decode("utf8").split("\n")
     edges = [json.loads(ln) for ln in lines if ln.strip()]
     return {

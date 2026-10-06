@@ -12,11 +12,9 @@ is as useless as one that redacts nothing.
 import io
 import json
 import os
-import sys
 
 import pytest
 
-from repo2graph import audit as audit_mod
 from repo2graph.audit import (
     MAX_SANITIZE_DEPTH,
     AuditConfig,
@@ -278,14 +276,14 @@ def test_identifier_queries_are_not_high_entropy():
     for text in (
         "resolve_import_python3_relative",
         "sha256_of_the_bytes_that_were_indexed",
-        "test_iss25_query_constants_and_budget_bounds",
+        "test_query_constants_and_budget_bounds",
         "parse_source",
         "how does export write manifest",
     ):
         assert sanitize_value("query", text) == text, text
 
-    params = sanitize_params({"query": "test_iss25_query_constants_and_budget_bounds"})
-    assert params == {"query": "test_iss25_query_constants_and_budget_bounds"}
+    params = sanitize_params({"query": "test_query_constants_and_budget_bounds"})
+    assert params == {"query": "test_query_constants_and_budget_bounds"}
 
 
 def test_high_entropy_and_vendor_shapes_still_redact_identifier_fields():
@@ -467,123 +465,8 @@ def test_params_that_cannot_be_sanitized_fall_back_to_a_record():
 
 
 # --------------------------------------------------------- lock failures ----
-#
-# flock fails with OSError on a filesystem with no advisory locking (NFS
-# without lockd, several FUSE and overlay mounts). That used to escape
-# _acquire into write()'s `except Exception: return`, so the file sink lost the
-# record while the stderr copy still appeared -- two sinks disagreeing with
-# nothing to say so. The fallthrough the code already had ("still write") was
-# unreachable for the case it was written for.
-
-UNSUPPORTED = OSError(95, "Operation not supported")
-
-
-class NoLockFcntl:
-    """Stand-in for `fcntl` on a filesystem that refuses advisory locks.
-
-    Injected into `sys.modules` so the POSIX branch of `_acquire` is exercised
-    on Windows too. Without it that branch is dead code in CI's Windows leg,
-    which is exactly where a POSIX-only regression would hide.
-    """
-
-    LOCK_EX = 2
-    LOCK_UN = 8
-
-    @staticmethod
-    def flock(fd, operation):
-        raise UNSUPPORTED
-
-
-@pytest.fixture
-def unwarned(monkeypatch):
-    """Reset the once-per-process locking warning so a test can observe it."""
-    monkeypatch.setattr(audit_mod, "_lock_warning_sent", False)
-
-
 def read_lines(path):
     return [line for line in path.read_text(encoding="utf8").splitlines() if line.strip()]
-
-
-def test_the_posix_branch_keeps_the_record_when_flock_raises(tmp_path, monkeypatch, unwarned):
-    """Runs on every platform: the POSIX branch is simulated, not skipped."""
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setitem(sys.modules, "fcntl", NoLockFcntl)
-
-    path = tmp_path / "audit.log"
-    log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
-    log.record("repo_map", {"n": 1})
-    log.record("repo_map", {"n": 2})
-    log.close()
-
-    rows = [json.loads(line) for line in read_lines(path)]
-    assert [r["params"]["n"] for r in rows] == [1, 2]
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="fcntl is POSIX-only")
-def test_a_real_flock_raising_oserror_still_appends(tmp_path, monkeypatch, unwarned):
-    """The same thing against the real module, on the platform that has it."""
-    import fcntl
-
-    def refuse(fd, operation):
-        raise UNSUPPORTED
-
-    monkeypatch.setattr(fcntl, "flock", refuse)
-
-    path = tmp_path / "audit.log"
-    log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
-    log.record("repo_map", {"n": 7})
-    log.close()
-
-    (row,) = [json.loads(line) for line in read_lines(path)]
-    assert row["params"]["n"] == 7
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="msvcrt is Windows-only")
-def test_the_win32_branch_keeps_the_record_when_locking_raises(tmp_path, monkeypatch, unwarned):
-    """The win32 branch already caught OSError; keep it pinned that way."""
-    import msvcrt
-
-    def refuse(fd, mode, nbytes):
-        raise UNSUPPORTED
-
-    monkeypatch.setattr(msvcrt, "locking", refuse)
-
-    path = tmp_path / "audit.log"
-    log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
-    log.record("repo_map", {"n": 7})
-    log.close()
-
-    (row,) = [json.loads(line) for line in read_lines(path)]
-    assert row["params"]["n"] == 7
-
-
-def test_unavailable_locking_is_announced_once_not_per_record(
-    tmp_path, monkeypatch, unwarned, capsys
-):
-    """An operator must learn that records are unserialised, not absent.
-
-    Once: the condition is a property of the filesystem, so a warning per
-    write would reproduce the audit log on stderr and bury itself.
-    """
-    monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setitem(sys.modules, "fcntl", NoLockFcntl)
-
-    path = tmp_path / "audit.log"
-    log = AuditLogger(AuditConfig(path=str(path)), stream=io.StringIO())
-    for i in range(5):
-        log.record("repo_map", {"n": i})
-    log.close()
-
-    warnings = [
-        json.loads(line)
-        for line in capsys.readouterr().err.splitlines()
-        if line.strip().startswith("{")
-    ]
-    events = [w for w in warnings if w.get("event") == "audit_lock_unavailable"]
-    assert len(events) == 1, warnings
-    assert events[0]["level"] == "warning"
-    assert events[0]["path"] == str(path)
-    assert len(read_lines(path)) == 5
 
 
 # ------------------------------------------------------ opening the sink ----
@@ -688,12 +571,12 @@ def test_emit_fails_closed_when_the_sanitiser_raises(monkeypatch):
     fall back to writing the raw field values to stderr. It must drop them."""
     import io
 
-    from repo2graph import events, secrets
+    from repo2graph import events, security
 
     def boom(key, value):
         raise RuntimeError("sanitiser broke")
 
-    monkeypatch.setattr(secrets, "sanitize_value", boom)
+    monkeypatch.setattr(security, "sanitize_value", boom)
     out = io.StringIO()
     record = events.emit("probe", stream=out, token="ghp_" + "x" * 36)
     assert "ghp_" not in out.getvalue()

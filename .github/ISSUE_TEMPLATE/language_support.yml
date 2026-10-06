@@ -14,11 +14,12 @@ body:
         [the README](../../README.md#languages). If yours is already there, this is a bug report
         rather than a request — use **Incorrect or missing graph edge** instead.
 
-        If you'd like to implement it: **[docs/parser-development.md](../../docs/parser-development.md)**
-        is the full guide. A grammar is almost certainly already installed —
-        `tree-sitter-language-pack` is a required dependency and ships ~165 of them — so an addition
-        is usually a `LANG_CFG` entry, an `EXT_LANG` mapping, two tests and a docs row. No parser is
-        written and no grammar is vendored.
+        If you'd like to implement it:
+        **[Adding a language](../../.github/CONTRIBUTING.md#adding-a-language)** is the full guide.
+        A grammar is almost certainly already installed — `tree-sitter-language-pack` is a required
+        dependency and ships ~165 of them — so an addition is usually a `LANG_CFG` entry, an
+        `EXT_LANG` mapping, two tests and a docs row. No parser is written and no grammar is
+        vendored.
 
   - type: input
     id: language

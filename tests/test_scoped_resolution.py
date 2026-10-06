@@ -228,7 +228,7 @@ def test_cli_stats_command_human_readable_and_json(tmp_path: Path, capsys):
     nothing pinned: the original test passed `--format text` explicitly while
     its own name claimed to be testing the default. Bare `stats` printing the
     raw `stats.json` is the pre-PR contract -- there was no `--format` flag
-    before this feature -- and `test_ac27_existing_subcommands_are_untouched`
+    before this feature -- and `test_existing_subcommands_are_untouched`
     in tests/test_rag.py depends on it, as does any caller piping it to jq.
     """
     (tmp_path / "a.py").write_text("def a(): return 1\n", encoding="utf8")
@@ -420,7 +420,7 @@ def test_cli_explain_path_command(tmp_path: Path, capsys):
 # Each of these was written against a reproduced failure, so each is a detector:
 # reverting its fix turns exactly this test red. Edge assertions are literal
 # `(src, dst, kind)` tuples hand-derived from the fixture above them -- never a
-# value the code under test computed (AGENTS.md).
+# value the code under test computed (CONTRIBUTING.md).
 # ==============================================================================
 
 
@@ -1569,3 +1569,105 @@ def test_repo_map_labels_overloads_by_node_key(tmp_path: Path):
     assert "- O.java::O.f (method, in=1)" in called
     assert "- O.java::O.f@L3 (method, in=1)" in called
     assert len(called) == len(set(called))
+
+
+# ==============================================================================
+# Bare calls to builtin *free* functions
+# ==============================================================================
+
+
+def test_bare_builtin_call_is_not_bound_confidently_across_files(tmp_path: Path):
+    """Django regression: `super()` bound to a method named `super` in another file.
+
+    `template/loader_tags.py::BlockNode.super` -- the helper behind
+    `{{ block.super }}` -- collected 1,805 incoming `CALLS` edges at confidence
+    1.0, sourced from `db/models/fields/`, `forms/fields.py` and
+    `db/models/expressions.py`, none of which touch block inheritance. It ranked
+    second in the repo map's most-called list. The untyped-receiver rule could
+    not reach it: that gate requires `receiver == "other"` and a bare `super()`
+    has no receiver at all.
+    """
+    (tmp_path / "loader_tags.py").write_text(
+        "class BlockNode:\n    def super(self):\n        return 'rendered'\n",
+        encoding="utf8",
+    )
+    (tmp_path / "fields.py").write_text(
+        "class CharField:\n    def __init__(self):\n        super().__init__()\n",
+        encoding="utf8",
+    )
+    g = build(tmp_path)
+    edges = _calls_to(g, "BlockNode.super")
+    assert edges, "the in-repo candidate is kept, not dropped"
+    for e in edges:
+        assert e["confidence"] <= graph_mod.UNTYPED_RECEIVER_CONFIDENCE, e
+        assert e["ambiguous"] is True
+        assert e["shadowed_builtin"] is True
+        # It is a bare call, so the receiver-based flag must *not* be set.
+        assert "untyped_receiver" not in e
+    assert g.stats["calls_shadowed_builtin"] == len(edges)
+
+
+def test_a_shadowed_builtin_is_kept_out_of_the_repo_map(tmp_path: Path):
+    """The ranking is the surface the Django defect was visible on."""
+    from repo2graph.edgemeta import counts_as_call
+
+    (tmp_path / "loader_tags.py").write_text(
+        "class BlockNode:\n    def super(self):\n        return 1\n", encoding="utf8"
+    )
+    (tmp_path / "fields.py").write_text(
+        "class F:\n    def __init__(self):\n        super().__init__()\n", encoding="utf8"
+    )
+    g = build(tmp_path)
+    edges = _calls_to(g, "BlockNode.super")
+    assert edges
+    assert not any(counts_as_call(e) for e in edges)
+
+
+def test_a_definition_this_file_owns_still_wins_a_bare_builtin_name(tmp_path: Path):
+    """Shadowing is only a guess *across* files.
+
+    A `filter()` defined in the calling file, or imported into it by name, is
+    what a bare `filter()` there means -- `SCOPED_CALL_KINDS` is exactly that
+    set, which is why the gate reads it rather than the name alone.
+    """
+    (tmp_path / "same_file.py").write_text(
+        "def filter(xs):\n    return xs\n\ndef run():\n    return filter([1])\n",
+        encoding="utf8",
+    )
+    (tmp_path / "util.py").write_text("def sorted(xs):\n    return xs\n", encoding="utf8")
+    (tmp_path / "importer.py").write_text(
+        "from util import sorted\n\ndef go():\n    return sorted([2])\n", encoding="utf8"
+    )
+    g = build(tmp_path)
+    for dst in ("same_file.py::filter", "util.py::sorted"):
+        edges = _calls_to(g, dst)
+        assert edges, dst
+        for e in edges:
+            assert "shadowed_builtin" not in e, (dst, e)
+            assert e["confidence"] == 1.0, (dst, e)
+
+
+def test_a_non_builtin_name_is_unaffected_across_files(tmp_path: Path):
+    """Only names the language defines are demoted; domain names are not."""
+    (tmp_path / "svc.py").write_text("def create_order():\n    return 1\n", encoding="utf8")
+    (tmp_path / "caller.py").write_text("def go():\n    return create_order()\n", encoding="utf8")
+    g = build(tmp_path)
+    edges = _calls_to(g, "svc.py::create_order")
+    assert edges
+    for e in edges:
+        assert "shadowed_builtin" not in e
+        assert e["confidence"] == 1.0
+
+
+def test_a_builtin_name_called_as_a_method_keeps_the_receiver_rule(tmp_path: Path):
+    """`x.copy()` is a method call: the receiver rule owns it, not this one."""
+    (tmp_path / "box.py").write_text(
+        "class Box:\n    def copy(self):\n        return self\n", encoding="utf8"
+    )
+    (tmp_path / "use.py").write_text("def go(d):\n    return d.copy()\n", encoding="utf8")
+    g = build(tmp_path)
+    edges = _calls_to(g, "Box.copy")
+    assert edges
+    for e in edges:
+        assert e["untyped_receiver"] is True
+        assert "shadowed_builtin" not in e

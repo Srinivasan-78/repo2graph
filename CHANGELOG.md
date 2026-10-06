@@ -15,7 +15,120 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
-- **Four new MCP tools**, taking the surface from six to ten
+- **Seeds are ranked on whether a chunk can plausibly hold an answer.** On the held-out 40+40,
+  structural recall 19/25/62% -> 29/60/79% at 2k/4k/8k against grep's 14/21/38, and repo2graph
+  now spends *fewer* tokens than grep reaching it. Lexical 14/24/40% -> 17/29/45% against grep's
+  28/48/59: better, still losing. On the published 35+10 (a regression set, visible while these
+  fixes were made) lexical reads 44/63/80% against grep's 35/61/72% and structural 60/80/100%
+  against 20/20/70%.
+
+  The cause was never parsing or retrieval. Measured on the 35-question set at 8,000 tokens:
+  every one of the 46 evidence definitions was present in some chunk, an oracle packer fit 100%
+  of them inside the budget, and yet **54% of pack tokens went to container chunks**. The
+  chunker emits each method as its own chunk and cuts it from the parent, so Flask's
+  `class Flask` chunk spans lines 81-1536, costs ~1,150 tokens and holds no method body at all
+  -- while ranking highly on almost any Flask question, because a long class docstring names
+  everything the class does.
+
+  Two corrections, applied as a re-rank over `score_rrf`'s output rather than as a change to
+  BM25: RRF maps scores onto `1/(60 + rank)`, nearly flat across the top of the list, so a
+  modest multiplier separates candidates BM25 could not -- without disturbing the lexical
+  scoring `repo2graph query` and the goldens pin. `CONTAINER_SEED_PENALTY` demotes class and
+  file-residual chunks, but only above `CONTAINER_PENALTY_MIN_TOKENS`, because the cost is the
+  problem and a cheap container has none. `NAME_TERM_BOOST` rewards a chunk whose declared name
+  shares content words with the question, capped at two terms and withheld from three kinds of
+  guaranteed non-answer: bulky containers, export aliases, and -- unless the question is about
+  tests -- test definitions, which name the behaviour in the question's own words and so collect
+  the boost more reliably than the implementation does.
+  `pack_context(rerank_answerability=False)` restores the 2.2 ordering.
+
+  Scaling the boost by the *fraction* of query terms a name covers was measured and rejected: it
+  loses 9 of 12 held-out cells. The strong multiplier earns its keep; gating which chunks are
+  eligible for it is what makes it safe.
+
+- **Two held-out sets, holding out different things.**
+  `benchmarks/real/tasks_holdout.json` is 40 lexical questions (plus 40 structural in
+  `tasks_holdout_structural_40.json`) on the same four repositories, so it tests whether a change
+  generalises to questions nobody tuned on. `benchmarks/real/tasks_holdout_repos.json` is 22
+  questions on click 8.1.8 and axios 1.7.9 -- repositories that appear in no other task file, and
+  the suite's only JavaScript -- so it tests whether a change generalises to code it never saw.
+  Every line range was read off the pinned commit before any retriever ran. On the repository set
+  the ranking change moves 67% -> 79% at 4,000 tokens and 71% -> 79% at 8,000, against grep's 58%
+  and 67%, having never seen it; the uncomfortable half of the same table is that graph expansion
+  adds **exactly zero** there at every budget while costing tokens. `bench_real_repos.py` grew a
+  repository-set option of its own (a benchmark script argument, not a `repo2graph` CLI flag), and
+  now drops tasks naming an unindexed repository rather than scoring them missed against an index
+  that cannot hold their evidence.
+  `test_the_benchmark_task_files_stay_disjoint` fails if the two corpora ever share a repository.
+
+- **`tests/test_bench_tables_match_artifacts.py` — published numbers are now machine-checked.**
+  Every benchmark table in `README.md`, `benchmarks/real/README.md` and `docs/comparison.md`
+  carries an HTML-comment marker naming the artifact it was read from, and the test fails if any
+  cell disagrees with that artifact, if a benchmark-shaped table carries no marker, or if a
+  referenced artifact was generated from a dirty tree. It exists because a published table had
+  silently been read off an intermediate artifact two phases old, understating two cells by
+  2.4 pp each and recording a round target as missed by 1 pp when it had passed. The 18 existing
+  doc-consistency tests check that links resolve and command lines parse, not that a number
+  matches the JSON beside it.
+
+  Four ideas were tried and rejected on the evidence, recorded in that page because each looked
+  obviously right beforehand: path-term boosting (worth nothing, slightly negative at 4k),
+  dropping test files from seeds (neutral on the dev set, harmful on the held-out set), raising
+  `k` from 8 to 40 (+2 lexical, but structural falls 100% -> 80% as extra lexical seeds crowd
+  out graph neighbours), and penalising containers by kind with no cost floor (dropped the demo
+  fixture's 91-token `app/store.py` residual, caught by `test_demo.py` rather than by the
+  benchmark).
+
+- **Property-based tests, via `hypothesis` (G57).** `tests/test_properties.py` — 22 properties over
+  UTF-8/surrogate decoding, chunk line slicing, and path normalization, the three areas where
+  hand-written examples kept missing cases because they spell inputs the way the rest of the
+  codebase produces them. Run under a fixed profile (`derandomize=True`, `max_examples=100`,
+  `deadline=None`) so CI cannot go flaky; the properties were first verified at `max_examples=4000`
+  non-derandomized, so the shipped setting is not hiding what the wider search found. Among them,
+  a direct detector for CONTRIBUTING invariant 1: a source with no `\n` is exactly one line however
+  many `U+2028` / `\x0b` / `\x0c` / `\x85` characters it holds, which is precisely what
+  `splitlines()` would get wrong.
+- **`--max-bytes`, `--max-edges` and `--limit-policy truncate|warn` (E40).** `--max-files` bounded
+  discovery, but nothing bounded the two axes that actually decide a build's memory ceiling: total
+  source bytes read, and total edges held. Edge count grows with how interconnected the code is,
+  not with how many files it has, so a repository well under any file count can still produce
+  millions of edges. `--max-bytes` keeps a *prefix* of discovery order rather than skipping an
+  oversized file and continuing — skipping would make which small files are indexed depend on the
+  sizes of files after them, so one large file inserted mid-repository could silently change the
+  tail of the selection. Both ceilings record what they cut under `limits_hit` in `stats.json`,
+  under **both** policies: `truncate` buys silence on stderr and nothing else, because a reader
+  asking "are there really no callers of `f`, or was that edge dropped?" has no other way to tell.
+  `tests/test_resource_limits.py`, including a determinism test pinning that two builds under one
+  ceiling keep the same edges.
+- **A total wall-clock bound on provider streaming, `MAX_ANSWER_SECONDS` (C26b).** `rag --answer`
+  had two bounds and needed three. `HTTP_TIMEOUT` is a *socket* timeout: it measures the gap
+  between reads and resets on every byte that arrives, so a host sending one byte at a time, for
+  ever, never trips it. `MAX_ANSWER_BYTES` bounds total size, but a trickle that stays under the
+  ceiling is never bounded by it either — together they permitted an indefinite hang on a stream
+  that looked well behaved, against an endpoint `OLLAMA_HOST` makes operator-choosable. The
+  stream now also stops after 600s measured on `time.monotonic()`, so an NTP step cannot cut a
+  healthy answer short. `timed_out` is reported separately from `truncated`, with distinct
+  wording: "too slow" and "too much" have different causes and different remedies.
+- **A seventh `doctor` check: `MCP Server`.** An MCP client surfaces a failed SDK preflight only
+  as "server failed to start" or an empty tool list — `server._require_sdk()` raises `SystemExit`
+  with an accurate message and the client swallows it — so a wrong or absent `mcp` SDK was a
+  setup failure users could not diagnose from inside their editor. `doctor` now runs the same
+  gate without launching the server, importing `SDK_SPEC`/`_sdk_version`/`_sdk_major` from
+  `mcp/server.py` rather than restating them, so a doctor that says ok and a server that refuses
+  to start cannot disagree. An absent SDK is a **warning**, not a failure: `repo2graph[mcp]` is an
+  extra and a CLI-only install is supported. It deliberately does not read the client's own
+  configuration (`~/.claude.json`, Cursor's `mcp.json`) — those belong to other tools and
+  `doctor --json` is documented as safe to paste into a bug report; a test enforces that over the
+  module's AST. Index freshness remains deliberately out of `doctor`, owned by `index-status`.
+- **`.github/remediation-tracking.md` and `.github/distribution.md`** — a verified status map for
+  the 60-item security/correctness remediation spec, and the distribution plan with its claims
+  checked against `benchmarks/real/`. They live in `.github/` beside `CONTRIBUTING.md`, **not** in
+  `docs/`: `test_the_shipped_doc_set_is_the_documented_one` pins `docs/` to its five reference
+  pages precisely to keep roadmap trackers and outreach material out of it, and that invariant is
+  worth more than the convenience of putting them there.
+- **Four new MCP tools**, taking the surface from six to ten — and then to **nine**, once
+  `repo_impact` was removed later in this same window (see **Removed**); `docs/mcp.md` is written
+  against the nine that ship
   ([#384](https://github.com/Srinivasan-78/repo2graph/issues/384),
   [#385](https://github.com/Srinivasan-78/repo2graph/issues/385),
   [#386](https://github.com/Srinivasan-78/repo2graph/issues/386),
@@ -33,48 +146,128 @@ makes keeping it current a release-blocking step rather than a good intention.
     path's minimum edge confidence. `CO_CHANGE` is opt-in, never traversed by default.
   - `repo_blast_radius` — reverse reachability: the reverse `CALLS` closure by hop distance,
     reverse `INHERITS`, reverse `IMPORTS` on the containing file, and `CO_CHANGE` files by count.
-    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because `repo_impact`
-    already exists and analyses a PR diff — a different question.
-- **MCP server flags for the HTTP transport's new limits**: `--http-insecure-ok`, `--trust-proxy`,
-  `--trusted-proxies`, and `--rate-limit-requests` / `--rate-limit-window` /
-  `--max-concurrent-requests` / `--max-queue-size` / `--max-concurrent-builds` /
-  `--max-response-bytes`. A `RateLimitConfig` is built only when at least one is passed, so
-  untouched fields keep their single set of defaults rather than a second, driftable copy.
-
+    Named `repo_blast_radius`, not `repo_impact` as issue #387 proposed, because at the time
+    `repo_impact` was taken by the PR-diff analyser — a different question. That tool is gone
+    (see **Removed**), but the name stays: it is the one that was shipped and documented.
 ### Security
 
-- **Rate limiting and concurrency quotas for HTTP MCP**
-  ([#264](https://github.com/Srinivasan-78/repo2graph/issues/264)): a per-client sliding window,
-  a server-wide concurrency semaphore with a bounded queue and bounded wait, an independent
-  build-concurrency gate, and a response-size cap. Client identity comes from the verified auth
-  subject where there is one, so a shared bearer token does not pool every caller into one bucket.
-  Overload answers in the JSON-RPC implementation-defined error range, not as a malformed-request
-  error. The limiter's own identity map is bounded by `max_tracked_clients` — its own knob, since
-  eviction from it is not a throttle: it clears a client's history and grants a fresh allowance.
-- **Content type is validated on `POST`**
-  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `application/json` with
-  optional parameters, case-insensitively. A *missing* Content-Type is refused rather than assumed
-  — `urllib` silently sends `x-www-form-urlencoded` when a caller sets no header, which is exactly
-  the misconfigured client this check exists to catch.
-- **Strict JSON-RPC envelope validation**
-  ([#293](https://github.com/Srinivasan-78/repo2graph/issues/293)): `jsonrpc` version, method type
-  and length, id type and numeric range, params schema, body length, nesting depth, duplicate
-  top-level keys, non-finite JSON constants, and strict UTF-8 decoding. Errors are bounded and
-  structured; no stack trace reaches a caller.
-- **TLS and trusted-proxy rules for remote binds**
-  ([#267](https://github.com/Srinivasan-78/repo2graph/issues/267)): binding non-loopback with
-  authentication configured prints a high-visibility banner and emits an
-  `http_transport_no_tls_termination` event unless explicitly acknowledged — this server does not
-  terminate TLS, so a bearer credential travels in clear without a proxy in front of it.
-  `X-Forwarded-For` is ignored by default and consulted only when `--trust-proxy` is set *and* the
-  immediate peer is in the allowlist, and never for authentication.
-- **`Host` and `Origin` are checked on `GET` and `HEAD`**, not only `POST`
-  ([#372](https://github.com/Srinivasan-78/repo2graph/issues/372)), so a page in the user's browser
-  cannot read the discovery documents or `/healthz` cross-origin. Those stay unauthenticated by
-  necessity — a client must learn how to authenticate before it holds a credential.
-- **RSA keys below 2048 bits, and unbounded public exponents, fail verification**
-  ([#367](https://github.com/Srinivasan-78/repo2graph/issues/367)). Both fail closed exactly as a
-  bad signature does, so a caller cannot tell a weak key from a forged one.
+- **Grammars no longer download themselves at first build.**
+  `tree-sitter-language-pack` is now pinned `>=0.7,<1.0`, and the upper bound is a security
+  boundary rather than a compatibility one. `>=0.7` resolved to 1.x, whose wheel is 2.5 MB and
+  whose sdist is 89 KB: the grammars are not in it, and roughly 21 MB of unsigned native code was
+  fetched from the network on the first `get_parser()` call, into the process holding the user's
+  source and — in CI — their tokens. 0.x compiles every grammar into the wheel (0.13.0 is 33 MB).
+  The 1.x behaviour broke three promises at once: the README's and SECURITY.md's "building,
+  querying and the MCP server make no network calls"; `uv.lock` and the SBOM, which described a
+  loader rather than the code that executes; and the documented read-only container and
+  egress-restricted CI, which simply could not work. 1.x exposes no offline switch —
+  `PackConfig` carries only `cache_dir`, `languages` and `groups`, all pre-*download* controls —
+  so raising the cap means vendoring grammars or dropping the claim.
+  `tests/test_grammar_availability.py::test_language_pack_is_capped_below_1_0` asserts the bound
+  so a dependency bump cannot quietly undo it.
+- **An unloadable grammar now fails the build instead of publishing an empty graph.**
+  `parse_source` answered an unavailable grammar with an empty-but-valid `ParsedFile`, making
+  "the grammar did not load" byte-identical to "this file declares nothing". A build with no
+  working grammars therefore reported `parsed == files`, wrote a graph of files and directories
+  with zero symbols, calls or imports, and exited 0 — and `--incremental` cached that result, so
+  the next build reproduced it without retrying — and every downstream query answered from that
+  empty graph as though the repository really had no callers.
+  `ParsedFile.grammar_unavailable` now records the distinction, `build` raises
+  `ParseError` when supported files were found and no grammar loaded for any of them, and the
+  message names the cause and the fix rather than leaving it looking like an empty repository.
+- **…and the guard above now also holds for files read in slices.** A file over
+  `max_file_bytes` is parsed by `_chunk_and_parse`, which carried `used_cpp` and
+  `undecodable_slices` out of its slice loop but not `grammar_unavailable`, so the assembled
+  `ChunkedParsedFile` inherited the field's `False` default. Such a file was counted in
+  `stats["parsed"]` with zero symbols, and the total-failure check — which fires only on
+  `_unavailable and not parsed` — could never see it. A repository whose only supported sources
+  are large (an amalgamated single-header library, a big generated file) therefore still exited 0
+  with an empty graph, and `--incremental` still cached it: exactly the failure the entry above
+  exists to prevent, reachable through the one code path that did not report the flag.
+  `tests/test_grammar_availability.py` covers the chunked path on both sides — grammar present
+  and grammar gone — with a fixture assertion that the file really exceeds the limit, so the test
+  cannot silently stop exercising the chunked reader.
+- **A credential-shaped *expression* is no longer redacted as a credential.** The unquoted-value
+  rule had an escape hatch for values that are only code, written as
+  `not _json_secret_value_ok(value) and <identifier-shaped>`. The first conjunct cancelled the
+  second for precisely the values the hatch was for: a mixed-case dotted attribute path has
+  lower, upper and — because the dots count as symbol — three of the four character classes, so
+  `_json_secret_value_ok` called it a real credential and the hatch never opened. `const apiKey =
+  process.env.API_KEY;`, `secret = settings.SECRET_KEY` and `api_key = os.environ["API_KEY"]`
+  shipped as `[REDACTED:CREDENTIAL_UNQUOTED]` into chunks, `nodes.jsonl`, `graph.html`, GraphML
+  and Cypher under the default `redact-match` — and since signatures and docstrings now route
+  through `redact_content` too, into five surfaces at once. The shape test (`_CODE_SHAPED_VALUE_RE`)
+  now stands alone. Digits stay out of that class deliberately: every generated credential carries
+  one, so `hunter2xyz`, `s3cr3tValue` and base64 key material still redact.
+
+  A second case fell outside it for that reason — `password = hashlib.sha256(raw).hexdigest()`
+  captured `hashlib.sha256`, which has digits. The value class already excluded `(` on the stated
+  grounds that no credential carries an unquoted paren, but excluding the *character* only
+  truncated the match at the paren instead of rejecting it, so the rule fired on the function name
+  it had just cut. A value sitting immediately before `(` is now read as a callee name. Checked on
+  the following character rather than by admitting digits to the class, which would also admit a
+  dotted high-entropy value such as a bare JWT. `tests/test_secret_coverage_gaps.py`.
+- **`doctor`'s grammar check can now fail.** It reported `len(LANG_CFG)` grammars "configured"
+  and returned `ok`; `LANG_CFG` is a dict literal, so the number was a property of the source
+  code and the check could not detect the thing it was named after. It now calls `parser_for()`
+  for every configured language and reports loaded-versus-configured — `fail` when none load,
+  `warn` when some do not, with the affected languages listed.
+- **`parser_for` no longer lets backend errors escape.** It caught
+  `(LookupError, ValueError, ImportError, AttributeError)`, which covers 0.x. Every 1.x failure —
+  `DownloadError`, `ChecksumMismatchError`, `CacheLockError`, `DynamicLoadError`,
+  `ParserSetupError` — derives from a private base outside that tuple, so offline they propagated
+  instead of answering `None`, and the file was dropped without being counted as unparsed.
+- **Signatures and docstrings are scanned for secrets.** Only chunk *bodies* ever were, so a
+  credential in a docstring or a default argument shipped verbatim in five places at once: the
+  `# doc:` line of every chunk header, `nodes.jsonl`, the JSON payload embedded in `graph.html`,
+  GraphML, and Cypher. Redaction now happens where the two fields enter the graph, which covers
+  all five rather than four, and is line-preserving so citation line numbers are unaffected.
+- **Secrets longer than a chunk no longer escape detection.** Scanning ran per 4,000-character
+  slice *after* splitting, and `_pem_spans` pairs a BEGIN with the next END within the text it is
+  given. A private key straddling the boundary left the first slice matching only its
+  `-----BEGIN ...-----` header and the second — the base64 body and the END line — matching
+  nothing, so under `redact-match` the key shipped almost whole and under `exclude-file` only the
+  slice holding the BEGIN was dropped. The whole body is now scanned before it is split, so
+  `exclude-file` drops the entire symbol rather than one arbitrary slice of it.
+- **Unquoted credential formats are detected.** Both existing rules required a *quoted* value,
+  which missed the three places enterprise credentials actually live: unquoted YAML
+  (`ansible_become_pass: ...`, and the `*_pass`/`pwd` family generally), INI/`.env`/`.properties`
+  (`password=...`), and delimited connection strings (`Password=...;`, JDBC `?password=`, Azure
+  `AccountKey=`, kubeconfig `client-key-data`). The new rule admits bare `pass`, `pwd` and
+  `token` as keys, so it rejects values shaped like identifiers, attribute paths, function calls
+  or placeholders — `token = get_token()` and `password: required` are not credentials.
+- **PGP and SSH2/PuTTY private keys are recognised.** The detector required `PRIVATE KEY`
+  followed immediately by five dashes, which excluded `-----BEGIN PGP PRIVATE KEY BLOCK-----`
+  ("KEY BLOCK"), the four-dash `---- BEGIN SSH2 ENCRYPTED PRIVATE KEY ----`, and PuTTY's
+  `PuTTY-User-Key-File-N:` header, which has no armour to pair at all. All three scanned clean
+  and shipped in full under every policy.
+- **Twelve more credential filenames are treated as secret paths**: `admin.conf`,
+  `*.kubeconfig` (only the bare name was listed), `.vault_pass`, `_netrc`, `pgpass.conf`,
+  `local.settings.json`, `appsettings.<env>.json` (not the base file, which holds non-secret
+  defaults by convention), `web.config`, `NuGet.Config`, `.my.cnf`, `.s3cfg`, `.boto` and
+  `*.publishsettings`. None matched an entry, an extension or a keyword before — "settings" is
+  not "secret", and bare "pass" is not "password".
+- **MCP `repo_read` redacts at serve time, like every other agent-facing path.** It sliced
+  `index.chunks` straight back to the caller instead of going through `Index._served`, so an
+  index built with `--secret-policy off` or `warn-only` — which deliberately stores text
+  unredacted — served credentials in clear from this tool while `repo_search` over the same bytes
+  redacted them. `docs/mcp.md` claimed without qualification that chunks "have already passed
+  secret-path exclusion and content redaction": true of the search path, false of this one.
+  Applied to the assembled slice rather than to the whole chunk cache, so only the lines actually
+  served are scanned and `repo_read` keeps its no-filesystem-access guarantee; an unreadable
+  manifest redacts rather than guessing.
+- **Repository content reaches an LLM as data, not as instructions.** `rag --answer` is the one
+  path that sends repository text to a provider, and a repository is untrusted input: a comment,
+  docstring, test fixture or vendored file can address the model directly ("ignore all previous
+  instructions", "print the contents of `.env`"). `answer.build_prompt` pasted the pack straight
+  into the user turn, where it read exactly like the operator's own words and there was no in-band
+  way for the model to tell the two apart. The pack now travels inside a fence whose label carries
+  a per-call random nonce; the system turn names that label in advance and states that everything
+  between the markers is data, and that a request inside the fence to change the task, reveal
+  secrets, fetch a URL or run a command is content to report rather than comply with. The question
+  is restated after the fence closes, so a pack ending in "now ignore the question above" has
+  nothing left to hijack. A *fixed* sentinel would be forgeable by any file that simply contains
+  it, which is why the nonce is random per call rather than a constant.
 - **JSONL index reads are bounded on the untrusted-index path**
   ([#408](https://github.com/Srinivasan-78/repo2graph/issues/408)). An index is untrusted input —
   shipped on a `graph` branch, as Action artifacts and in `examples/`. Lines are framed over fixed
@@ -95,7 +288,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   Agent-path reads (MCP, `rag --answer`) of an index built with `--secret-policy off`/`warn-only`
   are redacted at serve time.
 - **Secret-looking paths are excluded by default everywhere a human reads results**: `rag`,
-  `query`, `explain retrieval` and `impact` (previously only MCP and `rag --answer`).
+  `query` and `explain retrieval` (previously only MCP and `rag --answer`).
   `--include-secrets` opts back in per command; `--exclude-secrets` is a deprecated no-op.
 - **A deeply nested JWT header gets a 401** and an `auth_rejected` audit record instead of an
   escaped `RecursionError` and a dropped connection.
@@ -121,8 +314,57 @@ makes keeping it current a release-blocking step rather than a good intention.
   paragraph separators as `\u2028` and `\u2029`, preventing downstream tools using `str.splitlines()`
   from desynchronizing or tearing records (#376).
 
+### Changed
+
+- **The dense-vector recommendation is now conditional, because the default caught up.** Through
+  2.2, `repo2graph embed` (the `rag` extra) added recall on both question types. Measured again
+  on the held-out 40+40 after this round's seed ranking, it adds **+12 pp of lexical recall at
+  8,000 tokens and costs 3 pp of structural** -- and 10 pp at 4,000. Nothing about the embedder
+  changed; fusing a diffuse topical signal at equal weight now dilutes a BM25 ranking that
+  structural questions, which name their symbol, had already got right. **Turn vectors on for
+  lexical questions, leave them off for structural ones.** The real fix is to pass the
+  `weights=(w_bm25, w_vec)` that `score_rrf` already accepts and `pack_context` never has, keyed
+  off the question-shape classifier that already exists for expansion direction; that is now a
+  priority rather than the speculative parameter search it looked like before.
+
+- **`DEMO_K` 6 -> 8**, matching `pack_context`'s own default and the MCP server's `repo_search`
+  default, so `repo2graph demo` shows what a caller actually gets. Sharper seed ranking promotes
+  specific function bodies over module-level residuals, which is the point of it, and the effect
+  on the demo was that `app/store.py` -- the module answering the "to persistence" half of the
+  fifth starter question -- fell just past a 6-seed cut. The demo's output grew under 1%, because
+  `DEMO_BUDGET_CHARS` is what binds.
+
 ### Fixed — indexing and call resolution
 
+- **JS/TS export aliases are symbols.** A library that keeps a private implementation behind a
+  public façade binds the public name in a second statement, and neither form produced a node:
+  `export const getQueryParam: (...) = _getQueryParam as (...)` and `export { Hono as HonoBase }`.
+  So the name every consumer writes in its `import` had no symbol, no chunk and no line range, and
+  `hono/src/request.ts`'s `getQueryParam(this.url, key)` named a callee that resolved to nothing.
+  Both forms now yield a symbol of kind `alias` spanning the alias statement's own lines, which is
+  what a citation has to point at. Two boundaries are deliberate: the binding must be *exported*
+  (a file-local `const b = a` renames nothing a consumer can reach), and `export { x as y } from
+  './mod'` is left out, because nothing is defined at that line and a barrel file of re-exports
+  would become dozens of one-line nodes bidding against real definitions. On the held-out
+  structural set this moved recall 36% → 38% at 4k and 69% → 71% at 8k with mean tokens flat,
+  which takes the lead over ripgrep to +16.7pp and +33.3pp — past the +15pp target that round
+  had recorded as missed by a point. `tests/test_export_aliases.py`.
+- **An export alias is never a seed.** Giving aliases nodes (above) also put a *rename* into seed
+  selection, and `export { module as serveStatic }` is the worst possible seed: its name is an
+  exact match for the question, and its body is one line. The single-shot recall tables could not
+  see the cost — all eighteen held-out rows were byte-identical — but the simulated agent loop
+  could: held-out structural went 15/40 → 14/40, losing *"how does the serveStatic middleware
+  decide the Content-Type header"*, whose answer is the 92-line
+  `middleware/serve-static/index.ts`. Scoring aliases down the way test paths are scored down was
+  tried first and moved nothing, because the cost was never the alias's *rank* — seeds are packed
+  in order while `fits()` holds, so at a 2,000-token budget the bigger, better-scoring seeds are
+  rejected one by one and the one-line alias fits in exactly what they could not use. A cheap
+  chunk slipping through a budget that just rejected better ones is not something a multiplier can
+  reach, so `pack_context` now skips alias chunks as seeds outright. It does **not** mark them
+  seen: graph expansion must still reach them, which is where the whole gain above comes from —
+  `utils/url.ts:295-301` enters the pack as `CALLS out of query`, not as a seed. `retrieve()`, the
+  path `repo2graph query` uses, is deliberately untouched. Restores 15/40.
+  `tests/test_alias_seeds.py`.
 - **No definition is silently dropped.** Same-name definitions in one file (overloads,
   conditional redefinitions, nested closures, Rust `struct A` + `impl A`) used to collapse into
   one node, and all but one body vanished from `chunks.jsonl`. The first keeps its id; later ones
@@ -151,22 +393,93 @@ makes keeping it current a release-blocking step rather than a good intention.
   count; everything else counts at confidence ≥ 0.5. Duplicates are labelled by node key.
 - **`cochange_sampled_commits` reports the commits actually read** (a 1-commit shallow clone
   said 50); the request is kept as `cochange_requested_commits`.
+- **A bare call to a builtin *function* no longer binds to a same-named in-repo method at
+  confidence 1.0.** `b98fc46b` priced down builtin *method* names on untyped receivers (`x.get()`),
+  and its gate requires `receiver == "other"` — so a bare call was documented as unaffected, on the
+  reasoning that a bare call to a name the repository defines is probably calling it. That holds for
+  a name the repository owns and not for one the language owns. `super()` was the clearest case: in
+  Django, `template/loader_tags.py::BlockNode.super` — the helper behind `{{ block.super }}` —
+  carried **1,805 incoming `CALLS` edges at confidence 1.0**, sourced from
+  `db/models/fields/__init__.py` (92), `forms/fields.py` (44), `db/models/expressions.py` (36) and
+  other ORM and forms modules that never touch block inheritance. It ranked **second** in that
+  repository's most-called-symbols list, directly under a real result.
+
+  `BUILTIN_FREE_FUNCTIONS` (Python builtins, Go builtins, and the JS/TS globals reached as bare
+  calls) is the companion to `UNTYPED_RECEIVER_BUILTIN_METHODS`, and the new gate fires only when
+  the name resolved **globally**: `edgemeta.SCOPED_CALL_KINDS` is exactly the set of tiers that
+  found the definition in the calling file, its class, a base, or an import by name, and any of
+  those is a real target that happens to shadow a builtin. A project with its own `filter()`,
+  called where it is defined or imported where it is used, is untouched; what is demoted is a
+  cross-file name collision with a builtin, which is a coincidence rather than a call. The edge is
+  kept and flagged `shadowed_builtin`, priced at `UNTYPED_RECEIVER_CONFIDENCE` for the same reason
+  its sibling is — "kept as a possibility, not asserted" — and `edgemeta.counts_as_call` now
+  excludes both flags, which is what removes it from the repo map ranking.
+
+  **Measured before and after on identical harnesses, with the fix stashed for the baseline:
+  recall did not move on any set.** Published 35 + 10, held-out 40 + 40, and the held-out
+  repository set (22 on click and axios) produced **zero** differences in `evidence_recall`,
+  `fully_answered` or `any_evidence`; the held-out repository run was byte-identical. The only
+  deltas anywhere were `mean_tokens_used` shifts from changed confidence annotations — ≤8 tokens on
+  the held-out sets, ≤260 on one published row. The corpus regression gate stayed at 25/25 (100%).
+  So this buys back the repo map's ranking without touching retrieval quality, which is why the
+  committed benchmark artifacts are left as the clean-tree measurements they already are rather
+  than regenerated for sub-token noise. `tests/test_scoped_resolution.py` adds five cases: the
+  cross-file demotion, its exclusion from the ranking, and three guards — a same-file definition,
+  an imported one, and a non-builtin name — that must keep confidence 1.0.
+- **`edges_dropped` counts distinct edges lost, not attempts.** `Graph.add_edge` recorded a key in
+  `_edge_seen` only after the `max_edges` ceiling let the edge through, so an edge the ceiling had
+  already rejected was never remembered and every re-proposal of it was counted again. The number
+  is published in `stats.json` and read as how many edges the graph is missing, so it overstated
+  the loss for any edge discovered more than once — the normal case for `IMPORTS` and `CO_CHANGE`.
+  The key is now recorded before the ceiling test: `_edge_seen` means "already decided", which is
+  what both of its readers want. `tests/test_resource_limits.py` pins the repeat-of-a-dropped-edge
+  path alongside the existing repeat-of-an-added-edge one.
+- **A chunked file's nested definitions keep their real parent.** Re-keying across the slices of an
+  oversized file tracked seen `(name, start_line)` pairs in a set, so a symbol skipped as a
+  duplicate had no entry in the `rekeyed` map. A later child whose `symbol_parent_key` named it
+  then resolved through `rekeyed.get(old_parent, old_parent)` to a slice-local key that no longer
+  existed file-wide, `build` fell back to `owner = fid`, and the child's `DEFINES` edge came from
+  the *file* instead of its parent — silently, in the one case nothing else distinguishes. `seen`
+  is now a dict carrying the winning definition's global key, so a skipped duplicate is still
+  rekeyable.
 - `PARSE_CACHE_FORMAT` is 8; older caches are rebuilt on the next incremental build.
 
-### Fixed — CLI, MCP and impact
+### Fixed — retrieval and budgets
+
+- **`conditional_expansion` works on the hybrid path.** `is_lexical_weak`'s floors are absolute
+  BM25 magnitudes (`min_top_score=18.0`), but both callers handed it `score_rrf`'s output. With
+  vectors or an embedder supplied, those are reciprocal-rank scores — `w/(60 + rank)`, about 0.016
+  at rank 1 — so `top_score` sat below every floor and the answer was unconditionally "weak".
+  Expansion suppression therefore did nothing at all whenever dense retrieval was in play, while
+  working as documented on the lexical path: a silent difference in behaviour between the two.
+  `Index._lexical_for_weakness` now re-scores lexically for that test, and returns the ranking
+  unchanged when there is nothing fused to undo, so the lexical path does not score twice. The
+  docstring states the precondition the floors imply.
+- **`retrieve`'s character budget measures what it serves.** The headroom test read the *stored*
+  chunk length while `used` accumulated the *served* one, and `redact_content` replaces a secret
+  with a longer `[REDACTED:…]` marker, so `budget_chars` was overshot by the growth of every
+  redacted chunk, cumulatively. Redaction now happens before the measurement, as it already did in
+  `pack_context`. `tests/test_budget.py` checks the served bytes against four budgets, with a
+  fixture guard asserting the chunks really do grow under redaction — otherwise the budget
+  assertion would pass for the wrong reason.
+- **A question can ask about tests *and* ask a direction.** The test-seed penalty and the
+  answerability boost both read `classify_query`, which returns one label and tests the caller
+  patterns first — and `(what|who|which)\s+(\w+\s+){0,3}?uses?` claims "which tests use the
+  parser" before the test patterns are reached. The shape came back `callers`, so the 0.6 penalty
+  fired on exactly the chunks such a question asks for and the name boost was withheld from them.
+  "What tests cover X" escaped only because `cover` is not in the verb list. Reordering the two
+  loops would have traded the bug the other way, since `\btests?\b` also matches "what calls the
+  test runner". The two questions are independent and are now asked separately: the new
+  `asks_about_tests` drives the penalty and the boost, `classify_query` still drives the direction
+  filter, so "which tests use the parser" gets both. `tests/test_test_path_seeds.py`.
+
+### Fixed — CLI and MCP
 
 - **`build . -o .r2g` never indexes its own output**, nor any directory holding a repo2graph
   manifest; `explain-path` gained `-o/--out` and reports the same rule.
 - **MCP tools return `isError: true`** for missing/blank queries, unknown node ids, unknown
-  tools, git failures, bad diffs and bad `repo_build_status` ids. Out-of-range numbers are
+  tools, git failures and bad `repo_build_status` ids. Out-of-range numbers are
   clamped with a one-line `_note:`; non-finite JSON numbers (`1e999`) are treated as bad input.
-- **MCP `repo_impact` compares the working tree by default**, resolves git from the indexed repo
-  rather than the server's cwd, supports `format: "sarif"`, and passes git's own error through.
-- **`impact` scores what can break.** "Signature changed" means a substantive edit on the
-  definition line(s); a changed line is charged to its innermost symbol; a comment- or
-  blank-only edit changes no symbol and impacts no importer (a `# note` in a busy Flask function
-  was HIGH 40, now LOW 0); body-only changes weigh direct callers at 1 rather than 3. Text that is
-  not a unified diff is an error, not LOW RISK.
 - **Freshness is right for indexes outside the repo** (`index-status`/`doctor` use the recorded
   source root) and for `repo2graph github` builds (reported as not checkable, with the right
   refresh command).
@@ -174,11 +487,81 @@ makes keeping it current a release-blocking step rather than a good intention.
   `PYTHONIOENCODING` is respected).
 - **A compressed `rag` neighbour cites the lines it shows** (`[excerpt of A-B]`, `excerpt_of`
   in JSON).
+- **`repo_read` serves the lines it cites.** `_chunk_body_lines` derived the generated header's
+  length by subtracting the citation range from the line count, which is off by one for every
+  non-final part of a split chunk: such a part ends with its last body line's newline, so
+  `split("\n")` yields a trailing `""` that is not a body line, and the window started a line
+  late. `repo_read("m.py", 1, 3)` answered with lines 2–4 under a citation that said 1–3, dropping
+  the `def` of a long symbol — in the one tool an agent uses to go and *verify* a citation. The
+  range was never a reliable line count anyway: an over-long line is cut into several parts that
+  all sit on one source line, and redaction can change the count. The header is now measured by its
+  own shape via `_header_len`, the same way `query._excerpt_record` reads it. The chunk records
+  were already correct, which is why the chunk-level fidelity tests could not see this;
+  `tests/test_cite_fidelity.py` now asserts the invariant through the tool, across part boundaries
+  rather than only inside the first part, where the shift was smallest.
 - **`demo` question 4 shows the direct caller** via `explain node`.
-- Smaller: `rag`/`query` accept `--min-confidence`, `explain`/`impact` accept `--min-conf`;
-  `explain retrieval` defaults to `-k 8` like `rag`; `impact` hints at `--base` when `main` is
-  missing; `doctor` lists the files with parse errors; `embed --verify-rag` reports
-  `rag_extra_installed` as a boolean.
+- Smaller: `rag`/`query` accept `--min-confidence`, `explain` accepts `--min-conf`;
+  `explain retrieval` defaults to `-k 8` like `rag`; `doctor` lists the files with parse
+  errors; `embed --verify-rag` reports `rag_extra_installed` as a boolean.
+
+### Removed
+
+- **`impact`, `repo_impact`, and the PR-impact workflow.** The diff-analysis surface is gone:
+  `repo2graph/impact.py`, the `impact` CLI command, the `repo_impact` MCP tool and its schema,
+  `.github/workflows/pr-impact.yml`, and the `pr-impact` inputs and outputs of the Action. With it
+  go the `--base`, `--head`, `--diff`, `--max-depth`, `--min-conf`, `--fail-on` and `--write` flags
+  of that command, and the `impact-analysis` PyPI keyword, which was still advertising the removed
+  surface on the project's listing page.
+
+  This narrows the project to one thing: retrieval. The measurements that prompted it are in
+  `benchmarks/real/` — the graph earns its keep in retrieval (on 40 held-out structural questions
+  it adds 26 pp over lexical search alone at an 8,000-token budget, and beats ripgrep at every
+  budget), whereas the diff surface was never measured at all and had drifted from its own
+  documentation: it never traversed `INHERITS` or `CO_CHANGE`, both of which the README and
+  `docs/comparison.md` described it as reporting.
+
+  **`CO_CHANGE` edges are unaffected.** They are built by `graph.py`, are still in every index,
+  and are still followed during retrieval expansion. Only the diff report that never read them is
+  gone.
+
+  Migration: there is none in-tree. A PR blast-radius check can be rebuilt on `repo_blast_radius`,
+  which survives because it answers a graph question rather than a diff question.
+
+- **The retrieval mode knobs.** Choosing a retrieval configuration is no longer a caller's job.
+  Measured on 40 held-out lexical and 40 held-out structural questions, in both the BM25 and the
+  dense configuration, none of these settings has a regime where it wins — the numbers are in
+  [`benchmarks/real/results_holdout_knobs.json`](benchmarks/real/results_holdout_knobs.json).
+
+  Two surfaces, with different compatibility stories:
+
+  - **Over MCP, the `neighbours` and `max_neighbours` parameters of `repo_search` are gone.**
+    They were advertised in the tool schema and are no longer accepted.
+  - **On the CLI, `--neighbours`/`--neighbors`, `--conditional-expansion` and
+    `--precision-first` are retired no-ops.** They still parse, so no existing command line
+    breaks, and setting one emits a `retired_flag_ignored` warning explaining that the tool now
+    decides. They do nothing.
+
+  `--neighbours=cite` is worse than the default everywhere (dense rows, 2k/4k/8k: −1/−8/−19 pp
+  lexical and −3/−10/−31 pp structural) and, more decisively, it is *dominated* by turning graph
+  expansion off altogether: at 8,000 tokens it returns 38% lexical / 45% structural for
+  5,307 / 4,396 mean tokens, against 40% / 50% for 5,083 / 4,475. Citation mode's only claim was
+  token economy, and it does not hold it on the lexical set. This is the mode the README
+  advertised as the opt-in that wins the lexical table — which it did win, on the 35 published
+  questions it was diagnosed against.
+
+  `--conditional-expansion` is an exact no-op with dense vectors — identical recall *and*
+  identical mean token counts at all three budgets — and costs 17 pp of structural recall at 8k
+  without them (52% against the default's 69%). Useless or harmful, never right. It gates
+  expansion on BM25 confidence, and a structural question names its symbol, so BM25 looks
+  confident and the graph is skipped on exactly the questions it exists for. Its verdict had
+  flipped twice on underpowered question sets before the 40-task set settled it.
+
+  `--precision-first` was only ever exercised alongside citation mode and has no independent
+  measurement, so it goes with it.
+
+  All of them survive as internal keyword arguments to `pack_context`, which is what keeps the
+  ablation rows above reproducible. What is gone is the choice presented to a caller: the tool
+  decides, because every measured setting of these knobs was worse than letting it.
 
 ### Fixed — MCP SDK, staleness and annotations
 
@@ -224,6 +607,195 @@ makes keeping it current a release-blocking step rather than a good intention.
   ([#345](https://github.com/Srinivasan-78/repo2graph/issues/345)) when `measure is len`, with
   byte-identical output and unchanged semantics for an arbitrary `measure`.
 
+### Known issues
+
+- **`explain-path` misreports a filename-rule verdict for a path spelled with a trailing `..`,
+  on Windows.** Found by the new property tests and left unfixed deliberately, pinned by a strict
+  platform-conditional xfail so a fix cannot land unnoticed. `parse.explain_path` normalizes only
+  the *parent* of its target (`target_path.parent.resolve() / target_path.name`), so a trailing
+  `..` survives into the relative path every later rule is matched against. On Windows the Win32
+  API collapses `..` lexically before the stat, so the existence check succeeds against the
+  different file the path actually names. With a `.env` in the root, `explain-path .env` correctly
+  answers `secret_file`, while `explain-path .env/src/..` answers `included`.
+
+  **This is a wrong answer from the diagnostic, not an indexing leak.** `discover()` never produces
+  that spelling and the build path still excludes the file — verified: a build of a tree containing
+  `.env` indexes only the source file. It also fails in the conservative direction, claiming a
+  credential file *would* be indexed when it would not. Not reachable on POSIX, where `stat` is
+  physical and `.env/src` is `ENOTDIR`.
+
+### Fixed — repository tooling and stale references
+
+- **All five examples regenerated on 2.2.0, and they now say which analyser produced them.** Each
+  `examples/<id>/README.md` recorded the upstream commit it indexed but not the repo2graph version
+  that did the indexing — and all five were still **1.6.0** output. A pinned commit fixes the
+  *source* and says nothing about the *analyser*, so two minor versions of call-resolution changes
+  left the published figures describing behaviour the package no longer has. It was plainly visible
+  in the committed `overview.md` files, and regenerating is what proves the fix rather than asserts
+  it:
+
+  | most-called symbols, rank 1 | 1.6.0 | 2.2.0 |
+  |---|---|---|
+  | Kubernetes | `active_queue.go::len` (in=1386) | `wrappers.go::MakePod` (in=361) |
+  | VS Code | `DisposableMap.get` (in=5397) | `nls.ts::localize` (in=4233) |
+  | Django | `SessionStore.create` (in=2141) | `SimpleTestCase.assertRaisesMessage` (in=1941) |
+  | TensorFlow | `DataTypeSet.size` (in=597) | `constant_op.py::constant` (in=1066) |
+
+  Every 1.6.0 leader is a collection or builtin method name — Go's `len`/`append`, a TypeScript map
+  `.get`, five separate Django `.create` methods at ~2,140 each — fanned out across every
+  same-named in-repo definition. That is exactly the `b98fc46b` fan-out, and Kubernetes now has
+  zero bare builtins in its ranking where it previously held the top seven slots. The replacements
+  are real hot functions, which is what a repo map is for.
+
+  `scripts/generate_examples.py` already captured `R2G_VERSION` for `results.json`; its README
+  template simply never printed it, which is why the staleness had no visible marker. The template
+  now emits the version beside the commit and explains why both halves are load-bearing. New
+  figures, all five at 2.2.0: Django 56,074 nodes / 301,017 edges, Kubernetes 15,174 / 117,066,
+  TensorFlow 24,730 / 145,790, VS Code 114,070 / 664,312, Linux 185,496 / 310,854 — `results.json`
+  and `examples/README.md`'s table carry the same numbers.
+- **Each example page described five uncommitted files as if they shipped.** The generator's
+  README template listed `nodes.jsonl.gz`, `edges.jsonl.gz`, `graph.html`, `manifest.json`,
+  `stats.json` and `flows/` under "Generated graph" and named only `chunks.jsonl` as not committed
+  — true before `4e96b628`, wrong after it, and flatly contradicted by `examples/README.md`, which
+  says only `README.md` and `overview.md` are committed. Three places pointed a reader at `flows/`
+  for "each query's real results", and a clone has no `flows/` directory to look in. The section now
+  leads with what is committed and frames the rest as what the generator writes locally;
+  `chunks.jsonl` is described as discarded rather than merely uncommitted, which is what step 4 of
+  the pipeline actually does with it.
+- **The purged example artifacts had nothing stopping them coming back.** `4e96b628` removed ~28 MB
+  of generated graphs from `examples/<id>/` and left only `README.md` and `overview.md` committed,
+  but no ignore rule matched them, so any `git add -A` after a regeneration would have re-added
+  `nodes.jsonl.gz`, `edges.jsonl.gz`, `graph.html`, `manifest.json`, `metadata.json`, `stats.json`
+  and `flows/` — 11.4 MB on this round alone. They are now ignored by name rather than by a negated
+  glob, which would also have swallowed a future hand-written page.
+- **`docs/architecture.md`'s module table was stale in 26 of 36 rows.** Sizes are prose that no test
+  checks, and they had drifted badly: `query.py` read 1,039 against an actual 1,620, `doctor.py` 254
+  against 382, `graph.py` 2,117 against 2,333. Every row is now recomputed, `doctor.py` moved to
+  keep the Support table in descending order, and the `mcp/` total corrected to 2,387.
+- **`benchmarks/README.md` described the retrieval benchmark as it was two rounds ago** — "35
+  lexical and 10 cross-file structural questions about four pinned third-party repositories" — when
+  `real/` had grown the two held-out sets and two more repositories. The index page now carries the
+  same three-set table as `real/README.md` (35/40/22 lexical, 10/40 structural; click and axios in
+  the held-out repository set) and repeats the instruction to quote the held-out numbers, so the
+  summary cannot imply a smaller, easier benchmark than the one that ran.
+- **The changelog flag guard was running against a dead subcommand.**
+  `test_unreleased_changelog_does_not_advertise_flags_that_do_not_exist` builds its set of real
+  flags by running `repo2graph <cmd> --help` for each name in `_CLI_COMMANDS`, a deliberately
+  hand-maintained tuple — and it still listed `impact`. That invocation exits as `invalid choice: 'impact'` and
+  contributes nothing, so the guard ran against a set missing a command's worth of flags while
+  printing an argparse error into every test run. The entry is removed; the tuple stays explicit,
+  for the reason its own comment gives.
+- **A test comment pointed at a file deleted with the translations.**
+  `tests/test_doc_consistency.py` explained that `LANGUAGE_TOKENS` sits at module level so
+  `tests/test_i18n_consistency.py` could reuse it against the five translated READMEs. Both that
+  test and `docs/i18n/README_{de,es,fr,ja,zh-CN}.md` were removed in `b98fc46b`; the mapping now has
+  exactly one reader and guards `README.md` alone. The comment says so, keeping the reason the
+  mapping was shared in the first place — the language list had drifted in all six files at once.
+- **The unreleased notes claimed ten MCP tools while `docs/mcp.md` documented nine.** `repo_impact`
+  was removed later in the same window, so "taking the surface from six to ten" was true of the
+  addition and false of the release; it now states the net. The `impact-analysis` PyPI keyword went
+  with it.
+- **The incremental parse cache survived a grammar upgrade (E43).** `PARSE_CACHE_FORMAT` is bumped
+  by hand, so it catches every change to *our* extraction and none to the grammars that feed it. A
+  tree-sitter upgrade changes what the same bytes parse to while nothing in this repository
+  changes — so `--incremental` reused every entry for every unmodified file, and the resulting
+  index was a silent mix of two grammar versions that no full rebuild could reproduce.
+  `test_incremental_is_byte_identical_to_a_full_rebuild` cannot see this because it never changes
+  grammars mid-run. `parse.grammar_fingerprint()` now records the installed `tree-sitter` and
+  `tree-sitter-language-pack` versions in `parse.cache.json`, and a mismatch discards the cache the
+  same way a format bump does. A cache written before the field existed has no `grammars` key and
+  so can never match, which is the intended outcome: it was produced by an unknown grammar version.
+- **The language scorecard credited C with 123 tests.** The test-coverage column matched
+  `f"test_{lang}" in name`, which for `c` is true of `test_cli_*`, `test_cache_*` and
+  `test_citation_*` — every one of them counted, and the number was published in a table. Matching
+  now requires the language as a whole `_`-delimited token, which takes C from 123 to 1.
+- **Nothing asserted the removed HTTP/OIDC surface stays removed.** `647e76f3` deleted `auth.py`,
+  `http_server.py` and ten flags, but no test referenced any of them, so a reintroduction would
+  have been invisible to CI. `tests/test_http_surface_removed.py` covers all three layers. Worth
+  recording how it is written: an exit-status assertion alone is **not** a detector here —
+  re-adding one of the deleted value-taking options still exits 2, because argparse then reports
+  "expected one argument" instead of "unrecognized arguments". The primary check introspects the
+  registered options across
+  the top-level parser and every subparser; the behavioural test passes a value so a value-taking
+  reintroduction cannot pass either. The import scan walks `ast.Import`/`ast.ImportFrom` rather
+  than matching substrings, so `security.py`'s literal `"jwt"` secret pattern does not trip it.
+- **Two issue templates were deleted while everything kept routing people to them.**
+  `81bf24d5` removed the five per-category templates; `bug_report.yml` still told edge reports to
+  use *Incorrect or missing graph edge*, `feature_request.yml` still redirected language requests
+  to *Language / parser support*, and `CONTRIBUTING.md`'s "Where does this go?" table still listed
+  both. `bugreport.py` went further and claimed its five `CATEGORIES` paired with the templates
+  "one-to-one", asserted by a `tests/test_bugreport.py` that did not exist. Both templates are
+  restored (their links repointed at the docs that survived consolidation), the remaining three
+  categories are the dropdown on `bug_report.yml`, and `tests/test_bugreport.py` now exists: it
+  checks every category is offered somewhere, every template named in prose declares that name,
+  and every relative link out of a template resolves. The third caught a real `../../../` in
+  `feature_request.yml`, which rendered as a 404.
+- **`scripts/generate_language_scorecard.py` shipped with no consumer.** Nothing in `docs/`,
+  `README.md` or CI referenced it, and its own docstring pointed at a
+  `docs/LANGUAGE_SCORECARD.json` that was never committed — so the one artefact answering "how
+  well is *my* language supported" existed only as a script nobody ran. Its table is now
+  `docs/architecture.md` §4, between `BEGIN/END GENERATED` markers, with the priority order for
+  deep support and an explicit note on which columns are judgement rather than measurement.
+  Scores are read off `LANG_CFG`, so adding a language moves them:
+  `test_language_scorecard_matches_the_generator` fails until the table is regenerated, and the
+  §6 documentation checklist says so.
+- **CONTRIBUTING §7 promised measured C/C++ parse-error rates that no longer existed.** The link
+  pointed at `architecture.md`, which names no such rates after the consolidation. It now says
+  plainly that the macro penalty is a judgement call and that nothing here measures per-language
+  `parse_errors` across real code.
+- **Three of the five synthetic corpus archetypes, and 15 of its 25 tasks, were gone.**
+  `4e96b628` removed `ts_app/`, `python_backend/` and `modular_monolith/` with no stated reason,
+  leaving the regression gate covering TSX and dynamic-Python only — no TypeScript service, no
+  layered Python backend, no cross-domain monolith. All three are restored with their tasks; the
+  gate runs 25 again across 5 archetypes. `benchmarks/corpus/README.md` keeps its "regression
+  gate, not a benchmark" framing and does **not** reinstate the withdrawn ripgrep comparison.
+- **`make typecheck` failed outright once the `rag` extra was installed.** numpy's bundled stubs
+  use PEP 695 `type` statements, which mypy refuses to parse under `python_version = "3.10"`:
+  it reported a syntax error inside `numpy/__init__.pyi` and stopped, "errors prevented further
+  checking", without checking a line of this package. CI never saw it because CI does not install
+  `[rag]` — but `make install` does, so every contributor who followed the documented setup had a
+  broken typecheck target. numpy's stubs are now excluded with `follow_imports = "skip"`
+  (`silent` still parses the file); `python_version` stays at the declared `requires-python`
+  floor rather than being raised to paper over it. The package itself was already clean: 39 files,
+  no errors.
+- **`prod-igy` stopped applying two area labels, silently.** `detectAreas` matched
+  `repo2graph/mcp.py` after that module became the `repo2graph/mcp/` package (`c8c20bdb`) and
+  `repo2graph/walker.py` after that shim was deleted (`8ef6d006`), so `area/mcp` and `area/walker`
+  could never be applied again and the MCP argument-guardrail reminder never fired on an MCP PR.
+  The area test asserted the stale path strings, which is what kept it quiet;
+  `test_prod_igy_area_patterns_name_paths_that_exist` now checks every `repo2graph/...` pattern
+  against the filesystem, so the next rename fails in CI instead.
+- **`prod-igy`'s PR checklist cited `AGENTS.md`**, removed in `58c1f833` when the technical
+  invariants moved into `CONTRIBUTING.md`. Every rule now names the CONTRIBUTING invariant it
+  comes from, and `checkAgentsRules` is `checkRepositoryInvariants`.
+- **`pre-commit run --all-files` broke the test suite on an unmodified tree.** `end-of-file-fixer`
+  stripped two trailing newlines from `tests/golden/rag_markdown.md`, which
+  `test_rag_markdown_is_byte_identical_to_baseline` and
+  `test_no_vectors_matches_the_baseline_golden` compare byte-for-byte against real program output.
+  The same hooks rewrote `examples/*/overview.md` (generated: `export.write_overview` writes no
+  trailing newline) and `benchmarks/corpus/` (parser input for the regression gate) on every run.
+  All three are now excluded, with the reasoning in the config.
+- **`CONTRIBUTING.md` told maintainers a tag push publishes a release.** `publish.yml` is
+  `workflow_dispatch`-only and deliberately so — its own header records that the `push: tags:` and
+  `release:` triggers made every release re-trigger itself twice, which the PyPI job tolerated and
+  the MCP Registry job did not. The documented "local bump + tag push" route therefore published
+  nothing, and recovering by dispatching would have bumped a second time. It is now one route, and
+  the local bump is documented as the dry run it has to be.
+- **Doc references that the four-document consolidation left pointing at the wrong file.**
+  `architecture.md` had been substituted for `README.md` where the text means the package
+  description setuptools reads, the `mcp-name` ownership marker, the language list
+  `test_languages_documented` actually asserts against, and the "What it can't do" section; and for
+  `docs/comparison.md` where it means the "Languages parsed for symbols" count. Also
+  `docs/CONTRIBUTING.md` → `.github/CONTRIBUTING.md` in six places, `npm/architecture.md` →
+  `npm/README.md` for the launcher resolution order (the old target documents no such thing), and
+  the remaining `repo2graph/mcp.py` paths.
+- **`examples/` documented an artifact set that is no longer committed.** `README.md` described
+  eight files per example plus a full `metadata.json` schema, and `ATTRIBUTIONS.md` recorded each
+  repository's analyzed commit as living in that file; the graph artifacts were purged in
+  `4e96b628` and only `README.md` and `overview.md` remain. Provenance now points at each example's
+  own "Revision" heading, which is where it is. This matters most in `ATTRIBUTIONS.md`, which makes
+  claims about what is redistributed.
+
 ### Changed
 
 - **The HTTP transport advertises the protocol revision it actually implements**
@@ -254,10 +826,46 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Removed
 
+- **The HTTP MCP transport and the bespoke OIDC/JWT auth engine** (`repo2graph/http_server.py`,
+  `repo2graph/auth.py`, `647e76f3`). **This is a breaking change for anyone who ran the 2.2.0
+  server over HTTP.** `repo2graph-mcp` is now stdio-only, which is what every supported client
+  (Claude Code, Claude Desktop, Cursor) actually uses.
+
+  Gone with it, all of which `repo2graph-mcp` accepted in 2.2.0: `--http-only`, `--http-host`,
+  `--http-port`, `--http-allow-hosts`, `--well-known-port`, `--auth-token`, `--auth-oidc-issuer`,
+  `--auth-audience`, `--auth-jwks-ttl`, `--auth-cimd`, and the `/healthz` and OIDC discovery
+  endpoints. `--allow-auto-build` went too — auto-build is the default on stdio and `--no-auto-build`
+  remains the way to turn it off. Passing any removed flag now fails as an unknown argument.
+  `--out`, `--no-auto-build`, `--async-build`, `--cache-size`, `--cache-ttl`, `--audit-log`,
+  `--audit-log-level` and `--audit-log-fsync` are unchanged.
+
+  **Migration.** Point your client at the stdio command instead — `uvx --from
+  "repo2graph[mcp]" repo2graph-mcp .`, per [docs/mcp.md](docs/mcp.md). Stdio inherits the parent
+  process's identity, so bearer-token and OIDC configuration has nothing left to guard and is
+  simply dropped rather than replaced. The per-request output ceilings in `mcp/guardrails.py` are
+  unchanged and still enforced on every tool call. If you genuinely need a network-reachable MCP
+  endpoint, put a maintained MCP HTTP gateway in front of the stdio server rather than relying on
+  this project to terminate TLS — which it never did.
+
+  Why: ~4,000 lines of security-critical network and crypto code (hand-rolled RSA/JWT
+  verification, JWKS refresh, forwarded-header trust, rate limiting) served a transport no
+  supported client requested, and every line of it was a liability that stdio does not have.
 - Agent run logs (`DONE.md`, `docs/BUILD_STATE*.md`, `docs/remediation-tracking.md`), now
   gitignored; internal and outreach material (`docs/distribution/`, `docs/positioning.md`,
   `docs/PRODUCTION_READINESS.md`, a dated issue-triage dump, an internal test plan); the root
   `SECURITY.md` stub; the five translated READMEs and their drift test. All remain in git history.
+- `benchmarks/results_v2.json` — a `repo2graph` 1.6.0 run against `ts_app/`, `python_backend/` and
+  `modular_monolith/`, the three corpora deleted in `4e96b628`. No script, workflow or README
+  referenced it, and `benchmark_runner.py` now hard-fails on a task naming a corpus that is not
+  there, so it could not be regenerated as it stood. In git history.
+- The shipped rows and stale prose from `CONTRIBUTING.md`'s backlog. Every entry was re-checked
+  against the code: the SBOM step, `MAX_COCHANGE_BYTES`, `attestations: true`, the MCP 2.x port,
+  coverage measurement, the `jobs=1` auto-build pool pin and the above-`PARALLEL_MIN_FILES`
+  fixture had all landed. The design rationale for the incremental rebuild moved to
+  `docs/architecture.md` §3 rather than being dropped — it is shipped behaviour, not backlog.
+- `parse._receiver_kind`, dead since `_receiver_meta` took over receiver classification; it called
+  `_classify_receiver` with too few arguments to do what that function now does. Its docstring,
+  which documented the `none`/`self`/`other` semantics, moved onto `_classify_receiver` itself.
 
 ## [2.2.0] — 2026-09-26
 
@@ -580,7 +1188,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   container injected) and **stale indexes** (the index is a snapshot, nothing
   watches the filesystem, and `repo2graph doctor` checks index integrity and
   vector drift — not whether your working tree moved on). `docs/why-graph.md`
-  gained an embedding-search section; `docs/README.md`'s "when to use" bullets
+  gained an embedding-search section; `docs/architecture.md`'s "when to use" bullets
   became a persona routing table.
 - **The parsed-grammar count is 17 everywhere.** `docs/comparison.md` said 15 in
   two places, the README's comparison table said 16, and all five translated
@@ -657,7 +1265,7 @@ makes keeping it current a release-blocking step rather than a good intention.
   `evidence` at all. `docs/OUTPUT_SCHEMA.md` separately claimed the MCP tools return per-result
   `path`/`start_line` fields -- they return markdown strings. Both corrected, and
   `tests/test_doc_consistency.py` now fails if the two pages disagree about the standard fields.
-- **Four new docs were unreachable from `docs/README.md`**, along with `docs/ACTION_SECURITY.md`,
+- **Four new docs were unreachable from `docs/architecture.md`**, along with `docs/ACTION_SECURITY.md`,
   which predates this work. A doc nobody can reach from the index is a doc nobody reads; a test
   now enumerates `docs/*.md` and fails on any page that is neither linked nor explicitly marked a
   working note.
@@ -1241,11 +1849,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   `pull_request`-from-fork runs.
 - A whole-repository security audit — architecture, threat model, trust
   boundaries and a prioritized findings list with evidence — is at
-  [docs/SECURITY-AUDIT.md](docs/SECURITY-AUDIT.md). See also
+  `docs/SECURITY-AUDIT.md`. See also
   `docs/PRODUCTION_READINESS.md` (since removed),
-  [docs/PERFORMANCE.md](docs/PERFORMANCE.md),
-  [docs/PRIVACY.md](docs/PRIVACY.md) and
-  [docs/ENTERPRISE_DEPLOYMENT.md](docs/ENTERPRISE_DEPLOYMENT.md) (all new).
+  `docs/PERFORMANCE.md`,
+  `docs/PRIVACY.md` and
+  `docs/ENTERPRISE_DEPLOYMENT.md` (all new).
 
 ## [1.5.1] — 2026-09-16
 

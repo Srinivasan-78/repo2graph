@@ -1,4 +1,4 @@
-"""Change 4 -- budget in tokens, not characters. AC-22 .. AC-25.
+"""Change 4 -- budget in tokens, not characters. verification.
 
 No score, rank or float comparison is asserted anywhere here; every assertion
 is a length, a key or an equality between two runs of the same code.
@@ -16,8 +16,8 @@ TOKEN_BUDGETS = [50, 200, 1000, 6000]
 
 
 @pytest.mark.parametrize("budget", TOKEN_BUDGETS)
-def test_ac22_budget_tokens_is_reported_and_respected(big_index, budget):
-    """AC-22: tokens_budget == N and tokens_used <= N.
+def test_budget_tokens_is_reported_and_respected(big_index, budget):
+    """Verify tokens_budget == N and tokens_used <= N.
 
     `big_index` is used rather than `mini_index` so that every budget in the
     list actually binds -- the mini fixture packs to well under 6000 tokens, so
@@ -30,8 +30,8 @@ def test_ac22_budget_tokens_is_reported_and_respected(big_index, budget):
 
 
 @pytest.mark.parametrize("budget", TOKEN_BUDGETS)
-def test_ac22_token_budget_binds_on_the_big_fixture(big_index, budget):
-    """AC-22 (guard): the unbounded pack really is larger than every budget in
+def test_token_budget_binds_on_the_big_fixture(big_index, budget):
+    """Verify the unbounded pack really is larger than every budget in
     the list, so the assertion above is not vacuous."""
     idx = Index(big_index)
     unbounded = idx.pack_context(MINI_QUERY, k=20, budget_chars=0)
@@ -40,8 +40,8 @@ def test_ac22_token_budget_binds_on_the_big_fixture(big_index, budget):
     assert count_tokens(unbounded["markdown"]) > budget
 
 
-def test_ac23_char_budget_leaves_tokens_budget_unset(mini_index):
-    """AC-23: with budget_chars only, tokens_budget == 0, tokens_used is the
+def test_char_budget_leaves_tokens_budget_unset(mini_index):
+    """Verify with budget_chars only, tokens_budget == 0, tokens_used is the
     measure of the markdown, and used_chars keeps its current meaning."""
     from repo2graph.query import count_tokens
 
@@ -54,8 +54,8 @@ def test_ac23_char_budget_leaves_tokens_budget_unset(mini_index):
         assert res["budget_chars"] == budget_chars
 
 
-def test_ac23_count_tokens_default_hook():
-    """AC-23: the default measure is len(text) // CHARS_PER_TOKEN, floored at
+def test_count_tokens_default_hook():
+    """Verify the default measure is len(text) // CHARS_PER_TOKEN, floored at
     1 for any non-empty string and 0 for the empty one."""
     from repo2graph.query import CHARS_PER_TOKEN, count_tokens
 
@@ -67,8 +67,8 @@ def test_ac23_count_tokens_default_hook():
     assert count_tokens("a" * 400) == 100
 
 
-def test_ac24_a_custom_count_tokens_drives_all_accounting(big_index):
-    """AC-24: with count_tokens=len, a budget_tokens of B bounds the markdown
+def test_a_custom_count_tokens_drives_all_accounting(big_index):
+    """Verify with count_tokens=len, a budget_tokens of B bounds the markdown
     at B *characters* -- proving the measure is used for every comparison, not
     just for the reported total."""
     idx = Index(big_index)
@@ -79,8 +79,8 @@ def test_ac24_a_custom_count_tokens_drives_all_accounting(big_index):
         assert res["tokens_used"] == len(res["markdown"])
 
 
-def test_ac24_custom_measure_is_not_ignored(big_index):
-    """AC-24 (guard): count_tokens=len must produce a strictly smaller pack
+def test_custom_measure_is_not_ignored(big_index):
+    """Verify count_tokens=len must produce a strictly smaller pack
     than the default measure at the same budget, or it was never consulted."""
     idx = Index(big_index)
     default = idx.pack_context(MINI_QUERY, k=20, budget_tokens=2000)
@@ -88,8 +88,8 @@ def test_ac24_custom_measure_is_not_ignored(big_index):
     assert len(custom["markdown"]) < len(default["markdown"])
 
 
-def test_ac25_rag_budget_tokens_bounds_the_written_pack(big_index, capsys):
-    """AC-25 (a): `rag --budget-tokens 200` writes a pack measuring <= 200."""
+def test_rag_budget_tokens_bounds_the_written_pack(big_index, capsys):
+    """Verify `rag --budget-tokens 200` writes a pack measuring <= 200."""
     from repo2graph.query import count_tokens
 
     main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200"])
@@ -97,8 +97,8 @@ def test_ac25_rag_budget_tokens_bounds_the_written_pack(big_index, capsys):
     assert count_tokens(pack.rstrip("\n")) <= 200, len(pack)
 
 
-def test_ac25_budget_tokens_wins_over_budget(big_index, capsys):
-    """AC-25 (b): passing both gives the same result as --budget-tokens alone."""
+def test_budget_tokens_wins_over_budget(big_index, capsys):
+    """Verify passing both gives the same result as --budget-tokens alone."""
     main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200"])
     alone = capsys.readouterr().out
     main(["rag", MINI_QUERY, "-o", str(big_index), "--budget", "24000", "--budget-tokens", "200"])
@@ -111,16 +111,16 @@ def test_ac25_budget_tokens_wins_over_budget(big_index, capsys):
     assert chars_only != alone
 
 
-def test_ac25_budget_tokens_reaches_the_json_form(big_index, capsys):
-    """AC-25 (c): the JSON pack reports the token budget it was given."""
+def test_budget_tokens_reaches_the_json_form(big_index, capsys):
+    """Verify the JSON pack reports the token budget it was given."""
     main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "200", "--format", "json"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["tokens_budget"] == 200
     assert payload["tokens_used"] <= 200
 
 
-def test_ac25_budget_tokens_rejects_a_negative(big_index, capsys):
-    """AC-25 (d): --budget-tokens uses the shared _nonneg argparse type, so a
+def test_budget_tokens_rejects_a_negative(big_index, capsys):
+    """Verify --budget-tokens uses the shared _nonneg argparse type, so a
     negative is rejected by the validator -- not merely unrecognised."""
     with pytest.raises(SystemExit) as exc:
         main(["rag", MINI_QUERY, "-o", str(big_index), "--budget-tokens", "-1"])
@@ -128,3 +128,108 @@ def test_ac25_budget_tokens_rejects_a_negative(big_index, capsys):
     err = capsys.readouterr().err
     assert "--budget-tokens" in err, err
     assert "must be >= 0" in err, err
+
+
+# --------------------------------------------------------------------------
+# `retrieve`'s character budget has to measure what it serves
+#
+# The headroom test read the *stored* chunk length while `used` accumulated the
+# *served* one, and `redact_content` replaces a secret with a longer
+# `[REDACTED:...]` marker -- 37 characters longer on a two-assignment module. So
+# every redacted chunk overshot `budget_chars` by its own growth, silently and
+# cumulatively. `pack_context` already redacted before it measured; only
+# `retrieve` did it in the other order.
+#
+# The secrets sit in ordinary `.py` modules on purpose: `exclude_secrets` drops a
+# chunk whose *path* is secret-shaped, so a `.env` would never reach redaction at
+# all. Growth only happens where the file is kept and its contents rewritten.
+# --------------------------------------------------------------------------
+
+CHAR_BUDGETS = [300, 700, 1200, 2500]
+
+
+def _secretful_index(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(8):
+        (repo / f"settings{i}.py").write_text(
+            f'TOKEN_{i} = "s3cr3tValue{i}9"\n'
+            f'API_KEY_{i} = "Zm9vYmFy{i}23456"\n\n'
+            f"def load_settings_{i}():\n"
+            f'    """Return the configured token and api key."""\n'
+            f"    return TOKEN_{i}, API_KEY_{i}\n",
+            encoding="utf8",
+            newline="\n",
+        )
+    # `--secret-policy warn-only` is what leaves the *stored* chunk text
+    # unredacted, so `Index._served` is the thing that rewrites it and the served
+    # bytes are longer than the stored ones. Under the default `redact-match` the
+    # redaction has already happened by the time chunks.jsonl is written and
+    # `_served` is a no-op, which is why the growth is invisible there.
+    out = tmp_path / "idx"
+    main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--formats",
+            "jsonl,overview",
+            "--include-secrets",
+            "--secret-policy",
+            "warn-only",
+        ]
+    )
+    return Index(out)
+
+
+def test_redaction_actually_grows_these_chunks(tmp_path):
+    """Guard the fixture: with no growth the budget test below proves nothing."""
+    idx = _secretful_index(tmp_path)
+    grew = [
+        c["id"]
+        for c in idx.chunks
+        if len(idx._served(c).get("text") or "") > len(c.get("text") or "")
+    ]
+    assert grew, "no chunk grew under redaction; the fixture needs real secrets"
+
+
+@pytest.mark.parametrize("budget", CHAR_BUDGETS)
+def test_retrieve_char_budget_holds_after_redaction_growth(tmp_path, budget):
+    """Served length, accumulated in order, must never pass the budget.
+
+    The first pick is exempt by design -- `if picked and ...` admits one chunk
+    however large, so a budget smaller than any single chunk still answers.
+    Every pick after it has to fit.
+    """
+    idx = _secretful_index(tmp_path)
+    hits = idx.retrieve(
+        "configured token and api key",
+        k=20,
+        hops=0,
+        budget_chars=budget,
+        exclude_secrets=True,
+    )
+    assert hits, "the fixture returned nothing to measure"
+    running = 0
+    for n, c in enumerate(hits):
+        running += len(c.get("text") or "")
+        if n:
+            assert running <= budget, (
+                f"budget {budget} overshot at pick {n + 1}: {running} chars served"
+            )
+
+
+@pytest.mark.parametrize("budget", CHAR_BUDGETS)
+def test_retrieve_serves_redacted_text_within_budget(tmp_path, budget):
+    """What it counted and what it returned must be the same bytes."""
+    idx = _secretful_index(tmp_path)
+    hits = idx.retrieve(
+        "configured token and api key",
+        k=20,
+        hops=0,
+        budget_chars=budget,
+        exclude_secrets=True,
+    )
+    for c in hits:
+        assert "s3cr3tValue" not in (c.get("text") or ""), "a secret was served in clear"
