@@ -13,6 +13,32 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release pipeline no longer finds release-breaking problems after the tag is cut.** The
+  3.0.0 release aborted in `publish.yml`'s `pypi` job on `1 failed, 2073 passed`, with `v3.0.0`
+  already pushed and the bump PR already merged — recoverable only by force-moving a published
+  tag or burning a version number. Two separate holes put it there, both now closed.
+
+  `prepare-release` gates the *bumped* tree before it commits anything: `scripts/check_version.py`
+  and the full test suite now run between `bump_version.py auto` and the release commit. Both
+  already ran in this pipeline, but only on the far side of the tag, so anything version-coupled —
+  invisible until the bump exists — could not fail until it was too late to fail cheaply.
+
+  And `prepare-release` no longer treats a merged release PR as proof its checks passed. The
+  poll loop merges only on `CLEAN`/`HAS_HOOKS`, but it accepted `state == MERGED` however that
+  happened, and every admin on this repo is a bypass actor on `default-branch-protection`. On
+  3.0.0 all 13 `Test Suite` contexts reported `FAILURE`, the PR was merged by hand 23 minutes
+  later, and the loop cut the tag on a tree its own CI had already rejected. The required checks
+  are now re-asked immediately before tagging, and the step fails closed.
+
+- **A test can no longer hardcode the version under release.** `tests/test_export_hardening.py`
+  asserted the static `__version__` fallback equalled `"2.2.0"` — a claim nothing could falsify
+  until a bump rewrote the literal it shadowed, which is why it passed every PR and failed only
+  inside the release. It now reads the literal out of `repo2graph/__init__.py`, and a new guard in
+  `tests/test_version_surfaces.py` walks every test's AST for assertions that spell out the
+  current version, so the next one fails on its own PR instead.
+
 ## [3.0.0] — 2026-10-06
 
 ### Added
