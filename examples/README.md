@@ -5,13 +5,10 @@ reproduction command for every one. This is evidence, not a demo: every number b
 actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json), never typed in
 by hand.
 
-> **These runs were made by repo2graph 1.6.0** (`repo2graph_version` in that file, 2026-09-22);
-> the package is now at 2.2.0. A pinned upstream commit fixes the *source* but not the *analyser*,
-> and call resolution has changed since: `b98fc46b` stopped binding builtin method calls on untyped
-> receivers to in-repo methods, which moves `CALLS` totals, ambiguous-call counts and — most
-> visibly — the most-called-symbols ranking in each `overview.md`, where collection and builtin
-> method names still outrank the repositories' own hot functions. Treat the tables as a 1.6.0
-> record until `--all` is re-run; each example repeats this note.
+Each example records the repo2graph version that produced it, next to the upstream commit it
+indexed. A pinned commit fixes the *source* but not the *analyser*, and call resolution does change
+between versions — these five were last regenerated together, so they are directly comparable with
+each other and with `results.json`.
 
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
 [`../scripts/generate_examples.py`](../scripts/generate_examples.py). See
@@ -22,11 +19,11 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 
 | Repository | Language(s) | Scope | Files | Nodes | Edges | Example |
 |---|---|---|---:|---:|---:|---|
-| [Django](https://github.com/django/django) | Python | full repository | 5,629 | 55,810 | 303,339 | [examples/django](django/) |
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,084 | 14,451 | 110,246 | [examples/kubernetes](kubernetes/) |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 21,380 | 115,984 | [examples/tensorflow](tensorflow/) |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 113,080 | 656,158 | [examples/vscode](vscode/) |
-| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 136,219 | 256,413 | [examples/linux](linux/) |
+| [Django](https://github.com/django/django) | Python | full repository | 5,630 | 56,074 | 301,017 | [examples/django](django/) |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,085 | 15,174 | 117,066 | [examples/kubernetes](kubernetes/) |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 24,730 | 145,790 | [examples/tensorflow](tensorflow/) |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 114,070 | 664,312 | [examples/vscode](vscode/) |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 185,496 | 310,854 | [examples/linux](linux/) |
 
 "Full repository" means no `--include`/`--exclude` narrowing — every file `repo2graph` would index
 on a plain `repo2graph build`. "Scoped" means only the listed subtrees were cloned and indexed; see

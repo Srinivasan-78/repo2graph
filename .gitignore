@@ -33,3 +33,16 @@ requirements-rag.txt
 /DONE.md
 /docs/BUILD_STATE*.md
 /docs/remediation-tracking.md
+# Generated example graph artifacts. `4e96b628` purged ~28 MB of them from
+# `examples/<id>/` and left only README.md + overview.md committed, but nothing
+# matched them afterwards -- so any `git add -A` following
+# `scripts/generate_examples.py` put the whole set straight back. Listed by name
+# rather than as a negated glob: an "everything except README/overview" rule
+# would also swallow a future hand-written page nobody intended to hide.
+examples/*/nodes.jsonl.gz
+examples/*/edges.jsonl.gz
+examples/*/graph.html
+examples/*/manifest.json
+examples/*/metadata.json
+examples/*/stats.json
+examples/*/flows/

@@ -267,6 +267,13 @@ class Graph:
         # the key unrecorded here counted attempts instead and overstated the
         # loss for every edge discovered more than once. `_edge_seen` means
         # "already decided", which is what both callers of it want.
+        #
+        # The cost is that past the ceiling this set keeps growing, one tuple per
+        # distinct *rejected* edge, where before it only ever held accepted ones.
+        # That is inherent -- counting distinct losses means remembering them --
+        # and it is the cheaper half of the pair: a retained key is three pointers
+        # against the full attribute dict `self.edges` would have held, so
+        # `--max-edges` still bounds the thing it was added to bound.
         self._edge_seen.add(key)
         # Checked after the duplicate test, so a repeated edge is not counted as
         # one the ceiling dropped. Discovery order is deterministic (see

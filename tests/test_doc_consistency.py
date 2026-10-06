@@ -565,3 +565,66 @@ def test_unreleased_changelog_does_not_advertise_flags_that_do_not_exist():
         f"CHANGELOG [Unreleased] advertises flags that no longer exist: {stale}. "
         "Move them to ### Removed with migration notes, or delete the entry."
     )
+
+
+EXAMPLES_README_PATH = REPO_ROOT / "examples" / "README.md"
+BENCH_RESULTS_PATH = REPO_ROOT / "benchmarks" / "results.json"
+
+# `| [Name](url) | ... | files | nodes | edges | ... |` -- the three numeric
+# columns are the last ones before the "Example" link, and all three are
+# right-aligned in the table, so they are the only `[\d,]+` cells in the row.
+_EXAMPLES_ROW_RE = re.compile(
+    r"^\|\s*\[(?P<name>[^\]]+)\]\((?P<url>https://github\.com/[^)]+)\)"
+    r".*?\|\s*(?P<files>[\d,]+)\s*\|\s*(?P<nodes>[\d,]+)\s*\|\s*(?P<edges>[\d,]+)\s*\|",
+    re.MULTILINE,
+)
+
+
+def test_examples_table_matches_the_recorded_run():
+    """`examples/README.md`'s table must be what `benchmarks/results.json` records.
+
+    That page states every number in it "came from an actual run recorded in
+    ../benchmarks/results.json, never typed in by hand" -- but the table is
+    hand-maintained (`generate_examples.py` writes `examples/<id>/README.md` and
+    `results.json`, never the index page), so the claim rested on whoever last
+    regenerated remembering to retype five rows. This is the check that was
+    missing when all five examples were regenerated from 1.6.0 to 2.2.0.
+
+    Deliberately *not* asserted here: that `repo2graph_version` in results.json
+    equals the current package version. Regenerating needs network and clones of
+    five large repositories, so that gate would turn red on every version bump
+    and stay red until someone could run it -- and `results.json` is explicitly
+    history, the version that *produced* an artifact rather than a claim about
+    the current release (see `scripts/version_surfaces.py`, which excludes it
+    from bumping for the same reason). Each example page records its own
+    analyser version instead, which is what makes a stale figure visible.
+    """
+    recorded = {
+        entry["repository"].rstrip("/").rsplit("/", 1)[-1]: entry
+        for entry in json.loads(BENCH_RESULTS_PATH.read_text(encoding="utf-8"))["results"]
+    }
+    rows = list(_EXAMPLES_ROW_RE.finditer(EXAMPLES_README_PATH.read_text(encoding="utf-8")))
+    assert len(rows) == len(recorded), (
+        f"examples/README.md has {len(rows)} repository rows but results.json records "
+        f"{len(recorded)}: {sorted(recorded)}"
+    )
+
+    def _n(text: str) -> int:
+        return int(text.replace(",", ""))
+
+    mismatches = []
+    for row in rows:
+        rid = row.group("url").rstrip("/").rsplit("/", 1)[-1]
+        entry = recorded.get(rid)
+        if entry is None:
+            mismatches.append(f"{row.group('name')}: no results.json entry for {rid!r}")
+            continue
+        for column in ("files", "nodes", "edges"):
+            found, want = _n(row.group(column)), entry[column]
+            if found != want:
+                mismatches.append(f"{row.group('name')} {column}: table {found:,} != run {want:,}")
+    assert not mismatches, (
+        "examples/README.md's table disagrees with benchmarks/results.json:\n  "
+        + "\n  ".join(mismatches)
+        + "\nRe-read the numbers off results.json after regenerating."
+    )

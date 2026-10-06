@@ -593,20 +593,39 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed — repository tooling and stale references
 
-- **The five committed examples now say which analyser produced them.** Each
+- **All five examples regenerated on 2.2.0, and they now say which analyser produced them.** Each
   `examples/<id>/README.md` recorded the upstream commit it indexed but not the repo2graph version
-  that did the indexing, and all five were built by **1.6.0**. A pinned commit fixes the *source*
-  and says nothing about the *analyser*, so two minor versions of call-resolution changes — the
-  untyped-receiver fix in `b98fc46b` above all — left the published figures describing behaviour
-  the package no longer has. It is plainly visible in the committed `overview.md` files: Kubernetes'
-  most-called-symbols ranking is led by the Go builtins `len` and `append` attributed to arbitrary
-  in-repo files, VS Code's by `DisposableMap.get` at 5,397 incoming calls from map lookups, and
-  Django's by five separate `.create` methods at ~2,140 each — exactly the fan-out `b98fc46b`
-  removed. `scripts/generate_examples.py` already captured `R2G_VERSION` for `results.json`; its
-  README template simply never printed it, which is why the staleness had no visible marker. The
-  template now emits the version beside the commit and explains why both halves are load-bearing,
-  and the five existing pages carry an explicit note until
-  `python scripts/generate_examples.py --all` is re-run.
+  that did the indexing — and all five were still **1.6.0** output. A pinned commit fixes the
+  *source* and says nothing about the *analyser*, so two minor versions of call-resolution changes
+  left the published figures describing behaviour the package no longer has. It was plainly visible
+  in the committed `overview.md` files, and regenerating is what proves the fix rather than asserts
+  it:
+
+  | most-called symbols, rank 1 | 1.6.0 | 2.2.0 |
+  |---|---|---|
+  | Kubernetes | `active_queue.go::len` (in=1386) | `wrappers.go::MakePod` (in=361) |
+  | VS Code | `DisposableMap.get` (in=5397) | `nls.ts::localize` (in=4233) |
+  | Django | `SessionStore.create` (in=2141) | `SimpleTestCase.assertRaisesMessage` (in=1941) |
+  | TensorFlow | `DataTypeSet.size` (in=597) | `constant_op.py::constant` (in=1066) |
+
+  Every 1.6.0 leader is a collection or builtin method name — Go's `len`/`append`, a TypeScript map
+  `.get`, five separate Django `.create` methods at ~2,140 each — fanned out across every
+  same-named in-repo definition. That is exactly the `b98fc46b` fan-out, and Kubernetes now has
+  zero bare builtins in its ranking where it previously held the top seven slots. The replacements
+  are real hot functions, which is what a repo map is for.
+
+  `scripts/generate_examples.py` already captured `R2G_VERSION` for `results.json`; its README
+  template simply never printed it, which is why the staleness had no visible marker. The template
+  now emits the version beside the commit and explains why both halves are load-bearing. New
+  figures, all five at 2.2.0: Django 56,074 nodes / 301,017 edges, Kubernetes 15,174 / 117,066,
+  TensorFlow 24,730 / 145,790, VS Code 114,070 / 664,312, Linux 185,496 / 310,854 — `results.json`
+  and `examples/README.md`'s table carry the same numbers.
+- **The purged example artifacts had nothing stopping them coming back.** `4e96b628` removed ~28 MB
+  of generated graphs from `examples/<id>/` and left only `README.md` and `overview.md` committed,
+  but no ignore rule matched them, so any `git add -A` after a regeneration would have re-added
+  `nodes.jsonl.gz`, `edges.jsonl.gz`, `graph.html`, `manifest.json`, `metadata.json`, `stats.json`
+  and `flows/` — 11.4 MB on this round alone. They are now ignored by name rather than by a negated
+  glob, which would also have swallowed a future hand-written page.
 - **`docs/architecture.md`'s module table was stale in 26 of 36 rows.** Sizes are prose that no test
   checks, and they had drifted badly: `query.py` read 1,039 against an actual 1,620, `doctor.py` 254
   against 382, `graph.py` 2,117 against 2,333. Every row is now recomputed, `doctor.py` moved to

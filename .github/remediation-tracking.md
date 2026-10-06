@@ -4,6 +4,21 @@ Verification pass against the 60-item spec. Status assigned by reading the code 
 running the tests — **not** by assuming the spec's premise. Baseline taken on
 `fix/impact-analysis-and-untested-apis` @ `f0891134`.
 
+> **Superseded as a status report; still accurate as a snapshot.** `f0891134` is 2026-10-01,
+> and `develop` has moved 60 commits past it. Everything below was true when recorded and is
+> left unedited for that reason — a baseline that gets quietly updated stops being a baseline.
+> Do not read Phase 0 as current. What has changed since, in the facts this page states:
+>
+> - **The `impact` CLI command and the `repo_impact` MCP tool are gone**, so the subcommand
+>   list and "MCP tools | 10" rows no longer hold — the surface is **nine** tools, and
+>   `docs/mcp.md` is the contract for them.
+> - **Test suite: 1,895 passed → 2,060 passed, 11 skipped, 1 xfailed.**
+> - **Package: 21,075 lines across 39 modules → 20,779 across 38**; `graph.py` 2,131 → 2,333,
+>   `cli.py` 2,024 → 1,924. `docs/architecture.md`'s module table is the maintained version of
+>   that count.
+> - Several rows under **Genuinely open** have since landed; `CHANGELOG.md`'s `[Unreleased]`
+>   section is the current record of what shipped, not this page.
+
 ## Phase 0 — baseline (recorded)
 
 | Item | Value |
