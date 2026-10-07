@@ -333,7 +333,9 @@ def render(args) -> str:
         out.append("| File A          | File B          | Co-changes |")
         out.append("|-----------------|-----------------|------------|")
         for a, b, count in hotspots:
-            out.append(f"| {_escape_md(_strip_file_prefix(a))} | {_escape_md(_strip_file_prefix(b))} | {count} |")
+            out.append(
+                f"| {_escape_md(_strip_file_prefix(a))} | {_escape_md(_strip_file_prefix(b))} | {count} |"
+            )
         out.append("")
 
     delta = render_graph_delta(args.changelog)
@@ -342,9 +344,7 @@ def render(args) -> str:
 
     if args.artifact_name:
         safe_artifact = str(args.artifact_name).replace("`", "")
-        out.append(
-            f"> Artifact: download `{safe_artifact}` for the full interactive graph.html"
-        )
+        out.append(f"> Artifact: download `{safe_artifact}` for the full interactive graph.html")
 
     return "\n".join(out).rstrip() + "\n"
 
