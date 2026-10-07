@@ -7,9 +7,11 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .edgemeta import (
     METHOD_FILESYSTEM,
@@ -74,7 +76,7 @@ DEFAULT_MAX_CALL_CANDIDATES = 5
 # callers of `f` from one whose caller was dropped at the ceiling. `truncate` is
 # for callers that have already decided to bound the build and do not want the
 # noise on every run.
-LIMIT_POLICIES = ("warn", "truncate")
+LIMIT_POLICIES = ("warn", "truncate", "fail")
 DEFAULT_LIMIT_POLICY = "warn"
 # Method names of the built-in collection, string and promise types across the
 # indexed languages. `x.get()` on a receiver whose type the parser cannot see is
@@ -227,18 +229,24 @@ class Graph:
         max_files: int = 0,
         max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
         max_edges: int = 0,
-        limit_policy: str = DEFAULT_LIMIT_POLICY,
+        limit_policy: str | None = None,
+        max_memory_mb: float = 0.0,
+        max_build_seconds: float = 0.0,
     ):
         self.root, self.name = root, name
         self.max_files = max_files
         self.max_edges = max_edges
         self.limit_policy = limit_policy
+        self.max_memory_mb = max_memory_mb
+        self.max_build_seconds = max_build_seconds
+        self.start_time = time.monotonic()
+        self.bytes_indexed: int = 0
         # Which resource limits actually bound this build, and by how much.
         # Recorded whatever the policy is: `truncate` chooses to stay quiet on
         # stderr, never to produce an index that cannot say it is partial. An
         # artifact that was cut and does not admit it is the failure every other
         # bound in this file is written to avoid.
-        self.limits_hit: dict[str, int] = {}
+        self.limits_hit: dict[str, Any] = {}
         # The ambiguous-call fan-out limit this graph was resolved under.
         # Carried on the Graph purely so the writers can report it: export's
         # manifest.json describes the artifacts it ships beside, and a manifest
@@ -274,8 +282,47 @@ class Graph:
         self.incremental: dict[str, int] | None = None
         self._warned_large = False
         self._limits_announced: set[str] = set()
+        self.build_id: str | None = None
+
+    def _check_memory_and_duration(self) -> None:
+        if (
+            self.max_build_seconds > 0
+            and (time.monotonic() - self.start_time) > self.max_build_seconds
+        ):
+            if self.limit_policy == "fail":
+                raise GraphLimitExceeded(
+                    f"Build duration limit exceeded: reached {time.monotonic() - self.start_time:.1f}s "
+                    f"(max_build_seconds={self.max_build_seconds}). Use --max-build-seconds to increase."
+                )
+            self.limits_hit["build_duration_exceeded"] = round(
+                time.monotonic() - self.start_time, 2
+            )
+            self._note_limit(
+                "build_duration",
+                f"repo2graph: warning: build duration ceiling reached at {self.max_build_seconds}s; "
+                f"further elements are dropped and the graph is partial",
+            )
+        if self.max_memory_mb > 0:
+            est_mb = (
+                len(self.nodes) * 500 + len(self.edges) * 200 + getattr(self, "bytes_indexed", 0)
+            ) / 1_000_000
+            if est_mb >= self.max_memory_mb:
+                if self.limit_policy == "fail":
+                    raise GraphLimitExceeded(
+                        f"Graph memory limit exceeded: estimated {est_mb:.1f} MB "
+                        f"(max_memory_mb={self.max_memory_mb}). Use --max-memory-mb to increase."
+                    )
+                self.limits_hit["memory_dropped"] = self.limits_hit.get("memory_dropped", 0) + 1
+                self._note_limit(
+                    "memory",
+                    f"repo2graph: warning: memory ceiling reached at {self.max_memory_mb} MB; "
+                    f"further elements are dropped and the graph is partial",
+                )
 
     def add_node(self, nid: str, **attrs):
+        self._check_memory_and_duration()
+        if "build_duration_exceeded" in self.limits_hit or "memory_dropped" in self.limits_hit:
+            return nid
         if nid in self.nodes:
             # Preserve legitimate 0 and False values on re-add:
             self.nodes[nid].update(
@@ -290,10 +337,18 @@ class Graph:
         else:
             max_nodes = getattr(self.config, "max_nodes", 0) if self.config else 0
             if max_nodes > 0 and len(self.nodes) >= max_nodes:
-                raise GraphLimitExceeded(
-                    f"Graph node limit exceeded: graph reached {len(self.nodes)} nodes (max_nodes={max_nodes}). "
-                    "Use --max-nodes to increase the limit or filter with --include/--exclude."
+                if self.limit_policy == "fail" or self.limit_policy is None:
+                    raise GraphLimitExceeded(
+                        f"Graph node limit exceeded: graph reached {len(self.nodes)} nodes (max_nodes={max_nodes}). "
+                        "Use --max-nodes to increase the limit or filter with --include/--exclude."
+                    )
+                self.limits_hit["nodes_dropped"] = self.limits_hit.get("nodes_dropped", 0) + 1
+                self._note_limit(
+                    "nodes",
+                    f"repo2graph: warning: node ceiling reached at {max_nodes} nodes; "
+                    f"further nodes are dropped and the graph is partial",
                 )
+                return nid
             self.nodes[nid] = dict(id=nid, **attrs)
         self._warn_if_large()
         return nid
@@ -316,12 +371,20 @@ class Graph:
         # against the full attribute dict `self.edges` would have held, so
         # `--max-edges` still bounds the thing it was added to bound.
         self._edge_seen.add(key)
+        self._check_memory_and_duration()
+        if "build_duration_exceeded" in self.limits_hit or "memory_dropped" in self.limits_hit:
+            return
         # Checked after the duplicate test, so a repeated edge is not counted as
         # one the ceiling dropped. Discovery order is deterministic (see
         # CONTRIBUTING's "Deterministic Discovery Order"), so the same build
         # with the same limit keeps the same edges -- which is what lets
         # `test_max_edges_truncation_is_deterministic` compare two runs.
         if self.max_edges > 0 and len(self.edges) >= self.max_edges:
+            if self.limit_policy == "fail":
+                raise GraphLimitExceeded(
+                    f"Graph edge limit exceeded: graph reached {len(self.edges)} edges (max_edges={self.max_edges}). "
+                    "Use --max-edges to increase the limit or filter with --include/--exclude."
+                )
             self.limits_hit["edges_dropped"] = self.limits_hit.get("edges_dropped", 0) + 1
             self._note_limit(
                 "edges",
@@ -350,6 +413,12 @@ class Graph:
             return
         self._limits_announced.add(which)
         print(message, file=sys.stderr)
+        try:
+            from .events import emit
+
+            emit("resource_limit_reached", level="warning", limit=which)
+        except Exception:  # noqa: BLE001 - resilience boundary: event emission failure
+            pass
 
     def _warn_if_large(self) -> None:
         if self._warned_large:
@@ -1384,7 +1453,7 @@ def silence_worker_io() -> None:
             kernel32.SetStdHandle.restype = ctypes.c_int
             kernel32.SetStdHandle(_STD_INPUT_HANDLE, msvcrt.get_osfhandle(0))
             kernel32.SetStdHandle(_STD_OUTPUT_HANDLE, msvcrt.get_osfhandle(1))
-        except Exception:
+        except (AttributeError, OSError, ValueError):
             pass
 
 
@@ -1418,7 +1487,10 @@ def parse_all(files, jobs: int, config=None):
         # pool -- falling through to the serial fallback below would just
         # re-parse every file a second time and raise this same error again.
         raise
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - resilience boundary: process pool execution failure falls back to serial
+        from .events import reraise_if_debug
+
+        reraise_if_debug(exc)
         # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
         # worker ImportError, or a pickling failure on the call or its result:
         # the comment above promises a serial fallback, so honour it for all of
@@ -1451,6 +1523,11 @@ def _within_byte_budget(files, budget: int, g: "Graph"):
             kept.append((rel, absolute))
             continue
         if used + size > budget:
+            if g.limit_policy == "fail":
+                raise GraphLimitExceeded(
+                    f"Graph byte budget exceeded: {used + size} > {budget} bytes (max_bytes={budget}). "
+                    "Use --max-bytes to increase the limit or filter with --include/--exclude."
+                )
             dropped = len(files) - len(kept)
             g.limits_hit["files_dropped_over_max_bytes"] = dropped
             g._note_limit(
@@ -1479,7 +1556,9 @@ def build(
     cochange_min: int = 3,
     max_bytes: int = 0,
     max_edges: int = 0,
-    limit_policy: str = DEFAULT_LIMIT_POLICY,
+    limit_policy: str | None = None,
+    max_memory_mb: float = 0.0,
+    max_build_seconds: float = 0.0,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1506,16 +1585,30 @@ def build(
         max_edges: When positive, the graph holds at most this many edges;
             later ones are dropped.
         limit_policy: `warn` (default) announces a bound on stderr the first
-            time it binds; `truncate` cuts silently. Both record the cut in
-            `stats.json` -- see `LIMIT_POLICIES`.
+            time it binds; `truncate` cuts silently; `fail` aborts immediately
+            with GraphLimitExceeded. All record the cut in `stats.json`.
+        max_memory_mb: Maximum estimated RAM usage in MB before triggering limit_policy.
+        max_build_seconds: Maximum wall-clock build time in seconds before triggering limit_policy.
 
     Returns:
         The populated Graph. `parse_cache` holds the cache for the *next*
         build; `incremental` holds hit/miss counts when `cache` was supplied.
     """
+    if config:
+        if max_edges == 0 and getattr(config, "max_edges", 0) > 0:
+            max_edges = config.max_edges
+        if max_bytes == 0 and getattr(config, "max_bytes", 0) > 0:
+            max_bytes = config.max_bytes
+        if max_memory_mb == 0.0 and getattr(config, "max_memory_mb", 0.0) > 0:
+            max_memory_mb = config.max_memory_mb
+        if max_build_seconds == 0.0 and getattr(config, "max_build_seconds", 0.0) > 0:
+            max_build_seconds = config.max_build_seconds
+        if limit_policy is None and getattr(config, "limit_policy", None) in LIMIT_POLICIES:
+            limit_policy = config.limit_policy
+
     max_call_candidates = max(1, max_call_candidates)
     root = Path(root).resolve()
-    if limit_policy not in LIMIT_POLICIES:
+    if limit_policy is not None and limit_policy not in LIMIT_POLICIES:
         raise ValueError(f"limit_policy must be one of {LIMIT_POLICIES}, not {limit_policy!r}")
     g = Graph(
         root,
@@ -1524,6 +1617,8 @@ def build(
         max_call_candidates=max_call_candidates,
         max_edges=max_edges,
         limit_policy=limit_policy,
+        max_memory_mb=max_memory_mb,
+        max_build_seconds=max_build_seconds,
     )
     g.config = config
     g.include_globs = list(include) if include else None
@@ -1532,7 +1627,19 @@ def build(
     g.add_node(repo_id, type="repo", name=root.name, path=".")
 
     files = list(discover(root, include, exclude, stats=g.stats, config=config))
-    if max_files > 0:  # a negative limit must not become files[:-n] and drop the tail
+    if max_files > 0 and len(files) > max_files:
+        if limit_policy == "fail":
+            raise GraphLimitExceeded(
+                f"Graph file limit exceeded: found {len(files)} files (max_files={max_files}). "
+                "Use --max-files to increase the limit or filter with --include/--exclude."
+            )
+        dropped = len(files) - max_files
+        g.limits_hit["files_dropped_over_max_files"] = dropped
+        g._note_limit(
+            "files",
+            f"repo2graph: warning: file ceiling reached at {max_files} files; "
+            f"further files are dropped and the graph is partial",
+        )
         files = files[:max_files]
     if max_bytes > 0:
         files = _within_byte_budget(files, max_bytes, g)
@@ -1551,6 +1658,8 @@ def build(
         g.incremental = counts
 
     for rel, lang, read in results:
+        if "build_duration_exceeded" in g.limits_hit:
+            break
         if read is None:  # unreadable file
             continue
         size, lines, pf, digest = read
@@ -2079,8 +2188,11 @@ def build(
                     # each means "kept as a possibility, not asserted", and
                     # `edgemeta.counts_as_call` excludes both from the repo map.
                     ceiling = UNTYPED_RECEIVER_CONFIDENCE if guessed_call else 1.0
-                    conf = round(ceiling / limit, 3) if limit > 0 else 0.0
+                    # Confidence reflects candidate set size, never artificially inflated by capping (W12).
+                    conf = round(ceiling / len(chosen_cands), 3) if len(chosen_cands) > 0 else 0.0
                     extra: dict[str, bool] = {}
+                    if len(chosen_cands) > limit:
+                        extra["capped_candidates"] = True
                     if untyped_builtin:
                         extra["untyped_receiver"] = True
                     if shadowed_builtin:

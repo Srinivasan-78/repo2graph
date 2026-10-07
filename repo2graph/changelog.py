@@ -119,14 +119,18 @@ def _indegree(edges: list[dict[str, Any]]) -> dict[str, int]:
     return deg
 
 
+def _escape_md(text: Any) -> str:
+    return str(text or "").replace("`", "'").replace("|", "\\|")
+
+
 def _node_line(n: dict[str, Any]) -> str:
-    return f"- {n.get('id')}  ({n.get('type', '')})"
+    return f"- {_escape_md(n.get('id'))}  ({_escape_md(n.get('type', ''))})"
 
 
 def _edge_line(e: dict[str, Any]) -> str:
     conf = e.get("confidence")
     suffix = f"  (confidence: {conf})" if conf is not None else ""
-    return f"- {e.get('type')}: {e.get('src')} → {e.get('dst')}{suffix}"
+    return f"- {_escape_md(e.get('type'))}: {_escape_md(e.get('src'))} → {_escape_md(e.get('dst'))}{suffix}"
 
 
 def _section(lines: list[str], count: int) -> list[str]:

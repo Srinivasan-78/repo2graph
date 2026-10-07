@@ -182,7 +182,7 @@ class TaskManager:
     def _estimate(self, repo: str | Path) -> float:
         try:
             return max(1.0, float(self._estimator(repo)))
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience boundary: custom estimator failure falls back to 1.0s
             return 1.0
 
     def _run(self, task: BuildTask, repo: str | Path, out: str | Path) -> None:
@@ -192,7 +192,7 @@ class TaskManager:
                 task.estimated_s = est
         try:
             self._builder(repo, out)
-        except BaseException as exc:
+        except BaseException as exc:  # noqa: BLE001 - resilience boundary: background worker thread must capture task failure
             # BaseException, not Exception: a build killed by a SystemExit from
             # deep in the stack must still mark the task failed rather than
             # leaving it reporting "building" until the process dies.
@@ -225,9 +225,6 @@ class TaskManager:
 def _default_estimator(repo: str | Path) -> float:
     """Guess a build's duration from how many files discovery finds.
 
-    Discovery is cheap next to parsing -- it is a `git ls-files` or one walk --
-    so paying for it up front to produce an honest eta is worth it.
-
     Args:
         repo: Repository directory.
 
@@ -238,7 +235,7 @@ def _default_estimator(repo: str | Path) -> float:
         from .parse import discover
 
         count = sum(1 for _ in discover(Path(repo)))
-    except Exception:
+    except OSError:
         return 1.0
     return max(1.0, count / FILES_PER_SECOND)
 

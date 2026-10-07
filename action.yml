@@ -8,7 +8,7 @@ branding:
 
 inputs:
   repo:
-    description: "Target repo (owner/repo or URL). Leave blank to index `path` in the workspace."
+    description: "Target repo (owner/repo or URL). Leave blank to index `path` in the workspace. Note: cross-repo indexing stores the target repository's graph and chunk excerpts in the caller's workflow artifacts."
     required: false
     default: ""
   path:
@@ -88,15 +88,15 @@ inputs:
     required: false
     default: ""
   commit-force:
-    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: true)"
+    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: false). Force-push is only permitted for dedicated graph branches (branch names containing 'graph')."
     required: false
-    default: "true"
+    default: "false"
   version:
     description: "pip spec to install repo2graph from (blank = install the action checkout itself)"
     required: false
     default: ""
   token:
-    description: "Token used to clone a private target repo"
+    description: "Token used to clone a private target repo. Note: cross-repo indexing stores the target repository's graph and chunk excerpts in the caller's workflow artifacts."
     required: false
     default: ""
   include-secrets:
@@ -125,6 +125,38 @@ inputs:
     description: "Maximum call edge candidates to retain per ambiguous call site (default: 5)"
     required: false
     default: "5"
+  max-chunks:
+    description: "Maximum chunks to build (0 = no limit)"
+    required: false
+    default: ""
+  max-nodes:
+    description: "Maximum graph nodes to retain (0 = no limit)"
+    required: false
+    default: ""
+  max-total-bytes:
+    description: "Maximum total source bytes to index (0 = no limit)"
+    required: false
+    default: ""
+  max-build-seconds:
+    description: "Maximum build duration in seconds before limit policy triggers (0 = no limit)"
+    required: false
+    default: ""
+  limit-policy:
+    description: "Policy when graph limits are reached: fail, truncate, warn (default: fail)"
+    required: false
+    default: "fail"
+  secret-keywords:
+    description: "Additional keywords to exclude as secret file/path (space- or newline-separated)"
+    required: false
+    default: ""
+  secret-dirs:
+    description: "Additional directory names to exclude as secret path (space- or newline-separated)"
+    required: false
+    default: ""
+  smoke-check:
+    description: "Fail build if discovery is not 'git' or symbol count is 0 (default: true)"
+    required: false
+    default: "true"
 
 outputs:
   out:
@@ -169,10 +201,19 @@ runs:
       # no case-folding. The default is blank on purpose: a workflow that never
       # sets `version` installs the checkout it is pinned to, exactly as every
       # run did before, so nothing that works today changes.
+      #
+      # To prevent contaminating the runner's global Python environment or
+      # shared toolcache (SC10), repo2graph is installed into an isolated
+      # virtual environment in $RUNNER_TEMP and prepended to $GITHUB_PATH.
       env:
         R2G_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
+        VENV_DIR="${RUNNER_TEMP:-/tmp}/r2g-venv"
+        test -d "$VENV_DIR" || python3 -m venv "$VENV_DIR" 2>/dev/null || python -m venv "$VENV_DIR" 2>/dev/null || true
+        test -d "$VENV_DIR/bin" && VENV_BIN="$VENV_DIR/bin" || VENV_BIN="${VENV_DIR}/Scripts"
+        test -d "$VENV_BIN" && test -n "${GITHUB_PATH:-}" && echo "$VENV_BIN" >> "$GITHUB_PATH" || true
+        test -d "$VENV_BIN" && export PATH="$VENV_BIN:$PATH" || true
         if [ -n "$R2G_VERSION" ]; then
           pip install -q "$R2G_VERSION"
         elif [ -f "$GITHUB_ACTION_PATH/pyproject.toml" ]; then
@@ -204,6 +245,14 @@ runs:
         R2G_INCREMENTAL: ${{ inputs.incremental }}
         R2G_PARSE_POLICY: ${{ inputs.parse-policy }}
         R2G_MAX_CALL_CANDIDATES: ${{ inputs.max-call-candidates }}
+        R2G_MAX_CHUNKS: ${{ inputs.max-chunks }}
+        R2G_MAX_NODES: ${{ inputs.max-nodes }}
+        R2G_MAX_TOTAL_BYTES: ${{ inputs.max-total-bytes }}
+        R2G_MAX_BUILD_SECONDS: ${{ inputs.max-build-seconds }}
+        R2G_LIMIT_POLICY: ${{ inputs.limit-policy }}
+        R2G_SECRET_KEYWORDS: ${{ inputs.secret-keywords }}
+        R2G_SECRET_DIRS: ${{ inputs.secret-dirs }}
+        R2G_SMOKE_CHECK: ${{ inputs.smoke-check }}
         SUMMARY_FILE: ${{ runner.temp }}/summary.json
       run: |
         set -euo pipefail
@@ -232,24 +281,69 @@ runs:
         if [ -n "$R2G_SECRET_POLICY" ] && [ "$R2G_SECRET_POLICY" != "redact-match" ]; then
           args+=(--secret-policy "$R2G_SECRET_POLICY")
         fi
-        # read -a splits on spaces without letting bash expand the globs
+        if [ -n "${R2G_MAX_CHUNKS:-}" ]; then
+          args+=(--max-chunks "$R2G_MAX_CHUNKS")
+        fi
+        if [ -n "${R2G_MAX_NODES:-}" ]; then
+          args+=(--max-nodes "$R2G_MAX_NODES")
+        fi
+        if [ -n "${R2G_MAX_TOTAL_BYTES:-}" ]; then
+          args+=(--max-total-bytes "$R2G_MAX_TOTAL_BYTES")
+        fi
+        if [ -n "${R2G_MAX_BUILD_SECONDS:-}" ]; then
+          args+=(--max-build-seconds "$R2G_MAX_BUILD_SECONDS")
+        fi
+        if [ -n "${R2G_LIMIT_POLICY:-}" ] && [ "$R2G_LIMIT_POLICY" != "fail" ]; then
+          args+=(--limit-policy "$R2G_LIMIT_POLICY")
+        fi
+        if [ -n "${R2G_SECRET_KEYWORDS:-}" ]; then
+          IFS=$' \t\n' read -r -d '' -a skw <<< "$R2G_SECRET_KEYWORDS" || true
+          for kw in "${skw[@]}"; do
+            args+=(--secret-keyword "$kw")
+          done
+        fi
+        if [ -n "${R2G_SECRET_DIRS:-}" ]; then
+          IFS=$' \t\n' read -r -d '' -a sdir <<< "$R2G_SECRET_DIRS" || true
+          for sd in "${sdir[@]}"; do
+            args+=(--secret-dir "$sd")
+          done
+        fi
+        # `read -a ... <<< "$VAR"` (no `-d`) reads only the FIRST line of a
+        # multi-line input and silently drops the rest -- a multi-line
+        # `exclude` then fails open, applying only its first entry. `-d ''`
+        # makes `read` consume the whole here-string (it stops at EOF, not at
+        # the first newline), while IFS still splits on spaces, tabs and
+        # newlines, so every line and every space-separated entry on it is
+        # captured without letting bash expand the globs itself.
         if [ -n "$R2G_INCLUDE" ]; then
-          read -r -a inc <<< "$R2G_INCLUDE"
+          IFS=$' \t\n' read -r -d '' -a inc <<< "$R2G_INCLUDE" || true
           args+=(--include "${inc[@]}")
         fi
         if [ -n "$R2G_EXCLUDE" ]; then
-          read -r -a exc <<< "$R2G_EXCLUDE"
+          IFS=$' \t\n' read -r -d '' -a exc <<< "$R2G_EXCLUDE" || true
           args+=(--exclude "${exc[@]}")
         fi
         mkdir -p "$R2G_OUT"
         repo2graph "${args[@]}" > "$SUMMARY_FILE"
         python - <<'PY' >> "$GITHUB_OUTPUT"
-        import json, os
+        import json, os, sys
         d = json.load(open(os.environ["SUMMARY_FILE"]))
         s = d.get("stats", d)
         print(f"nodes={s.get('nodes', 0)}")
         print(f"edges={s.get('edges', 0)}")
         print(f"chunks={d.get('chunks', 0)}")
+        smoke_flag = os.environ.get("R2G_SMOKE_CHECK", "true").strip().lower()
+        stats_path = os.path.join(os.environ.get("R2G_OUT", ""), "agent", "stats.json")
+        if smoke_flag == "true" and os.path.exists(stats_path):
+            stats = json.load(open(stats_path))
+            discovery = stats.get("discovery")
+            symbols = sum(v for k, v in stats.items() if k.startswith("symbol:") and isinstance(v, int))
+            if discovery != "git":
+                print(f"::error::Smoke check failed: discovery mode was '{discovery}', expected 'git'", file=sys.stderr)
+                sys.exit(1)
+            if symbols <= 0:
+                print(f"::error::Smoke check failed: index produced 0 symbols", file=sys.stderr)
+                sys.exit(1)
         PY
 
     - name: Write job summary
@@ -396,6 +490,7 @@ runs:
         R2G_COMMIT_FORCE: ${{ inputs.commit-force }}
         EVENT_NAME: ${{ github.event_name }}
         IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
         set -euo pipefail
         if [ "${IS_FORK:-}" = "true" ]; then
@@ -405,6 +500,16 @@ runs:
         if [ "${EVENT_NAME:-}" = "pull_request" ] || [ "${EVENT_NAME:-}" = "pull_request_target" ]; then
           echo "::warning::Pushing graph to branch during ${EVENT_NAME} events may expose tokens or overwrite branches unintentionally. Recommended: run on push to default branch."
         fi
+        # Refuse any branch that looks like it carries real work, not a
+        # dedicated disposable graph branch: the repository's default branch,
+        # or the conventional main/master/trunk names some repos use without
+        # making one of them the configured default.
+        case "$R2G_BRANCH" in
+          main|master|trunk|"${DEFAULT_BRANCH:-__none__}")
+            echo "::error::commit-branch ('$R2G_BRANCH') looks like a protected/default branch carrying real work. Use a dedicated, disposable branch for the graph output."
+            exit 1
+            ;;
+        esac
         tmp="$(mktemp -d)"
         cp -r "$R2G_OUT/." "$tmp/"
         # Machine-local build facts (the runner's absolute path) never ship.
@@ -416,14 +521,26 @@ runs:
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add -A
         git commit -qm "graph for ${GITHUB_SHA:0:12}"
-        git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+        # GITHUB_SERVER_URL/GITHUB_API_URL (set by the runner for every job,
+        # including GHES) rather than a hardcoded github.com -- otherwise an
+        # enterprise token leaves the GHES instance and is sent to github.com.
+        server_url="${GITHUB_SERVER_URL:-https://github.com}"
+        git remote add origin "${server_url}/${GITHUB_REPOSITORY}.git"
         # Credential goes through a config value, never CLI argv or a URL: argv is
         # readable via `ps`/`/proc/$PID/cmdline` by any process on the host.
-        git config --local http.https://github.com/.extraheader \
+        git config --local "http.${server_url}/.extraheader" \
           "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
-        force_flag="$(printf '%s' "${R2G_COMMIT_FORCE:-true}" | tr '[:upper:]' '[:lower:]')"
-        if [ "$force_flag" = "false" ]; then
-          git push -q origin "$R2G_BRANCH"
-        else
+        force_flag="$(printf '%s' "${R2G_COMMIT_FORCE:-false}" | tr '[:upper:]' '[:lower:]')"
+        if [ "$force_flag" = "true" ]; then
+          case "$R2G_BRANCH" in
+            *graph*)
+              ;;
+            *)
+              echo "::error::commit-force is true but commit-branch ('$R2G_BRANCH') is not a dedicated graph branch. Force-push is only permitted to branches containing 'graph' to prevent overwriting working branches."
+              exit 1
+              ;;
+          esac
           git push -q --force origin "$R2G_BRANCH"
+        else
+          git push -q origin "$R2G_BRANCH"
         fi

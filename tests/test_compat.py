@@ -1,8 +1,7 @@
 """The backward-compatibility contract for query, RAG, CLI, and index state surfaces.
 
 These are characterization tests. The golden files under `tests/golden/` were
-captured from the baseline commit ff0e3ca (the tree this run started from), by
-running::
+captured from the baseline commit ff0e3ca by running::
 
     R2G_REGEN_GOLDEN=1 python -m pytest tests/test_compat.py -q
 
@@ -31,9 +30,11 @@ import pytest
 from conftest import (
     MINI_QUERY,
     REPO_ROOT,
+    action_step_by_name,
     build_mini_index,
     golden_json,
     golden_text,
+    run_body,
     write_golden_json,
     write_golden_text,
 )
@@ -458,10 +459,10 @@ def test_editing_one_file_changes_exactly_one_hash(mini_repo, tmp_path):
 
 
 # ==========================================================================
-# Regression -- REVIEW iteration 3
+# Regression: the embed/rag casing gate
 # ==========================================================================
 #
-# R-6: the `embed` input is read by two gates in two languages. The embed step
+# The `embed` input is read by two gates in two languages. The embed step
 # gates on `if: ${{ inputs.embed == 'true' }}`, and `==` in a GitHub expression
 # compares strings case-insensitively; the rag step gated on bash `=`, which
 # does not. `embed: "True"` therefore ran the embed step -- paying for the
@@ -484,26 +485,8 @@ if sys.platform == "win32":
 EMBED_CASINGS = ["true", "True", "TRUE", "tRuE", "false", "False", "FALSE", ""]
 
 
-def _action_step_by_name(text: str, name: str) -> str:
-    for chunk in re.split(r"\n(?=    - (?:name|uses):)", text):
-        if re.search(rf"^\s+- name: {re.escape(name)}\s*$", chunk, re.M):
-            return chunk
-    raise AssertionError(f"action.yml has no step named {name!r}")
-
-
-def _run_body(chunk: str) -> str:
-    """The dedented body of a composite step's `run: |` block."""
-    lines = chunk.split("\n")
-    for i, line in enumerate(lines):
-        if line.strip() == "run: |":
-            indent = len(line) - len(line.lstrip())
-            body = []
-            for nxt in lines[i + 1 :]:
-                if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
-                    break
-                body.append(nxt[indent + 2 :])
-            return "\n".join(body) + "\n"
-    raise AssertionError("step has no `run: |` block")
+_action_step_by_name = action_step_by_name
+_run_body = run_body
 
 
 def _github_gate(value: str) -> bool:
@@ -556,7 +539,7 @@ def _resolved_rag_argv(tmp_path: Path, embed: str) -> list:
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
 @pytest.mark.parametrize("embed", EMBED_CASINGS)
-def test_r6_the_yaml_gate_and_the_shell_gate_agree_on_every_casing(tmp_path, embed):
+def test_the_yaml_gate_and_the_shell_gate_agree_on_every_casing(tmp_path, embed):
     """R-6 (a): the step that computes vectors and the step that consumes them
     must switch on at exactly the same input values."""
     argv = _resolved_rag_argv(tmp_path, embed)
@@ -564,14 +547,14 @@ def test_r6_the_yaml_gate_and_the_shell_gate_agree_on_every_casing(tmp_path, emb
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_r6_a_capitalised_true_still_packs_with_vectors(tmp_path):
+def test_a_capitalised_true_still_packs_with_vectors(tmp_path):
     """R-6 (b): the exact value that used to compute vectors and ignore them."""
     assert "--vectors" in _resolved_rag_argv(tmp_path, "True")
     assert "--vectors" in _resolved_rag_argv(tmp_path, "TRUE")
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_r6_the_off_path_is_still_the_baseline_command_line(tmp_path):
+def test_the_off_path_is_still_the_baseline_command_line(tmp_path):
     """R-6 (c): with the input at its default, the argv is baseline's, in
     baseline's order -- the fix must not reach the workflows that never opt in."""
     baseline = [
@@ -593,7 +576,7 @@ def test_r6_the_off_path_is_still_the_baseline_command_line(tmp_path):
         assert _resolved_rag_argv(tmp_path, embed) == baseline, embed
 
 
-def test_r6_embed_is_the_only_boolean_input_with_a_split_gate():
+def test_embed_is_the_only_boolean_input_with_a_split_gate():
     """R-6 (d): every other `if:` on an input tests non-emptiness, which bash's
     `-n`/`-z` agree with for every casing. If a second boolean input is added,
     this fails and the new gate has to be checked the way `embed` now is."""
@@ -603,17 +586,17 @@ def test_r6_embed_is_the_only_boolean_input_with_a_split_gate():
 
 
 # ==========================================================================
-# Regressions -- VERIFY iteration 4
+# Regression: the fallback __version__ literal vs pyproject
 # ==========================================================================
 #
-# R-9: `repo2graph/__init__.py`'s fallback `__version__` (used only when the
+# `repo2graph/__init__.py`'s fallback `__version__` (used only when the
 # package is imported from a source tree with no installed dist-info) said
 # "1.3.0" while `[project] version` had moved to 1.4.0, so the same build
 # reported two different versions depending on how it was imported.
 
 
-def test_r9_the_fallback_version_agrees_with_pyproject():
-    """R-9: every `__version__` literal in the package equals the packaged
+def test_fallback_version_agrees_with_pyproject():
+    """Every `__version__` literal in the package equals the packaged
     version. There is no metadata to read in a source checkout, so the literal
     is the only thing that answers `repo2graph.__version__` there."""
     try:
@@ -696,20 +679,20 @@ def test_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
     calls = _resolved_push_git_calls(tmp_path, token)
     push_calls = [c for c in calls if c[:1] == ["push"]]
     assert len(push_calls) == 1, calls
-    assert push_calls[0] == ["push", "-q", "--force", "origin", "r2g-graph"]
+    assert push_calls[0] == ["push", "-q", "origin", "r2g-graph"]
     for call in calls:
         assert not any("x-access-token" in word for word in call), call
         assert not any(word.startswith("https://") and "@" in word for word in call), call
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
-def test_commit_force_false_uses_plain_push(tmp_path):
-    """Setting commit-force to false uses standard push without --force (#310)."""
+def test_commit_force_true_uses_force_push(tmp_path):
+    """Setting commit-force to true uses force-push (#310, #450)."""
     token = "ghs_TotallyFakeIssue310ProbeToken"  # noqa: S105
-    calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "false"})
+    calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "true"})
     push_calls = [c for c in calls if c[:1] == ["push"]]
     assert len(push_calls) == 1, calls
-    assert push_calls[0] == ["push", "-q", "origin", "r2g-graph"]
+    assert push_calls[0] == ["push", "-q", "--force", "origin", "r2g-graph"]
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
@@ -740,6 +723,64 @@ def test_push_refused_on_fork_pull_request(tmp_path):
     assert "Refusing to push graph to branch from a fork pull request" in (
         proc.stdout + proc.stderr
     )
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_force_push_refused_on_non_graph_branch(tmp_path):
+    """C4: Force-push is refused unless pushing to a dedicated graph branch."""
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch")
+    )
+    log = tmp_path / "git-calls.log"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
+    script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
+    env = dict(os.environ)
+    env.update(
+        GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+        GITHUB_REPOSITORY="acme/widgets",
+        GITHUB_SHA="0" * 40,
+        R2G_OUT=str(out_dir),
+        R2G_BRANCH="feature-work",
+        R2G_COMMIT_FORCE="true",
+        GIT_LOG=str(log),
+    )
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode != 0
+    assert "is not a dedicated graph branch" in (proc.stdout + proc.stderr)
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_push_refused_on_protected_or_default_branch(tmp_path):
+    """C4: Push is refused on main/master/trunk or configured default branch."""
+    body = _run_body(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Push graph to branch")
+    )
+    log = tmp_path / "git-calls.log"
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(exist_ok=True)
+    (out_dir / "graph.jsonl").write_text("{}\n", encoding="utf8")
+    script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
+
+    for protected in ("main", "master", "trunk", "production"):
+        env = dict(os.environ)
+        env.update(
+            GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+            GITHUB_REPOSITORY="acme/widgets",
+            GITHUB_SHA="0" * 40,
+            R2G_OUT=str(out_dir),
+            R2G_BRANCH=protected,
+            DEFAULT_BRANCH="production" if protected == "production" else "main",
+            GIT_LOG=str(log),
+        )
+        proc = subprocess.run(
+            [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+        )
+        assert proc.returncode != 0, f"Expected push refusal on {protected}"
+        assert "looks like a protected/default branch" in (proc.stdout + proc.stderr)
 
 
 # ==========================================================================
@@ -1160,3 +1201,28 @@ def test_every_subprocess_spawn_in_the_package_closes_stdin():
     # least a dozen spawn sites since fetch.py landed.
     assert total >= 10, total
     assert offenders == [], offenders
+
+
+def test_no_agent_loop_residue_in_tests():
+    """Verify tests and source do not reintroduce agent-loop artifacts, loop test IDs, or run narrations."""
+    test_dir = REPO_ROOT / "tests"
+    patterns = (
+        (re.compile(r"\biteration\s+\d+\b", re.IGNORECASE), "iteration <N>"),
+        (re.compile(r"\bat HEAD\b", re.IGNORECASE), "at HEAD"),
+        (re.compile(r"\b(ISS|AC)-\d+\b"), "ISS-<N> or AC-<N>"),
+        (re.compile(r"\bdef\s+test_r\d+\b"), "test_r<N> naming"),
+    )
+    offenders = []
+    for path in sorted(test_dir.glob("*.py")):
+        lines = path.read_text(encoding="utf8").splitlines()
+        in_guard_fn = False
+        for lineno, line in enumerate(lines, start=1):
+            if path.name == "test_compat.py":
+                if "def test_no_agent_loop_residue_in_tests" in line:
+                    in_guard_fn = True
+                if in_guard_fn:
+                    continue
+            for pat, desc in patterns:
+                if pat.search(line):
+                    offenders.append(f"{path.name}:{lineno} [{desc}]: {line.strip()}")
+    assert offenders == [], "Found agent-loop residue in tests:\n" + "\n".join(offenders)

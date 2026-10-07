@@ -292,6 +292,11 @@ def _fmt(value) -> str:
     return "N/A" if value is None else str(value)
 
 
+def _escape_md(text: str) -> str:
+    """Escape markdown table pipes and backticks."""
+    return str(text).replace("|", "\\|").replace("`", "'")
+
+
 def render(args) -> str:
     stats, stats_ok = load_stats(args.stats)
     files_n, functions_n, classes_n, edges_n = counts_from_stats(stats, stats_ok)
@@ -317,7 +322,7 @@ def render(args) -> str:
         out.append("| Rank | Node                        | In-degree |")
         out.append("|------|-----------------------------|-----------|")
         for i, (nid, degree) in enumerate(hubs, 1):
-            out.append(f"| {i}    | {nid} | {degree} |")
+            out.append(f"| {i}    | {_escape_md(nid)} | {degree} |")
     else:
         out.append("_No file nodes with incoming edges were found._")
     out.append("")
@@ -328,7 +333,7 @@ def render(args) -> str:
         out.append("| File A          | File B          | Co-changes |")
         out.append("|-----------------|-----------------|------------|")
         for a, b, count in hotspots:
-            out.append(f"| {_strip_file_prefix(a)} | {_strip_file_prefix(b)} | {count} |")
+            out.append(f"| {_escape_md(_strip_file_prefix(a))} | {_escape_md(_strip_file_prefix(b))} | {count} |")
         out.append("")
 
     delta = render_graph_delta(args.changelog)
@@ -336,8 +341,9 @@ def render(args) -> str:
         out.append(delta)
 
     if args.artifact_name:
+        safe_artifact = str(args.artifact_name).replace("`", "")
         out.append(
-            f"> Artifact: download `{args.artifact_name}` for the full interactive graph.html"
+            f"> Artifact: download `{safe_artifact}` for the full interactive graph.html"
         )
 
     return "\n".join(out).rstrip() + "\n"

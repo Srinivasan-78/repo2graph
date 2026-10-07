@@ -1,4 +1,9 @@
-"""Targeted negative and mutation tests for security-critical modules (Issue #317).
+"""Targeted negative tests for security-critical modules (Issue #317).
+
+These are ordinary unit tests pointed at the failure modes a security review
+flags, not mutation testing in the standard sense (removing or inverting a
+validation branch and proving a test fails). Real mutation testing of the
+auth/path-validation branches is tracked separately.
 
 Verifies that security checks cannot be bypassed or inverted across:
 - Path containment and symlink validation
@@ -22,7 +27,7 @@ from repo2graph.mcp import _clamp, MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS
 # ==============================================================================
 
 
-def test_mutation_validate_outdir_refuses_unsafe_symlinks(tmp_path: Path):
+def test_validate_outdir_refuses_unsafe_symlinks(tmp_path: Path):
     """Output directory validation must refuse symlinks when allow_symlink=False."""
     real_dir = tmp_path / "real_target"
     real_dir.mkdir()
@@ -47,7 +52,7 @@ def test_mutation_validate_outdir_refuses_unsafe_symlinks(tmp_path: Path):
 # ==============================================================================
 
 
-def test_mutation_mcp_output_caps_enforce_hard_ceilings():
+def test_mcp_output_caps_enforce_hard_ceilings():
     """Caller-supplied numeric arguments must never exceed MCP_MAX bounds."""
     # Enormous values must clamp to ceiling
     assert _clamp(1_000_000, 8, 1, MCP_MAX_K) == MCP_MAX_K
@@ -68,7 +73,7 @@ def test_mutation_mcp_output_caps_enforce_hard_ceilings():
 # ==============================================================================
 
 
-def test_mutation_secret_filter_identifies_credentials():
+def test_secret_filter_identifies_credentials():
     """Credential and secret files must always match secret detection patterns."""
     sensitive_paths = [
         ".env",
@@ -99,7 +104,7 @@ def test_mutation_secret_filter_identifies_credentials():
 # ==============================================================================
 
 
-def test_mutation_is_pid_alive_validation():
+def test_is_pid_alive_validation():
     """PID liveness checks must accurately distinguish active from nonexistent processes."""
     current_pid = os.getpid()
     assert _is_pid_alive(current_pid)
@@ -109,7 +114,7 @@ def test_mutation_is_pid_alive_validation():
     assert not _is_pid_alive(0)
 
 
-def test_mutation_active_lock_cannot_be_stolen(tmp_path: Path):
+def test_active_lock_cannot_be_stolen(tmp_path: Path):
     """An active build lock held by a live process must not be acquired or overwritten."""
     lock1 = BuildLock(tmp_path, timeout=0.1)
     lock1.acquire()

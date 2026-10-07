@@ -222,8 +222,7 @@ function run()
 end
 """
     pf = parse_source(src, "lua")
-    if not pf.symbols:
-        pytest.skip("lua grammar unavailable")
+    assert pf.symbols, "lua grammar produced no symbols"
     assert pf.parse_errors == 0
     names = {s.name: s for s in pf.symbols}
     assert "greet" in names
@@ -596,8 +595,8 @@ def test_index_survives_unicode_line_separators(tmp_path, sample_repo):
     assert idx.retrieve("uses_sep", k=3)
     # the chunk must carry the *body* of uses_sep, not a mis-sliced
     # fragment. splitlines() breaks on U+2028/U+2029/U+0085 but tree-sitter's
-    # row numbers do not, so at HEAD the chunk text is sliced from the wrong
-    # lines and never contains "return MSG".
+    # row numbers do not; custom line splitting avoids slicing chunk text from
+    # the wrong lines.
     sep_chunk = next(c for c in idx.chunks if c["node_id"] == "sym:pkg/sep.py::uses_sep")
     assert "return MSG" in sep_chunk["text"]
     assert 'MSG = "a' not in sep_chunk["text"]
@@ -666,6 +665,8 @@ def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, ca
         "overview.md",
     ]
     assert sorted(p.name for p in (out / "agent").iterdir()) == [
+        "bm25.jsonl",
+        "bm25.meta.json",
         "chunks.jsonl",
         "edges.jsonl",
         "graph.cypher",
@@ -1243,7 +1244,7 @@ def test_graph_shape_matches_the_characterization(sample_repo):
 
 def test_symbol_chunk_body_survives_unicode_line_separator(tmp_path):
     """Verify a file whose first line holds U+2028 must still slice each
-    later symbol's chunk from the right source lines. At HEAD `splitlines()`
+    later symbol's chunk from the right source lines. Currently, `splitlines()`
     splits on U+2028 while tree-sitter row numbers do not, so the body comes out
     as "\\ndef uses_sep():" and never contains "return MSG"."""
     repo = tmp_path / "repo"
@@ -1283,7 +1284,7 @@ def test_file_residual_excludes_symbol_body(tmp_path):
 
 def test_cochange_survives_non_ascii_filenames(tmp_path):
     """Verify two non-ASCII paths committed together three times
-    must yield a CO_CHANGE edge. At HEAD `git log` runs with text=True and
+    must yield a CO_CHANGE edge. Currently, `git log` runs with text=True and
     core.quotepath=true, so the paths come back quoted/locale-decoded, never
     match file_index, and the edge silently vanishes (or raises
     UnicodeDecodeError on a non-UTF-8 locale)."""
@@ -1362,7 +1363,7 @@ def test_add_cochange_splits_git_log_on_newline_only(monkeypatch):
 
 def test_graphml_roundtrips_with_a_control_char(tmp_path):
     """Verify a C0 control char inside a docstring must not make the
-    GraphML unparseable. stdlib only, never skipped. At HEAD ElementTree writes
+    GraphML unparseable. stdlib only, never skipped. Currently, ElementTree writes
     the raw \\x0c and ET.parse raises ParseError."""
     import xml.etree.ElementTree as ET
 
@@ -1391,7 +1392,7 @@ def test_graphml_roundtrips_with_a_control_char(tmp_path):
 
 @pytest.mark.parametrize("spec", ["owner/..", "../evil", "-x/-y", "owner/"])
 def test_parse_spec_rejects_traversal_and_option_specs(spec):
-    """Verify traversal / option-like specs must raise. At HEAD
+    """Verify traversal / option-like specs must raise. Currently,
     parse_spec("owner/..") returns ("owner", "..") instead of raising."""
     from repo2graph.fetch import parse_spec
 
@@ -1433,7 +1434,7 @@ class _RunRecorder:
 
 def test_token_never_appears_in_clone_argv(tmp_path, monkeypatch):
     """Verify no argv element handed to subprocess.run may contain the
-    token. At HEAD the token is interpolated into the clone URL argv element."""
+    token. Currently the token is interpolated into the clone URL argv element."""
     from repo2graph import fetch
 
     rec = _RunRecorder()
@@ -1464,7 +1465,7 @@ def test_every_fetch_subprocess_call_passes_timeout(tmp_path, monkeypatch):
 
 def test_discover_matches_between_git_and_walk(tmp_path):
     """Verify discover() must return the same relative paths whether or
-    not the tree is a git checkout. At HEAD the os.walk fallback drops every
+    not the tree is a git checkout. Currently the os.walk fallback drops every
     dot-directory while the git path keeps it, so `.github/**` appears only in a
     git checkout."""
     if shutil.which("git") is None:
@@ -1572,7 +1573,7 @@ def test_build_takes_the_pool_path_above_parallel_min_files(wide_repo, monkeypat
 
 def test_dead_dataclass_fields_are_gone():
     """Verify Symbol has no start_byte/end_byte and ParsedFile
-    has no file_calls. At HEAD all three fields are present."""
+    has no file_calls. Currently, all three fields are present."""
     import dataclasses
 
     from repo2graph.parse import ParsedFile, Symbol
@@ -1608,7 +1609,7 @@ def _run_blocks(yaml_text: str):
 
 def test_index_repo_workflow_has_no_run_interpolation():
     """Verify no `${{ inputs. }}` or `${{ github.event. }}` inside any
-    run: block of index-repo.yml; the slug is computed from "$R2G_REPO". At HEAD
+    run: block of index-repo.yml; the slug is computed from "$R2G_REPO". Currently,
     the "Compute slug" step interpolates ${{ inputs.repo }} straight into bash."""
     text = (REPO_ROOT / ".github" / "workflows" / "index-repo.yml").read_text(encoding="utf-8")
     for block in _run_blocks(text):
@@ -1619,7 +1620,7 @@ def test_index_repo_workflow_has_no_run_interpolation():
 
 def test_ci_workflow_tests_job_covers_windows():
     """Verify the ci.yml `tests` job runs on ubuntu and windows across
-    both Python versions. At HEAD the matrix is ubuntu-latest only."""
+    both Python versions. Currently the matrix is ubuntu-latest only."""
     text = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     tests_job = text.split("\n  tests:", 1)[1].split("\n  action:", 1)[0]
     assert "windows-latest" in tests_job
@@ -2044,6 +2045,7 @@ def test_clone_argv_construction(tmp_path, monkeypatch):
     assert target1 == tmp_path / "repo"
     assert rec.calls[-1][0] == [
         "git",
+        *fetch.GIT_HARDENING_ARGS,
         "clone",
         "--quiet",
         "https://github.com/owner/repo.git",
@@ -2055,6 +2057,7 @@ def test_clone_argv_construction(tmp_path, monkeypatch):
     assert target2 == tmp_path / "repo"
     assert rec.calls[-1][0] == [
         "git",
+        *fetch.GIT_HARDENING_ARGS,
         "clone",
         "--quiet",
         "--depth",
@@ -2497,8 +2500,7 @@ def test_ruby_call_resolves_to_method_not_receiver():
     fallback picked named_children[0] (the receiver), so `logger.info(x)` was
     recorded as a call to `logger`."""
     pf = parse_source(b"def greet(n)\n  puts n\n  logger.info(n)\n  User.find(1)\nend\n", "ruby")
-    if not pf.symbols:
-        pytest.skip("ruby grammar unavailable")
+    assert pf.symbols, "ruby grammar produced no symbols"
     calls = pf.symbols[0].calls
     assert "info" in calls and "find" in calls
     assert "logger" not in calls and "User" not in calls
@@ -2520,8 +2522,7 @@ protocol Named {
 }
 """
     pf = parse_source(src, "swift")
-    if not pf.symbols:
-        pytest.skip("swift grammar unavailable")
+    assert pf.symbols, "swift grammar produced no symbols"
     kinds = {s.qualname: s.kind for s in pf.symbols}
     assert kinds["Greeter"] == "class"
     assert kinds["Greeter.greet"] == "function"
@@ -2566,8 +2567,7 @@ class Runner {
 }
 """
     pf = parse_source(src, "tsx")
-    if not pf.symbols:
-        pytest.skip("tsx grammar unavailable")
+    assert pf.symbols, "tsx grammar produced no symbols"
     kinds = {s.qualname: s.kind for s in pf.symbols}
     assert kinds == {
         "Named": "interface",

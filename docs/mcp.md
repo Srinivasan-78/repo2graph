@@ -36,11 +36,12 @@ pip install "repo2graph[mcp]"
 
 Or from a checkout, if you want to change it: `pip install -e ".[mcp]"`.
 
-Prefer `npx`? [`repo2graph-mcp` on npm](https://www.npmjs.com/package/repo2graph-mcp) is a thin
-launcher that resolves `uvx` (falling back to an installed `repo2graph-mcp`, then `pipx`) and hands
-off to it — the server itself is still this same Python package, not a port. See
-[`npm/architecture.md`](architecture.md) for the resolution order and what it does when none of those is
-on `PATH`.
+Prefer `npx`? A thin `repo2graph-mcp` launcher package exists at
+[`npm/`](../npm/README.md) in this repository — it resolves `uvx` (falling back to an installed
+`repo2graph-mcp`, then `pipx`) and hands off to it, so the server itself stays this same Python
+package, not a port. **It is not yet published to the npm registry**, so the `npx` form below does
+not work yet; use the `uvx` command above until it is. See [`npm/README.md`](../npm/README.md) for
+the resolution order and what it does when none of `uvx`/`repo2graph-mcp`/`pipx` is on `PATH`.
 
 ```json
 {

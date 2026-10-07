@@ -60,7 +60,9 @@ def test_launcher_spawns_batch_shims_through_a_shell():
         "launcher no longer special-cases Windows batch shims; "
         "spawnSync cannot run them without shell: true"
     )
-    assert "shell" in src, "launcher must set shell: true for a .cmd/.bat shim"
+    # Comments mention "shell: true" in prose, so a bare `"shell" in src` would
+    # still pass with the real option deleted; match the actual assignment.
+    assert ".shell = true" in src, "launcher must set shell: true for a .cmd/.bat shim"
 
 
 def _run_launcher(tmp_path: Path, shim_dir: Path, args: list[str]) -> subprocess.CompletedProcess:

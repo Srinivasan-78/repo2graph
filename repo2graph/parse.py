@@ -4,6 +4,7 @@ import os
 import re
 import stat as statmod
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -342,6 +343,12 @@ class BuildConfig:
     include_vendor: bool = False
     chunk_large_files: bool = False
     max_nodes: int = 0
+    max_edges: int = 0
+    max_chunks: int = 0
+    max_bytes: int = 0
+    max_memory_mb: float = 0.0
+    max_build_seconds: float = 0.0
+    limit_policy: str | None = None
     include_secrets: bool = False
     secret_policy: str = "redact-match"
     extra_secret_keywords: list[str] = field(default_factory=list)
@@ -361,8 +368,11 @@ INDEX_MARKER_FORMAT = "repo2graph/"
 def _is_index_dir(d: Path) -> bool:
     """True when `d` is a repo2graph output directory (any build, any -o)."""
     manifest = d / "agent" / "manifest.json"
+    nodes = d / "agent" / "nodes.jsonl"
     try:
-        if not manifest.is_file() or manifest.stat().st_size > 5_000_000:
+        # A valid index has both manifest.json and nodes.jsonl.
+        # Requiring nodes.jsonl stops a planted agent/manifest.json from dropping subtrees (W20).
+        if not manifest.is_file() or not nodes.is_file() or manifest.stat().st_size > 5_000_000:
             return False
         import json
 
@@ -422,9 +432,13 @@ def _walk_files(root: Path, skip_dirs=None):
         skip_dirs = DEFAULT_SKIP_DIRS
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        dirpath_p = Path(dirpath)
+        # Exclude skip_dirs and submodules (.git inside subdirectories) so walk matches git discovery (W14).
+        dirnames[:] = [
+            d for d in dirnames if d not in skip_dirs and not (dirpath_p / d / ".git").exists()
+        ]
         for fn in filenames:
-            files.append(Path(dirpath) / fn)
+            files.append(dirpath_p / fn)
     return files
 
 
@@ -459,19 +473,44 @@ def _glob_re(pattern: str) -> re.Pattern:
         else:
             out.append(re.escape(pat[i]))
             i += 1
-    return re.compile("".join(out) + r"\Z")
+    # On Windows, path matching is case-insensitive so globs don't silently no-op (W13).
+    flags = re.IGNORECASE if os.name == "nt" else 0
+    return re.compile("".join(out) + r"\Z", flags)
 
 
 def matches_any(rel: str, patterns) -> bool:
     return any(_glob_re(p).match(rel) for p in patterns)
 
 
+def is_lfs_pointer(header: bytes) -> bool:
+    """True if header matches Git LFS pointer format (W16)."""
+    return header.startswith(b"version https://git-lfs.github.com/spec/v1\n") or header.startswith(
+        b"version https://git-lfs.github.com/spec/v1\r\n"
+    )
+
+
 def is_binary(path: Path) -> bool:
-    try:
-        with open(path, "rb") as fh:
-            return b"\0" in fh.read(4096)
-    except OSError:
-        return True
+    """True if file contains null bytes (binary) and is not BOM-encoded text (W10).
+    Raises OSError if unreadable (e.g. permission or missing sparse file) (W15).
+    """
+    p_str = str(path)
+    if os.name == "nt" and len(p_str) >= 250 and not p_str.startswith("\\\\?\\"):
+        p_str = "\\\\?\\" + os.path.abspath(p_str)
+    with open(p_str, "rb") as fh:
+        header = fh.read(4096)
+    if not header:
+        return False
+    # Check for UTF BOMs (UTF-8, UTF-16, UTF-32) (W10)
+    if header.startswith(
+        (b"\xef\xbb\xbf", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff")
+    ):
+        for enc in ("utf-8-sig", "utf-16", "utf-32"):
+            try:
+                header.decode(enc)
+                return False  # Decodes as valid text with BOM
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return b"\0" in header
 
 
 def _count_gitignored(root: Path) -> int:
@@ -525,6 +564,15 @@ def discover(
     if config.include_vendor:
         skip_dirs.discard("vendor")
 
+    walk_skip_dirs = set(skip_dirs)
+    if include_globs:
+        for pat in include_globs:
+            parts = pat.strip("/").split("/")
+            for part in parts:
+                if "*" in part or "?" in part or "[" in part:
+                    break
+                walk_skip_dirs.discard(part)
+
     root = root.resolve()
     files = _git_files(root)
     if files is not None:
@@ -532,7 +580,7 @@ def discover(
             stats["discovery"] = "git"
             stats["skipped_gitignore"] = _count_gitignored(root)
     else:
-        files = _walk_files(root, skip_dirs=skip_dirs)
+        files = _walk_files(root, skip_dirs=walk_skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
 
@@ -568,6 +616,8 @@ def discover(
                 return True
         return False
 
+    seen_case: set[str] = set()
+
     for abspath in files:
         try:
             rel = abspath.relative_to(root)
@@ -575,12 +625,20 @@ def discover(
             continue
         if _inside_index(rel.parts):
             continue
-        # A skip_dirs hit is either a hidden/dot directory (.git, .idea, ...)
-        # or a vendor/build directory (node_modules, dist, target, ...); tell
-        # the two apart for the human overview's "what was skipped" section,
-        # without changing which paths get skipped.
+        rp = rel.as_posix()
+        # Case collision deduplication on case-insensitive filesystems (W17)
+        if os.name == "nt" or sys.platform == "darwin":
+            rp_lower = rp.lower()
+            if rp_lower in seen_case:
+                if stats is not None:
+                    stats["skipped_case_collision"] = stats.get("skipped_case_collision", 0) + 1
+                continue
+            seen_case.add(rp_lower)
+
+        # Precedence: explicit --include rescues directories otherwise dropped by skip_dirs (W11)
+        rescued = bool(include_globs and matches_any(rp, include_globs))
         skip_part = next((part for part in rel.parts if part in skip_dirs), None)
-        if skip_part is not None:
+        if skip_part is not None and not rescued:
             if stats is not None:
                 key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
                 stats[key] += 1
@@ -598,6 +656,8 @@ def discover(
         try:
             st = abspath.lstat()
         except OSError:
+            if stats is not None:
+                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
             continue
         # Two independent rejections, deliberately not one branch. When they
         # shared a condition the `chunk_large_files` escape hatch dropped out of
@@ -612,7 +672,6 @@ def discover(
             if stats is not None:
                 stats["skipped_too_large"] += 1
             continue
-        rp = rel.as_posix()
         if not config.include_secrets:
             from .security import _is_secret_path
 
@@ -628,9 +687,27 @@ def discover(
             continue
         if exclude_globs and matches_any(rp, exclude_globs):
             continue
-        if is_binary(abspath):
+
+        # Check LFS pointer file (W16)
+        if st.st_size < 512:
+            try:
+                with open(abspath, "rb") as fh:
+                    header = fh.read(256)
+                if is_lfs_pointer(header):
+                    if stats is not None:
+                        stats["skipped_lfs"] = stats.get("skipped_lfs", 0) + 1
+                    continue
+            except OSError:
+                pass
+
+        try:
+            if is_binary(abspath):
+                if stats is not None:
+                    stats["skipped_binary"] += 1
+                continue
+        except OSError:
             if stats is not None:
-                stats["skipped_binary"] += 1
+                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
             continue
         yield rp, abspath
 
@@ -1624,6 +1701,19 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
     return details
 
 
+def normalize_source_bytes(source: bytes) -> bytes:
+    """If source has UTF BOM (UTF-16/UTF-32), decode and re-encode to UTF-8 for tree-sitter (W10)."""
+    if source.startswith(
+        (b"\xef\xbb\xbf", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff")
+    ):
+        for enc in ("utf-8-sig", "utf-16", "utf-32"):
+            try:
+                return source.decode(enc).encode("utf-8")
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return source
+
+
 def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
@@ -1639,6 +1729,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             imports=[],
             grammar_unavailable=cfg is not None and parser is None,
         )
+    source = normalize_source_bytes(source)
     tree = parser.parse(source)
 
     def _count_errors(node):
@@ -1655,45 +1746,42 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     used_cpp = False
 
     if errors > 0 and lang in ("c", "cpp") and filepath is not None:
-        try:
-            if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp") and (
-                _cpp_available()
-            ):
-                try:
-                    out = subprocess.run(
-                        ["cpp", "-w", "-P", "-undef", str(filepath)],
-                        stdin=subprocess.DEVNULL,
-                        capture_output=True,
-                        timeout=10,
-                    )
-                    if out.returncode == 0:
-                        # Never pass text=True to a subprocess reading git/cpp output on
-                        # Windows -- it decodes with the cp1252 locale and raises
-                        # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                        # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
-                        cpp_bytes = out.stdout
-                        if len(cpp_bytes) <= 2 * len(source):
-                            cpp_tree = parser.parse(cpp_bytes)
-                            cpp_errors = _count_errors(cpp_tree.root_node)
-                            if cpp_errors < errors:
-                                # Do not adopt cpp_bytes or cpp_tree.
-                                # cpp is invoked with -P, which strips
-                                # `# <linenum> "<file>"` markers, so
-                                # preprocessed row numbers cannot be mapped
-                                # back to the on-disk file. chunks.py always
-                                # slices the original, and storing cpp rows
-                                # desyncs every citation. used_cpp still
-                                # records that a macro-aware retry produced
-                                # fewer ERROR nodes.
-                                used_cpp = True
-                        else:
-                            import logging
+        if Path(filepath).suffix.lower() in (".c", ".cc", ".cpp", ".h", ".hpp") and (
+            _cpp_available()
+        ):
+            try:
+                out = subprocess.run(
+                    ["cpp", "-w", "-P", "-undef", str(filepath)],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=10,
+                )
+                if out.returncode == 0:
+                    # Never pass text=True to a subprocess reading git/cpp output on
+                    # Windows -- it decodes with the cp1252 locale and raises
+                    # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
+                    # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
+                    cpp_bytes = out.stdout
+                    if len(cpp_bytes) <= 2 * len(source):
+                        cpp_tree = parser.parse(cpp_bytes)
+                        cpp_errors = _count_errors(cpp_tree.root_node)
+                        if cpp_errors < errors:
+                            # Do not adopt cpp_bytes or cpp_tree.
+                            # cpp is invoked with -P, which strips
+                            # `# <linenum> "<file>"` markers, so
+                            # preprocessed row numbers cannot be mapped
+                            # back to the on-disk file. chunks.py always
+                            # slices the original, and storing cpp rows
+                            # desyncs every citation. used_cpp still
+                            # records that a macro-aware retry produced
+                            # fewer ERROR nodes.
+                            used_cpp = True
+                    else:
+                        import logging
 
-                            logging.warning(f"cpp output for {filepath} is too large, skipping")
-                except (OSError, subprocess.SubprocessError):
-                    pass
-        except Exception:
-            pass
+                        logging.warning(f"cpp output for {filepath} is too large, skipping")
+            except (OSError, subprocess.SubprocessError):
+                pass
 
     kind_map, call_types, import_types = cfg["kind_map"], cfg["call_types"], cfg["import_types"]
     symbols: list[Symbol] = []
@@ -2009,7 +2097,7 @@ def explain_path(
                     "reason": "Path is matched and ignored by .gitignore rules",
                     "precedence_step": 4,
                 }
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
 
     # Step 5: Regular file check (stat.S_ISREG)

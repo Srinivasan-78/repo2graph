@@ -92,7 +92,7 @@ def tool_repo_search(
         neighbours=nbr_mode,
         max_neighbours=max_nbrs,
     )
-    text = pack["markdown"]
+    text: str = str(pack.get("markdown") or "")
     if count_tokens(text) > room:
         text = _fit_lines(text, room, count_tokens)
     if not text.strip():

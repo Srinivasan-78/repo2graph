@@ -156,7 +156,7 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
+select = ["E", "F", "W", "BLE"]
 ignore = ["E501", "E702", "E731", "E741"]
 
 [tool.mypy]
@@ -193,16 +193,14 @@ follow_imports_for_stubs = true
 
 [[tool.mypy.overrides]]
 module = [
-    "repo2graph.answer", "repo2graph.chunks", "repo2graph.cli",
-    "repo2graph.embed", "repo2graph.fetch",
-    "repo2graph.graph", "repo2graph.mcp", "repo2graph.mcp.*", "repo2graph.parse",
-    "repo2graph.viz",
+    "repo2graph.cli",
+    "repo2graph.graph",
+    "repo2graph.parse",
 ]
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_untyped_calls = false
 disallow_any_generics = false
-# These modules call into each other, so an un-annotated return in one shows up
-# as "returning Any" in the next. It disappears as the sweep progresses; until
-# then it reports the same debt twice.
 warn_return_any = false
+
+

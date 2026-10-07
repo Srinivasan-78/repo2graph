@@ -16,6 +16,8 @@ vocabulary contract of its own that several of its tests depend on.
 
 import hashlib
 import json
+import os
+import re
 from pathlib import Path
 
 import pytest
@@ -177,7 +179,7 @@ def write_big_repo(root: Path) -> Path:
 
 @pytest.fixture(scope="session")
 def big_index(tmp_path_factory):
-    """Read-only: session scoped so the twelve-module build runs once."""
+    """Read-only: session scoped so the twenty-module build runs once."""
     root = tmp_path_factory.mktemp("big")
     repo = write_big_repo(root)
     out = root / "big_idx"
@@ -371,3 +373,43 @@ def write_golden_text(name: str, text: str) -> None:
 
 def write_golden_json(name: str, data) -> None:
     write_golden_text(name, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+# --------------------------------------------------------------------------
+# action.yml composite-step parsing, shared by test_compat.py and
+# test_secrets_hardening.py (previously duplicated byte-for-byte in both).
+# --------------------------------------------------------------------------
+
+
+def action_step_by_name(text: str, name: str) -> str:
+    for chunk in re.split(r"\n(?=    - (?:name|uses):)", text):
+        if re.search(rf"^\s+- name: {re.escape(name)}\s*$", chunk, re.M):
+            return chunk
+    raise AssertionError(f"action.yml has no step named {name!r}")
+
+
+def run_body(chunk: str) -> str:
+    """The dedented body of a composite step's `run: |` block."""
+    lines = chunk.split("\n")
+    for i, line in enumerate(lines):
+        if line.strip() == "run: |":
+            indent = len(line) - len(line.lstrip())
+            body = []
+            for nxt in lines[i + 1 :]:
+                if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                    break
+                body.append(nxt[indent + 2 :])
+            return "\n".join(body) + "\n"
+    raise AssertionError("step has no `run: |` block")
+
+
+@pytest.fixture(autouse=True)
+def clean_debug_env():
+    orig = os.environ.get("REPO2GRAPH_DEBUG")
+    try:
+        yield
+    finally:
+        if orig is None:
+            os.environ.pop("REPO2GRAPH_DEBUG", None)
+        else:
+            os.environ["REPO2GRAPH_DEBUG"] = orig

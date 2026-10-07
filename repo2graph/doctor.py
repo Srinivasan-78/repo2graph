@@ -85,16 +85,99 @@ class DoctorReport:
 
 
 def check_python() -> CheckResult:
-    """Check Python interpreter version (requires >= 3.10)."""
+    """Check Python interpreter version (requires >= 3.10, tested <= 3.13)."""
     vi = sys.version_info
     ver_str = f"{vi[0]}.{vi[1]}.{vi[2]}"
-    if vi >= (3, 10):
-        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.10)")
+    if (3, 10) <= vi <= (3, 13):
+        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.10, <= 3.13)")
+    if vi > (3, 13):
+        return CheckResult(
+            "Python Version",
+            "warn",
+            f"Python {ver_str} is newer than tested support matrix (<= 3.13)",
+            remediation="Python 3.10 through 3.13 are verified. Python 3.14+ may encounter grammar wheel compatibility issues.",
+        )
     return CheckResult(
         "Python Version",
         "fail",
         f"Python {ver_str} is unsupported (< 3.10)",
         remediation="Upgrade to Python 3.10 or newer.",
+    )
+
+
+def check_platform_support() -> CheckResult:
+    """Check operating system and C runtime (glibc) compatibility."""
+    import platform
+
+    system = platform.system()
+    details = [f"OS: {system} {platform.release()} ({platform.machine()})"]
+
+    if system == "Linux":
+        # Check for Alpine / musl
+        is_musl = False
+        if Path("/etc/alpine-release").exists():
+            is_musl = True
+        else:
+            lib, _ = platform.libc_ver()
+            if "musl" in lib.lower():
+                is_musl = True
+
+        if is_musl:
+            details.append("C library: musl libc (Alpine Linux)")
+            return CheckResult(
+                "Platform Support",
+                "warn",
+                "musl libc detected (Alpine Linux)",
+                details=details,
+                remediation=(
+                    "Precompiled tree-sitter grammar wheels are not distributed for musl libc. "
+                    "Use a glibc-based container (Debian 12+, Ubuntu 22.04+) or compile "
+                    "tree-sitter grammars with a C toolchain."
+                ),
+            )
+
+        lib, ver = platform.libc_ver()
+        if lib == "glibc" and ver:
+            details.append(f"C library: glibc {ver}")
+            try:
+                parts = tuple(int(p) for p in ver.split(".")[:2] if p.isdigit())
+                if len(parts) >= 2 and parts < (2, 34):
+                    return CheckResult(
+                        "Platform Support",
+                        "fail",
+                        f"glibc {ver} is below minimum requirement (>= 2.34)",
+                        details=details
+                        + [
+                            "tree-sitter precompiled grammar wheels require glibc >= 2.34.",
+                            "RHEL 8, CentOS 8, Amazon Linux 2, Debian 11, and Ubuntu 20.04 ship glibc < 2.34.",
+                        ],
+                        remediation=(
+                            "Upgrade glibc to >= 2.34, run inside a newer container "
+                            "(e.g., Ubuntu 22.04+, Debian 12+, RHEL 9+), or build tree-sitter "
+                            "grammars from source."
+                        ),
+                    )
+            except (ValueError, TypeError):
+                pass
+            return CheckResult(
+                "Platform Support",
+                "ok",
+                f"Linux with glibc {ver} (>= 2.34)",
+                details=details,
+            )
+        details.append(f"C library: {lib or 'unknown'} {ver or ''}".strip())
+        return CheckResult(
+            "Platform Support",
+            "ok",
+            f"Linux ({lib or 'unknown libc'})",
+            details=details,
+        )
+
+    return CheckResult(
+        "Platform Support",
+        "ok",
+        f"{system} is supported",
+        details=details,
     )
 
 
@@ -137,7 +220,7 @@ def check_git(path: Path | None = None) -> CheckResult:
         )
         version_str = out.stdout.strip()
         return CheckResult("Git CLI", "ok", f"available ({version_str})")
-    except Exception as exc:
+    except (OSError, subprocess.SubprocessError) as exc:
         return CheckResult(
             "Git CLI",
             "warn",
@@ -159,7 +242,7 @@ def check_tree_sitter() -> CheckResult:
     """
     try:
         from .parse import LANG_CFG, parser_for
-    except Exception as exc:
+    except ImportError as exc:
         return CheckResult(
             "Tree-sitter Grammars",
             "fail",
@@ -311,7 +394,7 @@ def check_permissions(path: Path | str) -> CheckResult:
         probe_file.write_text("ok", encoding="utf-8")
         probe_file.unlink()
         return CheckResult("Permissions", "ok", f"write access verified for {target}")
-    except Exception as exc:
+    except OSError as exc:
         return CheckResult(
             "Permissions",
             "fail",
@@ -358,7 +441,7 @@ def check_artifact_integrity(path: Path | str) -> CheckResult:
                 remediation="Rebuild index with: repo2graph build",
             )
         return CheckResult("Artifact Integrity", "ok", "index artifacts are intact")
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         return CheckResult(
             "Artifact Integrity",
             "fail",
@@ -373,6 +456,7 @@ def run_doctor(path: str | Path = ".") -> DoctorReport:
     target_path = Path(path).resolve()
     report = DoctorReport()
     report.checks.append(check_python())
+    report.checks.append(check_platform_support())
     report.checks.append(check_platform_encoding())
     report.checks.append(check_git(target_path))
     report.checks.append(check_tree_sitter())

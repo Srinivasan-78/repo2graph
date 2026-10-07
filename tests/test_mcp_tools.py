@@ -86,7 +86,7 @@ def test_find_symbol_empty_name_is_an_error(mini_index):
 
 
 def test_find_symbol_never_returns_a_secret_path_node(mini_index):
-    """the secret filter rule's rule extended to the new tool: a name inside `.env` must not
+    """The secret filter rule extended to the new tool: a name inside `.env` must not
     surface a secret-path node id."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -551,7 +551,7 @@ def test_blast_radius_unknown_node_is_an_error(mini_index):
 
 
 def test_blast_radius_never_returns_a_secret_neighbour(mini_index):
-    """the secret filter rule's rule extended: a caller/importer that lives at a secret path
+    """The secret filter rule extended: a caller/importer that lives at a secret path
     must not appear even though it is graph-reachable."""
     mcp = mcp_module()
     idx = Index(mini_index)

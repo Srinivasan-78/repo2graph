@@ -73,13 +73,17 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
+| `--max-total-bytes` | `0` (no limit) | Alias for `--max-bytes`: stop once discovered files exceed N bytes in total. |
 | `--max-edges` | `0` (no limit) | Keep at most N edges. Edges grow with how interconnected the code is, not with file count, so this is the bound that matters on a dense repository. |
-| `--limit-policy` | `warn` | What a reached limit does. `warn` says so on stderr once per limit; `truncate` cuts quietly. **Both** record the cut under `limits_hit` in `stats.json` — a bounded index always says it is partial, so a missing edge is never mistaken for an absent relationship. |
+| `--max-nodes` | `0` (unbounded) | Bound on graph node count before triggering the limit policy (0 = unbounded). |
+| `--max-chunks` | `0` (no limit) | Keep at most N retrieval chunks; further chunks are dropped. |
+| `--max-memory-mb` | `0` (no limit) | Stop or truncate when estimated memory consumption exceeds N MB. |
+| `--max-build-seconds` | `0` (no limit) | Stop or truncate when wall-clock build duration exceeds N seconds. |
+| `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
 | `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
-| `--max-nodes` | `0` (unbounded) | Fail the build with `GraphLimitExceeded` once the graph holds more than this many nodes — a guard for CI or shared machines against an unexpectedly huge tree. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
 | `--include-vendor` | off | Index files inside `vendor/` directories (skipped by default). |
 | `--exclude-dir` | none | Additional directory name to skip. Repeatable (e.g. `--exclude-dir generated --exclude-dir tmp`). |
@@ -93,6 +97,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--allow-symlink-out` | off | Allow `-o` to point through a symbolic link. Off by default to prevent accidental writes outside the repo tree. |
 | `--force` | off | Allow overwriting an existing directory that was not created by repo2graph. Without this flag, build refuses to write into any non-empty directory that does not contain a recognised index. |
 | `--lock-timeout` | `60` | Seconds to wait for the per-output-directory build lock before failing. Increase this when several CI jobs share the same network-mounted output path. |
+| `--debug` | off | Enable debug mode: re-raise unexpected internal errors instead of swallowing them (also controlled via `REPO2GRAPH_DEBUG=1`). |
 
 **Examples:**
 ```bash
@@ -474,6 +479,7 @@ Inspects the runtime environment and, if one is present, the index's artifacts.
 **Environment**
 
 - **Python Version**: checks that Python is >= 3.10.
+- **Platform Support**: checks operating system, CPU architecture, and C runtime (glibc >= 2.34 on Linux) compatibility.
 - **Platform Encoding**: reports the default, preferred and stdout encodings,
   which is what distinguishes a genuine parse failure from a cp1252 console
   mangling the output.
@@ -692,14 +698,22 @@ the step.
 | `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step get this model, so the two always agree. |
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
-| `commit-force` | `true` | Whether to force-push when pushing to `commit-branch`. Set to `false` for standard fast-forward push. |
-| `token` | `""` | Token that can read `repo` when the target is private. |
+| `commit-force` | `false` | Whether to force-push when pushing to `commit-branch`. Force-push is only permitted for dedicated graph branches (branches containing 'graph'). |
+| `token` | `""` | Token that can read `repo` when the target is private. Note: cross-repo indexing stores the target repository's graph and chunk excerpts in the caller's workflow artifacts. |
 | `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==3.0.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
 | `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
 | `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
 | `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
 | `parse-policy` | `best-effort` | Policy for AST parse errors: `best-effort`, `warn`, `strict`. |
 | `max-call-candidates` | `5` | Maximum call edge candidates to retain per ambiguous call site. |
+| `max-chunks` | `""` | Maximum chunks to build (`0` or blank = no limit). |
+| `max-nodes` | `""` | Maximum graph nodes to retain (`0` or blank = no limit). |
+| `max-total-bytes` | `""` | Maximum total source bytes to index (`0` or blank = no limit). |
+| `max-build-seconds` | `""` | Maximum build duration in seconds before limit policy triggers (`0` or blank = no limit). |
+| `limit-policy` | `fail` | Policy when graph limits are reached: `fail`, `truncate`, `warn`. |
+| `secret-keywords` | `""` | Additional keywords to exclude as secret file/path (space- or newline-separated). |
+| `secret-dirs` | `""` | Additional directory names to exclude as secret path (space- or newline-separated). |
+| `smoke-check` | `true` | Fail build if discovery is not `git` or symbol count is 0 (`true` or `false`). |
 
 ### Pinning the package instead of the checkout
 
@@ -838,7 +852,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write # Note for copiers: only needed if pushing to commit-branch; use contents: read if only uploading artifacts
 
 jobs:
   index:
@@ -875,6 +889,13 @@ with nothing installed.
 Inputs: `repo`, `ref`, `git_history`, `formats`, `exclude`, `publish_release`. For
 a private project, add a `TARGET_REPO_TOKEN` secret that can read it. Otherwise
 the job's own token is used.
+
+Cross-repo use stores the *target's* source, not just the caller's: the graph
+(and, with `--include-secrets` off, redacted source excerpts) ends up in
+*this* repository's workflow artifacts or release, not the target's. Only
+grant `TARGET_REPO_TOKEN` read access to repositories you are allowed to
+re-host copies of in this way, and treat this repo's artifacts/releases
+accordingly.
 
 All from the terminal:
 

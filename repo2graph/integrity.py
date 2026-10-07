@@ -10,8 +10,10 @@ Implements:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
+import secrets
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -306,7 +308,60 @@ def _is_own_transient(porcelain_line: str) -> bool:
     return name.endswith(".r2glock") or ".staging." in name
 
 
-def run_git(root: str | Path, args: Sequence[str], *, timeout: float = 10.0) -> str | None:
+# Flags applied to every git invocation in this package, not just the
+# read-only ones here: `graph.py` and `parse.py` build their own git argvs and
+# should pass the same options (see the cross-reference in the module
+# docstring's security note). Indexing an untrusted checkout runs `git`
+# *inside* that checkout, so it honours that checkout's own `.git/config` --
+# `core.fsmonitor`, `diff.external`, `textconv` and hooks can all execute
+# attacker-controlled code just from a `status`/`diff`/`log` call. These `-c`
+# overrides win over anything the checkout's config sets, because repeated
+# `-c` keys are last-wins and these are appended after nothing else, and
+# because `-c` always outranks a repo-level `.git/config` value regardless of
+# order. `core.hooksPath` is pointed at the OS null device: a path that exists
+# but is never a directory of executables, so git finds no hook to run
+# instead of erroring out the way an outright nonexistent path risks on some
+# platforms.
+GIT_HARDENING_ARGS: tuple[str, ...] = (
+    "--no-optional-locks",
+    "-c",
+    "core.quotepath=false",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.useBuiltinFSMonitor=false",
+    "-c",
+    "diff.external=",
+    "-c",
+    "core.hooksPath=" + os.devnull,
+)
+
+# Environment variables that redirect which repository git reads, independent
+# of the `-C <root>` argument. An ambient `GIT_DIR`/`GIT_WORK_TREE` (left over
+# from a wrapper script, a CI step, or a shell a user forgot to close)
+# overrides `-C` entirely, so a command that looks like it operates on `root`
+# can silently read or write a different repository. `GIT_INDEX_FILE` and the
+# `GIT_CONFIG_*` family are the same class of redirection one level down.
+_GIT_ENV_REDIRECT_PREFIXES = ("GIT_CONFIG_",)
+_GIT_ENV_REDIRECT_KEYS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
+
+
+def _clean_git_env() -> dict[str, str]:
+    """A copy of the process environment with repo-redirecting variables removed."""
+    env = dict(os.environ)
+    for key in list(env):
+        if key in _GIT_ENV_REDIRECT_KEYS or key.startswith(_GIT_ENV_REDIRECT_PREFIXES):
+            env.pop(key, None)
+    return env
+
+
+def run_git(
+    root: str | Path,
+    args: Sequence[str],
+    *,
+    timeout: float = 10.0,
+    allow_empty: bool = False,
+) -> str | None:
     """Run a read-only git command in `root` and return its stdout.
 
     The decoding rules are the ones every git call in this package has to follow:
@@ -316,10 +371,18 @@ def run_git(root: str | Path, args: Sequence[str], *, timeout: float = 10.0) -> 
     rather than escaped, and `stdin` is closed so a misconfigured credential
     helper cannot block the build waiting for input.
 
+    `GIT_HARDENING_ARGS` disables fsmonitor, external diff and hooks so that an
+    untrusted checkout's own `.git/config` cannot run code just because this
+    function read it, and the environment passed to the subprocess has
+    `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_CONFIG_*` stripped so an
+    ambient value from the caller's shell cannot redirect which repository is
+    actually read.
+
     Args:
         root: Repository directory to run in.
         args: Git arguments after the repository options, e.g. `["rev-parse", "HEAD"]`.
         timeout: Seconds to wait before giving up.
+        allow_empty: When True, return empty string for zero-output commands that exit 0.
 
     Returns:
         Stripped stdout, or None when git is missing, the directory is not a
@@ -327,16 +390,20 @@ def run_git(root: str | Path, args: Sequence[str], *, timeout: float = 10.0) -> 
     """
     try:
         proc = subprocess.run(
-            ["git", "-c", "core.quotepath=false", "-C", str(root), *args],
+            ["git", *GIT_HARDENING_ARGS, "-C", str(root), *args],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=timeout,
+            env=_clean_git_env(),
         )
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return None
     if proc.returncode != 0:
         return None
-    return proc.stdout.decode("utf8", "surrogateescape").strip() or None
+    out = proc.stdout.decode("utf8", "surrogateescape").strip()
+    if not out and not allow_empty:
+        return None
+    return out
 
 
 def get_source_provenance(root: str | Path) -> dict[str, Any]:
@@ -369,13 +436,17 @@ def get_source_provenance(root: str | Path) -> dict[str, Any]:
     # half-finished merge, and `index-status` has to tell the reader which.
     # split("\n") not splitlines(): --porcelain quotepath=false emits raw
     # bytes, and a path containing U+2028 would otherwise be counted twice.
-    status_out = _run_git(["status", "--porcelain"])
-    dirty_lines = [
-        ln for ln in (status_out or "").split("\n") if ln.strip() and not _is_own_transient(ln)
-    ]
-    provenance["dirty"] = bool(dirty_lines)
-    if dirty_lines:
-        provenance["dirty_files"] = len(dirty_lines)
+    status_out = run_git(root_path, ["status", "--porcelain"], timeout=5, allow_empty=True)
+    if status_out is None:
+        provenance["dirty"] = None
+        provenance["status_error"] = True
+    else:
+        dirty_lines = [
+            ln for ln in status_out.split("\n") if ln.strip() and not _is_own_transient(ln)
+        ]
+        provenance["dirty"] = bool(dirty_lines)
+        if dirty_lines:
+            provenance["dirty_files"] = len(dirty_lines)
 
     # Base branch: what this branch would merge into. `origin/HEAD` is the
     # authoritative answer but is only present when the clone set it up
@@ -438,7 +509,7 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
             manifest_path, MAX_METADATA_BYTES, what="manifest.json"
         ).decode("utf8", "replace")
         manifest = json.loads(manifest_text)
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         report.status = "corrupt"
         report.errors.append(f"Corrupt manifest.json: {exc}")
         return report
@@ -453,6 +524,17 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
         report.status = "incompatible"
         report.errors.append(f"Incompatible manifest format: {fmt}")
         return report
+
+    # Check incomplete status from manifest
+    if (
+        manifest.get("incomplete")
+        or manifest.get("complete") is False
+        or manifest.get("limits_hit")
+    ):
+        if report.status == "valid":
+            report.status = "partial"
+        limits = manifest.get("limits_hit") or {}
+        report.warnings.append(f"Index is marked incomplete due to resource limits: {limits}")
 
     # 2. Verify files and checksums
     checksums = manifest.get("checksums") or {}
@@ -568,8 +650,65 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
                         report.warnings.append(
                             f"{mismatched_texts} chunks have text differing from vector text_hashes"
                         )
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 report.status = "corrupt"
                 report.errors.append(f"Corrupt vectors.meta.json: {exc}")
 
     return report
+
+
+MACHINE_KEY_FILE = ".repo2graph_machine_key"
+
+
+def get_machine_key() -> bytes:
+    """Return this user/machine's private secret key for local provenance."""
+    key_path = Path.home() / MACHINE_KEY_FILE
+    try:
+        if key_path.is_file():
+            key = key_path.read_bytes()
+            if len(key) == 32:
+                return key
+        key = secrets.token_bytes(32)
+        key_path.write_bytes(key)
+        try:
+            os.chmod(key_path, 0o600)
+        except OSError:
+            pass
+        return key
+    except OSError:
+        return b"repo2graph-fallback-machine-key"
+
+
+def compute_machine_marker(build_id: str) -> str:
+    """Compute HMAC-SHA256 signature binding build_id to this machine."""
+    key = get_machine_key()
+    return hmac.new(key, build_id.encode("utf8"), hashlib.sha256).hexdigest()
+
+
+def is_foreign_index(outdir: str | Path) -> bool:
+    """True if outdir lacks a valid machine-local marker for its build_id.
+
+    An index arriving from a remote branch, a PR, or an external artifact
+    lacks local.json (which is git-ignored and stripped) or carries a marker
+    computed with another machine's key.
+    """
+    out = Path(outdir)
+    local_path = out / "local.json"
+    if local_path.is_symlink() or not local_path.is_file():
+        return True
+    manifest_path = out / "agent" / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        return True
+    try:
+        with open(local_path, "r", encoding="utf8") as fh:
+            local_data = json.load(fh)
+        with open(manifest_path, "r", encoding="utf8") as fh:
+            manifest_data = json.load(fh)
+        marker = local_data.get("machine_marker")
+        build_id = manifest_data.get("build_id")
+        if not marker or not build_id:
+            return True
+        expected = compute_machine_marker(str(build_id))
+        return not hmac.compare_digest(str(marker), expected)
+    except (OSError, ValueError):
+        return True
