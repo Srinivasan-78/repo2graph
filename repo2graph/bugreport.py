@@ -128,7 +128,7 @@ def _safe_environment() -> dict[str, Any]:
     """Versions and platform. No environment variable values, ever."""
     try:
         from . import __version__
-    except Exception:
+    except ImportError:
         __version__ = "unknown"
 
     versions: dict[str, Any] = {"repo2graph": __version__, "python": sys.version.split()[0]}
@@ -143,7 +143,7 @@ def _safe_environment() -> dict[str, Any]:
             import importlib.metadata
 
             versions[dist] = importlib.metadata.version(dist)
-        except Exception:
+        except (importlib.metadata.PackageNotFoundError, OSError, ValueError):
             versions[dist] = None
 
     return {
@@ -167,7 +167,10 @@ def _index_summary(out: Path, repo: Path | None, include_paths: bool) -> dict[st
         from .status import index_status
 
         report = index_status(out, repo=repo)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - resilience boundary: bugreport gathering must survive index inspection failure
+        from .events import reraise_if_debug
+
+        reraise_if_debug(exc)
         return {"available": False, "error": _scrub(f"{type(exc).__name__}: {exc}")}
 
     src = report["source"]
@@ -284,7 +287,10 @@ def _doctor_summary() -> dict[str, Any]:
         from .doctor import run_doctor
 
         report = run_doctor(".")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - resilience boundary: bugreport gathering must survive doctor check failure
+        from .events import reraise_if_debug
+
+        reraise_if_debug(exc)
         return {"available": False, "error": _scrub(f"{type(exc).__name__}: {exc}")}
     return {
         "available": True,

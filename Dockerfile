@@ -7,9 +7,13 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy source and install
+# Copy source and install. `.[mcp]` only, not `.[rag]`: the rag extra pulls in
+# torch+CUDA, which has no business in an image whose job is `build`/`query`/
+# `repo2graph-mcp`. Anyone who actually needs dense retrieval in a container
+# can add the extra themselves; a "published" image should not default to
+# that weight and attack surface for everyone else.
 COPY . .
-RUN pip install --no-cache-dir ".[mcp,rag]"
+RUN pip install --no-cache-dir ".[mcp]"
 
 # Stage 2: Runtime
 FROM python:3.12-slim

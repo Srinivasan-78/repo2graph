@@ -37,8 +37,8 @@ from .security import (
     MAX_VALUE_CHARS,
     REDACTION_HASH_CHARS,
     SECRET_KEY_RE,
+    _classify_secret_shape,
     _fingerprint,
-    _looks_like_a_secret,
     redact,
     sanitize_params,
     sanitize_value,
@@ -59,8 +59,8 @@ __all__ = [
     "REDACTION_HASH_CHARS",
     "SECRET_KEY_RE",
     "SECRET_VALUE_PATTERNS",
+    "_classify_secret_shape",
     "_fingerprint",
-    "_looks_like_a_secret",
     "redact",
     "sanitize_params",
     "sanitize_value",
@@ -102,7 +102,7 @@ class _LockedAppender:
                 fh.flush()
                 if self.fsync:
                     os.fsync(fh.fileno())
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 # A sink that stops accepting writes mid-run -- disk full, a
                 # revoked permission, a dropped network share -- was previously
                 # as silent as a working one, which is the wrong failure mode for
@@ -126,7 +126,7 @@ class _LockedAppender:
             return
         try:
             fh.close()
-        except Exception:
+        except OSError:
             pass
 
 
@@ -215,7 +215,7 @@ class AuditLogger:
         # the except clause that exists to survive caller-supplied values.
         try:
             duration, tokens = int(duration_ms), int(result_tokens)
-        except Exception:
+        except (TypeError, ValueError):
             duration, tokens = 0, 0
         record: dict[str, Any]
         # Sanitisation is inside the try, not just the dump. Every input to it
@@ -237,7 +237,10 @@ class AuditLogger:
                 "error": sanitize_value("error", error) if error is not None else None,
             }
             line = json.dumps(record, ensure_ascii=False, default=str)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - resilience boundary: audit record sanitization/serialization fallback
+            from .events import reraise_if_debug
+
+            reraise_if_debug(exc)
             record = {
                 "ts": ts,
                 "event": event,

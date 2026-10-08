@@ -13,7 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from .limits import render as limitations_block
@@ -113,7 +113,10 @@ class _WriterError(Exception):
         self.exc = exc
 
 
-def pick_provider(env=None, provider=None) -> dict | None:
+def pick_provider(
+    env: dict[str, str] | os._Environ[str] | Any | None = None,
+    provider: str | None = None,
+) -> dict[str, str] | None:
     """The configured provider, or first in GEMINI > OPENAI > ANTHROPIC > OLLAMA order."""
     env = os.environ if env is None else env
     if provider is not None:
@@ -145,7 +148,7 @@ def pick_provider(env=None, provider=None) -> dict | None:
     return None
 
 
-def build_prompt(pack, *, nonce: str | None = None) -> tuple[str, str]:
+def build_prompt(pack: dict[str, Any] | None, *, nonce: str | None = None) -> tuple[str, str]:
     """(system, user). The pack rides inside a nonced untrusted-content fence.
 
     `nonce` is injectable for tests only; production callers leave it None and
@@ -172,7 +175,9 @@ def build_prompt(pack, *, nonce: str | None = None) -> tuple[str, str]:
     return system, user
 
 
-def _request(spec: dict, model: str | None, system: str, user: str):
+def _request(
+    spec: dict[str, str], model: str | None, system: str, user: str
+) -> tuple[str, dict[str, str], dict[str, Any]]:
     """(url, headers, payload) for the chosen provider's streaming endpoint."""
     name = spec["name"]
     model = model or DEFAULT_MODELS[name]
@@ -277,7 +282,7 @@ def _delta(name: str, raw: bytes) -> str:
         return ""
 
 
-def _blocks(resp) -> Iterator[bytes]:
+def _blocks(resp: Any) -> Iterator[bytes]:
     """Yield the response body in READ_BLOCK-sized pieces.
 
     `http.client.HTTPResponse.read(n)` is the real path here, and the sized read
@@ -318,7 +323,7 @@ class _BoundedLines:
     too much, the other says it sent too slowly, and the remedies differ.
     """
 
-    def __init__(self, resp, limit: int, seconds: float | None = None):
+    def __init__(self, resp: Any, limit: int, seconds: float | None = None) -> None:
         self._resp = resp
         self._limit = limit
         self._seconds = seconds
@@ -391,7 +396,7 @@ def _note_timed_out(name: str, seconds: float) -> None:
     _flush(sys.stderr)
 
 
-def _writer(out=None):
+def _writer(out: Any = None) -> Callable[[str], None]:
     """A write callable that cannot raise UnicodeEncodeError.
 
     Always writes through the stream's own text-mode `write`, never through
@@ -418,14 +423,14 @@ def _writer(out=None):
     return write_text
 
 
-def _flush(stream) -> None:
+def _flush(stream: Any) -> None:
     try:
         stream.flush()
     except (OSError, ValueError):
         pass
 
 
-def _http_error(spec: dict, exc) -> str:
+def _http_error(spec: dict[str, str], exc: Any) -> str:
     """A one-line explanation of a provider HTTP error, without its URL.
 
     HTTPError.url can carry credentials for some providers, so it is never
@@ -440,7 +445,7 @@ def _http_error(spec: dict, exc) -> str:
     return f"{head}: {detail}" if detail else head
 
 
-def _empty_answer(spec: dict, raw_tail: list) -> str:
+def _empty_answer(spec: dict[str, str], raw_tail: list[bytes]) -> str:
     """Why a 200 response carried no answer text.
 
     Ollama answers HTTP 200 with {"error": "model 'x' not found"}; without this
@@ -546,7 +551,13 @@ class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_SameOriginRedirect)
 
 
-def stream_answer(pack, model=None, env=None, out=None, provider=None) -> str:
+def stream_answer(
+    pack: dict[str, Any] | None,
+    model: str | None = None,
+    env: dict[str, str] | os._Environ[str] | Any | None = None,
+    out: Any = None,
+    provider: str | None = None,
+) -> str:
     """Ask the configured provider and stream the answer out. Returns the text."""
     spec = pick_provider(env, provider=provider)
     if spec is None:

@@ -197,12 +197,31 @@ been visible without a real repository to ask questions about.
 
 ## Status
 
-The 2.x CLI, MCP tools and output schema follow semver: breaking changes wait for 3.0. Default paths run locally, send no telemetry and exclude secrets from agent replies
+The 3.x CLI, MCP tools and output schema follow semver. Default paths run locally, send no telemetry and exclude secrets from agent replies
 unconditionally ([what never leaves your machine](.github/SECURITY.md#what-never-leaves-your-machine),
 [how credential files are excluded](.github/SECURITY.md#how-credential-files-are-excluded),
-[reporting a vulnerability](.github/SECURITY.md#reporting-a-vulnerability)). A Docker image for
-read-only, non-root deployments is described in
-[.github/SECURITY.md](.github/SECURITY.md#container-deployment).
+[reporting a vulnerability](.github/SECURITY.md#reporting-a-vulnerability)). A Dockerfile for
+read-only, non-root local builds is provided ([.github/SECURITY.md](.github/SECURITY.md#container-deployment)).
+
+## Platform & Environment Requirements
+
+| Environment | Status | Details |
+|---|---|---|
+| **Python** | 3.10 – 3.13 | Tested across Linux, macOS, and Windows in CI. Python 3.14+ is untested. |
+| **Linux (glibc)** | Supported (glibc ≥ 2.34) | Precompiled `tree-sitter-language-pack` grammar wheels require glibc ≥ 2.34 (Ubuntu 22.04+, Debian 12+, RHEL 9+, Amazon Linux 2023+). |
+| **Legacy Linux** | Unsupported wheels | RHEL 8, CentOS 8, Amazon Linux 2, Debian 11, and Ubuntu 20.04 ship glibc < 2.34. Wheels fail to load; use a glibc 2.34+ container or compile grammars from source. |
+| **Alpine / musl** | Unsupported wheels | Precompiled grammar wheels are not distributed for musl libc. Use a glibc container or build with a C toolchain. |
+| **macOS / Windows** | Fully supported | Tested on macOS 12+ (Apple Silicon & Intel) and Windows 10/11 (UTF-8 & CP1252 codepages). |
+
+Run `repo2graph doctor` to diagnose environment and platform support.
+
+## Security & Maintenance Posture
+
+- **Single maintainer:** repo2graph is developed and maintained by a single author ([@Srinivasan-78](https://github.com/Srinivasan-78)).
+- **Automated gates:** Pull requests must pass automated CI checks (ruff, mypy, multi-OS test matrix, synthetic regression benchmarks).
+- **Review policy:** Pull requests require 0 third-party review approvals to merge to `main`.
+- **Commit signing:** Commit signing is not currently enforced on `main`.
+- **Integrity:** Releases are published to PyPI with provenance attestations, and `uv.lock` is pinned in the repository for reproducible builds.
 
 ## Contributing
 

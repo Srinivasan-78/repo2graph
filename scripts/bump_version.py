@@ -65,7 +65,7 @@ def get_latest_tag() -> str | None:
             tag = proc.stdout.decode("utf8", "surrogateescape").strip()
             if tag:
                 return tag
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
 
     try:
@@ -88,7 +88,7 @@ def get_latest_tag() -> str | None:
             tags = [t.strip() for t in lines if t.strip()]
             if tags:
                 return tags[0]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
 
     return None
@@ -104,7 +104,7 @@ def get_commits_since(tag: str | None) -> list[str]:
         if proc.returncode == 0:
             raw = proc.stdout.decode("utf8", "surrogateescape")
             return [e.strip() for e in raw.split("\x1e") if e.strip()]
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         pass
     return []
 

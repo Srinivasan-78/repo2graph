@@ -185,16 +185,21 @@ def evaluate_language(
     else:
         parsing_notes.append("Parser grammar unavailable")
 
-    # Known grammar robustness and macro vulnerability assessment
+    # Known grammar robustness and macro vulnerability assessment. These
+    # ratings are qualitative judgments about each tree-sitter grammar's
+    # known failure modes, not a measured error rate -- no numeric figure
+    # here has been produced by actually running the corpora in
+    # benchmarks/real/ and counting parse failures. Do not quote a precise
+    # percentage until that measurement exists.
     if lang in ("c", "cpp"):
         parsing_score += 25  # Preprocessor fallback implemented
         parsing_notes.append(
-            "Pre-processor cpp fallback enabled, macro ERROR nodes frequent (32-37% files in large C/C++ repos)"
+            "Pre-processor cpp fallback enabled; macro expansion is a known source of ERROR nodes in large C/C++ repos (unmeasured here)"
         )
     elif lang in ("python", "javascript", "typescript", "tsx", "go"):
-        parsing_score += 45  # Near zero parser failure in real repos
+        parsing_score += 45  # Grammar considered mature/low-risk; not independently measured
         parsing_notes.append(
-            "Clean AST grammar with <0.1% parse error rate on benchmark repositories"
+            "Clean AST grammar, low parse-failure risk in practice (not independently measured against benchmark repositories)"
         )
     elif lang in ("java", "csharp", "rust", "kotlin", "swift", "scala", "php", "ruby"):
         parsing_score += 40
@@ -279,8 +284,13 @@ def evaluate_language(
 
     # parse_import_details coverage
     pid_source = inspect_func_source(parse_mod.parse_import_details)
-    has_pid = lang in pid_source or (
-        lang in ("javascript", "typescript", "tsx") and "js" in pid_source
+    # A bare `lang in pid_source` substring check is almost always true: short
+    # language names like "go" or "c" are substrings of unrelated identifiers
+    # ("algorithm", "config"), so it never actually measures language-specific
+    # handling. Require the quoted literal as it appears in a real `lang ==
+    # "go"` comparison instead.
+    has_pid = f'"{lang}"' in pid_source or (
+        lang in ("javascript", "typescript", "tsx") and '"js"' in pid_source
     )
     if has_pid:
         imports_score += 25
@@ -290,8 +300,9 @@ def evaluate_language(
 
     # resolve_import candidate generation
     ri_source = inspect_func_source(graph_mod.resolve_import)
-    has_ri = lang in ri_source or (
-        lang in ("javascript", "typescript", "tsx") and "js" in ri_source
+    # Same quoted-literal requirement as has_pid above, for the same reason.
+    has_ri = f'"{lang}"' in ri_source or (
+        lang in ("javascript", "typescript", "tsx") and '"js"' in ri_source
     )
     if has_ri:
         imports_score += 25

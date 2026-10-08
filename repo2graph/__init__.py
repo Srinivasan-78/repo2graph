@@ -12,7 +12,7 @@ __all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
 # Static fallback: kept in sync with pyproject.toml's [project] version by
 # scripts/bump_version.py (see scripts/version_surfaces.py's SURFACES table)
 # and checked on every commit by scripts/check_version.py. This is the only
-# quoted __version__ literal in this file (tests/test_compat.py's R-9 asserts
+# quoted __version__ literal in this file (tests/test_compat.py asserts
 # exactly that) -- _resolve_version() below never assigns a second one, only
 # the result of a function call.
 __version__ = "3.0.0"
@@ -40,7 +40,7 @@ def _parse_toml(content: str) -> tuple[bool, dict[str, Any] | None]:
         return False, None
     try:
         return True, tomllib.loads(content)
-    except Exception:
+    except (ValueError, TypeError):
         return True, None
 
 
@@ -92,7 +92,7 @@ def _resolve_version() -> str:
         return v
     try:
         return importlib.metadata.version("repo2graph")
-    except Exception:
+    except (importlib.metadata.PackageNotFoundError, OSError, ValueError):
         return __version__
 
 

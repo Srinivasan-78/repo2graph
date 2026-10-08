@@ -92,6 +92,8 @@ SECTIONS: dict[str, tuple[str, ...]] = {
     "parse.cache.json": (AGENT_DIR,),
     "vectors.npy": (AGENT_DIR,),
     "vectors.meta.json": (AGENT_DIR,),
+    "bm25.jsonl": (AGENT_DIR,),
+    "bm25.meta.json": (AGENT_DIR,),
     "manifest.json": (AGENT_DIR,),
 }
 
@@ -592,6 +594,13 @@ def write_overview(g: "Graph", path: Path, top: int = 25) -> None:
         "",
         f"files: {len(files)}  nodes: {len(g.nodes)}  edges: {len(g.edges)}",
         "languages: " + ", ".join(f"{k}={v}" for k, v in langs.most_common(12) if k),
+    ]
+    if limits_hit := getattr(g, "limits_hit", {}):
+        out.append("")
+        out.append("WARNING: Incomplete graph -- resource limits breached:")
+        for k, v in sorted(limits_hit.items()):
+            out.append(f"  - {k}: {v}")
+    out += [
         "",
         "## Most depended-on files",
     ]
@@ -634,6 +643,9 @@ _SKIP_STAT_LABELS = (
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
     ("skipped_secret", "secret / credential files"),
+    ("skipped_lfs", "Git LFS pointer files"),
+    ("skipped_case_collision", "case-colliding files"),
+    ("skipped_unreadable", "unreadable files"),
 )
 
 
@@ -730,6 +742,17 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
         out += skip_bullets
         out.append("")
 
+    if limits_hit := getattr(g, "limits_hit", {}):
+        out.append("## Incomplete graph warning")
+        out.append("")
+        out.append(
+            "> **Warning:** This graph is partial. The build reached one or more configured resource limits:"
+        )
+        out.append("")
+        for k, v in sorted(limits_hit.items()):
+            out.append(f"- **{k}**: {v}")
+        out.append("")
+
     out.append("## How to explore")
     out.append("")
     out.append("```")
@@ -804,6 +827,8 @@ FILE_NOTES = {
     "parse.cache.json": "per-file symbols, imports and content hash, so `repo2graph build --incremental` can skip re-parsing files that did not change",
     "vectors.npy": "chunk embeddings as a plain NPY v1.0 array (C-order, <f4, one row per chunk id in vectors.meta.json); written by `repo2graph embed` only",
     "vectors.meta.json": "the embedding model id, vector width and the chunk ids and text hashes each vectors.npy row belongs to",
+    "bm25.jsonl": "lexical inverted index: term postings with term counts",
+    "bm25.meta.json": "BM25 index metadata: build_id, avgdl, chunk lengths",
     "manifest.json": "this file",
     "graph.html": "the interactive map, for a person in a browser",
     "graph.graphml": "the graph with a layout and yFiles node graphics, for yEd, Gephi, NetworkX or igraph",
@@ -924,7 +949,7 @@ def write_manifest(
     # --- Provenance: build ID, tool version, and source revision ---
     try:
         from . import __version__ as _tool_ver
-    except Exception:
+    except ImportError:
         _tool_ver = "unknown"
 
     source_revision: dict[str, Any] = {}
@@ -934,16 +959,25 @@ def write_manifest(
         root = getattr(g, "root", None)
         if root is not None:
             source_revision = get_source_provenance(root)
-    except Exception:
+    except OSError:
         pass
+
+    build_id = getattr(g, "build_id", None) or str(_uuid_mod.uuid4())
+    g.build_id = build_id
+
+    limits_hit = dict(getattr(g, "limits_hit", {}) or {})
+    incomplete = bool(limits_hit)
 
     manifest = {
         "format": "repo2graph/1",
-        "build_id": str(_uuid_mod.uuid4()),
+        "build_id": build_id,
         "tool_version": _tool_ver,
         "schema_version": 1,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": source_revision,
+        "complete": not incomplete,
+        "incomplete": incomplete,
+        "limits_hit": limits_hit,
         "checksums": checksums or {},
         "repo": g.name,
         # No absolute `source_root` here: this file ships (committed `.r2g`,
@@ -1061,6 +1095,9 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
         key=lambda n: -indeg[n["id"]],
     )[:10]
     extra: dict[str, Any] = {
+        "total_symbols": sum(
+            v for k, v in g.stats.items() if k.startswith("symbol:") and isinstance(v, int)
+        ),
         "top_hub_nodes": [
             {
                 "node_id": n["id"],
@@ -1157,7 +1194,7 @@ def register_written(outdir: Path | str, names: Iterable[str]) -> bool:
                 from .integrity import compute_file_checksum
 
                 checksums[name] = compute_file_checksum(artifact_file)
-            except Exception:
+            except OSError:
                 pass
     manifest["written"] = written
     manifest["files"] = files
@@ -1247,10 +1284,22 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
         `{relpath: entry}`, or an empty dict when no usable cache is present.
     """
     from .graph import PARSE_CACHE_FORMAT
+    from .integrity import is_foreign_index
     from .parse import grammar_fingerprint
 
+    out = Path(outdir)
+    if is_foreign_index(out):
+        return {}
+
     try:
-        cache_path = path(Path(outdir), "parse.cache.json")
+        cache_path = path(out, "parse.cache.json")
+        if cache_path.is_symlink():
+            return {}
+        try:
+            if not cache_path.resolve().is_relative_to(out.resolve()):
+                return {}
+        except OSError:
+            return {}
         data = json.loads(cache_path.read_text(encoding="utf8"))
     except (OSError, ValueError, KeyError):
         return {}
@@ -1280,10 +1329,10 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     target.rename(backup)
     try:
         staging.rename(target)
-    except Exception as swap_exc:
+    except OSError as swap_exc:
         try:
             backup.rename(target)
-        except Exception as restore_exc:
+        except OSError as restore_exc:
             # Both halves failed, so the previous index is no longer at
             # `target` and could not be put back. Swallowing this left an
             # operator with a vanished index and a dot-directory they had no
@@ -1314,8 +1363,16 @@ def write_local(g: Any, index_root: Path) -> None:
         index_root: Destination root directory of the index.
     """
     root = getattr(g, "root", None)
+    build_id = getattr(g, "build_id", None)
+    machine_marker = None
+    if build_id:
+        from .integrity import compute_machine_marker
+
+        machine_marker = compute_machine_marker(str(build_id))
     local = {
         "note": "machine-local; do not commit or ship",
+        "build_id": build_id,
+        "machine_marker": machine_marker,
         "source_root": (
             str(Path(root).resolve()) if root and not getattr(g, "source_remote", None) else None
         ),
@@ -1367,6 +1424,9 @@ def dump_all(
     if outdir.exists() and not outdir.is_dir():
         raise ValueError(f"output path exists and is not a directory: {outdir}")
 
+    if not getattr(g, "build_id", None):
+        setattr(g, "build_id", str(_uuid_mod.uuid4()))
+
     # Create a sibling staging directory for atomic swap
     staging_dir = outdir.parent / (
         f".{outdir.name}.staging.{os.getpid()}.{_uuid_mod.uuid4().hex[:8]}"
@@ -1396,7 +1456,15 @@ def dump_all(
             write_jsonl(out("edges.jsonl")[0], g.edges)
         if chunks is not None:
             # written whenever chunks are built, regardless of --formats (see FILE_NOTES)
-            n_chunks = write_jsonl(out("chunks.jsonl")[0], chunks)
+            chunk_list = list(chunks)
+            n_chunks = write_jsonl(out("chunks.jsonl")[0], chunk_list)
+            from .query import write_bm25
+
+            write_bm25(
+                chunk_list,
+                out("bm25.jsonl")[0],
+                out("bm25.meta.json")[0],
+            )
         if "graphml" in formats:
             write_graphml(g, out("graph.graphml")[0])
         if "cypher" in formats:
@@ -1429,7 +1497,7 @@ def dump_all(
                         checksums[rel_path] = compute_file_checksum(p)
                     except OSError:
                         pass
-        except Exception:
+        except (OSError, ValueError):
             pass  # Checksum failure is non-fatal; manifest still gets written
 
         write_manifest(g, out("manifest.json")[0], written, checksums=checksums)

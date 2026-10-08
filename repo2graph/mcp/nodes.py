@@ -45,16 +45,20 @@ def _impact_root(index: Index) -> Path:
 
 def _staleness_note(index: Index) -> str:
     try:
+        index_dir = Path(getattr(index, "dir", ".") or ".")
+        from ..integrity import is_foreign_index
+
+        if is_foreign_index(index_dir):
+            return ""
         repo_root = _impact_root(index)
         if not repo_root.is_dir():
             return ""
-        index_dir = Path(getattr(index, "dir", ".") or ".")
         agent_dir = artifact_path(index_dir, "index.state.json").parent
 
         from ..status import compute_freshness
 
         fresh = compute_freshness(repo_root, index_dir, agent_dir)
-    except Exception:
+    except (OSError, ValueError):
         return ""
     if fresh.status != "stale":
         return ""

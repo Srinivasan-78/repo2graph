@@ -13,7 +13,85 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable resource limits and limit policies (#299):**
+  Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
+  alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.
+  Under `truncate` and `warn`, incomplete indexes are marked with `"complete": false`, `"incomplete": true`,
+  and `"limits_hit"` in `manifest.json`, warning banners in `overview.md`, and flagged as `partial` by `doctor`
+  and `verify_artifacts`. Under `fail`, builds abort immediately with `GraphLimitExceeded`.
+- **Classified error handling and debug mode (#314):**
+  Replaced broad `except Exception` blocks across audit, lock, status, integrity, embed, query, and core modules
+  with explicit classified exceptions (`OSError`, `ValueError`, `TypeError`, `subprocess.SubprocessError`, `ImportError`).
+  Added `REPO2GRAPH_DEBUG=1` environment variable and `--debug` CLI flag to re-raise internal errors across resilience
+  boundaries, and enabled ruff `BLE001` checking in CI linting.
+
 ### Fixed
+
+- **Silent wrong/empty results and edge cases (#448):**
+  Addressed silent failure and edge case audit findings (W10-W24).
+  - W10: Handled BOM-encoded UTF-16 and UTF-32 source files by decoding them to UTF-8 for AST parsing rather than skipping them as binary files.
+  - W11: Rescued directories matching explicit `--include` patterns that would otherwise be excluded by default directory skip lists in both git and walk modes.
+  - W12: Fixed confidence calculation for ambiguous call candidates when capped by `--max-call-candidates`, dividing by the true candidate set size and recording `capped_candidates = True`.
+  - W13: Made glob matching case-insensitive on Windows to prevent path filters from silently failing.
+  - W14: Pruned submodule directories containing `.git` during walk mode discovery to align with `git ls-files`.
+  - W15: Added Windows long-path prefixing and counted unreadable files under `skipped_unreadable` rather than misclassifying them as binary.
+  - W16: Detected Git LFS pointer files and excluded them under `skipped_lfs` so pointer metadata is not parsed as code.
+  - W17: Deduplicated case-colliding filenames on case-insensitive filesystems (Windows, macOS) under `skipped_case_collision`.
+  - W20: Required both `agent/manifest.json` and `agent/nodes.jsonl` to identify index directories, preventing false pruning of user directories containing a `manifest.json`.
+  - W22: Distinguished git command failure or timeout from clean working tree status, recording `status_error` and `dirty: None`. Enforced `git --no-optional-locks` and `core.useBuiltinFSMonitor=false` across git calls.
+  - W23: Preserved `current` freshness status in `index-status` when HEAD advances solely to commit index artifacts.
+  - W24: Enforced unit-float range validation (0.0-1.0) on `explain retrieval` `--min-confidence` / `--min-conf` flags.
+  - Export & Stats: Added `total_symbols` and new skip categories (`skipped_lfs`, `skipped_case_collision`, `skipped_unreadable`) to `stats.json` and human overviews.
+
+- **Supply chain and installation hardening (#449):**
+  Addressed supply chain audit findings SC2-SC10.
+  Hardened the npm launcher `npm/bin/repo2graph-mcp.js` to reject relative cwd paths and local `node_modules` shims, resolving commands strictly against absolute PATH locations (SC9).
+  Removed squattable references to unpublished `npx repo2graph-mcp` across documentation, standardizing MCP setup around `uvx --from "repo2graph[mcp]" repo2graph-mcp` (SC2).
+  Isolated the composite Action's `Install repo2graph` step into a virtual environment in `$RUNNER_TEMP`, preventing toolcache and site-packages pollution on self-hosted runners (SC10).
+  Documented the platform support matrix (Python 3.10-3.13, Linux glibc ≥ 2.34) in `README.md`, calling out unsupported environments (Alpine musl, RHEL 8, CentOS 8, Debian 11, Amazon Linux 2, Ubuntu 20.04) (SC5).
+  Added `check_platform_support` and Python support matrix diagnostics to `repo2graph doctor` with actionable remediation guidance (SC5).
+  Clarified Docker container build expectations in `SECURITY.md` and `README.md`, removing stale claims of PR CI building images (SC6).
+  Documented single-maintainer review and signing posture in `SECURITY.md` and `README.md` (SC8).
+
+- **GitHub Action and CI template hardening (#450):**
+  Hardened the composite Action and workflow templates across security audit vectors C2-C11.
+  Enforced bot-author verification in `prod-igy.js` to prevent unauthorized commenters from forging AI spend caps or hijacking bot comment threads.
+  Restricted `commit-branch` force-pushes in `action.yml` to dedicated graph branches, refusing protected and default branch overwrites.
+  Replaced hard-coded `github.com` URLs with `GITHUB_SERVER_URL` in `fetch.py` clone and auth header configuration, ensuring enterprise tokens remain on GHES instances.
+  Escaped special Markdown characters and table pipes in `summary.py`, `changelog.py`, and `index-repo.yml` to prevent Markdown and HTML injection from repository names and node IDs.
+  Exposed resource cap (`max-chunks`, `max-nodes`, `max-total-bytes`, `max-build-seconds`, `limit-policy`) and secret rule (`secret-keywords`, `secret-dirs`) inputs in `action.yml`.
+  Added a CI smoke check in `action.yml` requiring git discovery and non-zero symbols, preventing silent empty-graph build success.
+  Documented cross-repo artifact retention risks and least-privilege workflow permissions.
+
+- **Scrub residue: find-and-replace damage and agent-loop IDs (#458):**
+  Repaired damaged strings resulting from prior mechanical passes across `test_mcp.py`, `test_mcp_tools.py`,
+  `test_query_bounds.py`, and `test_answer_limits.py`. Replaced agent-loop iteration headings, phase narrations,
+  and uninformative loop test names (`test_r*`, `test_iss*`) with clear behavioral descriptions. Cleaned up
+  unreferenced review IDs (`R-9`, `S-12`, `D1`) in production code comments. Added a regression test in `test_compat.py`
+  to prevent future reintroduction of loop phase artifacts and run narrations into the test suite.
+
+- **Test suite fidelity and assertion hardening (#459):**
+  Fixed tautological and always-true assertions across MCP and launcher tests (`test_mcp.py`, `test_npm_launcher.py`).
+  Replaced self-skipping parser tests in `test_repo2graph.py` with hard assertions that symbols were produced.
+  Removed redundant Python re-implementation of JS logic in `test_prod_igy.py`. Re-derived git history co-change
+  expectations in `test_git_history.py` from actual git path quoting guarantees. Renamed `test_security_mutations.py`
+  to `test_security_negative.py` to accurately reflect its negative unit testing scope. Deduplicated `_run_body`
+  and `_action_step_by_name` helpers into `conftest.py`. Cleaned up unused fixtures and reconciled contradicting docstrings.
+
+- **CI job summary status integrity and regression gate (#460):**
+  Replaced hardcoded `✅ Passed` markdown table rows across all four job summary blocks
+  in `.github/workflows/ci.yml` with dynamic statuses derived from `steps.<id>.outcome`.
+  Added `scripts/check_workflow_summaries.py` and `tests/test_workflow_summaries.py` to
+  prevent hardcoded summary cells from regressing in CI workflows. Fixed unmeasured
+  qualitative claims and substring matching in `scripts/generate_language_scorecard.py`.
+
+- **Strict typing expanded and mypy overrides reduced (#313):**
+  Eliminated broad non-strict overrides for `repo2graph.answer`, `repo2graph.chunks`,
+  `repo2graph.embed`, `repo2graph.fetch`, `repo2graph.mcp` (and all submodules), and
+  `repo2graph.viz`, bringing them to full strict-mode compliance with zero type errors.
+  Reduced the project's mypy overrides block to only the remaining un-annotated modules.
 
 - **The release pipeline no longer finds release-breaking problems after the tag is cut.** The
   3.0.0 release aborted in `publish.yml`'s `pypi` job on `1 failed, 2073 passed`, with `v3.0.0`

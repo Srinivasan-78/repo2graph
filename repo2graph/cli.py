@@ -74,7 +74,7 @@ def _emit(text: str) -> None:
         # a traceback over the output they were reading.
         try:
             stream.close()
-        except Exception:
+        except OSError:
             pass
         sys.exit(0)
     except UnicodeEncodeError:
@@ -154,6 +154,12 @@ def cmd_build(args):
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        max_edges=getattr(args, "max_edges", 0),
+        max_chunks=getattr(args, "max_chunks", 0),
+        max_bytes=getattr(args, "max_bytes", 0),
+        max_memory_mb=getattr(args, "max_memory_mb", 0.0),
+        max_build_seconds=getattr(args, "max_build_seconds", 0.0),
+        limit_policy=getattr(args, "limit_policy", None),
         include_secrets=include_secrets,
         secret_policy=getattr(args, "secret_policy", "redact-match"),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
@@ -194,9 +200,15 @@ def cmd_build(args):
                 cochange_min=getattr(args, "cochange_min", 3),
                 max_bytes=getattr(args, "max_bytes", 0),
                 max_edges=getattr(args, "max_edges", 0),
-                limit_policy=getattr(args, "limit_policy", "warn"),
+                limit_policy=getattr(args, "limit_policy", None),
+                max_memory_mb=getattr(args, "max_memory_mb", 0.0),
+                max_build_seconds=getattr(args, "max_build_seconds", 0.0),
             )
-            chunks = None if args.no_chunks else iter_chunks(g)
+            chunks = (
+                None
+                if args.no_chunks
+                else iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0))
+            )
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     except LockTimeoutError as exc:
         raise SystemExit(f"error: {exc}") from None
@@ -255,6 +267,12 @@ def cmd_github(args):
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         max_nodes=getattr(args, "max_nodes", 0),
+        max_edges=getattr(args, "max_edges", 0),
+        max_chunks=getattr(args, "max_chunks", 0),
+        max_bytes=getattr(args, "max_bytes", 0),
+        max_memory_mb=getattr(args, "max_memory_mb", 0.0),
+        max_build_seconds=getattr(args, "max_build_seconds", 0.0),
+        limit_policy=getattr(args, "limit_policy", None),
         include_secrets=include_secrets,
         secret_policy=getattr(args, "secret_policy", "redact-match"),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
@@ -284,7 +302,10 @@ def cmd_github(args):
                 cochange_min=getattr(args, "cochange_min", 3),
                 max_bytes=getattr(args, "max_bytes", 0),
                 max_edges=getattr(args, "max_edges", 0),
-                limit_policy=getattr(args, "limit_policy", "warn"),
+                max_chunks=getattr(args, "max_chunks", 0),
+                max_memory_mb=getattr(args, "max_memory_mb", 0.0),
+                max_build_seconds=getattr(args, "max_build_seconds", 0.0),
+                limit_policy=getattr(args, "limit_policy", None),
             )
     except LockTimeoutError as exc:
         raise SystemExit(f"error: {exc}") from None
@@ -400,7 +421,7 @@ def cmd_embed(args):
             _mdata = json.loads(_mpath.read_text(encoding="utf8", errors="replace"))
             if isinstance(_mdata, dict):
                 build_id = _mdata.get("build_id") or None
-    except Exception:
+    except (OSError, ValueError):
         pass
 
     n = write_vectors(
@@ -442,7 +463,7 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
         return {}
     try:
         previous, meta = load_vectors(npy)
-    except Exception:
+    except (OSError, ValueError, KeyError, ImportError):
         return {}
     if not previous or meta.get("model_id") != model_id:
         return {}
@@ -670,7 +691,7 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
     report["embedder_model_id"] = model_id_of(embedder)
     try:
         report["embedder_dim"] = dim_of(embedder)
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience boundary: external embedder inspection failure
         report["embedder_dim"] = None
     ok, reason = idx.fuse_ok(embedder)
     if not ok:
@@ -826,7 +847,7 @@ def cmd_stats(args):
         try:
             data = json.loads(raw)
             _emit(format_stats_summary(data))
-        except Exception:
+        except (ValueError, TypeError, KeyError):
             _emit(raw)
 
 
@@ -1263,11 +1284,18 @@ def main(argv=None):
         default=3,
         help="minimum co-edits across git history required to emit a CO_CHANGE edge (default: 3)",
     )
-    common.add_argument("--max-files", type=_nonneg, default=0)
     common.add_argument(
-        "--max-bytes",
+        "--max-files",
         type=_nonneg,
         default=0,
+        help="index at most N discovered files (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-bytes",
+        "--max-total-bytes",
+        type=_nonneg,
+        default=0,
+        dest="max_bytes",
         help="stop indexing once discovered files exceed N bytes in total (0 = no limit)",
     )
     common.add_argument(
@@ -1277,13 +1305,43 @@ def main(argv=None):
         help="keep at most N edges; later ones are dropped (0 = no limit)",
     )
     common.add_argument(
+        "--max-nodes",
+        type=_nonneg,
+        default=0,
+        help="keep at most N graph nodes (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-chunks",
+        type=_nonneg,
+        default=0,
+        help="keep at most N retrieval chunks (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-memory-mb",
+        type=float,
+        default=0.0,
+        help="maximum estimated RAM usage in MB before triggering limit policy (0 = no limit)",
+    )
+    common.add_argument(
+        "--max-build-seconds",
+        type=float,
+        default=0.0,
+        help="maximum wall-clock build time in seconds before triggering limit policy (0 = no limit)",
+    )
+    common.add_argument(
         "--limit-policy",
-        choices=("warn", "truncate"),
-        default="warn",
+        choices=("warn", "truncate", "fail"),
+        default=None,
         help=(
-            "what a reached limit does: 'warn' (default) says so on stderr, "
-            "'truncate' cuts quietly. Both record the cut in stats.json"
+            "what a reached limit does: 'warn' says so on stderr, "
+            "'truncate' cuts quietly, 'fail' aborts immediately with GraphLimitExceeded"
         ),
+    )
+    common.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="enable debug mode: re-raise unexpected internal errors instead of swallowing them",
     )
     common.add_argument(
         "--jobs",
@@ -1363,12 +1421,6 @@ def main(argv=None):
         "full rebuild). Safe for edits, adds, deletes and "
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
-    )
-    b.add_argument(
-        "--max-nodes",
-        type=_nonneg,
-        default=0,
-        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
     b.add_argument(
         "--allow-symlink-out",
@@ -1451,12 +1503,6 @@ def main(argv=None):
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
-    )
-    gh.add_argument(
-        "--max-nodes",
-        type=_nonneg,
-        default=0,
-        help="maximum graph node count before raising GraphLimitExceeded (default: 0, unbounded)",
     )
     gh.add_argument(
         "--allow-symlink-out",
@@ -1856,14 +1902,14 @@ def main(argv=None):
     )
     exp_ret.add_argument(
         "--min-confidence",
-        type=float,
+        type=_unit_float,
         default=None,
-        help="confidence threshold for CALLS edges",
+        help="confidence threshold for CALLS edges (0.0-1.0)",
     )
     exp_ret.add_argument(
         "--min-conf",
         dest="min_confidence",
-        type=float,
+        type=_unit_float,
         default=argparse.SUPPRESS,
         help="alias of --min-confidence",
     )
@@ -1898,11 +1944,13 @@ def main(argv=None):
             import argcomplete
 
             argcomplete.autocomplete(p)
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience boundary: optional shell autocomplete failure
             pass
 
     try:
         args = p.parse_args(argv)
+        if getattr(args, "debug", False):
+            os.environ["REPO2GRAPH_DEBUG"] = "1"
         if not hasattr(args, "func"):
             p.print_help()
             return 0
@@ -1912,7 +1960,7 @@ def main(argv=None):
     except BrokenPipeError:
         try:
             sys.stdout.close()
-        except Exception:
+        except OSError:
             pass
         return 0
     except _GraphLimitExceeded as exc:

@@ -11,9 +11,26 @@ import sys
 import tempfile
 import urllib.parse
 from pathlib import Path
+from typing import Any
 
 CLONE_TIMEOUT = 900
 GIT_TIMEOUT = 120
+
+# Same hardening as integrity.GIT_HARDENING_ARGS, duplicated rather than
+# imported: fetch.py clones arbitrary, not-yet-trusted repositories, so every
+# git invocation here -- clone, fetch, checkout, rev-parse -- must disable
+# fsmonitor/external-diff/hooks before the clone's own .git/config exists to
+# read, not just afterward. core.hooksPath is pointed at the OS null device so
+# a cloned repo's hooks directory, even if one somehow ends up at the target
+# path, is never consulted.
+GIT_HARDENING_ARGS = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "diff.external=",
+    "-c",
+    "core.hooksPath=" + os.devnull,
+)
 
 
 def _rmtree(path: Path) -> None:
@@ -24,7 +41,7 @@ def _rmtree(path: Path) -> None:
     whole clone (often hundreds of MB) behind. Clear the bit and retry.
     """
 
-    def _on_error(func, p, _exc):
+    def _on_error(func: Any, p: str, _exc: Any) -> None:
         try:
             os.chmod(p, stat.S_IWRITE)
             func(p)
@@ -41,10 +58,21 @@ def _rmtree(path: Path) -> None:
         pass
 
 
-GITHUB_SPEC = re.compile(
-    r"^(?:(?:https?://)?(?:www\.)?github\.com/|git@github\.com:)?"
-    r"(?P<owner>[\w.\-]+)/(?P<repo>[\w.\-]+?)(?:\.git)?/?$"
-)
+def _github_spec_regex() -> re.Pattern[str]:
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    domains = ["github\\.com"]
+    if server_url and server_url != "https://github.com":
+        host = urllib.parse.urlparse(server_url).netloc
+        if host:
+            domains.append(re.escape(host))
+    domain_pat = "|".join(domains)
+    return re.compile(
+        rf"^(?:(?:https?://)?(?:www\.)?(?:{domain_pat})/|git@(?:{domain_pat}):)?"
+        r"(?P<owner>[\w.\-]+)/(?P<repo>[\w.\-]+?)(?:\.git)?/?$"
+    )
+
+
+GITHUB_SPEC = _github_spec_regex()
 
 
 # A refname is one or more "/"-separated components. Each component must open
@@ -98,7 +126,7 @@ def _git_version() -> tuple[int, ...]:
 
 def parse_spec(spec: str) -> tuple[str, str]:
     """'owner/repo', a GitHub URL or an SSH remote -> (owner, repo)."""
-    m = GITHUB_SPEC.match(spec.strip())
+    m = _github_spec_regex().match(spec.strip())
     if not m:
         raise ValueError(f"not a GitHub repo spec: {spec!r}")
     owner, repo = m.group("owner"), m.group("repo")
@@ -140,14 +168,27 @@ def _redact(msg: str, token: str | None) -> str:
     return msg
 
 
-def _auth_env(token: str | None) -> dict:
+# Environment variables that redirect which repository/index git reads or
+# writes, independent of `-C`/argv. An ambient `GIT_DIR`/`GIT_WORK_TREE` left
+# set by a wrapper script or a prior command can silently point a clone or
+# checkout invocation at a different repository than the one just created.
+_GIT_ENV_REDIRECT_KEYS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY")
+
+
+def _auth_env(token: str | None) -> dict[str, str]:
     """Environment carrying the clone credential out of band.
 
     The token must never be an argv element: it would be visible in
     `ps`/`/proc` to every other user. git reads http.extraheader from
     GIT_CONFIG_* for this one invocation only, so nothing lands on disk either.
+
+    Also strips `GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE` inherited from the
+    ambient environment, so they cannot override the explicit `-C <target>`
+    every call site here passes.
     """
     env = dict(os.environ)
+    for key in _GIT_ENV_REDIRECT_KEYS:
+        env.pop(key, None)
     # Prevent git from hanging on a terminal credential prompt
     env["GIT_TERMINAL_PROMPT"] = "0"
     if not token:
@@ -163,7 +204,8 @@ def _auth_env(token: str | None) -> dict:
         count = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
     except ValueError:
         count = 0
-    env[f"GIT_CONFIG_KEY_{count}"] = "http.https://github.com/.extraheader"
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    env[f"GIT_CONFIG_KEY_{count}"] = f"http.{server_url}/.extraheader"
     env[f"GIT_CONFIG_VALUE_{count}"] = f"AUTHORIZATION: basic {basic}"
     env["GIT_CONFIG_COUNT"] = str(count + 1)
     return env
@@ -179,7 +221,8 @@ def clone(
     if ref:
         parse_ref(ref)
     token = token or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
-    url = f"https://github.com/{owner}/{repo}.git"
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com").rstrip("/")
+    url = f"{server_url}/{owner}/{repo}.git"
     target = Path(dest) / repo
 
     # Detect an existing checkout and reuse it
@@ -197,7 +240,18 @@ def clone(
                 # named main and never switches ref. Only parse_ref guards that
                 # call.
                 fetch_proc = subprocess.run(
-                    ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref],
+                    [
+                        "git",
+                        *GIT_HARDENING_ARGS,
+                        "-C",
+                        str(target),
+                        "fetch",
+                        "--depth",
+                        "1",
+                        "origin",
+                        "--",
+                        ref,
+                    ],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     encoding="utf8",
@@ -213,7 +267,7 @@ def clone(
 
             try:
                 proc = subprocess.run(
-                    ["git", "-C", str(target), "checkout", ref],
+                    ["git", *GIT_HARDENING_ARGS, "-C", str(target), "checkout", ref],
                     stdin=subprocess.DEVNULL,
                     capture_output=True,
                     encoding="utf8",
@@ -227,7 +281,15 @@ def clone(
                     # out FETCH_HEAD — but only when we know the fetch just succeeded,
                     # otherwise FETCH_HEAD may be stale from a prior run on a different ref.
                     proc_detach = subprocess.run(
-                        ["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
+                        [
+                            "git",
+                            *GIT_HARDENING_ARGS,
+                            "-C",
+                            str(target),
+                            "checkout",
+                            "--detach",
+                            "FETCH_HEAD",
+                        ],
                         stdin=subprocess.DEVNULL,
                         capture_output=True,
                         encoding="utf8",
@@ -255,7 +317,7 @@ def clone(
     if target.exists() and not target.is_dir():
         raise RuntimeError(f"destination path '{target}' exists and is not a directory")
 
-    cmd = ["git", "clone", "--quiet"]
+    cmd = ["git", *GIT_HARDENING_ARGS, "clone", "--quiet"]
     if depth:
         cmd += ["--depth", str(depth)]
     if ref:
@@ -284,12 +346,13 @@ def clone(
 def head_sha(path: Path) -> str:
     try:
         out = subprocess.run(
-            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            ["git", *GIT_HARDENING_ARGS, "-C", str(path), "rev-parse", "HEAD"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf8",
             errors="replace",
             timeout=GIT_TIMEOUT,
+            env=_auth_env(None),
         )
     except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
         return "unknown"
@@ -303,21 +366,24 @@ def index_github(
     depth: int = 0,
     git_history: int = 0,
     formats: str = "jsonl,graphml,cypher,overview,html",
-    include=None,
-    exclude=None,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
     max_files: int = 0,
     keep_clone: Path | None = None,
     token: str | None = None,
     viz_nodes: int = 300,
     jobs: int = 0,
-    config=None,
+    config: Any = None,
     max_call_candidates: int = 5,
     no_chunks: bool = False,
     cochange_min: int = 3,
     max_bytes: int = 0,
     max_edges: int = 0,
-    limit_policy: str = "warn",
-) -> dict:
+    max_chunks: int = 0,
+    max_memory_mb: float = 0.0,
+    max_build_seconds: float = 0.0,
+    limit_policy: str | None = None,
+) -> dict[str, Any]:
     """Clone a GitHub repo, build its graph, write artifacts to outdir."""
     from .chunks import iter_chunks
     from .export import atomic_write, dump_all, make_path
@@ -342,12 +408,16 @@ def index_github(
             max_bytes=max_bytes,
             max_edges=max_edges,
             limit_policy=limit_policy,
+            max_memory_mb=max_memory_mb,
+            max_build_seconds=max_build_seconds,
         )
         g.name = f"{owner}/{repo}"
         # The clone is deleted below, so there is no local tree for
         # index-status/doctor to compare against: record the remote instead.
         setattr(g, "source_remote", f"github:{owner}/{repo}@{sha}")  # not a Graph field
-        chunks = None if no_chunks else iter_chunks(g)  # a generator, streamed to disk by dump_all
+        chunks = (
+            None if no_chunks else iter_chunks(g, max_chunks=max_chunks)
+        )  # a generator, streamed to disk by dump_all
         outdir = Path(outdir)
         # Same cleaning as cli.parse_formats: tolerate "jsonl, html" (spaces,
         # empty items) so a format the caller asked for is not silently dropped.

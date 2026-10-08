@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .export import path as artifact_path
+from .export import atomic_write, path as artifact_path
 from .export import paths as artifact_paths
 from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
 
@@ -24,6 +24,7 @@ from .security import (
 )
 
 __all__ = [
+    "BM25_FORMAT",
     "CALLEE_EDGE_DIRS",
     "CALLER_EDGE_DIRS",
     "Index",
@@ -37,12 +38,16 @@ __all__ = [
     "asks_about_tests",
     "classify_query",
     "is_test_path",
+    "SUPPORTED_INDEX_FORMATS",
     "edge_dirs_for",
     "format_pack",
     "is_lexical_weak",
     "read_jsonl",
     "tokenize",
+    "write_bm25",
 ]
+
+SUPPORTED_INDEX_FORMATS = frozenset({"repo2graph/1"})
 
 if TYPE_CHECKING:
     # Type-only: `embed` pulls the optional `rag` extra, and every runtime use
@@ -348,10 +353,14 @@ def read_jsonl(path: Path) -> list[Record]:
         List of parsed JSON record dictionaries.
 
     Raises:
-        ValueError: If any line exceeds MAX_JSONL_LINE_BYTES or contains invalid JSON.
+        ValueError: If path is a symlink, or if any line exceeds MAX_JSONL_LINE_BYTES,
+            or contains invalid JSON.
     """
+    p = Path(path)
+    if p.is_symlink():
+        raise ValueError(f"Refusing to read symlinked artifact: {p}")
     rows: list[Record] = []
-    with open(path, "rb") as fh:
+    with open(p, "rb") as fh:
         for lineno, raw in enumerate(_iter_raw_lines(fh, MAX_JSONL_LINE_BYTES, str(path)), 1):
             if len(raw) > MAX_JSONL_LINE_BYTES:
                 raise ValueError(
@@ -446,6 +455,59 @@ def is_lexical_weak(
     return False
 
 
+BM25_FORMAT = "repo2graph/bm25-1"
+
+
+def write_bm25(
+    chunks: Sequence[Record],
+    bm25_path: Path,
+    meta_path: Path,
+    build_id: str | None = None,
+) -> None:
+    """Serialize the BM25 inverted index and metadata for fast startup.
+
+    Args:
+        chunks: Sequence of chunk dictionaries.
+        bm25_path: Target path for bm25.jsonl.
+        meta_path: Target path for bm25.meta.json.
+        build_id: Build UUID binding this lexical index to manifest.json.
+    """
+    chunk_ids: list[str] = []
+    lengths: list[int] = []
+    postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for i, c in enumerate(chunks):
+        chunk_ids.append(str(c.get("id") or ""))
+        terms = tokenize(c.get("text") or "") + tokenize(c.get("qualname") or "") * 3
+        name = c.get("name") or ""
+        if len(name) == 1 and IDENT_RE.fullmatch(name):
+            terms += [name.lower()] * 3
+        counts = Counter(terms)
+        lengths.append(sum(counts.values()) or 1)
+        for term, n in counts.items():
+            postings[term].append((i, n))
+
+    n = len(chunks)
+    avgdl = (sum(lengths) / n) if n else BM25_AVG_LEN
+
+    meta: dict[str, Any] = {
+        "format": BM25_FORMAT,
+        "count": n,
+        "avgdl": avgdl,
+        "chunk_ids": chunk_ids,
+        "lengths": lengths,
+    }
+    if build_id is not None:
+        meta["build_id"] = build_id
+    with atomic_write(meta_path, "w", encoding="utf8", newline="\n") as fh:
+        fh.write(json.dumps(meta, indent=2) + "\n")
+
+    with atomic_write(bm25_path, "w", encoding="utf8", newline="\n") as fh:
+        for term in sorted(postings):
+            rec = {"t": term, "p": postings[term]}
+            line = json.dumps(rec, ensure_ascii=False)
+            fh.write(line + "\n")
+
+
 class Index:
     # (fused, candidates) for the most recent score_rrf call, or None if no
     # fused query has run on this Index yet. A class-level default so every
@@ -456,7 +518,10 @@ class Index:
     repo_root: Path | None = None
 
     def __init__(self, outdir: Path):
-        self.dir = Path(outdir)
+        self.dir = Path(outdir).resolve()
+        self._overview: str | None = None
+        self._manifest: dict[str, Any] | None = None
+        self._check_manifest_format()
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
         self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
         self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
@@ -470,13 +535,17 @@ class Index:
         # The repo map, for pack_context()'s prepend. Both are optional: a
         # `--formats jsonl` build writes no overview.md, and a build interrupted
         # before write_manifest leaves no manifest.json. Neither may raise here.
-        self._overview: str | None = None
-        self._manifest: dict[str, Any] | None = None
         self.by_node: dict[str, list[Record]] = defaultdict(list)
         for c in self.chunks:
             self.by_node[c["node_id"]].append(c)
-        # inverted index: term -> [(chunk_index, term_count)], so scoring touches
-        # only the chunks that contain a query term instead of every chunk.
+        if not self._load_bm25():
+            self._build_bm25()
+        self.vectors: dict[int, Vector] | None = None
+        self.vector_meta: dict[str, Any] | None = None
+        self._load_vectors()
+
+    def _build_bm25(self) -> None:
+        """Compute the BM25 inverted index dynamically across all chunks."""
         self.df: Counter[str] = Counter()
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lengths: list[int] = []
@@ -495,9 +564,75 @@ class Index:
             self.df.update(counts.keys())
         self.N = len(self.chunks)
         self.avgdl = (sum(self.lengths) / self.N) if self.N else BM25_AVG_LEN
-        self.vectors: dict[int, Vector] | None = None
-        self.vector_meta: dict[str, Any] | None = None
-        self._load_vectors()
+
+    def _load_bm25(self) -> bool:
+        """Load precomputed BM25 inverted index from disk if present and matching.
+
+        Returns:
+            True if BM25 data was loaded successfully from disk, False otherwise.
+        """
+        meta_p = artifact_path(self.dir, "bm25.meta.json")
+        bm25_p = artifact_path(self.dir, "bm25.jsonl")
+        if not meta_p.is_file() or not bm25_p.is_file():
+            return False
+        if meta_p.is_symlink() or bm25_p.is_symlink():
+            return False
+        try:
+            if not meta_p.resolve().is_relative_to(self.dir.resolve()):
+                return False
+            if not bm25_p.resolve().is_relative_to(self.dir.resolve()):
+                return False
+        except OSError:
+            return False
+
+        try:
+            from .integrity import MAX_METADATA_BYTES, iter_jsonl_bounded, read_bounded
+
+            meta = json.loads(
+                read_bounded(meta_p, MAX_METADATA_BYTES, what="bm25.meta.json").decode(
+                    "utf8", "replace"
+                )
+            )
+            if not isinstance(meta, dict) or meta.get("format") != BM25_FORMAT:
+                return False
+            m_build_id = self.manifest.get("build_id")
+            v_build_id = meta.get("build_id")
+            if m_build_id and v_build_id and m_build_id != v_build_id:
+                return False
+            if meta.get("count") != len(self.chunks):
+                return False
+            meta_chunk_ids = meta.get("chunk_ids")
+            if not isinstance(meta_chunk_ids, list):
+                return False
+            for c, cid in zip(self.chunks, meta_chunk_ids):
+                if c.get("id") != cid:
+                    return False
+
+            lengths = meta.get("lengths")
+            if not isinstance(lengths, list) or len(lengths) != len(self.chunks):
+                return False
+
+            postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
+            df: Counter[str] = Counter()
+            for _lineno, rec in iter_jsonl_bounded(bm25_p):
+                if not isinstance(rec, dict):
+                    continue
+                term = rec.get("t")
+                raw_p = rec.get("p")
+                if not isinstance(term, str) or not isinstance(raw_p, list):
+                    continue
+                plist = [(int(idx), int(cnt)) for idx, cnt in raw_p]
+                postings[term] = plist
+                df[term] = len(plist)
+
+            self.postings = postings
+            self.df = df
+            self.lengths = [int(x) for x in lengths]
+            self.N = len(self.chunks)
+            self.avgdl = float(meta.get("avgdl", BM25_AVG_LEN))
+            return True
+        except (OSError, ValueError, KeyError):
+            return False
 
     def _load_vectors(self) -> None:
         """Load dense chunk vectors and metadata from vectors.npy if present."""
@@ -508,11 +643,15 @@ class Index:
             from .embed import load_vectors
 
             by_id, meta = load_vectors(npy)
-        except Exception:
+        except (OSError, ValueError, KeyError, ImportError):
             return
         pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
         vectors: dict[int, Vector] = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
         if not vectors:
+            return
+        m_build_id = self.manifest.get("build_id")
+        v_build_id = meta.get("build_id")
+        if m_build_id and v_build_id and m_build_id != v_build_id:
             return
         self.vectors, self.vector_meta = vectors, meta
 
@@ -543,7 +682,7 @@ class Index:
         index_dim = self.vector_meta.get("dim")
         try:
             query_dim = dim_of(embedder)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience boundary: external embedder model inference failure
             return False, f"the active embedder could not be measured: {exc}"
         if index_dim != query_dim:
             return False, (
@@ -571,6 +710,13 @@ class Index:
         if name == "overview.md" and len(paths) > 1:
             paths = list(reversed(paths))
         for p in paths:
+            if p.is_symlink():
+                continue
+            try:
+                if not p.resolve().is_relative_to(self.dir.resolve()):
+                    continue
+            except OSError:
+                continue
             try:
                 with open(p, encoding="utf8", newline="\n") as fh:
                     return fh.read()
@@ -578,17 +724,49 @@ class Index:
                 continue
         return ""
 
-    def _load_manifest(self) -> dict[str, Any]:
+    def _check_manifest_format(self) -> None:
+        p = artifact_path(self.dir, "manifest.json")
+        if not p.is_file() or p.is_symlink():
+            return
         try:
-            with open(
-                artifact_path(self.dir, "manifest.json"), encoding="utf8", newline="\n"
-            ) as fh:
+            if not p.resolve().is_relative_to(self.dir.resolve()):
+                return
+        except OSError:
+            return
+        try:
+            with open(p, encoding="utf8", newline="\n") as fh:
                 data = json.load(fh)
-        except (OSError, UnicodeDecodeError, ValueError):
-            # ValueError covers json.JSONDecodeError: a truncated manifest is a
-            # degraded map, not a reason to refuse to answer a query.
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        if isinstance(data, dict):
+            fmt = data.get("format")
+            if fmt and fmt not in SUPPORTED_INDEX_FORMATS:
+                raise ValueError(
+                    f"Unsupported index format: '{fmt}'. Expected one of: {sorted(SUPPORTED_INDEX_FORMATS)}"
+                )
+
+    def _load_manifest(self) -> dict[str, Any]:
+        p = artifact_path(self.dir, "manifest.json")
+        if p.is_symlink():
             return {}
-        return data if isinstance(data, dict) else {}
+        try:
+            if not p.resolve().is_relative_to(self.dir.resolve()):
+                return {}
+        except OSError:
+            return {}
+        try:
+            with open(p, encoding="utf8", newline="\n") as fh:
+                data = json.load(fh)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
+        if isinstance(data, dict):
+            fmt = data.get("format")
+            if fmt and fmt not in SUPPORTED_INDEX_FORMATS:
+                raise ValueError(
+                    f"Unsupported index format: '{fmt}'. Expected one of: {sorted(SUPPORTED_INDEX_FORMATS)}"
+                )
+            return data
+        return {}
 
     @property
     def overview(self) -> str:
@@ -1190,7 +1368,7 @@ class Index:
         use_tokens = budget_tokens is not None
         # len is the character measure, and it is additive, so the cumulative
         # accounting below reduces to exactly the arithmetic this method has
-        # always done when budget_tokens is None (D1: byte-identical output).
+        # always done when budget_tokens is None (preserves byte-identical output).
         measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
         bounded = budget > 0
