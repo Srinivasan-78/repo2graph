@@ -349,6 +349,50 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 
+# `.docker/config.json` and a decoded `.dockerconfigjson` store each registry
+# login as `"auth": "<base64 user:password>"`. The key is too short and too
+# common to add to the secret-word rules, but the exact `"auth"` key with a
+# base64 value is the Docker format, so it gets a value-only span of its own.
+DOCKER_AUTH_RE = re.compile(r"\"auth\"\s*:\s*\"(?P<value>[A-Za-z0-9+/]{12,1024}={0,2})\"")
+
+# A Kubernetes `Secret` manifest holds its credentials base64-wrapped under
+# `data:`, keyed by arbitrary names (`username`, `tls.crt`, `config`) that no
+# secret-word rule can recognise. Inside such a manifest every value of the
+# `data:` mapping is a credential by declaration, so the manifest kind is the
+# signal rather than the key.
+_K8S_SECRET_KIND_RE = re.compile(r"(?m)^kind:[ \t]*[\"']?Secret[\"']?[ \t]*$")
+_K8S_DATA_RE = re.compile(r"(?m)^(?P<indent>[ \t]*)(?:data|stringData):[ \t]*$")
+_K8S_ENTRY_RE = re.compile(
+    r"[ \t]+[\"']?[-\w.]{1,253}[\"']?:[ \t]*(?P<value>\S{1,65536})[ \t]*\r?$"
+)
+
+
+def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
+    """Value spans of every `data:`/`stringData:` entry in a k8s Secret manifest.
+
+    A multi-document file holding any Secret is treated whole, so a ConfigMap
+    beside it is redacted too; over-redaction is the safe side of that line.
+    """
+    if not _K8S_SECRET_KIND_RE.search(text):
+        return []
+    spans: list[tuple[int, int]] = []
+    for block in _K8S_DATA_RE.finditer(text):
+        indent = len(block.group("indent"))
+        pos = block.end() + 1
+        while pos < len(text):
+            eol = text.find("\n", pos)
+            eol = len(text) if eol < 0 else eol
+            line = text[pos:eol]
+            lead = len(line) - len(line.lstrip(" \t"))
+            if line.strip() and lead <= indent:
+                break
+            m = _K8S_ENTRY_RE.match(line)
+            if m:
+                spans.append((pos + m.start("value"), pos + m.end("value")))
+            pos = eol + 1
+    return spans
+
+
 def _pem_spans(text: str) -> list[tuple[int, int]]:
     """Span of every PEM private-key block, in one linear pass.
 
@@ -678,6 +722,11 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
 
     # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
     findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
+
+    # 1c. Docker registry logins and Kubernetes Secret payloads.
+    for m in DOCKER_AUTH_RE.finditer(text):
+        findings.append(("docker_registry_auth", m.start("value"), m.end("value")))
+    findings.extend(("k8s_secret_data", start, end) for start, end in _k8s_secret_spans(text))
 
     # 2. Database URLs with credentials
     for m in DB_URL_RE.finditer(text):
