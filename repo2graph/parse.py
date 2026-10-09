@@ -805,6 +805,41 @@ def grammar_fingerprint() -> str:
     return " ".join(parts)
 
 
+@lru_cache(maxsize=1)
+def lang_config_fingerprint() -> str:
+    """Digest of `LANG_CFG`, the node-type tables extraction is driven by.
+
+    Editing a kind map or a call-node list changes what every cached parse
+    would now contain, exactly like a grammar upgrade does, and is just as easy
+    to make without remembering to bump `PARSE_CACHE_FORMAT`.
+    """
+    import hashlib
+    import json
+
+    def _norm(o):
+        if isinstance(o, (set, frozenset)):
+            return sorted(o, key=repr)
+        return repr(o)
+
+    blob = json.dumps(LANG_CFG, sort_keys=True, default=_norm)
+    return hashlib.sha256(blob.encode("utf8")).hexdigest()[:16]
+
+
+def parse_cache_identity(config: "BuildConfig | None") -> dict[str, str]:
+    """Everything besides a file's bytes that decides what its cached parse holds.
+
+    Compared field by field on load, so a mismatch can say which one changed.
+    """
+    config = config or BuildConfig()
+    return {
+        "grammars": grammar_fingerprint(),
+        "lang_config": lang_config_fingerprint(),
+        "max_file_bytes": str(config.max_file_bytes),
+        "chunk_large_files": str(bool(config.chunk_large_files)),
+        "secret_policy": str(config.secret_policy),
+    }
+
+
 @lru_cache(maxsize=None)
 def parser_for(lang: str):
     """The parser for `lang`, or None if one cannot be obtained for any reason.
