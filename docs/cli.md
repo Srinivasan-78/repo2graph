@@ -113,6 +113,21 @@ Artifacts are staged in a sibling temp directory and atomically swapped into
 behind. The previous build is restored on failure. Files written by subsequent
 commands (`embed`, `github`) are preserved across rebuilds.
 
+### Large repositories and memory
+
+The whole graph is held in memory while it is built and exported, and the
+GraphML and Cypher writers each hold their own rendering of it. On a repository
+with hundreds of thousands of symbols that reaches gigabytes. If an agent or
+`rag` is the only consumer, skip the two export formats:
+
+```bash
+repo2graph build . --formats jsonl,overview,html
+```
+
+`--max-memory-mb` and `--max-build-seconds` stop a build that grows past a
+ceiling, and `--max-files`, `--max-nodes` and `--max-edges` cap its size; with the
+default `--limit-policy warn`, every cut is recorded in `stats.json`.
+
 ### `--incremental`
 
 Every build writes `agent/parse.cache.json`: each file's sha256 alongside the
