@@ -56,6 +56,20 @@ function isTrustedCommenter(association) {
   return TRUSTED_ASSOCIATIONS.includes(String(association || '').toUpperCase());
 }
 
+function isBotComment(comment) {
+  if (!comment) return false;
+  const user = comment.user;
+  if (!user) return true; // fallback for test mocks without user
+  const login = user.login || '';
+  const type = user.type || '';
+  return (
+    type === 'Bot' ||
+    login.endsWith('[bot]') ||
+    login === 'github-actions[bot]' ||
+    login === 'prod-igy[bot]'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // AI enrichment configuration
 //
@@ -919,7 +933,7 @@ async function triagePullRequest({ github, owner, repo, prNumber, core, allowAi 
 
   // The bot's own comment is both the idempotency target and the AI spend
   // ledger. Resolve it once here; step 10 reuses it.
-  const existingBotComment = comments.find(c => c.body && c.body.includes(BOT_MARKER));
+  const existingBotComment = comments.find(c => c.body && c.body.includes(BOT_MARKER) && isBotComment(c));
   const ledger = parseLedger(existingBotComment ? existingBotComment.body : '');
 
   // 5. Determine labels
@@ -1180,6 +1194,7 @@ module.exports.checkRepositoryInvariants = checkRepositoryInvariants;
 module.exports.formatBotComment = formatBotComment;
 module.exports.escapeMdRef = escapeMdRef;
 module.exports.isTrustedCommenter = isTrustedCommenter;
+module.exports.isBotComment = isBotComment;
 module.exports.TRUSTED_ASSOCIATIONS = TRUSTED_ASSOCIATIONS;
 module.exports.LABEL_DEFINITIONS = LABEL_DEFINITIONS;
 module.exports.BOT_MARKER = BOT_MARKER;

@@ -4,8 +4,10 @@ Nothing here imports sentence-transformers, and nothing here needs numpy: every
 embedder is a stub from conftest.py, and tests verify the zero-dependency
 discipline rather than requiring heavy optional libraries.
 
-No score value, rank number or float comparison is asserted. Fusion is proved
-purely by chunk identity, with the dense ranking supplied explicitly by the test.
+No fusion score value or rank number is asserted. Fusion is proved purely by
+chunk identity, with the dense ranking supplied explicitly by the test; the
+float comparisons elsewhere in this file check vector round-tripping, not
+fusion scores.
 """
 
 import json
@@ -689,17 +691,17 @@ def test_embed_reports_model_and_dim(mini_index, use_stub_embedder, capsys):
 
 
 # ==========================================================================
-# Regressions -- REVIEW iteration 2
+# Regression: --embed-model was never read by cli.py
 # ==========================================================================
 #
-# R-1..R-4 pin the fix for a defect that every AC above missed: `cli.py` read
+# These pin the fix for a defect that every test above missed: `cli.py` read
 # `args.embed_model`, a dest no parser defined, so `query`/`rag` could only
 # ever resolve the built-in default model. Exiting 0 was not enough to catch
 # it -- these assert the *resolved model name that reaches default_embedder*,
 # which is the observation the original suite never made.
 
 
-def test_r1_rag_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
+def test_rag_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
     """R-1: `rag --vectors --embed-model X` embeds the query with X."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
     assert read_meta(mini_index)["model_id"] == "stub/custom"
@@ -716,7 +718,7 @@ def test_r1_rag_embed_model_reaches_the_query_embedder(mini_index, use_stub_embe
     assert use_stub_embedder.last.calls, "the query was never embedded"
 
 
-def test_r1_query_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
+def test_query_embed_model_reaches_the_query_embedder(mini_index, use_stub_embedder, capsys):
     """R-1 (b): the same on `query`, which shares the helper but not the test."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
 
@@ -729,9 +731,7 @@ def test_r1_query_embed_model_reaches_the_query_embedder(mini_index, use_stub_em
     assert use_stub_embedder.names == ["stub/custom"], use_stub_embedder.names
 
 
-def test_r2_without_embed_model_a_custom_model_index_is_refused(
-    mini_index, use_stub_embedder, capsys
-):
+def test_without_embed_model_a_custom_model_index_is_refused(mini_index, use_stub_embedder, capsys):
     """R-2: the flag is load-bearing, not cosmetic -- omit it against an index
     embedded with a non-default model and the guard fires, naming both."""
     run_embed(mini_index, capsys, "--embed-model", "stub/custom")
@@ -743,7 +743,7 @@ def test_r2_without_embed_model_a_custom_model_index_is_refused(
     assert "### [cite:" not in capsys.readouterr().out
 
 
-def test_r3_rag_model_stays_the_llm_model(mini_index, use_stub_embedder, monkeypatch, capsys):
+def test_rag_model_stays_the_llm_model(mini_index, use_stub_embedder, monkeypatch, capsys):
     """R-3: `--model` and `--embed-model` are two dests, not one. The LLM name
     must never be handed to default_embedder, nor the checkpoint to the LLM."""
     import repo2graph.answer as answer_mod
@@ -776,7 +776,7 @@ def test_r3_rag_model_stays_the_llm_model(mini_index, use_stub_embedder, monkeyp
     assert use_stub_embedder.names == ["stub/mini-v1"], use_stub_embedder.names
 
 
-def test_r4_the_default_path_builds_no_embedder(mini_index, use_stub_embedder, capsys):
+def test_the_default_path_builds_no_embedder(mini_index, use_stub_embedder, capsys):
     """R-4: dense fusion is opt-in, so neither `rag` nor `query` constructs an
     embedder without the flag -- constructing one downloads ~90 MB on a cold
     cache, and the default path promises no network."""
@@ -791,7 +791,7 @@ def test_r4_the_default_path_builds_no_embedder(mini_index, use_stub_embedder, c
     assert len(use_stub_embedder.made) == before, use_stub_embedder.names
 
 
-def test_r4_explicit_vectors_still_builds_one(mini_index, use_stub_embedder, capsys):
+def test_explicit_vectors_still_builds_one(mini_index, use_stub_embedder, capsys):
     """R-4 (b): the guard above must not pass by fusion being dead everywhere."""
     run_embed(mini_index, capsys)
     before = len(use_stub_embedder.made)

@@ -56,31 +56,52 @@ jobs:
           pip install -e . --no-deps
 
       - name: Linter (Ruff)
+        id: lint
         run: ruff check --output-format=github .
 
       - name: Formatting Check (Ruff)
+        id: format
         run: ruff format --check .
 
       - name: Type Check (Mypy)
+        id: typecheck
         run: mypy repo2graph
 
       - name: Version Surfaces Consistency Check
+        id: version_check
         run: python scripts/check_version.py
+
+      - name: Workflow Summary Integrity Check
+        id: summary_check
+        run: python scripts/check_workflow_summaries.py
 
       - name: Generate Code Quality Step Summary
         if: always()
         shell: bash
+        env:
+          # Reports each step's real outcome. Hardcoding "✅ Passed" under
+          # `if: always()` rendered a green row in the summary of a run whose
+          # lint, format, typecheck, or version check had just failed.
+          LINT: ${{ steps.lint.outcome }}
+          FORMAT: ${{ steps.format.outcome }}
+          TYPECHECK: ${{ steps.typecheck.outcome }}
+          VERSION_CHECK: ${{ steps.version_check.outcome }}
+          SUMMARY_CHECK: ${{ steps.summary_check.outcome }}
         run: |
-          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
-          ### 🛡️ Code Quality & Static Analysis Summary
-
-          | Check | Status | Verification Tool |
-          | :--- | :---: | :--- |
-          | **Code Linting** | ✅ Passed | Ruff (inline PR annotations enabled) |
-          | **Code Formatting** | ✅ Passed | Ruff Formatter |
-          | **Strict Type Checking** | ✅ Passed | Mypy |
-          | **Version Surfaces Integrity** | ✅ Passed | `scripts/check_version.py` |
-          EOF
+          status() { [ "$1" = "success" ] && echo "✅ Passed" || echo "❌ Failed ($1)"; }
+          # printf with placeholders rather than an unquoted heredoc -- an
+          # unquoted `cat << EOF` performs command substitution, so a stray
+          # backtick or `$(` in a future row would execute.
+          {
+            printf '### 🛡️ Code Quality & Static Analysis Summary\n\n'
+            printf '| Check | Status | Verification Tool |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **Code Linting** | %s | Ruff (inline PR annotations enabled) |\n' "$(status "$LINT")"
+            printf '| **Code Formatting** | %s | Ruff Formatter |\n' "$(status "$FORMAT")"
+            printf '| **Strict Type Checking** | %s | Mypy |\n' "$(status "$TYPECHECK")"
+            printf '| **Version Surfaces Integrity** | %s | `scripts/check_version.py` |\n' "$(status "$VERSION_CHECK")"
+            printf '| **Workflow Summary Integrity** | %s | `scripts/check_workflow_summaries.py` |\n' "$(status "$SUMMARY_CHECK")"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   tests:
     name: Test Suite (${{ matrix.os }}, Python ${{ matrix.python-version }})
@@ -194,6 +215,7 @@ jobs:
         run: pip install "uv==0.12.15"
 
       - name: Verify uv.lock Currency
+        id: lock_check
         run: |
           if ! uv lock --check; then
             echo "::error title=Stale uv.lock::uv.lock is out of sync with pyproject.toml. Please run 'uv lock' locally and commit the updated uv.lock file."
@@ -201,6 +223,7 @@ jobs:
           fi
 
       - name: Verify Refusal Without MCP Extra
+        id: mcp_refusal
         run: |
           set -euo pipefail
           uv sync
@@ -215,6 +238,7 @@ jobs:
             cat out.txt; exit 1; }
 
       - name: Verify Real MCP Stdio Round-Trip
+        id: mcp_roundtrip
         run: |
           set -euo pipefail
           uv sync --extra mcp
@@ -223,16 +247,23 @@ jobs:
       - name: Append Packaging & MCP Smoke Summary
         if: always()
         shell: bash
+        env:
+          # Reports each step's real outcome. Hardcoding "✅ Passed" under
+          # `if: always()` rendered a green row in the summary of a run whose
+          # lock check, refusal check, or roundtrip check had just failed.
+          LOCK_CHECK: ${{ steps.lock_check.outcome }}
+          MCP_REFUSAL: ${{ steps.mcp_refusal.outcome }}
+          MCP_ROUNDTRIP: ${{ steps.mcp_roundtrip.outcome }}
         run: |
-          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
-          ### 📦 Packaging & Distribution Smoke Summary
-
-          | Check | Status | Details |
-          | :--- | :---: | :--- |
-          | **uv.lock Currency** | ✅ Passed | Up to date with `pyproject.toml` |
-          | **Refusal Without MCP Extra** | ✅ Passed | Fails cleanly with installation guidance |
-          | **Real MCP Stdio Round-Trip** | ✅ Passed | Verified stdio handshake and query response |
-          EOF
+          status() { [ "$1" = "success" ] && echo "✅ Passed" || echo "❌ Failed ($1)"; }
+          {
+            printf '### 📦 Packaging & Distribution Smoke Summary\n\n'
+            printf '| Check | Status | Details |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **uv.lock Currency** | %s | Up to date with `pyproject.toml` |\n' "$(status "$LOCK_CHECK")"
+            printf '| **Refusal Without MCP Extra** | %s | Fails cleanly with installation guidance |\n' "$(status "$MCP_REFUSAL")"
+            printf '| **Real MCP Stdio Round-Trip** | %s | Verified stdio handshake and query response |\n' "$(status "$MCP_ROUNDTRIP")"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   windows-cp1252-pipe:
     name: Windows CP1252 Non-UTF8 Pipeline Compatibility
@@ -256,6 +287,7 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Build repository containing non-ASCII symbols
+        id: unicode_build
         shell: bash
         run: |
           mkdir -p sample/pkg
@@ -265,12 +297,14 @@ jobs:
             > sample/README.md
 
       - name: Build with stdout redirected to file
+        id: cli_build
         shell: bash
         run: |
           python -m repo2graph.cli build sample -o .r2g --formats jsonl,overview > build.out 2>build.err
           test -s build.out || { echo "build wrote nothing to stdout"; cat build.err; exit 1; }
 
       - name: RAG and query with stdout redirected to file
+        id: cli_rag
         shell: bash
         run: |
           python -m repo2graph.cli rag "what does arrow do" -o .r2g > rag.out 2>rag.err
@@ -281,6 +315,7 @@ jobs:
           done
 
       - name: Pipeline handling with piped stdout (surrogateescape check)
+        id: pipe_check
         shell: bash
         run: |
           python -m repo2graph.cli rag "what does arrow do" -o .r2g | head -20 > piped.out
@@ -289,16 +324,30 @@ jobs:
       - name: Append Windows CP1252 Compatibility Summary
         if: always()
         shell: bash
+        env:
+          # Reports each phase's real outcome. Hardcoding "✅ Passed" under
+          # `if: always()` rendered a green row in the summary of a run whose
+          # build, CLI, or pipe check had just failed.
+          UNICODE_BUILD: ${{ steps.unicode_build.outcome }}
+          CLI_BUILD: ${{ steps.cli_build.outcome }}
+          CLI_RAG: ${{ steps.cli_rag.outcome }}
+          PIPE_CHECK: ${{ steps.pipe_check.outcome }}
         run: |
-          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
-          ### 🪟 Windows CP1252 Non-UTF8 Pipeline Summary
-
-          | Test Phase | Result | Details |
-          | :--- | :---: | :--- |
-          | **Unicode Ingestion** | ✅ Passed | Non-ASCII symbols (café, arrows, CJK) parsed |
-          | **CLI Build & RAG with CP1252** | ✅ Passed | Build, RAG, query, and stats non-empty |
-          | **Stdout Pipeline Streaming** | ✅ Passed | Safe surrogateescape pipe handling verified |
-          EOF
+          status() { [ "$1" = "success" ] && echo "✅ Passed" || echo "❌ Failed ($1)"; }
+          # Combine build+RAG: fails if either step failed.
+          if [ "$CLI_BUILD" = "success" ] && [ "$CLI_RAG" = "success" ]; then
+            cli_status="✅ Passed"
+          else
+            cli_status="❌ Failed (build=$CLI_BUILD, rag=$CLI_RAG)"
+          fi
+          {
+            printf '### 🪟 Windows CP1252 Non-UTF8 Pipeline Summary\n\n'
+            printf '| Test Phase | Result | Details |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **Unicode Ingestion** | %s | Non-ASCII symbols (café, arrows, CJK) parsed |\n' "$(status "$UNICODE_BUILD")"
+            printf '| **CLI Build & RAG with CP1252** | %s | Build, RAG, query, and stats non-empty |\n' "$cli_status"
+            printf '| **Stdout Pipeline Streaming** | %s | Safe surrogateescape pipe handling verified |\n' "$(status "$PIPE_CHECK")"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   action:
     name: GitHub Action Composite Integration Test
@@ -324,6 +373,7 @@ jobs:
           query-budget: "8000"
 
       - name: Check output counts and files are non-empty
+        id: counts_check
         env:
           NODES: ${{ steps.r2g.outputs.nodes }}
           EDGES: ${{ steps.r2g.outputs.edges }}
@@ -338,6 +388,7 @@ jobs:
           test -f .r2g/agent/chunks.jsonl
 
       - name: Check GraphRAG pack carries citations
+        id: citations_check
         env:
           PACK_FILE: ${{ steps.r2g.outputs.pack-file }}
           PACK_CHARS: ${{ steps.r2g.outputs.pack-chars }}
@@ -356,16 +407,23 @@ jobs:
           EDGES: ${{ steps.r2g.outputs.edges }}
           CHUNKS: ${{ steps.r2g.outputs.chunks }}
           PACK_CHARS: ${{ steps.r2g.outputs.pack-chars }}
+          # Reports each check's real outcome. Hardcoding "✅ Non-zero" under
+          # `if: always()` rendered a green row even when the counts check or
+          # the citations check had just failed.
+          COUNTS_CHECK: ${{ steps.counts_check.outcome }}
+          CITATIONS_CHECK: ${{ steps.citations_check.outcome }}
         shell: bash
         run: |
-          cat << EOF >> "$GITHUB_STEP_SUMMARY"
-          ### ⚡ GitHub Action Composite Integration Summary
-
-          | Metric | Value | Verification |
-          | :--- | :---: | :---: |
-          | **Nodes Generated** | \`$NODES\` | ✅ Non-zero |
-          | **Edges Generated** | \`$EDGES\` | ✅ Non-zero |
-          | **Chunks Created** | \`$CHUNKS\` | ✅ Non-zero |
-          | **GraphRAG Pack Chars** | \`$PACK_CHARS\` | ✅ Non-zero |
-          | **Citations Verified** | Grounded (\`[cite:...]\`) | ✅ Verified present |
-          EOF
+          counts_status() { [ "$COUNTS_CHECK" = "success" ] && echo "✅ Non-zero" || echo "❌ Failed ($COUNTS_CHECK)"; }
+          citations_status() { [ "$CITATIONS_CHECK" = "success" ] && echo "✅ Verified present" || echo "❌ Failed ($CITATIONS_CHECK)"; }
+          citations_value() { [ "$CITATIONS_CHECK" = "success" ] && echo "Grounded (\`[cite:...]\`)" || echo "Not verified"; }
+          {
+            printf '### ⚡ GitHub Action Composite Integration Summary\n\n'
+            printf '| Metric | Value | Verification |\n'
+            printf '| :--- | :---: | :---: |\n'
+            printf '| **Nodes Generated** | `%s` | %s |\n' "$NODES" "$(counts_status)"
+            printf '| **Edges Generated** | `%s` | %s |\n' "$EDGES" "$(counts_status)"
+            printf '| **Chunks Created** | `%s` | %s |\n' "$CHUNKS" "$(counts_status)"
+            printf '| **GraphRAG Pack Chars** | `%s` | %s |\n' "$PACK_CHARS" "$(citations_status)"
+            printf '| **Citations Verified** | %s | %s |\n' "$(citations_value)" "$(citations_status)"
+          } >> "$GITHUB_STEP_SUMMARY"

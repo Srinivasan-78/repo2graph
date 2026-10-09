@@ -143,3 +143,157 @@ def test_exclude_dir(tmp_path):
     g2 = build(repo, config=config)
     assert "file:normal/a.py" in g2.nodes
     assert "file:my_excluded/b.py" not in g2.nodes
+
+
+def test_limit_policy_fail_on_nodes(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f1(): pass\ndef f2(): pass\n")
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="node limit"):
+        build(repo, config=BuildConfig(max_nodes=1), limit_policy="fail")
+
+
+def test_limit_policy_fail_on_edges(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f(): pass\ndef g(): f()\n")
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="edge limit"):
+        build(repo, max_edges=1, limit_policy="fail")
+
+
+def test_limit_policy_fail_on_files(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("x = 1\n")
+    (repo / "b.py").write_text("y = 2\n")
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="file limit"):
+        build(repo, max_files=1, limit_policy="fail")
+
+
+def test_limit_policy_fail_on_bytes(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("x = 1\n" * 100)
+    (repo / "b.py").write_text("y = 2\n" * 100)
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="byte budget"):
+        build(repo, max_bytes=50, limit_policy="fail")
+
+
+def test_limit_policy_fail_on_chunks(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f(): pass\ndef g(): pass\n")
+    from repo2graph.chunks import iter_chunks
+    from repo2graph.graph import GraphLimitExceeded
+
+    g = build(repo, limit_policy="fail")
+    with pytest.raises(GraphLimitExceeded, match="Chunk limit"):
+        list(iter_chunks(g, max_chunks=1))
+
+
+def test_limit_policy_fail_on_memory(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f(): pass\n")
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="memory limit"):
+        build(repo, max_memory_mb=0.000001, limit_policy="fail")
+
+
+def test_limit_policy_fail_on_build_seconds(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f(): pass\n")
+    from repo2graph.graph import GraphLimitExceeded
+
+    with pytest.raises(GraphLimitExceeded, match="duration limit"):
+        # We simulate duration limit by starting with tiny limit and sleeping or small limit
+        build(repo, max_build_seconds=0.0000001, limit_policy="fail")
+
+
+def test_clean_build_manifest_marks_complete(tmp_path):
+    import json
+    from repo2graph.chunks import iter_chunks
+    from repo2graph.export import dump_all
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f(): return 1\n")
+
+    g = build(repo)
+    out = tmp_path / "out"
+    dump_all(g, iter_chunks(g), out, {"jsonl", "overview"}, 0)
+
+    manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf8"))
+    assert manifest["complete"] is True
+    assert manifest["incomplete"] is False
+    assert manifest["limits_hit"] == {}
+
+    overview = (out / "agent" / "overview.md").read_text(encoding="utf8")
+    assert "WARNING: Incomplete graph" not in overview
+    overview_h = (out / "human" / "overview.md").read_text(encoding="utf8")
+    assert "Incomplete graph warning" not in overview_h
+
+
+def test_truncate_marks_manifest_and_overview_incomplete_and_doctor_detects(tmp_path):
+    import json
+    from repo2graph.chunks import iter_chunks
+    from repo2graph.export import dump_all
+    from repo2graph.integrity import verify_artifacts
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f1(): pass\ndef f2(): pass\n")
+    (repo / "b.py").write_text("def g1(): pass\ndef g2(): pass\n")
+
+    g = build(repo, config=BuildConfig(max_nodes=3), limit_policy="truncate")
+    out = tmp_path / "out"
+    dump_all(g, iter_chunks(g), out, {"jsonl", "overview"}, 0)
+
+    manifest = json.loads((out / "agent" / "manifest.json").read_text(encoding="utf8"))
+    assert manifest["complete"] is False
+    assert manifest["incomplete"] is True
+    assert "nodes_dropped" in manifest["limits_hit"]
+
+    overview = (out / "agent" / "overview.md").read_text(encoding="utf8")
+    assert "WARNING: Incomplete graph -- resource limits breached" in overview
+
+    overview_h = (out / "human" / "overview.md").read_text(encoding="utf8")
+    assert "Incomplete graph warning" in overview_h
+
+    # Doctor / verify_artifacts detects it as partial
+    report = verify_artifacts(out)
+    assert report.status == "partial"
+    assert any("incomplete" in w.lower() for w in report.warnings)
+
+
+def test_cli_build_fail_policy_exits_one(tmp_path):
+    from repo2graph.cli import main
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f1(): pass\ndef f2(): pass\n")
+
+    out = tmp_path / "out"
+    rc = main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--max-nodes",
+            "1",
+            "--limit-policy",
+            "fail",
+        ]
+    )
+    assert rc == 1

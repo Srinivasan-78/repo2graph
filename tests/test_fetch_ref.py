@@ -184,8 +184,19 @@ def test_clone_still_reaches_git_for_ordinary_refs(ref, tmp_path, monkeypatch, n
     calls = _record_subprocess(monkeypatch)
     assert fetch.clone("owner/repo", tmp_path, ref=ref) == target
     assert calls == [
-        ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", ref],
-        ["git", "-C", str(target), "checkout", ref],
+        [
+            "git",
+            *fetch.GIT_HARDENING_ARGS,
+            "-C",
+            str(target),
+            "fetch",
+            "--depth",
+            "1",
+            "origin",
+            "--",
+            ref,
+        ],
+        ["git", *fetch.GIT_HARDENING_ARGS, "-C", str(target), "checkout", ref],
     ]
 
 
@@ -231,9 +242,20 @@ def test_fetch_head_retry_argv_unchanged(tmp_path, monkeypatch, no_token):
     monkeypatch.setattr(fetch.subprocess, "run", recorder)
     assert fetch.clone("owner/repo", tmp_path, ref="main") == target
     assert calls == [
-        ["git", "-C", str(target), "fetch", "--depth", "1", "origin", "--", "main"],
-        ["git", "-C", str(target), "checkout", "main"],
-        ["git", "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
+        [
+            "git",
+            *fetch.GIT_HARDENING_ARGS,
+            "-C",
+            str(target),
+            "fetch",
+            "--depth",
+            "1",
+            "origin",
+            "--",
+            "main",
+        ],
+        ["git", *fetch.GIT_HARDENING_ARGS, "-C", str(target), "checkout", "main"],
+        ["git", *fetch.GIT_HARDENING_ARGS, "-C", str(target), "checkout", "--detach", "FETCH_HEAD"],
     ]
 
 
@@ -295,3 +317,30 @@ def test_real_git_double_dash_semantics(tmp_path):
     # ... while the bare form does.
     assert _git("checkout", "feat", cwd=work)[0] == 0
     assert _git("rev-parse", "--abbrev-ref", "HEAD", cwd=work)[1].strip() == "feat"
+
+
+def test_ghes_server_url_honoured(monkeypatch, tmp_path):
+    """C6: GITHUB_SERVER_URL directs tokens and clones to enterprise instance."""
+    monkeypatch.setenv("GITHUB_SERVER_URL", "https://ghe.example.internal")
+
+    # Spec parsing honours enterprise host
+    assert fetch.parse_spec("https://ghe.example.internal/org/repo") == ("org", "repo")
+    assert fetch.parse_spec("git@ghe.example.internal:org/repo") == ("org", "repo")
+    assert fetch.parse_spec("org/repo") == ("org", "repo")
+
+    # Auth env sets header for enterprise host, not github.com
+    auth_env = fetch._auth_env("token123")
+    assert auth_env["GIT_CONFIG_KEY_0"] == "http.https://ghe.example.internal/.extraheader"
+
+    # Clone URL targets enterprise host
+    seen_calls = []
+
+    def mock_run(cmd, **kwargs):
+        seen_calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="git version 2.40.0")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    fetch.clone("org/repo", tmp_path, token="tok")
+    clone_calls = [c for c in seen_calls if "clone" in c]
+    assert clone_calls
+    assert "https://ghe.example.internal/org/repo.git" in clone_calls[0]

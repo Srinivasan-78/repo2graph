@@ -55,7 +55,7 @@ def _has_mcp():
 
         major = _sdk_major(_sdk_version(mcp))
         return major is None or major >= 2
-    except Exception:
+    except (ImportError, AttributeError, ValueError, OSError):
         return False
 
 
@@ -74,7 +74,7 @@ def _has_any_mcp():
         from mcp.server.stdio import stdio_server  # noqa: F401
 
         return True
-    except Exception:
+    except (ImportError, AttributeError):
         return False
 
 
@@ -94,7 +94,7 @@ def tokens(text: str) -> int:
 
 
 # ==========================================================================
-# the golden baseline6 -- repo_map
+# repo_map
 # ==========================================================================
 
 
@@ -149,7 +149,7 @@ def test_repo_map_warns_when_the_working_tree_moved(mini_repo, mini_index):
 
 
 # ==========================================================================
-# the golden baseline7 / the budget limit -- repo_search and its hard budget ceiling
+# repo_search and its hard budget ceiling
 # ==========================================================================
 
 
@@ -199,7 +199,7 @@ def test_a_zero_or_negative_budget_is_clamped_to_the_floor(big_index, budget):
     assert tokens(out) <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_ceiling_is_above_the_default(big_index):
+def test_ceiling_is_above_the_default():
     """Verify the two constants are ordered the way the plan says."""
     mcp = mcp_module()
     assert 0 < mcp.MCP_BUDGET_TOKENS <= mcp.MCP_MAX_BUDGET_TOKENS
@@ -273,8 +273,9 @@ def test_neighbours_names_a_reachable_node_its_edge_and_direction(mini_index):
     out = mcp.tool_repo_neighbours(idx, SYM_ROUTE)
     assert isinstance(out, str) and out.strip()
     assert "audit_event" in out, out
-    assert "CALLS" in out, out
-    assert "out" in out, out
+    # "out" in out alone would pass on "route_request" (r-out-e) regardless of
+    # direction, so assert the actual rendered edge line instead.
+    assert "CALLS out:" in out, out
 
 
 def test_an_unknown_node_id_returns_a_short_message(mini_index):
@@ -723,10 +724,10 @@ def test_stdio_server_roundtrip(mini_index):
 
 
 # ==========================================================================
-# Regressions -- REVIEW iteration 2
+# Regression: unclamped k/hops on repo_neighbours and repo_search
 # ==========================================================================
 #
-# R-5: `k` and `hops` were coerced but never clamped. `Index.expand` runs
+# `k` and `hops` were coerced but never clamped. `Index.expand` runs
 # `for _ in range(hops)` with no empty-frontier exit, so `hops=10**9` blocked
 # serve()'s single event loop for ~a minute. Output size was already bounded;
 # time was not. These assert the value that reaches the engine, not the value
@@ -734,7 +735,7 @@ def test_stdio_server_roundtrip(mini_index):
 
 
 @pytest.mark.parametrize("hops", [10**9, 10**12, 5, "99999", None, -3])
-def test_r5_neighbours_hops_never_exceeds_the_ceiling(mini_index, hops):
+def test_neighbours_hops_never_exceeds_the_ceiling(mini_index, hops):
     """R-5 (a): whatever a model writes into `hops`, expand() sees 0..MAX."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -748,7 +749,7 @@ def test_r5_neighbours_hops_never_exceeds_the_ceiling(mini_index, hops):
 
 
 @pytest.mark.parametrize("k,hops", [(10**9, 10**9), ("nonsense", -1), (0, 7)])
-def test_r5_search_k_and_hops_never_exceed_their_ceilings(mini_index, k, hops):
+def test_search_k_and_hops_never_exceed_their_ceilings(mini_index, k, hops):
     """R-5 (b): the same on the search path, where both arguments cost time."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -766,7 +767,7 @@ def test_r5_search_k_and_hops_never_exceed_their_ceilings(mini_index, k, hops):
     assert 0 <= seen["hops"] <= mcp.MCP_MAX_HOPS, seen
 
 
-def test_r5_dispatch_clamps_too(mini_index):
+def test_dispatch_clamps_too(mini_index):
     """R-5 (c): the clamp lives in the handlers, so the JSON route inherits it."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -783,7 +784,7 @@ def test_r5_dispatch_clamps_too(mini_index):
     assert seen["hops"] == mcp.MCP_MAX_HOPS
 
 
-def test_r5_sane_arguments_are_left_alone(mini_index):
+def test_sane_arguments_are_left_alone(mini_index):
     """R-5 (d): the ceilings must not quietly rewrite ordinary calls."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -801,10 +802,10 @@ def test_r5_sane_arguments_are_left_alone(mini_index):
 
 
 # ==========================================================================
-# Regression -- REVIEW iteration 3
+# Regression: unceilinged limit on repo_neighbours
 # ==========================================================================
 #
-# R-7: `limit` on repo_neighbours had a floor and no ceiling, so the size of
+# `limit` on repo_neighbours had a floor and no ceiling, so the size of
 # that answer was caller-controlled -- 35 414 characters at hops=4 limit=10**9
 # against a 1 532-character default on an 895-node index. It is the one tool
 # whose output no token budget measures, so the row count is the bound. The
@@ -825,7 +826,7 @@ def _rows(text):
 
 
 @pytest.mark.parametrize("limit", [10**9, 10**12, "99999", 51])
-def test_r7_neighbours_limit_never_exceeds_the_ceiling(mini_index, limit):
+def test_neighbours_limit_never_exceeds_the_ceiling(mini_index, limit):
     """R-7 (a): whatever a model writes into `limit`, the reply is bounded."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -834,7 +835,7 @@ def test_r7_neighbours_limit_never_exceeds_the_ceiling(mini_index, limit):
     assert len(_rows(out)) <= mcp.MCP_MAX_NEIGHBOURS, len(_rows(out))
 
 
-def test_r7_the_default_limit_still_applies(mini_index):
+def test_the_default_limit_still_applies(mini_index):
     """R-7 (b): the ceiling did not become the default."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -844,7 +845,7 @@ def test_r7_the_default_limit_still_applies(mini_index):
     assert mcp.MCP_MAX_NEIGHBOURS > mcp.MCP_NEIGHBOUR_LIMIT, "ceiling below default"
 
 
-def test_r7_dispatch_inherits_the_limit_clamp(mini_index):
+def test_dispatch_inherits_the_limit_clamp(mini_index):
     """R-7 (c): the clamp lives in the handler, so the JSON route gets it too."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -853,7 +854,7 @@ def test_r7_dispatch_inherits_the_limit_clamp(mini_index):
     assert len(_rows(out)) <= mcp.MCP_MAX_NEIGHBOURS, len(_rows(out))
 
 
-def test_r7_a_sane_limit_is_left_alone(mini_index):
+def test_a_sane_limit_is_left_alone(mini_index):
     """R-7 (d): the ceiling must not quietly rewrite an ordinary request."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -863,10 +864,10 @@ def test_r7_a_sane_limit_is_left_alone(mini_index):
 
 
 # ==========================================================================
-# Regressions -- VERIFY iteration 4
+# Regression: the mcp extra's version bound
 # ==========================================================================
 #
-# R-8: the extra declared `mcp>=1.0`, which resolves to mcp 2.x today. mcp 2.x
+# The extra declared `mcp>=1.0`, which resolves to mcp 2.x today. mcp 2.x
 # removed the `Server.list_tools` / `Server.call_tool` decorators that serve()
 # is written against, so `repo2graph-mcp` died with
 # `AttributeError: 'Server' object has no attribute 'list_tools'` -- a raw
@@ -945,7 +946,7 @@ def _fake_sdk(monkeypatch, *, decorators: bool, version="2.2.0", with_server_mod
     return mcp_pkg
 
 
-def test_r8_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatch):
+def test_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatch):
     """R-8 (c): the other way a future SDK can move -- `mcp` imports but
     `mcp.server` does not."""
     mcp = mcp_module()
@@ -955,7 +956,7 @@ def test_r8_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatc
     assert mcp.SDK_SPEC in str(exc.value), str(exc.value)
 
 
-def test_r8_a_supported_sdk_passes_the_guard(monkeypatch):
+def test_a_supported_sdk_passes_the_guard(monkeypatch):
     """R-8 (d): the guard must not become a blanket refusal -- an SDK that
     does carry the API serve() needs, and is 2.x or newer, is accepted."""
     mcp = mcp_module()
@@ -982,7 +983,7 @@ def test_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
     assert "#407" in str(exc.value)
 
 
-def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
+def test_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index, monkeypatch):
     """R-8 (e): absent and unusable are different problems with different
     instructions; the new branch must not swallow SDK absence guard's."""
     mcp = mcp_module()
@@ -993,7 +994,7 @@ def test_r8_the_missing_sdk_message_is_still_the_missing_sdk_message(mini_index,
     assert "not supported" not in str(exc.value)
 
 
-def test_r8_the_extra_is_bounded_below_the_unsupported_major():
+def test_the_extra_is_bounded_below_the_unsupported_major():
     """R-8 (f): the declared extra and the guard's advice are one string."""
     mcp = mcp_module()
     spec = load_pyproject()["project"]["optional-dependencies"]["mcp"]
@@ -1002,12 +1003,12 @@ def test_r8_the_extra_is_bounded_below_the_unsupported_major():
 
 
 # ==========================================================================
-# R-10 -- a floor-clamped budget must not hand an agent an empty string
+# A floor-clamped budget must not hand an agent an empty string
 # ==========================================================================
 
 
 @pytest.mark.parametrize("budget", [0, -5, -(10**9), 1])
-def test_r10_a_floor_clamped_budget_explains_itself(big_index, budget):
+def test_a_floor_clamped_budget_explains_itself(big_index, budget):
     """R-10 (a): the budget limit only requires "no crash"; an empty tool result reads to
     an agent exactly like "no such code", so say which it was."""
     mcp = mcp_module()
@@ -1018,7 +1019,7 @@ def test_r10_a_floor_clamped_budget_explains_itself(big_index, budget):
     assert tokens(out) <= mcp.MCP_MAX_BUDGET_TOKENS
 
 
-def test_r10_the_note_is_short_and_never_the_normal_answer(big_index):
+def test_the_note_is_short_and_never_the_normal_answer(big_index):
     """R-10 (b): a real pack must not be replaced by the note, and the note
     must stay far below the default budget so it cannot itself be trimmed."""
     mcp = mcp_module()
@@ -1029,7 +1030,7 @@ def test_r10_the_note_is_short_and_never_the_normal_answer(big_index):
     assert tokens(mcp.EMPTY_RESULT.format(budget=1, ceiling=12000)) < 200
 
 
-def test_r10_dispatch_inherits_the_note(big_index):
+def test_dispatch_inherits_the_note(big_index):
     """R-10 (c): the note lives in the handler, so the JSON route gets it too."""
     mcp = mcp_module()
     idx = Index(big_index)
@@ -1574,14 +1575,14 @@ def test_serve_reports_its_own_version_not_the_sdks(mini_index, monkeypatch):
 
 
 # ==========================================================================
-# R-9: string arguments (query, node_id, task_id) had no length ceiling.
+# String arguments (query, node_id, task_id) had no length ceiling.
 # Every numeric MCP argument was clamped in the handler, but a model can hand
 # this dispatcher an arbitrarily long string and nothing bounded it -- the
 # string-typed half of "every MCP tool argument is caller-hostile".
 # ==========================================================================
 
 
-def test_r9_an_absurdly_long_query_is_capped_before_it_reaches_the_index(mini_index):
+def test_an_absurdly_long_query_is_capped_before_it_reaches_the_index(mini_index):
     mcp = mcp_module()
     idx = Index(mini_index)
     seen = {}
@@ -1598,7 +1599,7 @@ def test_r9_an_absurdly_long_query_is_capped_before_it_reaches_the_index(mini_in
     assert len(seen["query"]) <= mcp.MCP_MAX_QUERY_CHARS, len(seen["query"])
 
 
-def test_r9_dispatch_caps_query_too(mini_index):
+def test_dispatch_caps_query_too(mini_index):
     mcp = mcp_module()
     idx = Index(mini_index)
     seen = {}
@@ -1647,7 +1648,7 @@ def test_an_absurdly_long_task_id_is_clamped_before_it_reaches_the_error():
     assert len(echoed) == mcp.MCP_MAX_TASK_ID_CHARS, len(echoed)
 
 
-def test_r9_sane_string_arguments_are_left_alone(mini_index):
+def test_sane_string_arguments_are_left_alone(mini_index):
     """The ceiling must not quietly rewrite ordinary calls."""
     mcp = mcp_module()
     idx = Index(mini_index)
@@ -1768,7 +1769,7 @@ def test_concurrent_open_index_builds_the_index_exactly_once(
         try:
             at_the_door.wait()
             results[slot] = mcp.open_index(out, repo=mini_repo)
-        except BaseException as exc:  # recorded, then re-raised in the main thread
+        except BaseException as exc:  # noqa: BLE001 - test concurrency helper captures thread failure
             failures[slot] = exc
 
     threads = [threading.Thread(target=call, args=(slot,)) for slot in (0, 1)]

@@ -56,7 +56,7 @@ def _is_pid_alive(pid: int) -> bool:
                 return bool(exit_code.value == 259)
             kernel32.CloseHandle(handle)
             return False
-        except Exception:
+        except (OSError, ValueError, AttributeError):
             return True
 
 
@@ -104,7 +104,7 @@ class BuildLock:
                 if fh is not None:
                     try:
                         fh.close()
-                    except Exception:
+                    except OSError:
                         pass
 
             elapsed = time.monotonic() - start_time
@@ -138,7 +138,7 @@ class BuildLock:
         finally:
             try:
                 self._fh.close()
-            except Exception:
+            except OSError:
                 pass
             self._fh = None
             self._acquired = False
@@ -255,7 +255,7 @@ class BuildLock:
                     parsed = json.loads(text)
                     if isinstance(parsed, dict):
                         return parsed
-        except Exception:
+        except (OSError, ValueError):
             pass
         return {"file": str(self.lock_file)}
 

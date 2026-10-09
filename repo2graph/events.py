@@ -20,9 +20,27 @@ lacks. Both are handled here rather than at each call site.
 """
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from typing import Any, TextIO
+
+
+def is_debug_mode() -> bool:
+    """Return True if REPO2GRAPH_DEBUG environment variable is enabled."""
+    val = os.environ.get("REPO2GRAPH_DEBUG", "").strip().lower()
+    return val in ("1", "true", "yes", "on")
+
+
+def reraise_if_debug(exc: BaseException | None = None) -> None:
+    """Re-raise the current or given exception if debug mode is active."""
+    if is_debug_mode():
+        if exc is not None:
+            raise exc
+        cur = sys.exc_info()[1]
+        if cur is not None:
+            raise cur
+
 
 # Error handlers that cannot raise: each one maps an unencodable character to a
 # substitute. "surrogateescape"/"surrogatepass" are absent on purpose -- they
@@ -59,7 +77,7 @@ def encodable(text: str, stream: Any) -> str:
         except (UnicodeDecodeError, LookupError):
             pass
     except LookupError:
-        # The stream named an encoding Python does not have (S-12: Windows can
+        # The stream named an encoding Python does not have (Windows can
         # report "cp0"). That says nothing about what the stream can *accept*,
         # so round-trip through UTF-8 rather than flattening to ascii -- which
         # would replace characters like "é" that were never the problem.
@@ -67,7 +85,7 @@ def encodable(text: str, stream: Any) -> str:
             return text.encode("utf8", "replace").decode("utf8", "replace")
         except UnicodeDecodeError:
             pass
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience boundary: mock or buggy stream must not crash caller
         # A mock stream whose .encode path misbehaves must not become the
         # caller's problem; fall through to the ascii floor.
         pass
@@ -95,13 +113,13 @@ def write_safe(stream: Any, text: str, newline: str = "\n") -> None:
         # encoding, fall back to the hardest floor there is.
         try:
             stream.write(text.encode("ascii", "replace").decode("ascii") + newline)
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience boundary: diagnostics writer must never raise
             return
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience boundary: closed or broken pipe must end silently
         return
     try:
         stream.flush()
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience boundary: stream.flush failure ignored
         pass
 
 
@@ -139,7 +157,7 @@ def emit(
 
             for k, v in fields.items():
                 record[k] = security.sanitize_value(str(k), v)
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience boundary: sanitizer failure fails closed
             # Fail closed: if the sanitiser itself breaks, the raw values are
             # exactly what must not reach stderr. Keep the keys so the event
             # stays diagnosable, drop every value (code-scanning #3/#4).

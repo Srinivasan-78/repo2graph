@@ -237,6 +237,9 @@ class ManifestRecord(TypedDict, total=False):
     schema_version: int
     created_at: str
     source_revision: dict[str, Any]
+    complete: bool
+    incomplete: bool
+    limits_hit: dict[str, Any]
     checksums: dict[str, str]
     repo: str
     written: list[str]

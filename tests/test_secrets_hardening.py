@@ -29,6 +29,8 @@ from repo2graph.security import (
     scan_content_secrets,
 )
 
+from conftest import action_step_by_name, run_body
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
 if sys.platform == "win32":
@@ -622,27 +624,8 @@ def test_low_entropy_password_in_code_redaction():
 # ---------------------------------------------------------------------------
 
 
-def _action_step_by_name(text: str, name: str) -> str:
-    import re
-
-    for chunk in re.split(r"\n(?=    - (?:name|uses):)", text):
-        if re.search(rf"^\s+- name: {re.escape(name)}\s*$", chunk, re.M):
-            return chunk
-    raise AssertionError(f"action.yml has no step named {name!r}")
-
-
-def _run_body(chunk: str) -> str:
-    lines = chunk.split("\n")
-    for i, line in enumerate(lines):
-        if line.strip() == "run: |":
-            indent = len(line) - len(line.lstrip())
-            body = []
-            for nxt in lines[i + 1 :]:
-                if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
-                    break
-                body.append(nxt[indent + 2 :])
-            return "\n".join(body) + "\n"
-    raise AssertionError("step has no `run: |` block")
+_action_step_by_name = action_step_by_name
+_run_body = run_body
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
@@ -693,6 +676,187 @@ def test_action_yml_secret_flags_forwarding(tmp_path: Path):
     assert "--secret-policy" in call
     policy_idx = call.index("--secret-policy")
     assert call[policy_idx + 1] == "exclude-file"
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_action_yml_multiline_include_exclude_forwarding(tmp_path: Path):
+    """C7: Verify multi-line include/exclude inputs apply in full."""
+    action_yml = REPO_ROOT / "action.yml"
+    body = _run_body(_action_step_by_name(action_yml.read_text(encoding="utf8"), "Build the graph"))
+
+    log = tmp_path / "r2g-calls.log"
+    script = (
+        'repo2graph() { printf "%s\\x1f" "$@" >> "$R2G_LOG"; printf "\\n" >> "$R2G_LOG"; echo \'{"nodes": 1, "edges": 0, "chunks": 1}\'; }\n'
+        + body
+    )
+    env = dict(os.environ)
+    env.update(
+        GH_TOKEN="",
+        R2G_REPO="",
+        R2G_REF="",
+        R2G_PATH=".",
+        R2G_OUT=str(tmp_path / "out"),
+        R2G_FORMATS="jsonl",
+        R2G_HISTORY="0",
+        R2G_INCLUDE="src/**\nlib/**",
+        R2G_EXCLUDE="secret_dir/**\n**/passwords/**",
+        R2G_INCLUDE_SECRETS="false",
+        R2G_SECRET_POLICY="redact-match",
+        R2G_LOG=str(log),
+        GITHUB_OUTPUT=str(tmp_path / "github_output.txt"),
+        SUMMARY_FILE=str(tmp_path / "summary.json"),
+    )
+    (tmp_path / "summary.json").write_text(
+        '{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8"
+    )
+
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    calls = []
+    for line in log.read_text(encoding="utf8").split("\n"):
+        if line:
+            calls.append(line.split("\x1f")[:-1])
+
+    assert len(calls) == 1
+    call = calls[0]
+    # Check that both lines of include are forwarded
+    assert "--include" in call
+    inc_idx = call.index("--include")
+    assert "src/**" in call[inc_idx:]
+    assert "lib/**" in call[inc_idx:]
+
+    # Check that both lines of exclude are forwarded
+    assert "--exclude" in call
+    exc_idx = call.index("--exclude")
+    assert "secret_dir/**" in call[exc_idx:]
+    assert "**/passwords/**" in call[exc_idx:]
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_action_yml_resource_caps_and_secret_rules_forwarding(tmp_path: Path):
+    """C11: Verify action.yml passes resource caps and secret rule flags."""
+    action_yml = REPO_ROOT / "action.yml"
+    body = _run_body(_action_step_by_name(action_yml.read_text(encoding="utf8"), "Build the graph"))
+
+    log = tmp_path / "r2g-calls.log"
+    script = (
+        'repo2graph() { printf "%s\\x1f" "$@" >> "$R2G_LOG"; printf "\\n" >> "$R2G_LOG"; echo \'{"nodes": 1, "edges": 0, "chunks": 1}\'; }\n'
+        + body
+    )
+    env = dict(os.environ)
+    env.update(
+        GH_TOKEN="",
+        R2G_REPO="",
+        R2G_REF="",
+        R2G_PATH=".",
+        R2G_OUT=str(tmp_path / "out"),
+        R2G_FORMATS="jsonl",
+        R2G_HISTORY="0",
+        R2G_INCLUDE="",
+        R2G_EXCLUDE="",
+        R2G_INCLUDE_SECRETS="false",
+        R2G_SECRET_POLICY="redact-match",
+        R2G_MAX_CHUNKS="100",
+        R2G_MAX_NODES="500",
+        R2G_MAX_TOTAL_BYTES="1048576",
+        R2G_MAX_BUILD_SECONDS="30",
+        R2G_LIMIT_POLICY="warn",
+        R2G_SECRET_KEYWORDS="apikey internal_cred",
+        R2G_SECRET_DIRS="super_secret_dir",
+        R2G_SMOKE_CHECK="false",
+        R2G_LOG=str(log),
+        GITHUB_OUTPUT=str(tmp_path / "github_output.txt"),
+        SUMMARY_FILE=str(tmp_path / "summary.json"),
+    )
+    (tmp_path / "summary.json").write_text(
+        '{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8"
+    )
+
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+
+    calls = []
+    for line in log.read_text(encoding="utf8").split("\n"):
+        if line:
+            calls.append(line.split("\x1f")[:-1])
+
+    assert len(calls) == 1
+    call = calls[0]
+    assert "--max-chunks" in call and call[call.index("--max-chunks") + 1] == "100"
+    assert "--max-nodes" in call and call[call.index("--max-nodes") + 1] == "500"
+    assert "--max-total-bytes" in call and call[call.index("--max-total-bytes") + 1] == "1048576"
+    assert "--max-build-seconds" in call and call[call.index("--max-build-seconds") + 1] == "30"
+    assert "--limit-policy" in call and call[call.index("--limit-policy") + 1] == "warn"
+    assert "--secret-keyword" in call and "apikey" in call
+    assert "--secret-keyword" in call and "internal_cred" in call
+    assert "--secret-dir" in call and "super_secret_dir" in call
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_action_yml_smoke_check(tmp_path: Path):
+    """Smoke check fails when discovery is not git or symbols is 0."""
+    action_yml = REPO_ROOT / "action.yml"
+    body = _run_body(_action_step_by_name(action_yml.read_text(encoding="utf8"), "Build the graph"))
+
+    out_dir = tmp_path / "out"
+    agent_dir = out_dir / "agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    stats_file = agent_dir / "stats.json"
+
+    # Case 1: Non-git discovery mode fails
+    stats_file.write_text(json.dumps({"discovery": "walk", "symbol:function": 5}), encoding="utf8")
+    log = tmp_path / "r2g-calls.log"
+    script = (
+        'repo2graph() { printf "%s\\x1f" "$@" >> "$R2G_LOG"; printf "\\n" >> "$R2G_LOG"; echo \'{"nodes": 1, "edges": 0, "chunks": 1}\'; }\n'
+        + body
+    )
+    env = dict(os.environ)
+    env.update(
+        GH_TOKEN="",
+        R2G_REPO="",
+        R2G_REF="",
+        R2G_PATH=".",
+        R2G_OUT=str(out_dir),
+        R2G_FORMATS="jsonl",
+        R2G_HISTORY="0",
+        R2G_INCLUDE="",
+        R2G_EXCLUDE="",
+        R2G_INCLUDE_SECRETS="false",
+        R2G_SECRET_POLICY="redact-match",
+        R2G_SMOKE_CHECK="true",
+        R2G_LOG=str(log),
+        GITHUB_OUTPUT=str(tmp_path / "github_output.txt"),
+        SUMMARY_FILE=str(tmp_path / "summary.json"),
+    )
+    (tmp_path / "summary.json").write_text(
+        '{"nodes": 1, "edges": 0, "chunks": 1}\n', encoding="utf8"
+    )
+
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode != 0
+    assert "Smoke check failed: discovery mode was 'walk', expected 'git'" in proc.stderr
+
+    # Case 2: Zero symbols fails
+    stats_file.write_text(json.dumps({"discovery": "git"}), encoding="utf8")
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode != 0
+    assert "Smoke check failed: index produced 0 symbols" in proc.stderr
+
+    # Case 3: Valid discovery git with symbols passes
+    stats_file.write_text(json.dumps({"discovery": "git", "symbol:function": 10}), encoding="utf8")
+    proc = subprocess.run(
+        [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
@@ -1247,11 +1411,16 @@ def test_repo_read_leaves_text_alone_when_build_time_redaction_applied(tmp_path)
         '"api_key_header": "X-API-Key-V2"',
         '"token_type": "Bearer2x"',
         '"password_policy": "min8-upper1"',
-        '"client_secret": "https://vault.local/v1/x"',  # a URL is an endpoint
+        '"client_secret_url": "https://vault.local/v1/x"',
     ],
 )
 def test_json_credential_properties_are_not_redacted(text):
     assert redact_content(text) == (text, 0)
+
+
+def test_json_secret_url_value_is_redacted():
+    text = '"client_secret": "https://vault.local/v1/x"'
+    assert redact_content(text) == ('"client_secret": "[REDACTED:CREDENTIAL_JSON]"', 1)
 
 
 @pytest.mark.parametrize(

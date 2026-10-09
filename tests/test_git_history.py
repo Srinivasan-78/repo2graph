@@ -112,6 +112,17 @@ def test_add_cochange_edge_cases(tmp_path: Path):
 
     g = Graph(repo, "test_repo")
 
+    # Only real on-disk paths: what a caller actually has for `file_index` --
+    # the current indexed tree. Git backslash-escapes a path that contains a
+    # tab, newline or double quote into a C-quoted literal (e.g.
+    # `"file\twith\ttab.txt"`) in `--name-only` output regardless of
+    # core.quotepath, which only governs non-ASCII bytes. add_cochange()
+    # compares each raw output line against `file_index` with no dequoting
+    # (repo2graph/graph.py, `elif line in file_index:`), so it can never match
+    # one of these paths against its real name. The result: CO_CHANGE edges
+    # between control-character paths are silently dropped rather than
+    # produced under some garbled name -- this test asserts that drop, not a
+    # fake node identified by git's quoted form.
     file_index = {
         "file.txt",
         "space file.txt",
@@ -123,9 +134,6 @@ def test_add_cochange_edge_cases(tmp_path: Path):
         "file\twith\ttab.txt",
         "file\nwith\nnewline.txt",
         'file"with"quotes.txt',
-        '"file\\twith\\ttab.txt"',
-        '"file\\nwith\\nnewline.txt"',
-        '"file\\"with\\"quotes.txt"',
     }
 
     add_cochange(g, repo, commits=20, file_index=file_index, min_pairs=1)
@@ -138,20 +146,17 @@ def test_add_cochange_edge_cases(tmp_path: Path):
             )
             edges.add(edge)
 
+    # No edge touches any of the three control-character paths: git quoted
+    # them in its output, file_index holds their real names, and the exact
+    # string compare never bridges the two.
+    control_char_paths = {"file\twith\ttab.txt", "file\nwith\nnewline.txt", 'file"with"quotes.txt'}
+    assert not any(control_char_paths & set(edge) for edge in edges), edges
+
     expected_edges = {
         ("file.txt", "space file.txt"),
         ("file.txt", "renamed.txt"),
         ("renamed.txt", "space file.txt"),
         ("copied.txt", "space file.txt"),
-        ('"file\\nwith\\nnewline.txt"', '"file\\twith\\ttab.txt"'),
-        ('"file\\"with\\"quotes.txt"', '"file\\nwith\\nnewline.txt"'),
-        ('"file\\"with\\"quotes.txt"', '"file\\twith\\ttab.txt"'),
-        ('"file\\nwith\\nnewline.txt"', "café.txt"),
-        ('"file\\twith\\ttab.txt"', "café.txt"),
-        ('"file\\"with\\"quotes.txt"', "café.txt"),
-        ('"file\\nwith\\nnewline.txt"', "main_file.txt"),
-        ('"file\\twith\\ttab.txt"', "main_file.txt"),
-        ('"file\\"with\\"quotes.txt"', "main_file.txt"),
     }
 
     assert edges == expected_edges
