@@ -935,3 +935,16 @@ def test_empty_matrix_still_reads(tmp_path):
     target = tmp_path / VEC_NPY
     target.write_bytes(embed._npy_header(0, 0))
     assert embed._npy_read(target) == ([], 0)
+
+
+def test_a_dropped_vector_set_says_why(mini_index, use_stub_embedder, capsys):
+    """#456 P1: an oversized or corrupt vectors.npy used to vanish silently and
+    ranking fell back to BM25 with nothing reporting it."""
+    run_embed(mini_index, capsys)
+    npy, _ = vec_paths(mini_index)
+    npy.write_bytes(b"\x93NUMPY garbage")
+    idx = Index(mini_index)
+    assert idx.vectors is None
+    assert "could not be loaded" in (idx.vectors_unavailable or "")
+    ok, msg = idx.fuse_ok(StubEmbedder())
+    assert not ok and "could not be loaded" in msg

@@ -543,6 +543,10 @@ def _count_gitignored(root: Path) -> int:
                 "--others",
                 "--ignored",
                 "--exclude-standard",
+                # One entry per ignored directory rather than one per file in
+                # it: a node_modules or venv otherwise costs a full walk and a
+                # multi-megabyte listing on every build, just to be counted.
+                "--directory",
             ],
             capture_output=True,
             stdin=subprocess.DEVNULL,

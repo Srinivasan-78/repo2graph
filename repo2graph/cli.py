@@ -676,9 +676,11 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         # can branch on it even when the index has no vectors yet.
         "rag_extra_installed": _rag_extra_installed(),
     }
+    report["vectors_unavailable"] = getattr(idx, "vectors_unavailable", None)
     if not idx.vectors:
+        why = f" ({report['vectors_unavailable']})" if report["vectors_unavailable"] else ""
         return report, (
-            f"no vectors in the index at {out}: dense retrieval is not "
+            f"no vectors in the index at {out}{why}: dense retrieval is not "
             f"available. Run `repo2graph embed -o {out}` to build them."
         )
     meta = idx.vector_meta or {}

@@ -7,6 +7,7 @@ import random
 import re
 import shutil
 import threading
+import time
 import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
@@ -1336,6 +1337,29 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+_WINDOWS = os.name == "nt"
+#: Delays between rename attempts on Windows; ~3 s in all.
+_RENAME_RETRY_DELAYS = (0.1, 0.2, 0.4, 0.8, 1.6)
+
+
+def _rename(src: Path, dst: Path) -> None:
+    """`src.rename(dst)`, retried on Windows while something holds a file open.
+
+    OneDrive, antivirus scanners and editors briefly open files in a fresh
+    index; NTFS then refuses the rename with a sharing violation (WinError 5 or
+    32) that clears on its own. Elsewhere, and once the retries are spent, the
+    error is raised as it was.
+    """
+    for delay in (*_RENAME_RETRY_DELAYS, None):
+        try:
+            src.rename(dst)
+            return
+        except PermissionError:
+            if not _WINDOWS or delay is None:
+                raise
+            time.sleep(delay)
+
+
 def _atomic_dir_swap(staging: Path, target: Path) -> None:
     """Atomically replace target directory with staging directory.
 
@@ -1346,7 +1370,7 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     for d in (staging, *(p for p in staging.rglob("*") if p.is_dir())):
         _fsync_dir(d)
     if not target.exists():
-        staging.rename(target)
+        _rename(staging, target)
         _fsync_dir(target.parent)
         return
 
@@ -1354,12 +1378,12 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     # Ensure no stale backup from a prior crash
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
-    target.rename(backup)
+    _rename(target, backup)
     try:
-        staging.rename(target)
+        _rename(staging, target)
     except OSError as swap_exc:
         try:
-            backup.rename(target)
+            _rename(backup, target)
         except OSError as restore_exc:
             # Both halves failed, so the previous index is no longer at
             # `target` and could not be put back. Swallowing this left an

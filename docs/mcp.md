@@ -191,7 +191,7 @@ runtime argument — see [`server.json`](../server.json).
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
-| `--audit-log-level` | `all` | `none`, `errors` or `all` — which tool calls produce a record. |
+| `--audit-log-level` | `errors` | `none`, `errors` or `all` — which tool calls produce a record. `all` also records every query's text. |
 | `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
 
 ## Tools

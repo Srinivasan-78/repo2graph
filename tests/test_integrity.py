@@ -824,3 +824,83 @@ def test_index_files_and_swap_are_fsynced(tmp_path, monkeypatch):
 
     export.dump_all(g, iter_chunks(g), tmp_path / "out", {"jsonl"})
     assert len(synced) >= 5
+
+
+def test_ignored_directory_is_counted_once_not_walked(tmp_path):
+    """#456 P6: without --directory, git enumerated every file under an ignored
+    node_modules/venv on each build just to produce a count."""
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    from repo2graph.parse import _count_gitignored
+
+    (tmp_path / ".gitignore").write_text("node_modules/\n", encoding="utf8")
+    nm = tmp_path / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    for i in range(50):
+        (nm / f"f{i}.js").write_text("x\n", encoding="utf8")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, stdin=subprocess.DEVNULL)
+    assert _count_gitignored(tmp_path) == 1
+
+
+def test_windows_junction_counts_as_a_link(tmp_path, monkeypatch):
+    """#451 D6: `is_symlink()` is False for an NTFS junction, so the output-path
+    guard could be walked around with `mklink /J`."""
+    from types import SimpleNamespace
+
+    from repo2graph import integrity
+
+    d = tmp_path / "out"
+    d.mkdir()
+    monkeypatch.setattr(integrity, "_WINDOWS", True)
+    monkeypatch.setattr(
+        type(d), "lstat", lambda self: SimpleNamespace(st_file_attributes=0x400, st_mode=0o40755)
+    )
+    assert integrity._is_link_like(d)
+    with pytest.raises(ValueError, match="symlink"):
+        integrity.validate_outdir(d)
+
+
+def test_swap_rename_retries_a_transient_windows_sharing_violation(tmp_path, monkeypatch):
+    """#451 D4: OneDrive or an AV scanner holding a file open made the swap fail
+    hard with WinError 32, though the lock clears within a second."""
+    from pathlib import Path as _P
+
+    from repo2graph import export
+
+    monkeypatch.setattr(export, "_WINDOWS", True)
+    monkeypatch.setattr(export.time, "sleep", lambda s: None)
+    real = _P.rename
+    fails = {"n": 2}
+
+    def flaky(self, dst):
+        if fails["n"]:
+            fails["n"] -= 1
+            raise PermissionError(32, "The process cannot access the file")
+        return real(self, dst)
+
+    monkeypatch.setattr(_P, "rename", flaky)
+    src, dst = tmp_path / "a", tmp_path / "b"
+    src.mkdir()
+    export._rename(src, dst)
+    assert dst.is_dir() and not src.exists()
+
+
+def test_swap_rename_does_not_retry_off_windows(tmp_path, monkeypatch):
+    from pathlib import Path as _P
+
+    from repo2graph import export
+
+    monkeypatch.setattr(export, "_WINDOWS", False)
+    calls = []
+
+    def denied(self, dst):
+        calls.append(dst)
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(_P, "rename", denied)
+    with pytest.raises(PermissionError):
+        export._rename(tmp_path / "a", tmp_path / "b")
+    assert len(calls) == 1

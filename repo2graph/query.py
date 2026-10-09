@@ -542,6 +542,9 @@ class Index:
             self._build_bm25()
         self.vectors: dict[int, Vector] | None = None
         self.vector_meta: dict[str, Any] | None = None
+        # Why a vectors.npy that exists was not used. None when there is no file
+        # or it loaded; a dropped vector set must be reportable, never silent.
+        self.vectors_unavailable: str | None = None
         self._load_vectors()
 
     def _build_bm25(self) -> None:
@@ -643,15 +646,18 @@ class Index:
             from .embed import load_vectors
 
             by_id, meta = load_vectors(npy)
-        except (OSError, ValueError, KeyError, ImportError):
+        except (OSError, ValueError, KeyError, ImportError) as exc:
+            self.vectors_unavailable = f"vectors.npy could not be loaded: {exc}"
             return
         pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
         vectors: dict[int, Vector] = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
         if not vectors:
+            self.vectors_unavailable = "vectors.npy matches none of this index's chunks"
             return
         m_build_id = self.manifest.get("build_id")
         v_build_id = meta.get("build_id")
         if m_build_id and v_build_id and m_build_id != v_build_id:
+            self.vectors_unavailable = "vectors.npy was embedded for a different build"
             return
         self.vectors, self.vector_meta = vectors, meta
 
@@ -665,8 +671,10 @@ class Index:
             Tuple of (is_compatible, error_message).
         """
         if not self.vectors or not self.vector_meta:
+            why = f" ({self.vectors_unavailable})" if self.vectors_unavailable else ""
             return False, (
-                f"no vectors in the index at {self.dir}: run `repo2graph embed -o {self.dir}` first"
+                f"no vectors in the index at {self.dir}{why}: "
+                f"run `repo2graph embed -o {self.dir}` first"
             )
         from .embed import dim_of, model_id_of
 
