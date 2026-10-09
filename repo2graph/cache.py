@@ -102,7 +102,7 @@ def make_key(tool: str, params: Any) -> str:
     # Digest, not the body itself. `dispatch` keys on the *raw* arguments, before
     # the handler's own `_str(query, MCP_MAX_QUERY_CHARS)` cap applies, so the
     # serialised params were retained verbatim for the whole TTL: 256 calls each
-    # carrying a ~1 MB query -- all inside the HTTP server's MAX_BODY_BYTES --
+    # carrying a ~1 MB query over the stdio transport --
     # held ~257 MB in keys alone, for a cache whose *values* are bounded. The
     # digest keeps equal-arguments-equal-keys (the only property callers rely on)
     # at 64 bytes regardless of argument size. `tool` stays in the clear so a key

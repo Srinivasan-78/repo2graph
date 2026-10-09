@@ -223,8 +223,8 @@ SECRET_KEY_RE = re.compile(
 )
 
 # Field names that match SECRET_KEY_RE by substring but describe a *shape*
-# rather than hold a credential -- `auth_modes` is ("none",)/("token",)/
-# ("oidc",) and `budget_tokens` is a count. Redacting them cost the audit log
+# rather than hold a credential -- `auth_modes` is a tuple of mode names and
+# `budget_tokens` is a count. Redacting them cost the audit log
 # the two fields an operator most wants when reading it back: which auth was
 # in force, and how large the request was.
 #
@@ -235,18 +235,6 @@ SECRET_KEY_RE = re.compile(
 # field's value is never sensitive. Note the values are not blindly trusted
 # either -- they still go through the shape, URL and path checks below.
 NON_SECRET_KEYS = frozenset({"auth_modes", "budget_tokens", "result_tokens", "max_tokens"})
-
-# Sensitive HTTP headers to redact in logs.
-SENSITIVE_HEADERS = frozenset(
-    {
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        "set-cookie",
-        "x-api-key",
-        "x-goog-api-key",
-    }
-)
 
 # Sensitive query parameters to redact in logged URLs.
 SENSITIVE_QUERY_PARAMS_RE = re.compile(
@@ -265,10 +253,8 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
 # literal that follows it, so an unbounded `*` has to backtrack the entire tail
 # at every one of the n/11 offsets where `-----BEGIN ` matches. A body of
 # repeated *incomplete* headers is therefore quadratic -- measured 1.1 s at
-# 107 KB and ~90 s at 1 MB, which `MAX_BODY_BYTES` admits in a single request.
-# That is reachable pre-authentication: `http_server._reject` calls `emit()`
-# unconditionally, so sanitising a rejected request's own field burns the CPU
-# before the 401 is written, and `AuditConfig(level="none")` does not avoid it.
+# 107 KB and ~90 s at 1 MB. Every indexed file and every sanitised event field
+# goes through this pattern, so the cost is paid on attacker-supplied text.
 # With `{0,40}` the engine tries at most 41 lengths per offset, which is linear
 # (966 KB in 0.0084 s) and still admits every real label -- `RSA`, `DSA`, `EC`,
 # `OPENSSH`, `ENCRYPTED`, `ENCRYPTED RSA`, and the bare `PRIVATE KEY`.
@@ -874,19 +860,6 @@ def sanitize_url(url: str) -> str:
     )
     # Redact sensitive query parameters
     return SENSITIVE_QUERY_PARAMS_RE.sub(r"\g<1>[redacted:query_param]", s)
-
-
-def sanitize_headers(headers: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive headers such as Authorization and Cookie."""
-    sanitized = {}
-    for k, v in headers.items():
-        k_lower = str(k).lower()
-        if k_lower in SENSITIVE_HEADERS or SECRET_KEY_RE.search(str(k)):
-            val_str = str(v)
-            sanitized[k] = redact(val_str, f"header:{k_lower}")
-        else:
-            sanitized[k] = sanitize_value(str(k), v)
-    return sanitized
 
 
 def sanitize_value(

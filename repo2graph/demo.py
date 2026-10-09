@@ -475,7 +475,7 @@ def build_demo_index(repo: Path, outdir: Path) -> dict[str, Any]:
     from .parse import BuildConfig
 
     g = build(repo, config=BuildConfig(), jobs=1)
-    written, n_chunks = dump_all(g, iter_chunks(g), outdir, {"jsonl", "overview", "html"}, 0)
+    written, n_chunks = dump_all(g, iter_chunks(g), outdir, {"jsonl", "overview", "html"})
     stats = dict(g.stats)
     stats["chunks"] = n_chunks
     stats["written"] = written
@@ -576,7 +576,7 @@ def run_demo(
             is removed on the way out unless `keep` is set.
         keep: Leave the materialised repo and its index on disk, and print
             the follow-up commands that work against it.
-        brief: Truncate each answer to `BRIEF_LINES` lines. False prints the
+        brief: Truncate each answer to `BRIEF_BODY_LINES` lines. False prints the
             whole cited pack for every question.
         emit: Where to write. The CLI passes its encoding-safe writer; the
             default `print` is for library callers and tests.

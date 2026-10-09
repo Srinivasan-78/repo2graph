@@ -105,8 +105,8 @@ TOOL_DESCRIPTIONS = {
     ),
     "repo_read": (
         "Read a widened window of source text around a citation, from the indexed chunks "
-        "rather than the filesystem -- works over HTTP, from a different machine, with no "
-        "shared filesystem, because chunks have already passed secret-path exclusion and "
+        "rather than the filesystem -- works with no shared filesystem between client and "
+        "server, because chunks have already passed secret-path exclusion and "
         "redaction. Read-only, deterministic, zero side effects. When to use: use after "
         "repo_search or repo_neighbours to see more lines around a `[cite: path:start-end]` "
         "citation, with optional `context` lines each side. When NOT to use: do not use for a "

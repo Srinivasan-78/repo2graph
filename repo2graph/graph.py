@@ -1031,7 +1031,7 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     pf = ChunkedParsedFile(
         lang=lang,
         symbols=deduped_symbols,
-        imports=list(set(all_imports)),
+        imports=sorted(set(all_imports)),
         parse_errors=total_parse_errors,
         used_cpp=used_cpp,
         is_chunked=True,
@@ -1042,9 +1042,6 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     return rel, lang, (total_bytes, newlines + 1, pf, hasher.hexdigest())
 
 
-_ORIGINAL_READ_BYTES = Path.read_bytes
-
-
 def _safe_read_bytes(path: Path) -> bytes:
     """Read file bytes using O_NOFOLLOW where supported to avoid symlink TOCTOU races.
 
@@ -1053,8 +1050,6 @@ def _safe_read_bytes(path: Path) -> bytes:
     symlink to a sensitive file before open). On Windows, O_NOFOLLOW is not supported
     by the OS open(), so standard read flags are used.
     """
-    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
-        return path.read_bytes()
     o_nofollow = getattr(os, "O_NOFOLLOW", None)
     if o_nofollow is not None:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
@@ -1077,8 +1072,6 @@ def _safe_open(path: Path, mode: str = "rb"):
     Like _safe_read_bytes, but returns a file object for chunked reading
     (used by _chunk_and_parse for files larger than config.max_file_bytes).
     """
-    if Path.read_bytes is not _ORIGINAL_READ_BYTES:
-        return open(path, mode)  # noqa: SIM115 -- test harness monkey-patched read_bytes
     o_nofollow = getattr(os, "O_NOFOLLOW", None)
     if o_nofollow is not None:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow

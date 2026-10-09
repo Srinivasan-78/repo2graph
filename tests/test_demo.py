@@ -270,3 +270,13 @@ def test_blast_radius_question_shows_the_direct_caller(tmp_path):
     out = "\n".join(lines)
     assert "repo2graph explain node 'sym:app/store.py::OrderStore.insert'" in out
     assert "OrderService.place_order" in out.split("--- 4/5")[1].split("--- 5/5")[0]
+
+
+def test_demo_graph_html_is_not_empty(demo_index):
+    """#50: the demo passed viz_nodes=0, so its first-run map had no nodes."""
+    from repo2graph.export import path as artifact_path
+
+    _, out, _ = demo_index
+    html = artifact_path(out, "graph.html").read_text(encoding="utf8")
+    assert '"nodes":[]' not in html.replace(" ", "")
+    assert "file:app/routes.py" in html or "routes.py" in html
