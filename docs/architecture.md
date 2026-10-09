@@ -86,21 +86,38 @@ A symbol node's id is `sym:<path>::<qualname>`. When two definitions in one file
 | `CALLS_EXTERNAL` | symbol -> external, a name that resolved to nothing in-repo |
 | `INHERITS` | symbol -> base class or interface |
 | `CO_CHANGE` | file <-> file, edited together in 3+ of the commits read by `--git-history` |
+| `TESTS` | test symbol -> non-test symbol it reaches through at most 2 `CALLS` hops |
+
+`TESTS` means **tests that reach this symbol via calls**, not tests that assert on it: nothing
+reads an assertion. A test symbol is any symbol defined in a file `testpaths.is_test_path`
+claims (`tests/`, `test/`, `__tests__/`, `spec/`, `test_*.py`, `*_test.py`, `*_test.go`,
+`*.test.ts`, `*.spec.ts`, `*Test.java`, `*_spec.rb`, ...), helpers and fixtures included.
+`graph.add_tests_edges` walks `CALLS` out of each one up to `TESTS_MAX_HOPS` (2), through test
+helpers and production code alike, and adds one edge per non-test symbol reached, never
+test -> test. `confidence` is the product of the `CALLS` confidences along the best path (so two
+0.5 guesses in a row read as 0.25, not 0.5), `evidence` is the call in the test where that path
+starts, and `hops` is its length. `CALLS` edges that are not evidence of a call
+(`untyped_receiver`, `shadowed_builtin`) are not walked. `stats.json` reports `edge:TESTS`,
+`testable_symbols` / `tested_symbols` (non-test functions and methods, and how many have an
+incoming `TESTS` edge) and their ratio `tested_symbol_fraction` -- an upper bound on what the
+suite exercises, never a coverage figure. Retrieval does not follow `TESTS` by default; pass
+`edge_types` to `pack_context` to opt in. `repo_neighbours` lists a symbol's `TESTS` edges.
 
 ### Edge metadata
 
 Every edge goes through `Graph.add_edge()`, which normalises three fields:
 
 - **`method`** — how the edge was derived (for example `same_file`, `import_resolved`,
-  `receiver_typed`, `name_only`). It records the evidence class, not a quality score.
-- **`confidence`** — a float on `CALLS` edges only, reflecting how much the resolution narrowed the
-  candidate set. It deliberately does **not** encode "how likely is this call at runtime": a
+  `receiver_typed`, `name_only`, or `call-graph` for `TESTS`, which is derived from `CALLS`
+  edges rather than read from source). It records the evidence class, not a quality score.
+- **`confidence`** — a float on `CALLS` edges (and `TESTS`, which inherits it), reflecting how
+  much the resolution narrowed the candidate set. It deliberately does **not** encode "how likely is this call at runtime": a
   dynamically dispatched call that resolved to exactly one candidate scores high.
 - **`evidence`** — the source line the reader is shown. Structural edges (`CONTAINS`) and
   historical ones (`CO_CHANGE`) legitimately carry `evidence: null`; never synthesise a line for a
   relation that has no syntactic site.
 
-The confidence threshold gate applies to `CALLS` edges only. `DEFINES`, `IMPORTS` and `INHERITS`
+The confidence threshold gate applies to `CALLS` and `TESTS` edges only. `DEFINES`, `IMPORTS` and `INHERITS`
 carry no confidence and must not be dropped by a confidence filter.
 
 ### Artifacts
@@ -315,11 +332,12 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `graph.py` | 2,333 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; entrypoint marking. |
+| `graph.py` | 2,333 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; `TESTS` derived from `CALLS`; entrypoint marking. |
 | `parse.py` | 2,114 | File discovery (`discover`, `_git_files`, `_walk_files`, `explain_path`), the language table (`LANG_CFG`, `EXT_LANG`), tree-sitter invocation, symbol and import extraction, `_callee_name`. |
 | `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
 | `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
 | `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
+| `testpaths.py` | 60 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
 | `chunks.py` | 397 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
 
 ### Surfaces

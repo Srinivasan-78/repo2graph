@@ -15,6 +15,7 @@ from typing import Any
 
 from .events import diagnostic
 from .edgemeta import (
+    METHOD_CALL_GRAPH,
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
@@ -45,6 +46,7 @@ from .parse import (
     parse_source,
     sniff_header_lang,
 )
+from .testpaths import is_test_path
 
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
@@ -2264,6 +2266,8 @@ def build(
     if len(g.edges) != before:
         g.stats["edges_pruned_dangling"] += before - len(g.edges)
 
+    # After the dangling-edge prune, so every CALLS edge walked has both ends.
+    add_tests_edges(g)
     mark_entrypoints(g)
     g.stats["nodes"] = len(g.nodes)
     g.stats["edges"] = len(g.edges)
@@ -2328,6 +2332,96 @@ def mark_entrypoints(g: Graph):
     for nid in roots[:SCORED_ENTRYPOINTS]:
         g.nodes[nid]["reach"] = _reach(nid, out)
     g.stats["entrypoints"] = len(roots)
+
+
+# How many CALLS hops a TESTS edge may span. Two reaches both `test -> helper
+# -> target` and `test -> target -> its callee`; every further hop multiplies
+# the fan-out of ambiguous names while saying less about what the test is for.
+TESTS_MAX_HOPS = 2
+
+
+def add_tests_edges(g: Graph) -> None:
+    """TESTS edges: from each test symbol to every non-test symbol it reaches.
+
+    A test symbol is any `symbol` node defined in a file `is_test_path` claims,
+    helpers and fixtures included. From each one, CALLS edges are walked up to
+    TESTS_MAX_HOPS deep -- through test helpers and production code alike --
+    and a TESTS edge is added to every non-test symbol reached. So TESTS means
+    "this test reaches that symbol through calls", never "this test asserts on
+    it": nothing here reads an assertion.
+
+    Confidence is the product of the CALLS confidences along the path, the
+    best path winning when several reach the same symbol. Each CALLS
+    confidence is P(dst is the right target), so the product is the chance
+    every hop on the path resolved correctly -- taking the minimum instead
+    would let a chain of two 0.5 guesses read as certain as one. Evidence is
+    the call site in the test where that path starts, which is a line in the
+    test that leads to the symbol; `hops` says how far away it is.
+
+    CALLS edges that are not evidence of a call at all (a builtin method name on
+    an untyped receiver, a bare call to a shadowed builtin -- see
+    `edgemeta.counts_as_call`) are not walked: `d.get()` in a test does not
+    exercise every `get` in the repository.
+    """
+    out: dict[str, list[dict]] = defaultdict(list)
+    for e in g.edges:
+        if e["type"] != "CALLS" or e["src"] == e["dst"]:
+            continue
+        if e.get("untyped_receiver") or e.get("shadowed_builtin"):
+            continue
+        out[e["src"]].append(e)
+
+    test_syms: set[str] = set()
+    testable: list[str] = []
+    for nid, n in g.nodes.items():
+        if n["type"] != "symbol":
+            continue
+        if is_test_path(n.get("path") or ""):
+            test_syms.add(nid)
+        elif n.get("kind") in ENTRY_KINDS:
+            testable.append(nid)
+
+    # Sorted, and frontiers walked in sorted order, so ties between equally
+    # good paths break the same way on every run and under every hash seed.
+    for test in sorted(test_syms):
+        best: dict[str, tuple[float, int, Any]] = {}
+        frontier: dict[str, tuple[float, Any]] = {test: (1.0, None)}
+        for hop in range(1, TESTS_MAX_HOPS + 1):
+            nxt: dict[str, tuple[float, Any]] = {}
+            for u in sorted(frontier):
+                conf_u, ev_u = frontier[u]
+                for e in out.get(u, ()):
+                    v = e["dst"]
+                    if v == test:
+                        continue
+                    try:
+                        conf = conf_u * float(e.get("confidence", 1.0))
+                    except (TypeError, ValueError):
+                        continue
+                    ev = e.get("evidence") if hop == 1 else ev_u
+                    if v not in nxt or conf > nxt[v][0]:
+                        nxt[v] = (conf, ev)
+                    if v in test_syms:
+                        continue
+                    prev = best.get(v)
+                    if prev is None or conf > prev[0]:
+                        best[v] = (conf, hop, ev)
+            frontier = nxt
+        for v in sorted(best):
+            conf, hops, ev = best[v]
+            g.add_edge(
+                test,
+                v,
+                "TESTS",
+                method=METHOD_CALL_GRAPH,
+                confidence=round(conf, 3),
+                evidence=ev,
+                hops=hops,
+            )
+
+    tested = {e["dst"] for e in g.edges if e["type"] == "TESTS"}
+    g.stats["testable_symbols"] = len(testable)
+    g.stats["tested_symbols"] = sum(1 for nid in testable if nid in tested)
 
 
 def _reach(start: str, out: dict) -> int:

@@ -777,7 +777,7 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
 # NODE_TYPES / EDGE_TYPES (issue #349): one definition, in viz.py -- see the
 # comment there for why that's the direction that avoids a circular import --
 # imported above so both this module's manifest.json and viz.py's own legend
-# panel describe the same six node types and seven edge types the same way.
+# panel describe the same six node types and eight edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
 # and docs/architecture.md. Written into manifest.json so a consumer reading
@@ -787,7 +787,8 @@ EDGE_FIELDS = {
     "method": (
         "how the relationship was extracted: tree-sitter/<lang> (read from a parse tree), "
         "name-resolver (a parsed name matched against this repo's definitions -- the only "
-        "method whose confidence is routinely below 1), filesystem, or git-log"
+        "method whose confidence is routinely below 1), filesystem, git-log, or call-graph "
+        "(derived from a path of CALLS edges; TESTS only)"
     ),
     "confidence": (
         "P(dst is the correct target | the relationship at `evidence` exists), 0..1. "
@@ -807,6 +808,10 @@ EDGE_FIELDS = {
         "called on a receiver of unknown type; confidence is capped at 0.2"
     ),
     "count": "how many times this relationship occurs; `evidence` cites the first",
+    "hops": (
+        "TESTS only: how many CALLS edges the best path from the test to dst spans; "
+        "`evidence` cites the call in the test where that path starts"
+    ),
 }
 
 ID_GRAMMAR = {
@@ -897,6 +902,7 @@ APPROXIMATIONS = [
     "Call resolution is name-based; ambiguous names fan out to up to {n} edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call.",
+    "A TESTS edge means a test reaches the symbol through CALLS edges, not that it asserts on it.",
 ]
 
 DYNAMIC_CALLS_NOTE = (
@@ -1100,6 +1106,7 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
             indeg[e["dst"]] += 1
+    testable = g.stats.get("testable_symbols", 0)
     hubs = sorted(
         (n for n in g.nodes.values() if n["type"] in ("file", "symbol") and indeg[n["id"]]),
         key=lambda n: -indeg[n["id"]],
@@ -1132,6 +1139,12 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
         # no other way to tell, and an index that cannot answer that is worse
         # than one that was never bounded.
         "limits_hit": dict(getattr(g, "limits_hit", {}) or {}),
+        # Share of non-test functions and methods with at least one incoming
+        # TESTS edge -- reachability from a test, which is an upper bound on
+        # coverage, never a measure of it.
+        "tested_symbol_fraction": (
+            round(g.stats.get("tested_symbols", 0) / testable, 3) if testable else 0.0
+        ),
     }
     sha = _git_short_sha(g.root)
     if sha:
