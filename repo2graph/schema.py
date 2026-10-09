@@ -212,6 +212,17 @@ class PackResult(TypedDict):
     tokens_used: int
     tokens_budget: int
     query: str
+    #: Characters of chunk text selected, before citation headers and the map.
+    source_text_chars: int
+    #: Characters actually rendered into `markdown` (always `len(markdown)`).
+    rendered_context_chars: int
+    #: True when anything (a chunk, part of the map) was cut to fit the budget.
+    budget_exhausted: bool
+    #: Candidate seeds and neighbours left out of the pack entirely.
+    omitted_chunk_count: int
+    #: "heuristic" (len // 4) unless the caller passed its own `count_tokens`,
+    #: which may set a `token_count_method` attribute to say what it is.
+    token_count_method: str
 
 
 class EntrypointRecord(TypedDict):

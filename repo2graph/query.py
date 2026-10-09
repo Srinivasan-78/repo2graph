@@ -383,6 +383,11 @@ def count_tokens(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN) if text else 0
 
 
+#: Reported as `token_count_method` in every pack: this is an estimate, and a
+#: caller comparing it with a model's real limit needs to know that (#290).
+count_tokens.token_count_method = "heuristic"  # type: ignore[attr-defined]
+
+
 # Bound at import so pack_context's `count_tokens=` parameter, which shadows
 # the name inside the method, can still reach the default.
 _DEFAULT_MEASURE = count_tokens
@@ -1603,6 +1608,15 @@ class Index:
             "tokens_used": measure_tokens(markdown),
             "tokens_budget": budget_tokens if use_tokens else 0,
             "query": query,
+            # The two budgets, reported apart (#282): what retrieval selected
+            # versus what was rendered. Rendered is the larger one -- citation
+            # headers and the map prepend add bytes the source never had.
+            "source_text_chars": sum(len(text) for _, text in picked),
+            "rendered_context_chars": len(markdown),
+            "budget_exhausted": truncated,
+            "omitted_chunk_count": max(0, len(seeds) + len(graph_neighbours) - len(picked)),
+            # `tokens_used` is only as exact as the counter behind it (#290).
+            "token_count_method": getattr(measure_tokens, "token_count_method", "caller-supplied"),
         }
 
 
