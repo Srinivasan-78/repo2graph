@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .events import diagnostic
 from .edgemeta import (
     METHOD_FILESYSTEM,
     METHOD_GIT_LOG,
@@ -417,7 +418,7 @@ class Graph:
         if which in self._limits_announced:
             return
         self._limits_announced.add(which)
-        print(message, file=sys.stderr)
+        diagnostic(message)
         try:
             from .events import emit
 
@@ -441,7 +442,7 @@ class Graph:
                 msg += f" (max_files={self.max_files})."
             else:
                 msg += " with no size limit set; pass max_files= to build() to bound memory use."
-            print(msg, file=sys.stderr)
+            diagnostic(msg)
 
 
 # ---------- import parsing ----------
@@ -1160,8 +1161,8 @@ def _read_and_parse(item):
                 f"Strict parse policy: '{rel}' produced {pf.parse_errors} syntax error(s) under language '{lang}'"
             )
         if policy == "warn":
-            sys.stderr.write(
-                f"repo2graph: warning: '{rel}' produced {pf.parse_errors} syntax error(s) ({lang})\n"
+            diagnostic(
+                f"repo2graph: warning: '{rel}' produced {pf.parse_errors} syntax error(s) ({lang})"
             )
 
     return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())

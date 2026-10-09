@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from .events import diagnostic
 from . import __version__
 from .chunks import iter_chunks
 
@@ -144,8 +145,8 @@ def cmd_build(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -172,9 +173,9 @@ def cmd_build(args):
     if getattr(args, "incremental", False):
         cache, cache_invalidated = load_parse_cache_report(outdir, config)
         if cache_invalidated:
-            sys.stderr.write(
+            diagnostic(
                 f"note: --incremental is doing a full build; the parse cache was "
-                f"discarded: {cache_invalidated}\n"
+                f"discarded: {cache_invalidated}"
             )
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
@@ -267,8 +268,8 @@ def cmd_github(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -514,9 +515,9 @@ def _validate_auto_build_out(out, repo_root) -> None:
 def _warn_exclude_secrets_deprecated(args) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
-        sys.stderr.write(
+        diagnostic(
             "warning: --exclude-secrets is deprecated and has no effect; secret-looking "
-            "files are excluded by default (pass --include-secrets to include them)\n"
+            "files are excluded by default (pass --include-secrets to include them)"
         )
 
 
@@ -648,7 +649,7 @@ def _rag_index_dir(args) -> Path:
                 f"{target!r} is not a directory or an index here; refusing to treat it "
                 "as a GitHub repository. For a remote, use https://github.com/owner/repo."
             )
-    sys.stderr.write(f"note: {target!r} is not a local path; fetching it from GitHub\n")
+    diagnostic(f"note: {target!r} is not a local path; fetching it from GitHub")
     index_github(target, out, formats="jsonl,overview")
     return out
 
@@ -1103,7 +1104,7 @@ def cmd_explain(args) -> int:
         _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
         return 0
     else:
-        print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
+        diagnostic(f"repo2graph: error: unknown explain command '{subcmd}'")
         return 1
 
 
@@ -1980,7 +1981,7 @@ def main(argv=None):
             pass
         return 0
     except _GraphLimitExceeded as exc:
-        print(f"repo2graph: error: {exc}", file=sys.stderr)
+        diagnostic(f"repo2graph: error: {exc}")
         return 1
 
 

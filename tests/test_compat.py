@@ -1285,3 +1285,18 @@ def test_no_agent_loop_residue_in_tests():
                 if pat.search(line):
                     offenders.append(f"{path.name}:{lineno} [{desc}]: {line.strip()}")
     assert offenders == [], "Found agent-loop residue in tests:\n" + "\n".join(offenders)
+
+
+def test_human_messages_go_through_one_helper():
+    """#461 #43: warnings were written four ways (print, stderr.write, logging,
+    emit). Sentences for a person now go through `events.diagnostic`; structured
+    records through `events.emit`. Only events.py touches stderr directly."""
+    pattern = re.compile(r"sys\.stderr\.write\(|file=sys\.stderr|\blogging\.(warning|info|error)\(")
+    offenders = []
+    for path in sorted((REPO_ROOT / "repo2graph").rglob("*.py")):
+        if path.name == "events.py":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf8").splitlines(), 1):
+            if pattern.search(line) and not line.lstrip().startswith("#"):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert offenders == [], offenders

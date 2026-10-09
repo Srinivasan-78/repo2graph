@@ -13,6 +13,7 @@ from typing import TypedDict, cast
 
 from tree_sitter import Node, Parser
 
+from .events import diagnostic
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
 
@@ -609,11 +610,10 @@ def discover(
         if (root / ".git").exists():
             if stats is not None:
                 stats["discovery_git_failed"] = 1
-            print(
+            diagnostic(
                 f"warning: {root} is a git checkout but `git ls-files` failed; "
                 "falling back to a directory walk that does not honour .gitignore, "
-                "so untracked and ignored files will be indexed",
-                file=sys.stderr,
+                "so untracked and ignored files will be indexed"
             )
 
     # Discovery order *is* artifact order: node ids are emitted in the order
@@ -1944,9 +1944,9 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             try:
                 rc, cpp_bytes = _run_cpp(_strip_cpp_includes(source), 2 * len(source))
                 if rc == 0 and cpp_bytes is None:
-                    import logging
-
-                    logging.warning(f"cpp output for {filepath} is too large, skipping")
+                    diagnostic(
+                        f"repo2graph: warning: cpp output for {filepath} is too large, skipping"
+                    )
                 elif rc == 0 and cpp_bytes is not None:
                     cpp_tree = parser.parse(cpp_bytes)
                     cpp_errors = _count_errors(cpp_tree.root_node)

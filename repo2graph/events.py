@@ -123,6 +123,18 @@ def write_safe(stream: Any, text: str, newline: str = "\n") -> None:
         pass
 
 
+def diagnostic(text: str) -> None:
+    """One human-readable line on stderr: a warning, a note or an error.
+
+    The single way repo2graph talks to a person outside its JSON output (#43):
+    `emit()` is for structured events a program reads; this is for sentences.
+    Resolves `sys.stderr` at call time and, like `write_safe`, never raises.
+    """
+    import sys
+
+    write_safe(sys.stderr, text)
+
+
 def timestamp() -> str:
     """An ISO-8601 UTC timestamp with millisecond precision.
 
