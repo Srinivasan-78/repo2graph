@@ -1252,7 +1252,7 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         path: Destination for `parse.cache.json`.
     """
     from .graph import PARSE_CACHE_FORMAT
-    from .parse import grammar_fingerprint
+    from .parse import grammar_fingerprint, parse_cache_identity
 
     payload = {
         "format": STATE_FORMAT,
@@ -1261,13 +1261,21 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         # the same bytes parse to without changing PARSE_CACHE_FORMAT. See
         # `parse.grammar_fingerprint`.
         "grammars": grammar_fingerprint(),
+        # The rest of the key: language tables and the parse options that
+        # change what a cached entry holds (#302).
+        "identity": parse_cache_identity(getattr(g, "config", None)),
         "files": dict(getattr(g, "parse_cache", {}) or {}),
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def load_parse_cache(outdir: Path) -> dict[str, Any]:
+def load_parse_cache(outdir: Path, config: Any = None) -> dict[str, Any]:
+    """`load_parse_cache_report` without the reason."""
+    return load_parse_cache_report(outdir, config)[0]
+
+
+def load_parse_cache_report(outdir: Path, config: Any = None) -> tuple[dict[str, Any], str | None]:
     """Read a previous build's parse cache out of an index directory.
 
     Every failure mode -- no index, no cache file, unreadable, malformed JSON,
@@ -1288,36 +1296,51 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
 
     Args:
         outdir: The index directory (the one holding `agent/`).
+        config: The `BuildConfig` of the build about to run. Its parse options
+            are part of the key; None means the defaults.
 
     Returns:
-        `{relpath: entry}`, or an empty dict when no usable cache is present.
+        `({relpath: entry}, reason)`. The dict is empty when no usable cache is
+        present; `reason` then says why a cache that *was* there was discarded
+        (None when there was simply no cache).
     """
     from .graph import PARSE_CACHE_FORMAT
     from .integrity import is_foreign_index
-    from .parse import grammar_fingerprint
+    from .parse import grammar_fingerprint, parse_cache_identity
 
     out = Path(outdir)
     if is_foreign_index(out):
-        return {}
+        return {}, "the index was built on another machine"
 
     try:
         cache_path = path(out, "parse.cache.json")
+        if not cache_path.exists():
+            return {}, None
         if cache_path.is_symlink():
-            return {}
+            return {}, "parse.cache.json is a symlink"
         try:
             if not cache_path.resolve().is_relative_to(out.resolve()):
-                return {}
+                return {}, "parse.cache.json resolves outside the index"
         except OSError:
-            return {}
+            return {}, "parse.cache.json could not be resolved"
         data = json.loads(cache_path.read_text(encoding="utf8"))
-    except (OSError, ValueError, KeyError):
-        return {}
-    if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:
-        return {}
+    except (OSError, ValueError, KeyError) as exc:
+        return {}, f"parse.cache.json is unreadable ({type(exc).__name__})"
+    if not isinstance(data, dict):
+        return {}, "parse.cache.json is malformed"
+    if data.get("cache_format") != PARSE_CACHE_FORMAT:
+        return {}, f"cache format {data.get('cache_format')} -> {PARSE_CACHE_FORMAT}"
     if data.get("grammars") != grammar_fingerprint():
-        return {}
+        return {}, f"grammars {data.get('grammars')} -> {grammar_fingerprint()}"
+    recorded = data.get("identity")
+    current = parse_cache_identity(config)
+    if not isinstance(recorded, dict):
+        return {}, "cache predates the parse-option key"
+    changed = [k for k in sorted(current) if recorded.get(k) != current[k]]
+    if changed:
+        return {}, "; ".join(f"{k} {recorded.get(k)} -> {current[k]}" for k in changed)
     files = data.get("files")
-    return files if isinstance(files, dict) else {}
+    return (files, None) if isinstance(files, dict) else ({}, "parse.cache.json has no files")
 
 
 def _fsync_dir(path: Path) -> None:

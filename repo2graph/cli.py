@@ -18,7 +18,7 @@ from .chunks import iter_chunks
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
 from .export import (
     dump_all,
-    load_parse_cache,
+    load_parse_cache_report,
     make_path,
     path as artifact_path,
     register_written,
@@ -167,7 +167,15 @@ def cmd_build(args):
         parse_policy=getattr(args, "parse_policy", "best-effort"),
         output_dir=str(outdir),
     )
-    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+    cache = None
+    cache_invalidated = None
+    if getattr(args, "incremental", False):
+        cache, cache_invalidated = load_parse_cache_report(outdir, config)
+        if cache_invalidated:
+            sys.stderr.write(
+                f"note: --incremental is doing a full build; the parse cache was "
+                f"discarded: {cache_invalidated}\n"
+            )
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
     # them below -- CHANGELOG.md (written after dump_all, when "overview" is
@@ -204,6 +212,8 @@ def cmd_build(args):
                 max_memory_mb=getattr(args, "max_memory_mb", 0.0),
                 max_build_seconds=getattr(args, "max_build_seconds", 0.0),
             )
+            if cache_invalidated:
+                g.stats["parse_cache_invalidated"] = cache_invalidated  # type: ignore[assignment]
             chunks = (
                 None
                 if args.no_chunks
