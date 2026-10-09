@@ -225,7 +225,7 @@ Run `repo2graph doctor` to diagnose environment and platform support.
 - **Automated gates:** Pull requests must pass automated CI checks (ruff, mypy, multi-OS test matrix, synthetic regression benchmarks).
 - **Review policy:** Pull requests require 0 third-party review approvals to merge to `main`.
 - **Commit signing:** Commit signing is not currently enforced on `main`.
-- **Integrity:** Releases are published to PyPI with provenance attestations, and `uv.lock` is pinned in the repository for reproducible builds.
+- **Integrity:** Releases are published to PyPI with provenance attestations. `uv.lock` pins every dependency by hash for CI and contributors (`uv sync --frozen`); a plain `pip install repo2graph` resolves its own versions within the ranges in `pyproject.toml` and does not read it.
 
 ## Contributing
 

@@ -253,7 +253,6 @@ _STALENESS_NOTED_TOOLS = frozenset(
         "repo_find_symbol",
         "repo_read",
         "repo_path_between",
-        "repo_impact",
         "repo_blast_radius",
     }
 )
