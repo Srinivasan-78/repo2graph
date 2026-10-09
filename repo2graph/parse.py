@@ -17,6 +17,14 @@ from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
 
 
+# Import-statement patterns shared with graph._IMPORT_RE, which composes its
+# table from these, so the two readers of an import line cannot drift (#461 #37).
+PY_FROM_IMPORT_RE = re.compile(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)")
+PY_IMPORT_RE = re.compile(r"^import\s+([\w\.,\s]+)")
+JAVA_IMPORT_RE = re.compile(r"import\s+(?:static\s+)?([\w\.\*]+)")
+RUBY_REQUIRE_RE = re.compile(r"""(?:require_relative|require|load)\s*\(?\s*['"]([^'"]+)['"]""")
+
+
 class ParseError(RuntimeError):
     """Raised when parser strictness policy encounters parse errors."""
 
@@ -1641,7 +1649,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
     details: list[ImportDetail] = []
     if lang == "python":
         # from ... import ...
-        m = re.match(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)", raw_clean)
+        m = PY_FROM_IMPORT_RE.match(raw_clean)
         if m:
             module = m.group(1) or ""
             names_part = m.group(2).replace("(", " ").replace(")", " ")
@@ -1667,7 +1675,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     )
             return details
         # import a as b, c as d
-        m2 = re.match(r"^import\s+([\w\.,\s]+)", raw_clean)
+        m2 = PY_IMPORT_RE.match(raw_clean)
         if m2:
             for p in m2.group(1).split(","):
                 p = p.strip()
@@ -1762,7 +1770,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
             return details
 
     elif lang in ("java", "kotlin", "scala"):
-        m = re.search(r"import\s+(?:static\s+)?([\w\.\*]+)", raw_clean)
+        m = JAVA_IMPORT_RE.search(raw_clean)
         if m:
             full = m.group(1)
             parts = full.rsplit(".", 1)
@@ -1867,7 +1875,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
             return details
 
     elif lang == "ruby":
-        m = re.search(r"""(?:require|require_relative|load)\s*\(?\s*['"]([^'"]+)['"]""", raw_clean)
+        m = RUBY_REQUIRE_RE.search(raw_clean)
         if m:
             mod = m.group(1)
             details.append(ImportDetail(raw=raw_clean, module=mod, name=mod.rsplit("/", 1)[-1]))
