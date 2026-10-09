@@ -837,7 +837,8 @@ def test_strip_cpp_includes_leaves_no_file_opening_directive(lines, filler):
     out = _strip_cpp_includes(src).decode()
     joined = out.replace("\\\n", "")
     assert not re.search(
-        r"(?m)^[ \t]*(?:#|%:)(?:[ \t]|/\*.*?\*/)*(?:include|include_next|import|embed)\b", joined
+        r"(?m)^[ \t]*(?:#|%:)(?:[ \t]|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)*(?:include|include_next|import|embed)\b",
+        joined,
     )
     for f in filler:
         if f:

@@ -379,3 +379,14 @@ def test_run_cpp_returns_small_output_whole():
     _require_cpp()
     rc, out = _REAL_RUN_CPP(b"#define M {\nint main() M }\n", 1000)
     assert rc == 0 and out is not None and b"int main() {" in out
+
+
+def test_include_strip_is_linear_on_nested_comment_lookalikes():
+    """CodeQL py/redos: `/\\*.*?\\*/` inside a repeated group backtracked
+    exponentially on `#/*` followed by many `*//*`."""
+    import time
+
+    evil = b"#/*" + b"*//*" * 20000
+    t0 = time.monotonic()
+    parse_mod._strip_cpp_includes(evil)
+    assert time.monotonic() - t0 < 1.0
