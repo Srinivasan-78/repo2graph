@@ -17,6 +17,7 @@ import urllib.request
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from .events import diagnostic
 from .limits import render as limitations_block
 
 HTTP_TIMEOUT = 300
@@ -284,9 +285,9 @@ def _ollama_base(value: str) -> str:
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
     if parts.scheme == "http" and not _is_loopback(parts.hostname or ""):
-        sys.stderr.write(
+        diagnostic(
             f"warning: OLLAMA_HOST={value!r} is plain HTTP to a non-loopback host; "
-            "your code and the answer cross the network unencrypted\n"
+            "your code and the answer cross the network unencrypted"
         )
     return base
 

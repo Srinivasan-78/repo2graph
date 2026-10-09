@@ -1,4 +1,3 @@
-import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -115,7 +114,7 @@ def test_cpp_parse_cpp_unavailable(mock_run):
 
 
 @patch("subprocess.run")
-def test_cpp_parse_cpp_too_large(mock_run, caplog):
+def test_cpp_parse_cpp_too_large(mock_run, capsys):
     source = b"#define MACRO { error \nint main() MACRO }"
 
     def mock_run_impl(cmd, **kwargs):
@@ -127,13 +126,12 @@ def test_cpp_parse_cpp_too_large(mock_run, caplog):
 
     mock_run.side_effect = mock_run_impl
 
-    with caplog.at_level(logging.WARNING):
-        pf = parse_source(source, "c", filepath="test.c")
+    pf = parse_source(source, "c", filepath="test.c")
 
     # Should skip cpp and use Pass 1
     assert pf.parse_errors > 0
     assert not pf.used_cpp
-    assert "is too large, skipping" in caplog.text
+    assert "is too large, skipping" in capsys.readouterr().err
 
 
 # X-macro at file scope that tree-sitter cannot parse (ERROR on the later
