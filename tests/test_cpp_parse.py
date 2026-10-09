@@ -296,4 +296,40 @@ def test_both_cpp_invocations_close_stdin(mock_run):
 
     assert mock_run.call_args_list, "the cpp fallback never ran"
     for call in mock_run.call_args_list:
-        assert call.kwargs.get("stdin") is subprocess.DEVNULL, call
+        if "--version" in call.args[0]:
+            assert call.kwargs.get("stdin") is subprocess.DEVNULL, call
+        else:
+            # #475: the source goes in on stdin, so the child never sees ours.
+            assert isinstance(call.kwargs.get("input"), bytes), call
+            assert "stdin" not in call.kwargs, call
+
+
+@patch("subprocess.run")
+def test_cpp_retry_never_names_the_file_or_follows_includes(mock_run):
+    """#475: cpp resolves #include, so an untrusted file could point it at
+    /dev/zero or any readable path. The retry feeds the source on stdin with
+    every file-opening directive blanked, in all the spellings cpp accepts."""
+    source = (
+        b'#include "/dev/zero"\n'
+        b"  # include </etc/passwd>\n"
+        b'%:include "/dev/zero"\n'
+        b'#/* c */include_next "/dev/zero"\n'
+        b'#\\\ninclude "/dev/zero"\n'
+        b'#embed "/dev/zero"\n'
+        b"#import <x>\n"
+        b"#define MACRO { error \nint main() MACRO }\n"
+    )
+
+    def mock_run_impl(cmd, **kwargs):
+        if "--version" in cmd:
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout=b"int main() { return 0; }")
+
+    mock_run.side_effect = mock_run_impl
+    parse_source(source, "c", filepath="evil.c")
+
+    (pre,) = [c for c in mock_run.call_args_list if "--version" not in c.args[0]]
+    assert pre.args[0][-1] == "-" and "evil.c" not in pre.args[0]
+    fed = pre.kwargs["input"]
+    assert b"/dev/zero" not in fed and b"/etc/passwd" not in fed and b"<x>" not in fed
+    assert b"#define MACRO" in fed

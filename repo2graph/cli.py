@@ -1086,12 +1086,24 @@ def _git_ref_exists(repo: Path, ref: str) -> bool:
     """True when `ref` resolves to a commit in `repo` (bytes, bounded; see CONTRIBUTING.md)."""
     import subprocess
 
+    from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+
     try:
         proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+            [
+                "git",
+                *GIT_HARDENING_ARGS,
+                "-C",
+                str(repo),
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{ref}^{{commit}}",
+            ],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=10,
+            env=_clean_git_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return True  # cannot tell: do not claim it is missing
