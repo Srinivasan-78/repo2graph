@@ -136,7 +136,7 @@ def pick_provider(
         if not value:
             raise SystemExit(f"provider {provider!r} requested but {env_var} is not set")
         return {"name": provider, "env": env_var, "value": value}
-    found = []
+    found: list[dict[str, str]] = []
     for name, var in (
         ("gemini", "GEMINI_API_KEY"),
         ("gemini", "GOOGLE_API_KEY"),
