@@ -483,8 +483,11 @@ def main(argv: list[str] | None = None) -> int:
     log.add_argument(
         "--audit-log-level",
         choices=("none", "errors", "all"),
-        default="all",
-        help="which tool calls produce an audit record (default: all)",
+        # `all` records every query's text and up to 512 chars of arguments,
+        # on stderr that MCP clients often keep in their own logs. Recording
+        # successful calls is an opt-in for operators who want that trail.
+        default="errors",
+        help="which tool calls produce an audit record (default: errors)",
     )
     log.add_argument(
         "--audit-log-fsync",
