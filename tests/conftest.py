@@ -413,3 +413,16 @@ def clean_debug_env():
             os.environ.pop("REPO2GRAPH_DEBUG", None)
         else:
             os.environ["REPO2GRAPH_DEBUG"] = orig
+
+
+@pytest.fixture(autouse=True)
+def no_ambient_git_config(monkeypatch):
+    """Tests must not inherit `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`_VALUE_n`.
+
+    CI runners, proxies and dev containers export these, and the code under
+    test both reads and extends them (`fetch._auth_env`), so an ambient count
+    shifted every index a test asserted on.
+    """
+    for key in list(os.environ):
+        if key == "GIT_CONFIG_COUNT" or key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            monkeypatch.delenv(key, raising=False)
