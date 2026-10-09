@@ -1182,7 +1182,8 @@ def _subprocess_spawn_calls(path: Path):
         kwnames = {kw.arg for kw in node.keywords}
         # `subprocess.run(**kwargs)` would carry stdin invisibly; None means a
         # `**` unpacking, so treat it as unverifiable-but-not-a-violation.
-        ok = "stdin" in kwnames or None in kwnames
+        # `input=` replaces stdin with a pipe we write and close, so it counts.
+        ok = "stdin" in kwnames or "input" in kwnames or None in kwnames
         found.append((node.lineno, f"subprocess.{func.attr}", ok))
     return found
 
@@ -1200,6 +1201,55 @@ def test_every_subprocess_spawn_in_the_package_closes_stdin():
     # A sweep that found nothing would pass vacuously; the package has had at
     # least a dozen spawn sites since fetch.py landed.
     assert total >= 10, total
+    assert offenders == [], offenders
+
+
+def _git_spawn_calls(path: Path):
+    """(lineno, hardened, env-cleaned) for every subprocess spawn of a literal git argv."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("run", "Popen", "call"):
+            continue
+        if not isinstance(func.value, ast.Name) or func.value.id != "subprocess":
+            continue
+        argv = node.args[0]
+        if not isinstance(argv, ast.List) or not argv.elts:
+            continue
+        head = argv.elts[0]
+        if not (isinstance(head, ast.Constant) and head.value == "git"):
+            continue
+        rest = [e.value for e in argv.elts[1:] if isinstance(e, ast.Constant)]
+        if rest == ["--version"] and len(argv.elts) == 2:
+            continue  # reads no repository, so no repository config either
+        hardened = any(
+            isinstance(e, ast.Starred)
+            and isinstance(e.value, ast.Name)
+            and e.value.id == "GIT_HARDENING_ARGS"
+            for e in argv.elts
+        )
+        found.append((node.lineno, hardened, "env" in {kw.arg for kw in node.keywords}))
+    return found
+
+
+def test_every_git_spawn_in_the_package_is_hardened():
+    """#455: git honours the target repository's own .git/config, so a
+    `core.fsmonitor` there runs on `ls-files`/`check-ignore`. Every git argv
+    must carry GIT_HARDENING_ARGS and an explicit (cleaned) env."""
+    package = REPO_ROOT / "repo2graph"
+    offenders = []
+    total = 0
+    for path in sorted(package.rglob("*.py")):
+        for lineno, hardened, has_env in _git_spawn_calls(path):
+            total += 1
+            if not (hardened and has_env):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert total >= 5, total
     assert offenders == [], offenders
 
 

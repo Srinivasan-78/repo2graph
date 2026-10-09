@@ -916,3 +916,22 @@ def test_a_normal_vectors_pair_still_round_trips_under_the_real_limits(tmp_path)
 
     assert sorted(vectors) == ["a", "b"]
     assert meta["dim"] == 2
+
+
+def test_zero_width_rows_are_rejected_before_the_row_loop(tmp_path):
+    """#474: with cols == 0 the payload-size check needs zero bytes, so a
+    128-byte header claiming a trillion rows would pass it and spin the loop."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(10**12, 0))
+    with pytest.raises(ValueError, match="zero-width"):
+        embed._npy_read(target)
+
+
+def test_empty_matrix_still_reads(tmp_path):
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(0, 0))
+    assert embed._npy_read(target) == ([], 0)

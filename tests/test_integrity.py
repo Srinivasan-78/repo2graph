@@ -737,3 +737,32 @@ class TestRunGit:
         repo_root = Path(__file__).resolve().parents[1]
         out = run_git(repo_root, ["non-existent-subcommand-12345"])
         assert out is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="fsmonitor hook is a shell command")
+def test_untrusted_checkout_fsmonitor_does_not_run_during_build(tmp_path):
+    """#455: `ls-files`/`check-ignore` read the index, which runs the
+    repository's own `core.fsmonitor` unless the invocation overrides it."""
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    from repo2graph.parse import _count_gitignored, _git_files, explain_path
+
+    repo = write_simple_repo(tmp_path)
+    git = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+    subprocess.run([*git, "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+    subprocess.run([*git, "commit", "-qm", "i"], check=True, stdin=subprocess.DEVNULL)
+    marker = tmp_path / "PWNED"
+    subprocess.run(
+        [*git, "config", "core.fsmonitor", f"touch '{marker}'; false #"],
+        check=True,
+        stdin=subprocess.DEVNULL,
+    )
+
+    assert _git_files(repo)
+    _count_gitignored(repo)
+    explain_path(repo, next(p for p in repo.rglob("*.py")))
+    assert not marker.exists(), "the checkout's core.fsmonitor ran"

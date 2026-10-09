@@ -23,6 +23,7 @@ from .edgemeta import (
     normalize as normalize_edge,
     tree_sitter_method,
 )
+from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .parse import (
     CONFIG_EXT,
     DOC_EXT,
@@ -2421,8 +2422,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
         proc = subprocess.Popen(
             [
                 "git",
-                "-c",
-                "core.quotepath=false",
+                *GIT_HARDENING_ARGS,
                 "-C",
                 str(root),
                 "log",
@@ -2434,6 +2434,7 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=_clean_git_env(),
         )
     except (OSError, subprocess.SubprocessError):
         return

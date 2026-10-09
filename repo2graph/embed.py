@@ -114,6 +114,10 @@ def _npy_read(path: Path) -> tuple[list[list[float]], int]:
     ):
         raise ValueError(f"{path}: expected a 2-D shape, got {shape!r}")
     nrows, cols = shape
+    # A zero-width row needs zero payload bytes, so the truncation check below
+    # cannot bound `nrows` and a 128-byte header could demand a trillion rows.
+    if nrows and not cols:
+        raise ValueError(f"{path}: zero-width rows in shape {shape!r}")
     body_at = start + hlen
     if len(raw) - body_at < nrows * cols * _FLOAT_BYTES:
         raise ValueError(f"{path}: truncated .npy payload")

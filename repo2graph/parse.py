@@ -13,6 +13,8 @@ from typing import TypedDict, cast
 
 from tree_sitter import Node, Parser
 
+from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+
 
 class ParseError(RuntimeError):
     """Raised when parser strictness policy encounters parse errors."""
@@ -406,8 +408,7 @@ def _git_files(root: Path):
         out = subprocess.run(
             [
                 "git",
-                "-c",
-                "core.quotepath=false",
+                *GIT_HARDENING_ARGS,
                 "-C",
                 str(root),
                 "ls-files",
@@ -418,6 +419,7 @@ def _git_files(root: Path):
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
+            env=_clean_git_env(),
         )
         if out.returncode != 0:
             return None
@@ -528,8 +530,7 @@ def _count_gitignored(root: Path) -> int:
         out = subprocess.run(
             [
                 "git",
-                "-c",
-                "core.quotepath=false",
+                *GIT_HARDENING_ARGS,
                 "-C",
                 str(root),
                 "ls-files",
@@ -541,6 +542,7 @@ def _count_gitignored(root: Path) -> int:
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
+            env=_clean_git_env(),
         )
         if out.returncode != 0:
             return 0
@@ -1410,6 +1412,27 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
 
 _cpp_available_cache: bool | None = None
 
+# Backslash-newline splices are joined before directives are recognised, so
+# "#\<newline>include" is still an include; drop them first.
+_CPP_SPLICE_RE = re.compile(rb"\\\r?\n")
+# `#` or its `%:` digraph, then blanks or /* */ comments, then any directive
+# that makes cpp open another file. `#embed` is C23.
+_CPP_INCLUDE_RE = re.compile(
+    rb"^[ \t]*(?:#|%:)(?:[ \t]|/\*.*?\*/)*(?:include|include_next|import|embed)\b[^\n]*",
+    re.MULTILINE,
+)
+
+
+def _strip_cpp_includes(source: bytes) -> bytes:
+    """`source` with every file-opening directive blanked, for the cpp retry.
+
+    The retry only needs this file's own macros expanded, and its output is
+    only scored, never adopted. Following includes would let an untrusted file
+    point cpp at `/dev/zero`, a FIFO or any readable path on the machine.
+    Line numbers are irrelevant here (`-P` drops them anyway).
+    """
+    return _CPP_INCLUDE_RE.sub(b"", _CPP_SPLICE_RE.sub(b"", source))
+
 
 def _cpp_available() -> bool:
     """Is a usable `cpp` on PATH? Memoizing only a successful probe.
@@ -1751,8 +1774,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
         ):
             try:
                 out = subprocess.run(
-                    ["cpp", "-w", "-P", "-undef", str(filepath)],
-                    stdin=subprocess.DEVNULL,
+                    ["cpp", "-w", "-P", "-undef", "-"],
+                    input=_strip_cpp_includes(source),
                     capture_output=True,
                     timeout=10,
                 )
@@ -2076,8 +2099,7 @@ def explain_path(
             p = subprocess.run(
                 [
                     "git",
-                    "-c",
-                    "core.quotepath=false",
+                    *GIT_HARDENING_ARGS,
                     "-C",
                     str(root_path),
                     "check-ignore",
@@ -2087,6 +2109,7 @@ def explain_path(
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=5,
+                env=_clean_git_env(),
             )
             if p.returncode == 0:
                 return {
