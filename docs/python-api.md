@@ -96,6 +96,14 @@ write_html(LoadedGraph(Path(".r2g")), Path(".r2g/human/graph.html"), max_nodes=8
 budget-bounded packing out of the box. It is the same object the CLI, the Action
 and the [MCP server](mcp.md) all call.
 
+> **Secret-path filtering is off by default here, and on everywhere else.**
+> `Index.retrieve()` and `Index.pack_context()` default to
+> `exclude_secrets=False` for backwards compatibility, while `repo2graph query`,
+> `repo2graph rag` and every MCP tool pass `exclude_secrets=True`. Code that
+> hands a pack to a model or a person should pass `exclude_secrets=True`
+> explicitly, or `.env`, `*.pem` and other credential-shaped paths that made it
+> into the index can be returned.
+
 ```python
 from repo2graph.query import Index, format_pack, read_jsonl
 
@@ -111,7 +119,7 @@ pack = idx.pack_context(
     budget_chars=24000,  # bounds the WHOLE markdown; 0 means unbounded
     min_confidence=1.0,  # drop ambiguous CALLS edges (CALLS only)
     expand_graph=True,  # False = lexical seeds only
-    exclude_secrets=False,  # True drops dotfiles/.env/.pem/... from the pack
+    exclude_secrets=True,  # default False; True drops .env/.pem/... as the CLI does
 )
 print(pack["markdown"], pack["used_chars"], pack["truncated"])
 
