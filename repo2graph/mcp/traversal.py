@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 
 from ..query import Index
@@ -33,7 +34,9 @@ from .nodes import _containing_file, _path_secret
 from .schemas import ToolError
 
 
-def _clean_edge_types(value: Any, default=DEFAULT_PATH_EDGE_TYPES) -> tuple[frozenset, str]:
+def _clean_edge_types(
+    value: Any, default: Iterable[str] = DEFAULT_PATH_EDGE_TYPES
+) -> tuple[frozenset[str], str]:
     if not isinstance(value, (list, tuple, set)):
         return frozenset(default), ""
     cleaned = {str(v) for v in value if isinstance(v, str) and v in PATH_EDGE_TYPES}
@@ -45,10 +48,12 @@ def _clean_edge_types(value: Any, default=DEFAULT_PATH_EDGE_TYPES) -> tuple[froz
     return frozenset(cleaned), ""
 
 
-def _reconstruct(parents: dict, node: str, root: str, cap: int) -> list[tuple[list, list]]:
+def _reconstruct(
+    parents: dict[str, list[Any]], node: str, root: str, cap: int
+) -> list[tuple[list[str], list[Any]]]:
     if node == root:
         return [([root], [])]
-    out: list[tuple[list, list]] = []
+    out: list[tuple[list[str], list[Any]]] = []
     for parent, etype, direction, edge in parents.get(node, [])[:cap]:
         for nodes, edges in _reconstruct(parents, parent, root, cap):
             out.append((nodes + [node], edges + [(etype, direction, edge)]))
@@ -61,18 +66,20 @@ def _bidirectional_bfs(
     index: Index,
     from_id: str,
     to_id: str,
-    wanted: frozenset,
+    wanted: frozenset[str],
     max_hops: int,
     visited_cap: int,
-):
+) -> tuple[
+    dict[str, int], dict[str, list[Any]], dict[str, int], dict[str, list[Any]], str | None, bool
+]:
     if from_id == to_id:
         return {from_id: 0}, {}, {to_id: 0}, {}, from_id, False
 
     dist_f: dict[str, int] = {from_id: 0}
-    parents_f: dict[str, list] = defaultdict(list)
+    parents_f: dict[str, list[Any]] = defaultdict(list)
     frontier_f = [from_id]
     dist_b: dict[str, int] = {to_id: 0}
-    parents_b: dict[str, list] = defaultdict(list)
+    parents_b: dict[str, list[Any]] = defaultdict(list)
     frontier_b = [to_id]
     visited = 2
     meet = None
@@ -170,7 +177,7 @@ def tool_repo_path_between(
     fwd = _reconstruct(parents_f, meet, from_id, paths_limit * 4)
     back = _reconstruct(parents_b, meet, to_id, paths_limit * 4)
 
-    def _min_conf(edges) -> float:
+    def _min_conf(edges: list[Any]) -> float:
         vals = [
             float(e.get("confidence"))
             for _t, _d, e in edges
@@ -178,8 +185,8 @@ def tool_repo_path_between(
         ]
         return min(vals) if vals else 1.0
 
-    combined: list[tuple[list, list]] = []
-    seen_seqs: set[tuple] = set()
+    combined: list[tuple[list[str], list[Any]]] = []
+    seen_seqs: set[tuple[str, ...]] = set()
     for fnodes, fedges in fwd:
         for bnodes, bedges in back:
             nodes = fnodes + list(reversed(bnodes))[1:]

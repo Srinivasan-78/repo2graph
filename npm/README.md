@@ -1,5 +1,12 @@
 # repo2graph-mcp (npx launcher)
 
+> **Not yet published to npm.** This package's `name` is not currently claimed on the npm
+> registry. Until it is published, do not reference `npx repo2graph-mcp` as a working install path
+> in any documentation or announcement -- an unpublished-but-documented package name is squattable,
+> and anyone who later claims it could ship arbitrary code to people following those instructions.
+> Use `uvx --from "repo2graph[mcp]" repo2graph-mcp` (see [`docs/mcp.md`](../docs/mcp.md)) instead
+> until this is published and this notice is removed.
+
 An `npx`-installable launcher for the [repo2graph](https://github.com/Srinivasan-78/repo2graph)
 MCP server. This package ships **no server code** — `repo2graph-mcp` is a Python console script
 published on PyPI as part of the `repo2graph[mcp]` extra; this package's `bin` entry finds a way to

@@ -16,8 +16,9 @@ import ast
 import hashlib
 import json
 import struct
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .export import atomic_write
 
@@ -56,7 +57,7 @@ def _npy_header(rows: int, cols: int) -> bytes:
     return _NPY_MAGIC + bytes((1, 0)) + struct.pack("<H", len(body)) + body.encode("latin1")
 
 
-def _npy_write(path: Path, rows: list, cols: int) -> None:
+def _npy_write(path: Path, rows: list[list[float]], cols: int) -> None:
     """Write `rows` (a list of equal-length float sequences) as NPY v1.0.
 
     Opened "wb" with no encoding: a text-mode write on Windows rewrites every
@@ -68,7 +69,7 @@ def _npy_write(path: Path, rows: list, cols: int) -> None:
             fh.write(struct.pack(f"<{cols}f", *row))
 
 
-def _npy_read(path: Path) -> tuple[list, int]:
+def _npy_read(path: Path) -> tuple[list[list[float]], int]:
     """Read a 2-D C-order '<f4' NPY file; returns (rows, cols).
 
     Anything else -- a different dtype, Fortran order, a truncated header or a
@@ -126,20 +127,20 @@ def _npy_read(path: Path) -> tuple[list, int]:
 # ------------------------------------------------------------ metadata ----
 
 
-def meta_path(path) -> Path:
+def meta_path(path: str | Path) -> Path:
     """'.../vectors.npy' -> '.../vectors.meta.json' (a sibling, same stem)."""
-    path = Path(path)
-    return path.with_name(path.stem + ".meta.json")
+    p = Path(path)
+    return p.with_name(p.stem + ".meta.json")
 
 
-def text_hash(chunk) -> str:
+def text_hash(chunk: str | dict[str, Any]) -> str:
     """sha256 of a chunk's text. A chunk's vector depends on nothing else, so
     this is a sound reuse key even when the surrounding graph changed."""
     text = chunk if isinstance(chunk, str) else (chunk.get("text") or "")
     return hashlib.sha256(text.encode("utf8", "surrogateescape")).hexdigest()
 
 
-def model_id_of(embedder) -> str:
+def model_id_of(embedder: Any) -> str:
     """A stable identity for whatever produced an index's vectors."""
     for attr in ("model_id", "name_or_path"):
         value = getattr(embedder, attr, None)
@@ -148,7 +149,7 @@ def model_id_of(embedder) -> str:
     return f"{type(embedder).__module__}.{type(embedder).__qualname__}"
 
 
-def dim_of(embedder, probe: str = "dimension probe") -> int:
+def dim_of(embedder: Any, probe: str = "dimension probe") -> int:
     """The width of an embedder's output, without assuming an attribute."""
     value = getattr(embedder, "dim", None)
     if isinstance(value, int) and value > 0:
@@ -161,7 +162,10 @@ def dim_of(embedder, probe: str = "dimension probe") -> int:
 
 
 def build_vectors(
-    chunks, embedder, batch: int = DEFAULT_BATCH, reuse=None
+    chunks: Iterable[dict[str, Any]],
+    embedder: Any,
+    batch: int = DEFAULT_BATCH,
+    reuse: dict[str, list[float]] | None = None,
 ) -> dict[str, list[float]]:
     """{chunk id: vector} for every chunk, embedding in batches.
 
@@ -192,7 +196,13 @@ def build_vectors(
 
 
 def write_vectors(
-    path, vectors, model_id: str, dim: int, chunk_ids, text_hashes=None, build_id: str | None = None
+    path: str | Path,
+    vectors: dict[str, list[float]],
+    model_id: str,
+    dim: int,
+    chunk_ids: Iterable[str],
+    text_hashes: Iterable[str] | None = None,
+    build_id: str | None = None,
 ) -> int:
     """Write vectors.npy plus its sibling vectors.meta.json; return the count.
 
@@ -203,7 +213,7 @@ def write_vectors(
     against; stored so `verify_artifacts` and `doctor` can detect when a rebuild
     has produced a new manifest build_id but `embed` has not been re-run.
     """
-    path = Path(path)
+    p = Path(path)
     ids = list(chunk_ids)
     hashes = list(text_hashes) if text_hashes is not None else [""] * len(ids)
     if len(hashes) != len(ids):
@@ -215,8 +225,8 @@ def write_vectors(
         if len(vec) != dim:
             raise ValueError(f"chunk {cid} has width {len(vec)}, expected {dim}")
         rows.append(vec)
-    _npy_write(path, rows, dim)
-    meta: dict = {
+    _npy_write(p, rows, dim)
+    meta: dict[str, Any] = {
         "format": VECTORS_FORMAT,
         "model_id": model_id,
         "dim": int(dim),
@@ -231,7 +241,7 @@ def write_vectors(
     return len(rows)
 
 
-def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
+def load_vectors(path: str | Path) -> tuple[dict[str, list[float]], dict[str, Any]]:
     """Inverse of write_vectors: ({chunk id: vector}, meta).
 
     Raises ValueError/OSError on anything malformed; callers that must not fail
@@ -240,6 +250,9 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
     from .integrity import MAX_METADATA_BYTES, read_bounded
 
     path = Path(path)
+    if path.is_symlink() or meta_path(path).is_symlink():
+        raise ValueError(f"Refusing to load symlinked vectors artifact: {path}")
+
     # Bounded, and bounded *here* in particular: the sidecar is read before the
     # array, so a ceiling on vectors.npy alone would leave the whole allocation
     # reachable through this file instead.
@@ -264,14 +277,19 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
     fmt = meta.get("format")
     if fmt != VECTORS_FORMAT:
         raise ValueError(f"{meta_path(path)}: format is {fmt!r}, expected {VECTORS_FORMAT!r}")
+    dim = meta.get("dim")
+    if not isinstance(dim, int) or dim <= 0:
+        raise ValueError(f"{meta_path(path)}: invalid dim: {dim}")
     ids = meta.get("chunk_ids")
     if not isinstance(ids, list):
         raise ValueError(f"{meta_path(path)}: chunk_ids is missing")
+    count = meta.get("count")
+    if isinstance(count, int) and count != len(ids):
+        raise ValueError(f"{meta_path(path)}: count {count} does not match {len(ids)} chunk ids")
     rows, cols = _npy_read(path)
     if len(rows) != len(ids):
         raise ValueError(f"{path}: {len(rows)} rows for {len(ids)} chunk ids")
-    dim = meta.get("dim")
-    if isinstance(dim, int) and rows and dim != cols:
+    if rows and dim != cols:
         raise ValueError(f"{path}: rows are {cols} wide, meta says {dim}")
     return dict(zip(ids, rows, strict=True)), meta
 
@@ -282,16 +300,16 @@ def load_vectors(path) -> tuple[dict[str, list[float]], dict]:
 class _SentenceTransformerEmbedder:
     """Adapter: sentence-transformers' ndarray output -> plain float lists."""
 
-    def __init__(self, model, model_id: str):
+    def __init__(self, model: Any, model_id: str) -> None:
         self._model = model
         self.model_id = model_id
 
-    def encode(self, texts):
+    def encode(self, texts: Iterable[str]) -> list[list[float]]:
         encoded = self._model.encode(list(texts))
         return [[float(x) for x in vec] for vec in encoded]
 
 
-def default_embedder(name: str | None = None):
+def default_embedder(name: str | None = None) -> _SentenceTransformerEmbedder:
     """Load `name` (default DEFAULT_MODEL) through sentence-transformers.
 
     The import is deliberately here and not at module scope: `repo2graph.embed`
@@ -300,7 +318,7 @@ def default_embedder(name: str | None = None):
     model_id = name or DEFAULT_MODEL
     try:
         from sentence_transformers import SentenceTransformer
-    except Exception:
+    except ImportError:
         raise RuntimeError(
             'embedding needs the optional `rag` extra: pip install "repo2graph[rag]"'
         ) from None

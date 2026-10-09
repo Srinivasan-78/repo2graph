@@ -89,7 +89,7 @@ class Session:
                 self.proc.stdin.close()
             self.proc.terminate()
             self.proc.wait(timeout=30)
-        except Exception:
+        except (subprocess.SubprocessError, OSError):
             self.proc.kill()
 
 

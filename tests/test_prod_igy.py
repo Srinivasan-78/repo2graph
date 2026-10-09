@@ -148,28 +148,6 @@ def test_prod_igy_calculate_size_logic():
     assert "linesChanged < 1000" in body and "'size/L'" in body
     assert "'size/XL'" in body
 
-    # Emulate the JS logic in Python to verify exact boundaries
-    def calculate_size(lines: int) -> str:
-        if lines < 10:
-            return "size/XS"
-        if lines < 50:
-            return "size/S"
-        if lines < 250:
-            return "size/M"
-        if lines < 1000:
-            return "size/L"
-        return "size/XL"
-
-    assert calculate_size(0) == "size/XS"
-    assert calculate_size(9) == "size/XS"
-    assert calculate_size(10) == "size/S"
-    assert calculate_size(49) == "size/S"
-    assert calculate_size(50) == "size/M"
-    assert calculate_size(249) == "size/M"
-    assert calculate_size(250) == "size/L"
-    assert calculate_size(999) == "size/L"
-    assert calculate_size(1000) == "size/XL"
-
 
 def test_prod_igy_type_detection_regexes():
     """Verify regexes used for conventional commit type detection."""
@@ -298,8 +276,8 @@ def test_prod_igy_comment_formatting_and_author_tagging():
     assert "${BOT_MARKER}" in content
 
 
-def test_iss208_issue_comment_job_requires_trusted_author_association():
-    """ISS-208: outsider PR comments must not start the privileged triage job.
+def test_issue_comment_job_requires_trusted_author_association():
+    """Issue #208: outsider PR comments must not start the privileged triage job.
 
     The gate lives in the workflow `if:` so no runner is allocated. Trusted
     associations are the three GitHub values for people who can change the
@@ -322,8 +300,8 @@ def test_iss208_issue_comment_job_requires_trusted_author_association():
     assert "contains(github.event.comment.author_association" not in content
 
 
-def test_iss208_script_issue_comment_skips_untrusted_association():
-    """ISS-208: script defence if the workflow `if:` is ever widened."""
+def test_script_issue_comment_skips_untrusted_association():
+    """Issue #208: script defence if the workflow `if:` is ever widened."""
     content = "\n".join(_read_lines(SCRIPT_PATH))
 
     match = re.search(
@@ -349,8 +327,8 @@ def test_iss208_script_issue_comment_skips_untrusted_association():
     assert "return;" in branch
 
 
-def test_iss208_format_bot_comment_strips_backticks_from_refs():
-    """ISS-208: a fork branch name must not break out of a markdown code span.
+def test_format_bot_comment_strips_backticks_from_refs():
+    """Issue #208: a fork branch name must not break out of a markdown code span.
 
     git check-ref-format permits `` ` ``. The Head Commit line (and every
     other `` `${headRef}` `` / `` `${baseRef}` `` interpolation) wraps the
@@ -575,7 +553,7 @@ def test_ai_ledger_round_trip_and_hostile_input():
             return {"v": 1, "runs": 0, "out": 0}
         try:
             parsed = json.loads(m.group(1))
-        except Exception:
+        except (ValueError, TypeError):
             return {"v": 1, "runs": 0, "out": 0}
 
         def clean(v):
@@ -1096,7 +1074,7 @@ def test_ai_prompt_frames_pr_text_as_data():
     assert "tools:" not in call, "the AI step must not declare tools"
 
 
-def test_iss374_edited_does_not_retrigger_the_privileged_job():
+def test_edited_does_not_retrigger_the_privileged_job():
     """#374: `edited` fires whenever a PR's title or body changes -- which the
     author (including a fork author) controls and can pull at will, against a
     job holding pull-requests: write, issues: write and an API key. It must
@@ -1111,7 +1089,7 @@ def test_iss374_edited_does_not_retrigger_the_privileged_job():
     assert set(values) == {"opened", "synchronize", "reopened"}, values
 
 
-def test_iss375_app_token_probe_env_is_job_level_not_step_level():
+def test_app_token_probe_env_is_job_level_not_step_level():
     """#375: the app-token step's `if:` used to read `env.HAS_APP_ID` /
     `env.HAS_PRIVATE_KEY` from an `env:` block declared on that same step,
     which works only if the step's own `env:` is guaranteed resolved before
@@ -1150,7 +1128,7 @@ def test_iss375_app_token_probe_env_is_job_level_not_step_level():
     assert "if: ${{ env.HAS_APP_ID != '' && env.HAS_PRIVATE_KEY != '' }}" in content
 
 
-def test_iss375_the_fallback_identity_is_logged():
+def test_the_fallback_identity_is_logged():
     """#375 (acceptance): the GITHUB_TOKEN fallback is no longer silent --
     a run log line says which identity is posting."""
     content = "\n".join(_read_lines(WORKFLOW_PATH))
@@ -1236,12 +1214,12 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
         # lockfile.yml is deliberately absent -- its checkout now sets
         # `persist-credentials` explicitly, so it needs no ignore.
         ("publish.yml", 85): ("actions/checkout@", 1),
-        ("publish.yml", 435): ("actions/checkout@", 1),
+        ("publish.yml", 508): ("actions/checkout@", 1),
         # dangerous-triggers: reported against the `on:` mapping, not the trigger.
         ("prod-igy.yml", 16): ("pull_request_target:", 8),
         # self-repository: jobs that run this repo's own composite action
-        ("ci.yml", 317): ("uses: ./", 1),
-        ("index-repo.yml", 59): ("uses: ./", 1),
+        ("ci.yml", 366): ("uses: ./", 1),
+        ("index-repo.yml", 67): ("uses: ./", 1),
         ("self-index.yml", 34): ("uses: ./", 1),
         # adhoc-packages: the one pinned npm dependency prod-igy.js has
         ("prod-igy.yml", 168): ("npm install", 1),
@@ -1262,3 +1240,12 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
             f"Re-run `uvx zizmor==1.30.1 --config .github/zizmor.yml --format plain .` "
             f"and re-anchor the pin."
         )
+
+
+def test_existing_bot_comment_filters_on_bot_author():
+    """C3/C10: Comments matching BOT_MARKER are only treated as the bot's own
+    comment if authored by a bot, preventing commenters from forging spend caps."""
+    content = "\n".join(_read_lines(SCRIPT_PATH))
+    assert "function isBotComment(comment)" in content
+    assert "isBotComment(c)" in content
+    assert "module.exports.isBotComment = isBotComment;" in content

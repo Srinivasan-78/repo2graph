@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import threading
 from pathlib import Path
+from typing import Any
 
 from ..cache import ResultCache
 from ..export import path as artifact_path
@@ -65,13 +66,27 @@ def _build_index(repo: Path, out: Path) -> None:
 
 
 def open_index(
-    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None
+    out: str | Path,
+    repo: str | Path | None = None,
+    cache: ResultCache | None = None,
+    *,
+    allow_foreign_index: bool = False,
 ) -> Index:
     """Open or build an index for `out`, reusing instances across calls."""
     out_path = Path(out)
     key = str(out_path.resolve())
 
     with _index_lock(key):
+        if _has_index(out_path) and not allow_foreign_index:
+            from ..integrity import is_foreign_index
+
+            if is_foreign_index(out_path):
+                raise ValueError(
+                    f"Refusing to serve foreign index at '{out_path}'. "
+                    "The index was not built on this machine. "
+                    "Rebuild it with 'repo2graph build' or pass --allow-foreign-index."
+                )
+
         current_mtime = _index_mtime(out_path)
 
         index = _INDEXES.get(key)
@@ -109,14 +124,19 @@ def open_index(
 
 
 def open_index_or_task(
-    out: str | Path, repo: str | Path | None = None, cache: ResultCache | None = None, tasks=None
-):
+    out: str | Path,
+    repo: str | Path | None = None,
+    cache: ResultCache | None = None,
+    tasks: Any = None,
+    *,
+    allow_foreign_index: bool = False,
+) -> tuple[Index | None, str | None]:
     """Open index or launch a background build task if asynchronous builds are enabled."""
     from ..tasks import BUILDING, BUILDING_MESSAGE, FAILED, FAILED_MESSAGE
 
     out_path = Path(out)
     if tasks is None or _has_index(out_path) or repo is None:
-        return open_index(out, repo, cache), None
+        return open_index(out, repo, cache, allow_foreign_index=allow_foreign_index), None
 
     task = tasks.for_dir(out_path)
     if task is None:
@@ -128,4 +148,4 @@ def open_index_or_task(
         return None, FAILED_MESSAGE.format(error=task.error)
     if cache is not None:
         cache.clear()
-    return open_index(out, repo, cache), None
+    return open_index(out, repo, cache, allow_foreign_index=allow_foreign_index), None

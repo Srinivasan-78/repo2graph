@@ -1,5 +1,5 @@
-"""Tests for bounded JSONL reads (bounded JSONL reads), fit_lines linearity (_fit_lines linearity),
-and single-character identifier retrieval (single-character identifier retrieval).
+"""Tests for bounded JSONL reads, fit_lines linearity, and single-character
+identifier retrieval.
 
 Per CONTRIBUTING.md: assertions use hand-derived literal values, never values
 recomputed by the code under test.

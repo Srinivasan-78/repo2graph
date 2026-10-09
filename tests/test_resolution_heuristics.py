@@ -132,8 +132,9 @@ def test_max_call_candidates_fan_out(tmp_path):
     edges2 = [e for e in g2.edges if e["type"] == "CALLS" and "caller.py" in e["src"]]
     assert len(edges2) == 2
     for e in edges2:
-        assert e["confidence"] == 0.5
+        assert e["confidence"] == 0.2
         assert e.get("ambiguous") is True
+        assert e.get("capped_candidates") is True
 
 
 def test_ambiguous_calls_stat_non_heuristic_fanout(tmp_path):

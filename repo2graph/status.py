@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .integrity import run_git
+
 # Re-hashing the whole tree is not free, and `index-status` is meant to be
 # cheap enough to put in a prompt. Past this many recorded files the
 # file-level comparison is skipped and the report says so -- the commit
@@ -82,15 +84,13 @@ class Freshness:
 
 def _git_head(repo: Path) -> str | None:
     """The tree's current HEAD sha, or None when `repo` is not a git checkout."""
-    from .integrity import run_git
-
     return run_git(repo, ["rev-parse", "HEAD"])
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(Path(path).read_text(encoding="utf8", errors="replace"))
-    except Exception:
+    except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -176,7 +176,7 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
     manifest_file = agent_dir / "manifest.json"
     try:
         manifest = json.loads(manifest_file.read_text(encoding="utf8", errors="replace"))
-    except Exception:
+    except (OSError, ValueError):
         manifest = {}
     revision = manifest.get("source_revision") or {}
     fresh.indexed_commit = str(revision.get("commit") or "") or None
@@ -186,11 +186,47 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
     fresh.head_commit = _git_head(repo)
     if fresh.indexed_commit and fresh.head_commit:
         if fresh.indexed_commit != fresh.head_commit:
-            fresh.commit_moved = True
-            fresh.reasons.append("HEAD moved since the build")
+            # Check if source code changed, or if HEAD only moved to commit index artifacts (W23).
+            source_changed = True
+            diff_out = run_git(
+                repo,
+                ["diff", "--name-only", fresh.indexed_commit, fresh.head_commit],
+                timeout=5,
+                allow_empty=True,
+            )
+            if diff_out is not None:
+                lines = diff_out.splitlines() if diff_out else []
+                idx_prefix = ""
+                try:
+                    idx_prefix = idx_dir.resolve().relative_to(repo.resolve()).as_posix()
+                except ValueError:
+                    pass
+                non_index = [
+                    l.strip()
+                    for l in lines
+                    if l.strip()
+                    and not (
+                        idx_prefix
+                        and (l.strip() == idx_prefix or l.strip().startswith(idx_prefix + "/"))
+                    )
+                ]
+                if not non_index:
+                    source_changed = False
+
+            if source_changed:
+                fresh.commit_moved = True
+                fresh.reasons.append("HEAD moved since the build")
+            else:
+                fresh.notes.append(
+                    f"HEAD moved ({fresh.indexed_commit[:8]}..{fresh.head_commit[:8]}) only to commit index artifacts"
+                )
     elif not fresh.head_commit:
         fresh.notes.append("not a git repository (commit comparison skipped)")
-    if fresh.built_dirty:
+    if revision.get("status_error"):
+        fresh.notes.append(
+            "git status failed or timed out when the index was built (dirty state unknown)"
+        )
+    elif fresh.built_dirty:
         fresh.notes.append("the tree had uncommitted changes when the index was built")
 
     # --- Signals 2 and 3 need index.state.json ---
@@ -205,7 +241,7 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
     try:
         state = json.loads(state_file.read_text(encoding="utf8", errors="replace"))
         recorded: dict[str, str] = dict(state.get("files") or {})
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         fresh.notes.append(f"index.state.json is unreadable ({exc}); file-level check skipped")
         fresh.reasons.append("change-detection state is unreadable")
         fresh.status = "stale"
@@ -260,7 +296,7 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
                 config=config,
             )
         }
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         fresh.notes.append(f"could not re-discover the source tree ({exc}); file check skipped")
         fresh.status = "stale" if fresh.reasons else "unknown"
         return fresh
@@ -352,6 +388,9 @@ _SKIP_LABELS: tuple[tuple[str, str], ...] = (
     ("skipped_binary", "binary"),
     ("skipped_too_large", "over the size ceiling"),
     ("skipped_secret", "secret/credential paths"),
+    ("skipped_lfs", "Git LFS pointer files"),
+    ("skipped_case_collision", "case collisions"),
+    ("skipped_unreadable", "unreadable/inaccessible files"),
 )
 
 
@@ -378,7 +417,7 @@ def index_status(out: Path | str, repo: Path | str | None = None) -> dict[str, A
     manifest = json.loads(manifest_file.read_text(encoding="utf8", errors="replace"))
     try:
         stats = json.loads((agent / "stats.json").read_text(encoding="utf8", errors="replace"))
-    except Exception:
+    except (OSError, ValueError):
         stats = {}
 
     # `out` is normally the -o directory, with artifacts under `agent/`. It may

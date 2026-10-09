@@ -1,6 +1,7 @@
 """Turn graph nodes into retrieval chunks: code text + graph context header."""
 
 from collections import Counter, defaultdict
+from collections.abc import Iterator
 from typing import Any
 
 MAX_CHARS = 4000
@@ -77,7 +78,7 @@ def _keepends_lf(text: str) -> list[str]:
     return lines
 
 
-def _split(text: str, max_chars: int = MAX_CHARS):
+def _split(text: str, max_chars: int = MAX_CHARS) -> list[str]:
     """The parts of `_split_spans`, without their line offsets."""
     return [part for part, _lo, _hi in _split_spans(text, max_chars)]
 
@@ -142,13 +143,13 @@ def _split_spans(text: str, max_chars: int = MAX_CHARS) -> list[tuple[str, int, 
     return out
 
 
-def _conf(text: str, edge: dict) -> str:
+def _conf(text: str, edge: dict[str, Any]) -> str:
     """Label a CALLS edge with its confidence when the call was ambiguous."""
     c = edge.get("confidence", 1.0)
     return text if c >= 1.0 else f"{text} (confidence {c})"
 
 
-def _neighbour_edge(target: str, edge: dict, direction: str) -> dict:
+def _neighbour_edge(target: str, edge: dict[str, Any], direction: str) -> dict[str, Any]:
     """Structured form of a callers/callees/bases entry.
 
     Additive sibling of the callers/callees/callees_external string lists --
@@ -163,12 +164,27 @@ def _neighbour_edge(target: str, edge: dict, direction: str) -> dict:
     return d
 
 
-def build_chunks(g, include_files: bool = True) -> list[dict]:
+def build_chunks(g: Any, include_files: bool = True) -> list[dict[str, Any]]:
     """All retrieval chunks as a list (stable public API)."""
     return list(iter_chunks(g, include_files))
 
 
-def iter_chunks(g, include_files: bool = True):
+def _decode_source(raw: bytes) -> str:
+    """Decode source bytes into string, respecting UTF BOMs (UTF-8, UTF-16, UTF-32) (W10)."""
+    if raw.startswith(
+        (b"\xef\xbb\xbf", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff", b"\xff\xfe", b"\xfe\xff")
+    ):
+        for enc in ("utf-8-sig", "utf-16", "utf-32"):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+    return raw.decode("utf-8", "replace")
+
+
+def iter_chunks(
+    g: Any, include_files: bool = True, max_chunks: int = 0
+) -> Iterator[dict[str, Any]]:
     """Yield chunk dicts ready for embedding, one at a time.
 
     A generator, not a list: on a large repo the chunk text is the single
@@ -176,6 +192,9 @@ def iter_chunks(g, include_files: bool = True):
     holding every chunk in memory at once. Source text is dropped from the cache
     as soon as the last symbol on a file has been emitted.
     """
+    if max_chunks == 0 and hasattr(g, "config") and getattr(g.config, "max_chunks", 0) > 0:
+        max_chunks = g.config.max_chunks
+    yielded = 0
     out_edges, in_edges = defaultdict(list), defaultdict(list)
     for e in g.edges:
         out_edges[e["src"]].append(e)
@@ -191,7 +210,8 @@ def iter_chunks(g, include_files: bool = True):
     def source_of(path: str) -> str:
         if path not in src_cache:
             try:
-                src_cache[path] = (g.root / path).read_text("utf8", "replace")
+                raw = (g.root / path).read_bytes()
+                src_cache[path] = _decode_source(raw)
             except OSError:
                 src_cache[path] = ""
         return src_cache[path]
@@ -288,6 +308,24 @@ def iter_chunks(g, include_files: bool = True):
             part_header[1] = (
                 f"# {n['kind']}: {n['qualname']}  (lines {p_start}-{p_end}, {n['lang']})"
             )
+            if max_chunks > 0 and yielded >= max_chunks:
+                if getattr(g, "limit_policy", "warn") == "fail":
+                    from .graph import GraphLimitExceeded
+
+                    raise GraphLimitExceeded(
+                        f"Chunk limit exceeded: reached {yielded} chunks (max_chunks={max_chunks}). "
+                        "Use --max-chunks to increase the limit."
+                    )
+                if hasattr(g, "limits_hit"):
+                    g.limits_hit["chunks_dropped"] = g.limits_hit.get("chunks_dropped", 0) + 1
+                    if hasattr(g, "_note_limit"):
+                        g._note_limit(
+                            "chunks",
+                            f"repo2graph: warning: chunk ceiling reached at {max_chunks} chunks; "
+                            f"further chunks are dropped and the graph is partial",
+                        )
+                return
+            yielded += 1
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,
@@ -375,6 +413,24 @@ def iter_chunks(g, include_files: bool = True):
                 p_end = line_map[min(hi, len(line_map) - 1)]
             else:
                 p_start, p_end = span_start, span_end
+            if max_chunks > 0 and yielded >= max_chunks:
+                if getattr(g, "limit_policy", "warn") == "fail":
+                    from .graph import GraphLimitExceeded
+
+                    raise GraphLimitExceeded(
+                        f"Chunk limit exceeded: reached {yielded} chunks (max_chunks={max_chunks}). "
+                        "Use --max-chunks to increase the limit."
+                    )
+                if hasattr(g, "limits_hit"):
+                    g.limits_hit["chunks_dropped"] = g.limits_hit.get("chunks_dropped", 0) + 1
+                    if hasattr(g, "_note_limit"):
+                        g._note_limit(
+                            "chunks",
+                            f"repo2graph: warning: chunk ceiling reached at {max_chunks} chunks; "
+                            f"further chunks are dropped and the graph is partial",
+                        )
+                return
+            yielded += 1
             yield {
                 "id": f"{nid}#{i}" if i else nid,
                 "node_id": nid,

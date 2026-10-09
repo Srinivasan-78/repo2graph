@@ -5,6 +5,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Any
 
 
 # The Neo4j browser palette, so the map reads the way their graph view does.
@@ -70,12 +71,14 @@ def _trim(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
-def node_label(n: dict) -> str:
+def node_label(n: dict[str, Any]) -> str:
     text = n.get("qualname") or n.get("name") or n.get("path") or n["id"]
     return _trim(text, LABEL_CHARS)
 
 
-def select(nodes: dict, edges: list, max_nodes: int = MAX_NODES):
+def select(
+    nodes: dict[str, Any], edges: list[dict[str, Any]], max_nodes: int = MAX_NODES
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Keep the max_nodes best-connected nodes, and the edges between them.
 
     A force layout stops being readable long before a real repo stops having
@@ -107,11 +110,11 @@ def select(nodes: dict, edges: list, max_nodes: int = MAX_NODES):
     return kept_nodes, kept_edges
 
 
-def payload(g, max_nodes: int = MAX_NODES) -> dict:
+def payload(g: Any, max_nodes: int = MAX_NODES) -> dict[str, Any]:
     """The JSON the page draws: nodes, edges by index, legend counts."""
     nodes, edges = select(g.nodes, g.edges, max_nodes)
     index = {n["id"]: i for i, n in enumerate(nodes)}
-    deg: Counter = Counter()
+    deg: Counter[str] = Counter()
     for e in edges:
         deg[e["src"]] += 1
         deg[e["dst"]] += 1
@@ -142,7 +145,7 @@ def payload(g, max_nodes: int = MAX_NODES) -> dict:
     }
 
 
-def write_html(g, path: Path, max_nodes: int = MAX_NODES) -> dict:
+def write_html(g: Any, path: Path, max_nodes: int = MAX_NODES) -> dict[str, Any]:
     data = payload(g, max_nodes)
     # Escape every "<": json.dumps only emits it inside a string literal, and
     # "\u003c" parses back to "<" through JSON.parse. This stops not just a

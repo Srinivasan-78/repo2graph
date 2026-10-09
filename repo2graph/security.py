@@ -212,9 +212,13 @@ APPSETTINGS_OVERLAY_RE = re.compile(r"^appsettings\..+\.json$")
 SECRET_WORD_RE = re.compile(r"[a-z0-9]+")
 
 # Field names whose *value* is a credential whatever it looks like.
+# `dockerconfigjson` covers Kubernetes' `.dockerconfigjson` secret key, whose
+# value is a base64-wrapped registry-credential JSON blob that no shape test
+# below can validate -- the key name alone is the only reliable signal, the
+# same way `accountkey` is for Azure storage.
 SECRET_KEY_RE = re.compile(
     r"(pass(word|wd)?|secret|token|api[-_]?key|auth|credential|private[-_]?key"
-    r"|session|cookie|bearer|signature|access[-_]?key)",
+    r"|session|cookie|bearer|signature|access[-_]?key|dockerconfigjson)",
     re.I,
 )
 
@@ -295,7 +299,7 @@ PUTTY_KEY_RE = re.compile(r"PuTTY-User-Key-File-\d+:")
 
 # Types whose spans are computed by a dedicated pass rather than by running
 # their entry below over the text. The entry is still the shape test used by
-# `_looks_like_a_secret`.
+# `_classify_secret_shape`.
 PAIRED_TYPES = frozenset({"private_key"})
 
 # Content scanning patterns: (type_name, regex)
@@ -326,6 +330,28 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("shopify_token", re.compile(r"\bshp(?:at|ss)_[a-fA-F0-9]{20,}\b")),
     ("sendgrid_key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
     ("telegram_bot_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
+    ("hashicorp_vault_token", re.compile(r"\bhv[sb]\.[A-Za-z0-9_-]{20,}\b")),
+    # The header alone is diagnostic -- it never appears outside an actual
+    # Ansible Vault payload, so no value-shape test is needed to confirm it.
+    ("ansible_vault_blob", re.compile(r"\$ANSIBLE_VAULT;1\.[12];AES256")),
+    # A SAS query string is a bearer credential by itself: anyone holding the
+    # full `sv=...&...&sig=...` string has the access it grants, with no
+    # further secret needed. `sv=` (signed version) and a trailing `sig=`
+    # (the HMAC) bracketing the other signed-* parameters is the shape that
+    # is unique to Azure Storage SAS tokens.
+    (
+        "azure_storage_sas_token",
+        re.compile(r"\bsv=\d{4}-\d{2}-\d{2}&(?:[^&\s\"'<>]+&){1,10}sig=[A-Za-z0-9%+/]{20,}"),
+    ),
+    ("slack_webhook_url", re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/+]{20,}")),
+    (
+        "teams_webhook_url",
+        re.compile(r"https://[a-z0-9.-]+\.webhook\.office\.com/webhookb2/[A-Za-z0-9@/_-]{20,}"),
+    ),
+    (
+        "discord_webhook_url",
+        re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}"),
+    ),
     ("private_key", PEM_BEGIN_RE),
     # Not in PAIRED_TYPES: PuTTY keys carry no END marker to pair with.
     ("putty_private_key", PUTTY_KEY_RE),
@@ -397,7 +423,8 @@ ASSIGNMENT_RE = re.compile(
 JSON_SECRET_RE = re.compile(
     r"(?im)(?:(?P<kq>[\"'])|^[ \t]*(?:-[ \t]+)?)"
     r"[A-Za-z0-9_.-]{0,40}?"
-    r"(?:pass(?:word|wd)|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)"
+    r"(?:pass(?:word|wd)|secret|token|api[-_]?key|access[-_]?key|private[-_]?key"
+    r"|dockerconfigjson)"
     r"(?P<suffix>[A-Za-z0-9_.-]{0,40})(?(kq)(?P=kq))\s*:\s*(?P<vq>[\"'])"
     r"(?P<value>(?:(?!(?P=vq))[^\\\s]|\\[^\r\n]){8,1024})(?P=vq)"
 )
@@ -428,7 +455,7 @@ UNQUOTED_SECRET_RE = re.compile(
     r"(?im)(?:^|[^A-Za-z0-9_])"
     r"(?P<key>[A-Za-z0-9_.\- ]{0,40}?"
     r"(?:pass(?:word|wd)?|pwd|secret|token|api[-_]?key|auth[-_]?key|access[-_]?token"
-    r"|accountkey|client[-_]key[-_]data)"
+    r"|accountkey|client[-_]key[-_]data|\.?dockerconfigjson)"
     r"(?P<suffix>[A-Za-z0-9_.-]{0,40}?))"
     r"[ \t]*[:=][ \t]*"
     rf"(?P<value>{_UNQUOTED_VALUE_CHAR}{{6,1024}})"
@@ -475,13 +502,21 @@ def _json_secret_value_ok(value: str) -> bool:
 
 
 def _json_secret_spans(text: str) -> list[tuple[int, int]]:
-    """Spans of the *values* of JSON credential pairs in `text`."""
+    """Spans of the *values* of JSON credential pairs in `text`.
+
+    No longer exempts a value just because it contains "://": that exemption
+    was meant to leave `tokenUrl`/`authEndpoint`-style properties alone, but
+    `_NON_SECRET_SUFFIX_RE` already does that job by looking at the *key*,
+    which is the correct signal -- a key named `webhookSecret` or `authToken`
+    whose value happens to be a URL (a Slack/Teams/Discord webhook, or a
+    `https://user:pass@host/...` connection string) is exactly the kind of
+    secret-as-URL this project is supposed to catch, and the blanket
+    exemption let it through under any secret-ish key.
+    """
     return [
         (m.start("value"), m.end("value"))
         for m in JSON_SECRET_RE.finditer(text)
         if not _NON_SECRET_SUFFIX_RE.match(m.group("suffix"))
-        # a URL is an endpoint; one carrying credentials is DB_URL_RE's job
-        and "://" not in m.group("value")
         and _json_secret_value_ok(m.group("value"))
     ]
 
@@ -744,13 +779,26 @@ def redact_content(text: str, policy: str = "redact-match") -> tuple[str, int]:
     # Redact from back to front so indices remain valid
     out = text
     count = 0
-    # Deduplicate overlapping spans
+    # Merge overlapping spans rather than dropping the later one outright.
+    # `findings` is sorted by start, so a span that starts before the
+    # previously kept span's end overlaps it; the old rule discarded that
+    # whole later finding, which left its non-overlapping *tail* -- the part
+    # past the first span's end -- in clear whenever the two secrets were
+    # different lengths (e.g. two detectors matching the same credential at
+    # slightly different spans, or a long high-entropy value with a shorter
+    # known-format secret embedded at its start). Extending the kept span's
+    # end instead covers that tail under one redaction marker.
     filtered_findings: list[tuple[str, int, int]] = []
     last_end = -1
     for stype, start, end in findings:
-        if start >= last_end:
-            filtered_findings.append((stype, start, end))
-            last_end = end
+        if filtered_findings and start < last_end:
+            prev_type, prev_start, prev_end = filtered_findings[-1]
+            if end > prev_end:
+                filtered_findings[-1] = (prev_type, prev_start, end)
+                last_end = end
+            continue
+        filtered_findings.append((stype, start, end))
+        last_end = end
 
     for stype, start, end in reversed(filtered_findings):
         # Line-preserving rule: preserve exact count of newlines. Count them in
@@ -765,8 +813,20 @@ def redact_content(text: str, policy: str = "redact-match") -> tuple[str, int]:
     return out, count
 
 
-def _looks_like_a_secret(value: str) -> str | None:
-    """Name the credential shape `value` matches, or None."""
+def _classify_secret_shape(value: str) -> str | None:
+    """Name the credential shape `value` matches, or None.
+
+    Returns a short classification label (e.g. "aws_access_key",
+    "high_entropy") -- never `value` itself and never any substring of it.
+    The label is deliberately non-sensitive: it says *what kind* of thing the
+    caller's string resembles, not what the string is, so passing it to a log
+    line or an audit record never reproduces the secret it is naming. (This
+    function used to be named with "secret" in a way that made static
+    scanners treat its return value as itself sensitive purely by name --
+    CodeQL's py/clear-text-storage-sensitive-data heuristic sources on
+    identifiers, not on what a function actually returns. Renamed, and this
+    paragraph exists so the next rename explains itself.)
+    """
     for stype, pattern in CONTENT_SECRET_PATTERNS:
         if pattern.search(value):
             return stype.lower()
@@ -897,7 +957,7 @@ def sanitize_value(
         else:
             try:
                 text = str(value)
-            except Exception:
+            except Exception:  # noqa: BLE001 - resilience boundary: arbitrary object __str__ failure must not crash sanitizer
                 return f"[unprintable:{type(value).__name__}]"
 
         # Check key name. NON_SECRET_KEYS names the handful that match by
@@ -909,7 +969,7 @@ def sanitize_value(
         if "://" in text and ("?" in text or "@" in text):
             text = sanitize_url(text)
 
-        shape = _looks_like_a_secret(text)
+        shape = _classify_secret_shape(text)
         if shape:
             return redact(text, shape)
 

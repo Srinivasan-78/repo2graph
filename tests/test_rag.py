@@ -553,8 +553,8 @@ def test_retrieve_keeps_every_edge_direction(dirs_out):
 
     The assertion above compares `cmd_query` output against `format_pack(
     retrieve(...))` -- the implementation against itself -- so a traversal
-    change moves both sides together and stays green. REVIEW iteration 1 found
-    exactly that: `retrieve()` picked up expand()'s restrictive
+    change moves both sides together and stays green. That blind spot let
+    `retrieve()` pick up expand()'s restrictive
     DEFAULT_EDGE_DIRS ({"DEFINES": ("in",), "IMPORTS": ("out",),
     "INHERITS": ("out",)}) and silently dropped every DEFINES-out, IMPORTS-in
     and INHERITS-in neighbour from the `query` command.

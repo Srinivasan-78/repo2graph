@@ -132,7 +132,7 @@ def tool_cache_stats(cache: ResultCache | None) -> str:
     return json.dumps(cache.stats(), indent=2)
 
 
-def tool_build_status(tasks, task_id: str) -> str:
+def tool_build_status(tasks: Any, task_id: str) -> str:
     """Return status of a background build task as JSON."""
     task_id = _str(task_id, MCP_MAX_TASK_ID_CHARS)
     if tasks is None:
@@ -180,7 +180,7 @@ def dispatch(
     name: str,
     arguments: dict[str, Any] | None,
     cache: ResultCache | None = None,
-    tasks=None,
+    tasks: Any = None,
 ) -> str:
     """Route tool call by name to its corresponding handler."""
     args = arguments or {}
@@ -196,7 +196,7 @@ def dispatch(
         key = make_key(name, args)
         hit = cache.get(key)
         if hit is not None:
-            return hit
+            return str(hit)
 
     if index is None:
         return ToolError(

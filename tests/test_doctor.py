@@ -4,8 +4,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from repo2graph.cli import main
 from repo2graph.doctor import (
     DoctorReport,
@@ -14,6 +12,7 @@ from repo2graph.doctor import (
     check_mcp_server,
     check_permissions,
     check_platform_encoding,
+    check_platform_support,
     check_python,
     check_tree_sitter,
     run_doctor,
@@ -256,17 +255,38 @@ def test_doctor_cli_text_and_json(tmp_path, capsys):
     assert isinstance(data["checks"], list)
 
 
-@pytest.fixture
-def built_repo(tmp_path):
-    src = tmp_path / "repo"
-    src.mkdir()
-    (src / "pkg").mkdir()
-    (src / "pkg" / "__init__.py").write_text("", encoding="utf-8")
-    (src / "pkg" / "core.py").write_text(
-        "TITLE = 'core module'\ndef run():\n    return 42\n", encoding="utf-8"
-    )
-    (src / "pkg" / "util.py").write_text(
-        "from .core import run\ndef helper():\n    return run()\n", encoding="utf-8"
-    )
-    assert main(["build", str(src), "-o", str(src / ".r2g")]) == 0
-    return src
+def test_doctor_python_version_warn_newer():
+    """Verify that Python > 3.13 produces a WARN result (untested support matrix)."""
+    with patch("sys.version_info", (3, 14, 0)):
+        res = check_python()
+        assert res.status == "warn"
+        assert "newer" in res.summary
+        assert res.remediation is not None
+        assert "3.10 through 3.13" in res.remediation
+
+
+def test_doctor_platform_support_glibc_failures_and_success():
+    """Verify check_platform_support detects glibc < 2.34 as fail and glibc >= 2.34 as ok."""
+    with patch("platform.system", return_value="Linux"):
+        with patch("pathlib.Path.exists", return_value=False):
+            with patch("platform.libc_ver", return_value=("glibc", "2.31")):
+                res = check_platform_support()
+                assert res.status == "fail"
+                assert "below minimum" in res.summary
+                assert "2.34" in res.summary
+                assert res.remediation is not None
+
+            with patch("platform.libc_ver", return_value=("glibc", "2.35")):
+                res = check_platform_support()
+                assert res.status == "ok"
+                assert "2.35" in res.summary
+
+
+def test_doctor_platform_support_musl_alpine_warning():
+    """Verify check_platform_support warns when musl/Alpine is detected."""
+    with patch("platform.system", return_value="Linux"):
+        with patch("pathlib.Path.exists", return_value=True):
+            res = check_platform_support()
+            assert res.status == "warn"
+            assert "musl" in res.summary or "Alpine" in res.summary
+            assert res.remediation is not None

@@ -36,16 +36,17 @@ MISSING_SDK = 'the MCP server needs the optional `mcp` extra: pip install "repo2
 SDK_SPEC = "mcp>=2.0,<3.0"
 
 
-def _sdk_version(module) -> str:
+def _sdk_version(module: Any) -> str:
     """Best-effort version of the installed SDK."""
     version = getattr(module, "__version__", None)
     if version:
         return str(version)
     try:
+        from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as _dist_version
 
         return str(_dist_version("mcp"))
-    except Exception:
+    except (PackageNotFoundError, OSError, ValueError):
         return "unknown"
 
 
@@ -99,7 +100,7 @@ def _require_sdk() -> Any:
     return mcp
 
 
-def get_tools(types_module=None, auto_build: bool = False):
+def get_tools(types_module: Any = None, auto_build: bool = False) -> list[Any]:
     """Construct Tool instances with descriptions, schemas, and annotations."""
     if types_module is None:
         try:
@@ -126,7 +127,7 @@ def get_tools(types_module=None, auto_build: bool = False):
             if tool_ann_cls is not None:
                 try:
                     kwargs["annotations"] = tool_ann_cls(**ann)
-                except Exception:
+                except (TypeError, ValueError):
                     kwargs["annotations"] = ann
             else:
                 kwargs["annotations"] = ann
@@ -142,7 +143,7 @@ class ServerWrapper:
         self.version = version
         self.tools: dict[str, dict[str, Any]] = {}
 
-    def add_tool(self, name: str, handler: Any, schema: Any = None):
+    def add_tool(self, name: str, handler: Any, schema: Any = None) -> None:
         self.tools[name] = {"handler": handler, "schema": schema}
 
 
@@ -163,13 +164,15 @@ class ToolCallFailed(Exception):
 
 
 def run_tool(
-    index_dir,
-    repo,
+    index_dir: str | Path,
+    repo: str | Path | None,
     name: str,
     arguments: dict[str, Any] | None,
-    cache=None,
-    tasks=None,
-    audit=None,
+    cache: Any = None,
+    tasks: Any = None,
+    audit: Any = None,
+    *,
+    allow_foreign_index: bool = False,
 ) -> str:
     """Execute a single stdio tool call: ensure index exists, then dispatch.
 
@@ -181,6 +184,7 @@ def run_tool(
         cache: Optional result cache.
         tasks: Optional background build registry.
         audit: Optional `AuditLogger`; one record is written per call when given.
+        allow_foreign_index: Whether to permit opening an index built elsewhere.
 
     Returns:
         The tool's rendered text, or a `ToolError` when the call failed.
@@ -189,15 +193,15 @@ def run_tool(
     args = arguments or {}
     with audit_timer() as elapsed:
         try:
-            text = _dispatch_tool(index_dir, repo, name, args, cache, tasks)
-        except SystemExit as exc:
+            text = _dispatch_tool(
+                index_dir, repo, name, args, cache, tasks, allow_foreign_index=allow_foreign_index
+            )
+        except (SystemExit, ValueError) as exc:
             # open_index() exits the process when it finds no index and has no
-            # repo to build one from. That is right for the startup preflight
-            # and for a direct call, but this is the per-request path: an index
-            # deleted while the server runs would take the whole server down
-            # and the client would see a closed pipe rather than an error. One
-            # bad request has to cost one failed tool call, like every other
-            # failure here.
+            # repo to build one from, or raises ValueError when the index is foreign.
+            # That is right for the startup preflight and for a direct call, but this
+            # is the per-request path: an index deleted or rejected while the server runs
+            # should fail the tool call with a ToolError rather than crashing the server.
             text = ToolError(str(exc) or "the index is no longer available")
             _audit(audit, name, args, elapsed, text=text, error=exc)
             return text
@@ -210,16 +214,34 @@ def run_tool(
     return text
 
 
-def _dispatch_tool(index_dir, repo, name: str, args: dict[str, Any], cache, tasks) -> str:
+def _dispatch_tool(
+    index_dir: str | Path,
+    repo: str | Path | None,
+    name: str,
+    args: dict[str, Any],
+    cache: Any,
+    tasks: Any,
+    *,
+    allow_foreign_index: bool = False,
+) -> str:
     if name == "repo_build_status" or name not in TOOL_DESCRIPTIONS:
         return dispatch(None, name, args, cache=cache, tasks=tasks)
-    index, pending = open_index_or_task(index_dir, repo, cache, tasks)
+    index, pending = open_index_or_task(
+        index_dir, repo, cache, tasks, allow_foreign_index=allow_foreign_index
+    )
     if pending is not None:
         return pending
     return dispatch(index, name, args, cache=cache, tasks=tasks)
 
 
-def _audit(audit, name: str, args: dict[str, Any], elapsed, text=None, error=None) -> None:
+def _audit(
+    audit: Any,
+    name: str,
+    args: dict[str, Any],
+    elapsed: Any,
+    text: Any = None,
+    error: Any = None,
+) -> None:
     """Write one audit record, never letting the logger break the tool call."""
     if audit is None:
         return
@@ -232,7 +254,10 @@ def _audit(audit, name: str, args: dict[str, Any], elapsed, text=None, error=Non
             result_tokens=len(text) // 4 if isinstance(text, str) else 0,
             error=f"{type(error).__name__}: {error}" if error is not None else None,
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience boundary: audit sink failure must not abort tool execution
+        from ..events import reraise_if_debug
+
+        reraise_if_debug()
         # An unwritable sink must not turn a working tool call into a failure;
         # AuditLogger.record already sanitizes and degrades internally, so
         # reaching here means the sink itself is gone.
@@ -243,8 +268,10 @@ def serve(
     out: str | Path,
     repo: str | Path | None = None,
     cache: ResultCache | None = None,
-    tasks=None,
-    audit=None,
+    tasks: Any = None,
+    audit: Any = None,
+    *,
+    allow_foreign_index: bool = False,
 ) -> None:
     """Run stdio MCP server over JSON-RPC.
 
@@ -254,30 +281,43 @@ def serve(
         cache: Optional result cache.
         tasks: Optional background build registry.
         audit: Optional `AuditLogger`; one record per tool call when given.
+        allow_foreign_index: Whether to permit opening an index built elsewhere.
     """
     mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
-        open_index(index_dir)
+        try:
+            open_index(index_dir, allow_foreign_index=allow_foreign_index)
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}") from None
 
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent
 
-    async def _list_tools_handler(*args, **kwargs):
+    async def _list_tools_handler(*args: Any, **kwargs: Any) -> list[Any]:
         return get_tools(mcp.types, auto_build=(repo is not None))
 
-    async def _call_tool_handler(ctx, params):
+    async def _call_tool_handler(ctx: Any, params: Any) -> str:
         name = params.name
         arguments = params.arguments
-        return run_tool(index_dir, repo, name, arguments, cache=cache, tasks=tasks, audit=audit)
+        return run_tool(
+            index_dir,
+            repo,
+            name,
+            arguments,
+            cache=cache,
+            tasks=tasks,
+            audit=audit,
+            allow_foreign_index=allow_foreign_index,
+        )
 
     server_cls: Any = Server
 
-    async def _list_tools_2x(ctx, params):
+    async def _list_tools_2x(ctx: Any, params: Any) -> Any:
         return mcp.types.ListToolsResult(tools=await _list_tools_handler())
 
-    async def _call_tool_2x(ctx, params):
+    async def _call_tool_2x(ctx: Any, params: Any) -> Any:
         text = await _call_tool_handler(ctx, params)
         return mcp.types.CallToolResult(
             content=[TextContent(type="text", text=text)],
@@ -294,7 +334,7 @@ def serve(
     except TypeError:
         mcp_server = server_cls(server.name, version=server.version)
 
-    async def _run():
+    async def _run() -> None:
         async with stdio_server() as (read_stream, write_stream):
             await mcp_server.run(
                 read_stream, write_stream, mcp_server.create_initialization_options()
@@ -384,7 +424,7 @@ def _assert_inferable_repo_root(path: Path) -> None:
         )
 
 
-def main(argv=None) -> int:
+def main(argv: list[str] | None = None) -> int:
     """Main CLI entrypoint for repo2graph-mcp."""
     p = argparse.ArgumentParser(
         prog="repo2graph-mcp", description="Serve a repo2graph index over MCP on stdio"
@@ -402,6 +442,11 @@ def main(argv=None) -> int:
         "--no-auto-build",
         action="store_true",
         help="never build: exit unless the index already exists",
+    )
+    p.add_argument(
+        "--allow-foreign-index",
+        action="store_true",
+        help="permit opening an index not built on this machine (e.g. from an artifact or PR)",
     )
     p.add_argument(
         "--async-build",
@@ -469,7 +514,14 @@ def main(argv=None) -> int:
 
     try:
         serve_fn = getattr(sys.modules.get("repo2graph.mcp"), "serve", serve)
-        serve_fn(index_dir, build_from, cache=cache, tasks=tasks, audit=audit)
+        serve_fn(
+            index_dir,
+            build_from,
+            cache=cache,
+            tasks=tasks,
+            audit=audit,
+            allow_foreign_index=args.allow_foreign_index,
+        )
     finally:
         audit.close()
     return 0

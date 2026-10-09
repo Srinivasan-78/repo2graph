@@ -27,7 +27,7 @@ rules:
       # changes zizmor's output not at all, so keeping it would be dead config
       # that could silently absorb a future real finding if lines shift onto it.
       - publish.yml:85     # prepare-release: `git push origin refs/tags/$tag`
-      - publish.yml:435    # release: `git push -f origin refs/tags/$major`
+      - publish.yml:508    # release: `git push -f origin refs/tags/$major`
 
   dangerous-triggers:
     ignore:
@@ -54,8 +54,8 @@ rules:
       # jobs exist to smoke-test the action at the exact commit checked out,
       # not at a separate pinned ref that could drift from what the PR
       # actually changed.
-      - ci.yml:317         # action: smoke-tests the composite action itself
-      - index-repo.yml:59  # index: dispatch-driven build against a target repo
+      - ci.yml:366         # action: smoke-tests the composite action itself
+      - index-repo.yml:67  # index: dispatch-driven build against a target repo
       - self-index.yml:34  # index: keeps this repo's own graph fresh
 
   adhoc-packages:
