@@ -101,7 +101,8 @@ def test_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
 
 
 def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
-    """Verify JSON form gains exactly tokens_used and tokens_budget without changing other fields."""
+    """Verify JSON form only gains known additive keys without changing other fields:
+    the two token keys, then the #282/#290 budget-reporting fields."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
     if REGEN:
@@ -109,7 +110,15 @@ def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
         pytest.skip("regenerating goldens")
     baseline = golden_json("rag_json.json")
     added = set(payload) - set(baseline)
-    assert added == {"tokens_used", "tokens_budget"}, added
+    assert added == {
+        "tokens_used",
+        "tokens_budget",
+        "source_text_chars",
+        "rendered_context_chars",
+        "budget_exhausted",
+        "omitted_chunk_count",
+        "token_count_method",
+    }, added
     assert not set(baseline) - set(payload), set(baseline) - set(payload)
     for key in baseline:
         assert payload[key] == baseline[key], key

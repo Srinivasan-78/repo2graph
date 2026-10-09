@@ -1510,7 +1510,20 @@ def main(argv=None):
     q.add_argument("-o", "--out", default=".r2g")
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
-    q.add_argument("--budget", type=_nonneg, default=24000)
+    q.add_argument(
+        "--budget",
+        type=_nonneg,
+        default=24000,
+        help="characters of chunk text to retrieve (0 = unlimited). Caps source "
+        "text only, not rendered output",
+    )
+    q.add_argument(
+        "--retrieve-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
+    )
     q.add_argument(
         "--min-conf",
         type=_unit_float,
@@ -1571,13 +1584,27 @@ def main(argv=None):
         "--budget",
         type=_nonneg,
         default=24000,
-        help="character budget for the whole pack, map and headers included",
+        help="character budget for the whole pack, map and headers included (0 = unlimited)",
+    )
+    r.add_argument(
+        "--context-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
     )
     r.add_argument(
         "--budget-tokens",
         type=_nonneg,
         default=None,
-        help="token budget for the whole pack; replaces --budget when given",
+        help="estimated token budget for the whole pack; replaces --budget when given",
+    )
+    r.add_argument(
+        "--context-budget-tokens",
+        dest="budget_tokens",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget-tokens that names its stage and unit",
     )
     r.add_argument(
         "--min-conf",

@@ -178,6 +178,7 @@ functions around each answer come along too.
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
+| `--retrieve-budget-chars` | — | Alias of `--budget` whose name says what it caps: retrieved chunk text, in characters. |
 | `--min-conf`, `--min-confidence` | off | Drop `CALLS` arrows below this confidence. |
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
@@ -236,6 +237,8 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
+| `--context-budget-chars` | — | Alias of `--budget`: rendered context, in characters. |
+| `--context-budget-tokens` | — | Alias of `--budget-tokens`: rendered context, in estimated tokens. |
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
@@ -346,6 +349,48 @@ This surprises people, so it is worth saying plainly. Both commands take
 So the same number gives you less code from `rag` than from `query`. That is on
 purpose: `query`'s accounting is what it has always done and programs depend on
 it, while `rag` has to promise an LLM that the thing it is handed fits.
+
+The longer names say which stage and which unit each one caps:
+`query --retrieve-budget-chars`, `rag --context-budget-chars` and
+`rag --context-budget-tokens`. The short names keep working.
+
+```
+retrieve ──► expand ──► pack ──────────────► clamp (MCP only)
+   │                     │                       │
+   query --budget        rag --budget /          12k-token ceiling,
+   (chunk text, chars)   --budget-tokens         re-measured after
+                         (rendered markdown)     rendering
+```
+
+`rag --format json` and `Index.pack_context()` report both sides so nothing has to
+be inferred from flag names:
+
+| Field | Meaning |
+|---|---|
+| `source_text_chars` | Characters of chunk text selected. |
+| `rendered_context_chars` | Characters actually rendered (`len(markdown)`); larger, because headers and the map count. |
+| `tokens_used` | Tokens of the rendered markdown, by `token_count_method`. |
+| `token_count_method` | `heuristic` (4 characters per token) unless you passed your own `count_tokens`. An estimate: dense code and CJK run higher. |
+| `budget_exhausted` | Something was cut to fit. |
+| `omitted_chunk_count` | Candidate chunks left out entirely. |
+
+## Conventions
+
+Every command follows these, so a flag you have not used yet behaves the way the
+others do:
+
+- **`0` means unlimited** for every numeric ceiling (`--max-files`, `--max-nodes`,
+  `--max-edges`, `--max-bytes`, `--max-chunks`, `--max-memory-mb`,
+  `--max-build-seconds`, the budgets). Three flags give `0` a different job, and
+  their help says so: `--jobs 0` is one worker per CPU, `github --depth 0` is full
+  history, and `--viz-nodes 0` draws an empty map (`--viz-nodes all` is the
+  unlimited spelling).
+- **Units are part of the meaning.** Budgets are characters unless the flag says
+  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`
+  and `--max-build-seconds` are seconds. Numbers must be finite and `>= 0`.
+- **Lists are repeatable flags** (`--secret-keyword a --secret-keyword b`), except
+  `--formats`, which takes one comma-separated value.
+- **A renamed flag keeps its old name** as an alias, so scripts do not break.
 
 ## How retrieval works
 
