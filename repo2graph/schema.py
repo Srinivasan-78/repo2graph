@@ -158,10 +158,24 @@ class NeighbourEdge(_NeighbourEdgeRequired, total=False):
     confidence: float
 
 
-class ChunkRecord(TypedDict):
+class ChunkSplit(TypedDict):
+    """Where a part sits when one symbol was too large for one chunk."""
+
+    part: int  # 1-based
+    of: int
+    by: str  # "size": cut at the character ceiling, preferring a blank line
+
+
+class _ChunkOptional(TypedDict, total=False):
+    #: Present only on the parts of a split symbol; absent on a whole one.
+    split: ChunkSplit
+
+
+class ChunkRecord(_ChunkOptional):
     """One line of `chunks.jsonl` — exactly the field list `manifest.json`
     publishes as `chunk_fields` (`export.write_manifest`), which is the
-    authoritative list this TypedDict mirrors.
+    authoritative list this TypedDict mirrors. `split` is the one optional
+    field, published as `chunk_optional_fields`.
     """
 
     id: str
