@@ -391,6 +391,7 @@ _SKIP_LABELS: tuple[tuple[str, str], ...] = (
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case collisions"),
     ("skipped_unreadable", "unreadable/inaccessible files"),
+    ("skipped_undecodable_path", "non-UTF-8 filenames"),
 )
 
 

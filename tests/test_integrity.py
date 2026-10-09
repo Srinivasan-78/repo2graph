@@ -766,3 +766,61 @@ def test_untrusted_checkout_fsmonitor_does_not_run_during_build(tmp_path):
     _count_gitignored(repo)
     explain_path(repo, next(p for p in repo.rglob("*.py")))
     assert not marker.exists(), "the checkout's core.fsmonitor ran"
+
+
+def test_unwritable_lock_dir_fails_fast_with_the_real_cause(tmp_path, monkeypatch):
+    """#451 D9: a read-only mount used to wait the full timeout and then blame
+    a lock holder that did not exist."""
+    import builtins
+    import errno
+    import time
+
+    from repo2graph.lock import BuildLock, LockTimeoutError
+
+    real_open = builtins.open
+
+    def ro_open(path, *a, **kw):
+        if str(path).endswith(".r2glock"):
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", ro_open)
+    t0 = time.monotonic()
+    with pytest.raises(LockTimeoutError, match="Read-only file system"):
+        BuildLock(tmp_path / "out", timeout=30).acquire()
+    assert time.monotonic() - t0 < 5
+
+
+def test_leftover_staging_and_backup_dirs_are_not_indexed(tmp_path):
+    """#451 D7: a crash mid-swap leaves `.<out>.staging.*`/`.<out>.backup.*`
+    holding a whole index; discovery must never treat it as source."""
+    from repo2graph.graph import build
+
+    (tmp_path / "app.py").write_text("def f():\n    return 1\n", encoding="utf8")
+    for leftover in (".r2g.staging.123.deadbeef", ".r2g.backup.456", "r2g.backup.7x"):
+        d = tmp_path / leftover
+        d.mkdir()
+        (d / "leak.py").write_text("def leaked():\n    pass\n", encoding="utf8")
+    g = build(tmp_path, jobs=1)
+    paths = {n.get("path") for n in g.nodes.values()}
+    assert "app.py" in paths
+    assert not any(p and "leak.py" in p and ".r2g." in p for p in paths), paths
+    assert "r2g.backup.7x/leak.py" in paths  # a normal directory is still source
+
+
+def test_index_files_and_swap_are_fsynced(tmp_path, monkeypatch):
+    """#451 D5: an unflushed write survives a crash as an empty file that every
+    "index exists" check accepts. Files and the swapped directories are synced."""
+    from repo2graph import export
+    from repo2graph.graph import build
+
+    synced = []
+    real = os.fsync
+    monkeypatch.setattr(export.os, "fsync", lambda fd: synced.append(fd) or real(fd))
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("def f():\n    pass\n", encoding="utf8")
+    g = build(tmp_path / "src", jobs=1)
+    from repo2graph.chunks import iter_chunks
+
+    export.dump_all(g, iter_chunks(g), tmp_path / "out", {"jsonl"})
+    assert len(synced) >= 5
