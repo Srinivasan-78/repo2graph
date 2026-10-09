@@ -65,6 +65,7 @@ def _build_index(repo: Path, out: Path) -> None:
     from ..export import _LOCAL_GITIGNORE, atomic_write
     from ..integrity import validate_outdir
     from ..lock import BuildLock
+    from ..config import build_options, load as load_repo_config
     from ..parse import BuildConfig
 
     # `build -o` is hardened by `validate_outdir`; this auto-build reached the
@@ -74,17 +75,19 @@ def _build_index(repo: Path, out: Path) -> None:
     # Raised as ValueError rather than SystemExit: this runs inside a live stdio
     # server, which must answer the tool call rather than exit the process.
     validate_outdir(out, repo_root=repo)
+    # The repo's own config file (#391), as `repo2graph build` there would read
+    # it. A ConfigError is a ValueError, answered like the one above. The
+    # server's --secret-keyword/--secret-dir are its CLI flags: when given they
+    # replace the file's lists, as on the command line.
+    config_kw, build_kw = build_options(load_repo_config(repo).values)
+    if SECRET_RULES["keywords"]:
+        config_kw["extra_secret_keywords"] = list(SECRET_RULES["keywords"])
+    if SECRET_RULES["dirs"]:
+        config_kw["extra_secret_dirs"] = list(SECRET_RULES["dirs"])
     # The same lock `repo2graph build` takes: without it two servers (or a
     # server and a CLI build) pointed at one index interleave their swaps.
     with BuildLock(out):
-        graph = build(
-            repo,
-            config=BuildConfig(
-                output_dir=str(out),
-                extra_secret_keywords=list(SECRET_RULES["keywords"]),
-                extra_secret_dirs=list(SECRET_RULES["dirs"]),
-            ),
-        )
+        graph = build(repo, config=BuildConfig(output_dir=str(out), **config_kw), **build_kw)
         dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
     # Nobody asked for this index, so nobody decided to commit it: chunks.jsonl
     # carries full source text, and `git add -A` would publish it. An explicit
