@@ -1031,6 +1031,7 @@ def write_manifest(
             "base_edges",
             "text",
         ],
+        "chunk_optional_fields": ["split"],
         "counts": dict(g.stats),
         "quality_metrics": {
             "files_discovered": g.stats.get("files", 0),

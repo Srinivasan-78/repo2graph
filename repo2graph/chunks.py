@@ -142,6 +142,17 @@ def _split_spans(text: str, max_chars: int = MAX_CHARS) -> list[tuple[str, int, 
             buf.append(lines[i])
             size += len(lines[i])
             i += 1
+        if i < len(lines):
+            # Prefer to end the part at a logical block boundary -- the last
+            # blank line in the final quarter of the window -- over cutting
+            # wherever the ceiling fell, so a part does not end one line into
+            # the next statement group (#287).
+            floor = start + max(1, (i - start) * 3 // 4)
+            for j in range(i - 1, floor - 1, -1):
+                if not lines[j].strip():
+                    i = j + 1
+                    buf = lines[start:i]
+                    break
         out.append(("".join(buf), owner[start], owner[i - 1]))
         if i < len(lines):
             i = max(start + 1, i - OVERLAP_LINES)
@@ -350,6 +361,13 @@ def iter_chunks(
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
                 "text": "\n".join(part_header) + "\n" + part,
+                # Only on a symbol too large for one chunk, so `explain` and a
+                # reader can tell part 2 of 3 from a whole definition (#287).
+                **(
+                    {"split": {"part": i + 1, "of": len(body_spans), "by": "size"}}
+                    if len(body_spans) > 1
+                    else {}
+                ),
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:
