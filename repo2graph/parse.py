@@ -9,13 +9,16 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from tree_sitter import Node, Parser
 
 from .events import diagnostic
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
+
+if TYPE_CHECKING:
+    from .config import RepoConfig
 
 
 # Import-statement patterns shared with graph._IMPORT_RE, which composes its
@@ -2171,8 +2174,13 @@ def explain_path(
     config: BuildConfig | None = None,
     include_globs=None,
     exclude_globs=None,
+    repo_config: "RepoConfig | None" = None,
 ) -> dict:
     """Evaluate a path against the 10 inclusion/exclusion precedence rules.
+
+    `repo_config` holds the settings a config file supplied (#391); a decision
+    one of them made names that file instead of the CLI flag, and carries it
+    as `source`.
 
     Returns a dict with:
         path: target path
@@ -2184,6 +2192,7 @@ def explain_path(
     """
     if config is None:
         config = BuildConfig()
+    file_values = repo_config.values if repo_config is not None else {}
     root_path = Path(root).resolve()
     target_path = Path(target)
     if not target_path.is_absolute():
@@ -2228,6 +2237,19 @@ def explain_path(
         skip_dirs.discard("vendor")
     skip_part = next((part for part in rel.parts if part in skip_dirs), None)
     if skip_part is not None:
+        if skip_part not in DEFAULT_SKIP_DIRS and skip_part in file_values.get(
+            "extra_exclude_dirs", ()
+        ):
+            source = cast("RepoConfig", repo_config).label("extra_exclude_dirs")
+            return {
+                "path": str(target_path),
+                "relative_path": rel_str,
+                "included": False,
+                "rule": "skip_dir",
+                "reason": f"Path component '{skip_part}' is excluded by {source}",
+                "source": source,
+                "precedence_step": 2,
+            }
         cat = "dot-directory" if skip_part.startswith(".") else "vendor/build directory"
         return {
             "path": str(target_path),
@@ -2334,7 +2356,7 @@ def explain_path(
 
     # Step 8: Include globs
     if include_globs and not matches_any(rel_str, include_globs):
-        return {
+        res = {
             "path": str(target_path),
             "relative_path": rel_str,
             "included": False,
@@ -2342,6 +2364,11 @@ def explain_path(
             "reason": f"Path does not match any --include glob: {include_globs}",
             "precedence_step": 8,
         }
+        if "include" in file_values:
+            source = cast("RepoConfig", repo_config).label("include")
+            res["reason"] = f"Path does not match any glob in {source}: {include_globs}"
+            res["source"] = source
+        return res
 
     # Step 9: Exclude globs
     if exclude_globs and matches_any(rel_str, exclude_globs):
@@ -2350,7 +2377,7 @@ def explain_path(
         # `--exclude-group` expands to as many as 60 globs -- echoing all of
         # them buries the answer in the evidence.
         matched = next((g for g in exclude_globs if matches_any(rel_str, [g])), None)
-        return {
+        res = {
             "path": str(target_path),
             "relative_path": rel_str,
             "included": False,
@@ -2359,6 +2386,11 @@ def explain_path(
             "matched_glob": matched,
             "precedence_step": 9,
         }
+        if matched in file_values.get("exclude", ()):
+            source = cast("RepoConfig", repo_config).label("exclude")
+            res["reason"] = f"Path matches exclude glob {matched!r} from {source}"
+            res["source"] = source
+        return res
 
     # Step 10: Binary check
     if is_binary(target_path):

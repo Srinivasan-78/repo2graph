@@ -160,6 +160,47 @@ Cache entries written by a different cache format are ignored automatically, as
 is a cache that is missing, unreadable or corrupt; each of those degrades to a
 full build rather than to a wrong one.
 
+### Config file
+
+Options a project always builds with can live in the repository instead of on
+every command line, in CI and for the MCP server alike:
+
+```toml
+# pyproject.toml
+[tool.repo2graph]
+git-history = 500
+viz-nodes = 600
+exclude = ["vendor/**", "**/generated/**"]
+secret-keywords = ["corp-token", "internal-key"]
+secret-dirs = ["deploy/secrets"]
+```
+
+The same keys can go at the top level of a `.repo2graph.toml` in the repository
+root. Precedence, most specific first:
+
+1. a flag on the command line;
+2. `[tool.repo2graph]` in the repo's `pyproject.toml`;
+3. `.repo2graph.toml` in the repo root;
+4. the built-in defaults above.
+
+Keys are spelled like the flags they stand in for: `include`, `exclude`,
+`exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
+`git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
+`"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
+choices; `chunk-large-files` and `include-vendor` `true`/`false`. A list given
+on the command line replaces the file's list rather than adding to it, and a
+flag typed at its default value (`--git-history 0`) still beats the file. An
+unknown key or a mistyped value stops the build with an error naming the file
+and the key.
+
+`build`, the auto-build `rag <source-dir>` runs, and the MCP server's auto-build
+all read it; `explain-path` does too, and names the file when one of its rules
+decided a path (`Path matches exclude glob 'gen/**' from pyproject.toml
+[tool.repo2graph] exclude`). `github` does not read the cloned repository's
+file. Reading TOML needs Python 3.11+, or the `tomli` package on 3.10; without
+either, a config file is skipped with a one-line note on stderr. With no config
+file, nothing changes.
+
 ## `github` — map a project you do not have locally
 
 ```bash
@@ -597,8 +638,10 @@ holding a repo2graph `agent/manifest.json` (an earlier build's index), and
 `explain-path` reports those as `output_dir` / `index_dir` at step 2 — so
 `explain-path .r2g/agent/nodes.jsonl` says EXCLUDED, as the build behaves. It
 never opens the index. It also takes no size flags, so it cannot explain a build that used them: the size check
-below is always evaluated against the 1.5 MB `--max-file-mb` default with
-`--chunk-large-files` off, whatever the build was actually run with.
+below is evaluated against the 1.5 MB `--max-file-mb` default with
+`--chunk-large-files` off, whatever the build was actually run with, unless the
+repo's [config file](#config-file) sets them. A decision made by a config-file
+setting names that file in `reason` and in an extra `source` field.
 
 ```bash
 $ repo2graph explain-path repo2graph/cli.py

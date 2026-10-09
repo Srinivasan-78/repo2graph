@@ -110,12 +110,60 @@ def _effective_exclude(args) -> list[str] | None:
     return explicit + globs_for(groups)
 
 
+def _explicit_dests(root, sub, argv) -> set[str]:
+    """The dests the user actually typed on `sub`'s command line.
+
+    A config file fills in flags that were not given, and a parsed namespace
+    cannot tell `--git-history 0` typed on purpose from the default 0. Parse
+    once more with every default suppressed: only typed flags land in it.
+    """
+    saved = [(a, a.default) for a in sub._actions]
+    try:
+        for a, _ in saved:
+            a.default = argparse.SUPPRESS
+        ns, _ = root.parse_known_args(argv)
+    finally:
+        for a, d in saved:
+            a.default = d
+    return set(vars(ns))
+
+
+def _with_repo_config(args, repo):
+    """`args` with the repo's config file filling every flag not typed (#391).
+
+    Returns `(merged, applied)`: a copy of `args`, and a `RepoConfig` holding
+    only the settings that took effect, for attribution. With no config file
+    the original `args` comes back untouched.
+    """
+    from .config import ConfigError, RepoConfig, load
+
+    try:
+        cfg = load(repo)
+    except ConfigError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    applied = RepoConfig()
+    if not cfg:
+        return args, applied
+    # Set by main(). A namespace built by hand has no record of what was typed,
+    # so every attribute it carries counts as given.
+    explicit = getattr(args, "explicit_flags", None)
+    merged = argparse.Namespace(**vars(args))
+    for dest, value in cfg.values.items():
+        given = dest in explicit if explicit is not None else hasattr(args, dest)
+        if not given:
+            setattr(merged, dest, value)
+            applied.values[dest] = value
+            applied.sources[dest] = cfg.sources[dest]
+    return merged, applied
+
+
 def cmd_build(args):
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
+    args, _ = _with_repo_config(args, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # Resolved before validate_outdir and the build lock: `--exclude-group
@@ -615,16 +663,21 @@ def _rag_index_dir(args) -> Path:
     if artifact_path(tpath, "manifest.json").exists():
         return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
+        from .config import build_options
         from .parse import BuildConfig
 
-        cfg = BuildConfig(
-            include_secrets=getattr(args, "include_secrets", False),
-            secret_policy=getattr(args, "secret_policy", "redact-match"),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
-            output_dir=str(out),
+        # rag's own secret flags win over the repo's config file, which fills
+        # in the rest of what `repo2graph build` there would have used.
+        bargs, applied = _with_repo_config(args, tpath)
+        config_kw, build_kw = build_options(applied.values)
+        config_kw.update(
+            include_secrets=getattr(bargs, "include_secrets", False),
+            secret_policy=getattr(bargs, "secret_policy", "redact-match"),
+            extra_secret_keywords=getattr(bargs, "extra_secret_keywords", None) or [],
+            extra_secret_dirs=getattr(bargs, "extra_secret_dirs", None) or [],
         )
-        g = build(tpath, config=cfg)
+        cfg = BuildConfig(output_dir=str(out), **config_kw)
+        g = build(tpath, config=cfg, **build_kw)
         # `build` validates its own `-o` (cli.py:130); this auto-build path did
         # not, so an implicit build could stage an index over any directory the caller
         # named -- and `dump_all`'s directory swap renames the target aside and
@@ -917,6 +970,7 @@ def cmd_explain_path(args):
     if not repo_path.is_dir():
         raise SystemExit(f"error: repository directory does not exist: {repo_path}")
 
+    args, applied = _with_repo_config(args, repo_path)
     config = BuildConfig(
         include_vendor=getattr(args, "include_vendor", False),
         include_secrets=getattr(args, "include_secrets", False),
@@ -925,12 +979,15 @@ def cmd_explain_path(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
     )
+    if "max_file_mb" in applied.values:
+        config.max_file_bytes = int(applied.values["max_file_mb"] * 1_000_000)
     res = explain_path(
         repo_path,
         args.path,
         config=config,
         include_globs=args.include or None,
         exclude_globs=_effective_exclude(args),
+        repo_config=applied,
     )
     if res["rule"] not in ("outside_root", "not_found"):
         index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
@@ -1966,6 +2023,11 @@ def main(argv=None):
 
     try:
         args = p.parse_args(argv)
+        # The commands that read the repo's config file need to know which
+        # flags were typed, so a file value never overrides one (#391).
+        config_aware = {"build": b, "rag": r, "explain-path": ep}
+        if getattr(args, "cmd", None) in config_aware:
+            args.explicit_flags = _explicit_dests(p, config_aware[args.cmd], argv)
         if getattr(args, "debug", False):
             os.environ["REPO2GRAPH_DEBUG"] = "1"
         if not hasattr(args, "func"):

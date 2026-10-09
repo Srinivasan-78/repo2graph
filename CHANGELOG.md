@@ -25,6 +25,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   following `TESTS`, which default retrieval does not. `is_test_path` moved to
   `repo2graph.testpaths` (still importable from `repo2graph.query`) and now also recognises
   `*Test.java`, `*Tests.java`, `*Test.kt`, `*_spec.rb` and `*_test.rb`.
+- **Config file (#391):** build options can live in `[tool.repo2graph]` in the
+  repo's `pyproject.toml` or in `.repo2graph.toml`, read by `build`, the
+  `rag <source-dir>` auto-build and the MCP auto-build. A command-line flag
+  still wins, and `explain-path` names the file when one of its settings
+  decided a path. No config file, no change.
 - **Configurable resource limits and limit policies (#299):**
   Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
   alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.
