@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -32,7 +33,11 @@ from repo2graph.mcp.schemas import (  # noqa: E402
 )
 from repo2graph.query import count_tokens  # noqa: E402
 
-TIMEOUT = 120
+# Per session, like test_mcp.SERVE_TIMEOUT: a cold Windows runner under xdist is
+# many times slower than a local run, but the bound stays finite, so a real hang
+# still fails.
+TIMEOUT = 240
+CALL_TIMEOUT = 200
 
 
 def _params(index_dir, *extra: str) -> StdioServerParameters:
@@ -155,17 +160,24 @@ def test_concurrent_calls_on_one_session_all_complete(mini_index):
 
     async def body(session):
         results: dict[int, object] = {}
+        took: dict[int, float] = {}
+        start = time.monotonic()
 
         async def one(i):
-            results[i] = await session.call_tool("repo_search", {"query": f"{MINI_QUERY} {i}"})
+            # Bounded per call, so a stall names the request that never got
+            # an answer instead of surfacing as a bare session timeout.
+            with anyio.move_on_after(CALL_TIMEOUT):
+                results[i] = await session.call_tool("repo_search", {"query": f"{MINI_QUERY} {i}"})
+                took[i] = round(time.monotonic() - start, 1)
 
         async with anyio.create_task_group() as tg:
             for i in range(8):
                 tg.start_soon(one, i)
-        return results
+        return results, took
 
-    results = _run(mini_index, body)
-    assert len(results) == 8
+    results, took = _run(mini_index, body)
+    missing = sorted(set(range(8)) - set(results))
+    assert not missing, f"calls {missing} got no response within {CALL_TIMEOUT}s; answered: {took}"
     assert all(not r.is_error for r in results.values())
 
 
