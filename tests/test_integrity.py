@@ -904,3 +904,26 @@ def test_swap_rename_does_not_retry_off_windows(tmp_path, monkeypatch):
     with pytest.raises(PermissionError):
         export._rename(tmp_path / "a", tmp_path / "b")
     assert len(calls) == 1
+
+
+def test_git_discovery_failure_in_a_checkout_is_announced(tmp_path, monkeypatch, capsys):
+    """#453 S13: the walk fallback ignores .gitignore; when git fails inside a
+    real checkout the file set silently changed."""
+    from repo2graph import parse as parse_mod
+    from repo2graph.graph import build
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "a.py").write_text("def f():\n    pass\n", encoding="utf8")
+    monkeypatch.setattr(parse_mod, "_git_files", lambda root: None)
+    g = build(tmp_path, jobs=1)
+    assert g.stats["discovery"] == "walk"
+    assert g.stats["discovery_git_failed"] == 1
+    assert "does not honour .gitignore" in capsys.readouterr().err
+
+
+def test_plain_directory_walk_is_silent(tmp_path, capsys):
+    from repo2graph.graph import build
+
+    (tmp_path / "a.py").write_text("def f():\n    pass\n", encoding="utf8")
+    build(tmp_path, jobs=1)
+    assert "gitignore" not in capsys.readouterr().err

@@ -594,6 +594,19 @@ def discover(
         files = _walk_files(root, skip_dirs=walk_skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
+        # Not a git checkout is ordinary. A checkout where git itself failed
+        # (git missing, dubious ownership, a corrupt index) is not: the walk
+        # ignores .gitignore, so untracked and ignored files -- build output,
+        # local secrets -- are indexed with nothing saying the file set changed.
+        if (root / ".git").exists():
+            if stats is not None:
+                stats["discovery_git_failed"] = 1
+            print(
+                f"warning: {root} is a git checkout but `git ls-files` failed; "
+                "falling back to a directory walk that does not honour .gitignore, "
+                "so untracked and ignored files will be indexed",
+                file=sys.stderr,
+            )
 
     # Discovery order *is* artifact order: node ids are emitted in the order
     # files are parsed, and edges and chunks follow the nodes. `git ls-files`
@@ -1454,6 +1467,88 @@ _CPP_INCLUDE_RE = re.compile(
 )
 
 
+CPP_TIMEOUT = 10
+_CPP_READ_BLOCK = 1 << 16
+
+
+def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[int, bytes | None]:
+    """Preprocess `source` on stdin; return (returncode, output or None if over `limit`).
+
+    Streamed rather than `run(capture_output=True)`: macros expand
+    exponentially (`#define A B B`, `#define B C C`, ...), so a few hundred
+    bytes of hostile source can make cpp print gigabytes, all of which
+    `capture_output` would hold in this process before any size check ran.
+    Here the read stops one byte past `limit` and cpp is killed.
+
+    Never pass text=True to a subprocess reading cpp output on Windows -- it
+    decodes with the cp1252 locale and raises UnicodeDecodeError on UTF-8
+    source. tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
+    """
+    import threading
+
+    proc = subprocess.Popen(
+        ["cpp", "-w", "-P", "-undef", "-"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    stdin, stdout = proc.stdin, proc.stdout
+
+    def _feed() -> None:
+        try:
+            stdin.write(source)
+        except OSError:
+            pass  # cpp exited early or was killed: nothing left to feed
+        finally:
+            try:
+                stdin.close()
+            except OSError:
+                pass
+
+    got: list[bytes] = []
+
+    def _drain() -> None:
+        buf = bytearray()
+        try:
+            while len(buf) <= limit:
+                block = stdout.read(min(_CPP_READ_BLOCK, limit + 1 - len(buf)))
+                if not block:
+                    break
+                buf.extend(block)
+        except (OSError, ValueError):
+            pass
+        got.append(bytes(buf))
+
+    writer = threading.Thread(target=_feed, daemon=True)
+    reader = threading.Thread(target=_drain, daemon=True)
+    writer.start()
+    reader.start()
+    reader.join(timeout)
+    timed_out = reader.is_alive()
+    over = bool(got) and len(got[0]) > limit
+    if timed_out or over:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    reader.join(1)
+    writer.join(1)
+    try:
+        stdout.close()
+    except OSError:
+        pass
+    try:
+        rc = proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        rc = -1
+    if timed_out:
+        raise subprocess.TimeoutExpired(proc.args, timeout)
+    if over:
+        return 0, None
+    return rc, got[0] if got else b""
+
+
 def _strip_cpp_includes(source: bytes) -> bytes:
     """`source` with every file-opening directive blanked, for the cpp retry.
 
@@ -1804,36 +1899,23 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             _cpp_available()
         ):
             try:
-                out = subprocess.run(
-                    ["cpp", "-w", "-P", "-undef", "-"],
-                    input=_strip_cpp_includes(source),
-                    capture_output=True,
-                    timeout=10,
-                )
-                if out.returncode == 0:
-                    # Never pass text=True to a subprocess reading git/cpp output on
-                    # Windows -- it decodes with the cp1252 locale and raises
-                    # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                    # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
-                    cpp_bytes = out.stdout
-                    if len(cpp_bytes) <= 2 * len(source):
-                        cpp_tree = parser.parse(cpp_bytes)
-                        cpp_errors = _count_errors(cpp_tree.root_node)
-                        if cpp_errors < errors:
-                            # Do not adopt cpp_bytes or cpp_tree.
-                            # cpp is invoked with -P, which strips
-                            # `# <linenum> "<file>"` markers, so
-                            # preprocessed row numbers cannot be mapped
-                            # back to the on-disk file. chunks.py always
-                            # slices the original, and storing cpp rows
-                            # desyncs every citation. used_cpp still
-                            # records that a macro-aware retry produced
-                            # fewer ERROR nodes.
-                            used_cpp = True
-                    else:
-                        import logging
+                rc, cpp_bytes = _run_cpp(_strip_cpp_includes(source), 2 * len(source))
+                if rc == 0 and cpp_bytes is None:
+                    import logging
 
-                        logging.warning(f"cpp output for {filepath} is too large, skipping")
+                    logging.warning(f"cpp output for {filepath} is too large, skipping")
+                elif rc == 0 and cpp_bytes is not None:
+                    cpp_tree = parser.parse(cpp_bytes)
+                    cpp_errors = _count_errors(cpp_tree.root_node)
+                    if cpp_errors < errors:
+                        # Do not adopt cpp_bytes or cpp_tree. cpp is invoked
+                        # with -P, which strips `# <linenum> "<file>"` markers,
+                        # so preprocessed row numbers cannot be mapped back to
+                        # the on-disk file. chunks.py always slices the
+                        # original, and storing cpp rows desyncs every
+                        # citation. used_cpp still records that a macro-aware
+                        # retry produced fewer ERROR nodes.
+                        used_cpp = True
             except (OSError, subprocess.SubprocessError):
                 pass
 

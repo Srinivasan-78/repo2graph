@@ -498,6 +498,21 @@ def main(argv: list[str] | None = None) -> int:
         help=f"seconds a cached result is served before it is "
         f"recomputed (default: {DEFAULT_TTL:g})",
     )
+    p.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        help="additional keyword marking a file/path as secret, as `repo2graph build` "
+        "takes it; applied to auto-builds and to every pack (repeatable)",
+    )
+    p.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        help="additional directory name to treat as secret (repeatable)",
+    )
     log = p.add_argument_group("audit logging")
     log.add_argument(
         "--audit-log",
@@ -521,6 +536,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
+    from .indexes import SECRET_RULES
+
+    SECRET_RULES["keywords"] = list(args.extra_secret_keywords)
+    SECRET_RULES["dirs"] = list(args.extra_secret_dirs)
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
     build_from = None if args.no_auto_build else repo
 

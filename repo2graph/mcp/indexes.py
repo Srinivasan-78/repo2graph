@@ -46,6 +46,11 @@ def _has_index(out_path: Path) -> bool:
     return out_path.exists() and artifact_path(out_path, "chunks.jsonl").is_file()
 
 
+#: An organisation's own secret rules (`repo2graph-mcp --secret-keyword/--secret-dir`).
+#: Process-wide, set once by `server.main` before the first tool call: one
+#: server serves one repository under one policy.
+SECRET_RULES: dict[str, list[str]] = {"keywords": [], "dirs": []}
+
 #: Written into an index the MCP server built on its own initiative.
 AUTO_BUILD_GITIGNORE = (
     "# written by repo2graph-mcp: an auto-built index holds full source text\n*\n"
@@ -72,7 +77,14 @@ def _build_index(repo: Path, out: Path) -> None:
     # The same lock `repo2graph build` takes: without it two servers (or a
     # server and a CLI build) pointed at one index interleave their swaps.
     with BuildLock(out):
-        graph = build(repo, config=BuildConfig(output_dir=str(out)))
+        graph = build(
+            repo,
+            config=BuildConfig(
+                output_dir=str(out),
+                extra_secret_keywords=list(SECRET_RULES["keywords"]),
+                extra_secret_dirs=list(SECRET_RULES["dirs"]),
+            ),
+        )
         dump_all(graph, iter_chunks(graph), out, AUTO_BUILD_FORMATS)
     # Nobody asked for this index, so nobody decided to commit it: chunks.jsonl
     # carries full source text, and `git add -A` would publish it. An explicit

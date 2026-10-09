@@ -2017,3 +2017,20 @@ def test_content_tools_carry_the_staleness_note_too(mini_repo, mini_index, tool,
     os.utime(gateway, (future, future))
     stale = run_tool(mini_index, mini_repo, tool, args)
     assert stale.startswith("_note: index may be stale")
+
+
+def test_auto_build_applies_the_servers_secret_rules(mini_repo, tmp_path, monkeypatch):
+    """#453 S10: an org's --secret-keyword/--secret-dir rules never reached the
+    MCP auto-build, so files they name were indexed anyway."""
+    from repo2graph.mcp import indexes
+
+    (mini_repo / "vaultcfg").mkdir()
+    (mini_repo / "vaultcfg" / "settings.py").write_text("X = 1\n", encoding="utf8")
+    (mini_repo / "acme_internal.py").write_text("Y = 2\n", encoding="utf8")
+    monkeypatch.setitem(indexes.SECRET_RULES, "keywords", ["acme_internal"])
+    monkeypatch.setitem(indexes.SECRET_RULES, "dirs", ["vaultcfg"])
+    out = tmp_path / "idx"
+    indexes._build_index(mini_repo, out)
+    nodes = (out / "agent" / "nodes.jsonl").read_text(encoding="utf8")
+    assert "acme_internal.py" not in nodes
+    assert "vaultcfg/settings.py" not in nodes

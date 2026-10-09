@@ -39,6 +39,7 @@ from .guardrails import (
     _int,
     _str,
 )
+from .indexes import SECRET_RULES
 from .nodes import _edge_note, _label, _staleness_note
 from .schemas import ToolError
 
@@ -89,6 +90,8 @@ def tool_repo_search(
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         budget_tokens=room,
         exclude_secrets=True,
+        extra_secret_keywords=SECRET_RULES["keywords"] or None,
+        extra_secret_dirs=SECRET_RULES["dirs"] or None,
         neighbours=nbr_mode,
         max_neighbours=max_nbrs,
     )
