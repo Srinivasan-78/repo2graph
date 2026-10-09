@@ -23,6 +23,29 @@ def _reset_cpp_probe_cache():
     parse_mod._cpp_available_cache = None
 
 
+_REAL_RUN_CPP = parse_mod._run_cpp
+
+
+@pytest.fixture(autouse=True)
+def _preprocess_via_subprocess_run(monkeypatch):
+    """The tests below script cpp by patching `subprocess.run`. `_run_cpp`
+    streams through Popen instead, so route it through `run` here, keeping
+    its contract (None when over the limit). `_run_cpp` itself is exercised
+    against a real cpp at the end of this file."""
+
+    def via_run(source, limit, timeout=parse_mod.CPP_TIMEOUT):
+        out = subprocess.run(
+            ["cpp", "-w", "-P", "-undef", "-"],
+            input=source,
+            capture_output=True,
+            timeout=timeout,
+        )
+        data = out.stdout
+        return out.returncode, (None if len(data) > limit else data)
+
+    monkeypatch.setattr(parse_mod, "_run_cpp", via_run)
+
+
 def test_cpp_parse_pass_1():
     # Simple #define handled fine by tree-sitter (0 errors)
     source = b"#define FOO 1\nint main() { return FOO; }"
@@ -333,3 +356,28 @@ def test_cpp_retry_never_names_the_file_or_follows_includes(mock_run):
     fed = pre.kwargs["input"]
     assert b"/dev/zero" not in fed and b"/etc/passwd" not in fed and b"<x>" not in fed
     assert b"#define MACRO" in fed
+
+
+def _require_cpp():
+    if shutil.which("cpp") is None:
+        pytest.skip("cpp preprocessor not available")
+
+
+def test_run_cpp_stops_a_macro_bomb_at_the_limit():
+    """#456 P4: 40 doubling macros expand to ~2^40 tokens. capture_output held
+    all of it in this process before the size check ran; the stream stops one
+    byte past the limit and kills cpp."""
+    _require_cpp()
+    bomb = (
+        b"#define A0 x\n"
+        + b"".join(b"#define A%d A%d A%d\n" % (i, i - 1, i - 1) for i in range(1, 40))
+        + b"A39\n"
+    )
+    rc, out = _REAL_RUN_CPP(bomb, 2 * len(bomb), timeout=30)
+    assert out is None
+
+
+def test_run_cpp_returns_small_output_whole():
+    _require_cpp()
+    rc, out = _REAL_RUN_CPP(b"#define M {\nint main() M }\n", 1000)
+    assert rc == 0 and out is not None and b"int main() {" in out

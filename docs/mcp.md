@@ -185,6 +185,8 @@ runtime argument — see [`server.json`](../server.json).
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
+| `--secret-keyword` | none | Extra keyword marking a file or path as secret, as `repo2graph build --secret-keyword` takes it. Applied to auto-builds and to every pack. Repeatable. |
+| `--secret-dir` | none | Extra directory name treated as secret. Repeatable. |
 
 **Audit logging**
 
