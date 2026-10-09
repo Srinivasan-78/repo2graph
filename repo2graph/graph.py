@@ -25,6 +25,10 @@ from .edgemeta import (
 )
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .parse import (
+    JAVA_IMPORT_RE,
+    PY_FROM_IMPORT_RE,
+    PY_IMPORT_RE,
+    RUBY_REQUIRE_RE,
     CONFIG_EXT,
     DOC_EXT,
     SUPER_RECEIVERS,
@@ -446,11 +450,13 @@ _IMPORT_RE = {
     # 2): a dots-only module ("from . import X") has no name of its own, so
     # import_targets() below appends each imported name to the dots instead of
     # discarding it (#160). The bare `import a, b` form is group 3, unchanged.
-    "python": re.compile(r"^(?:from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)|import\s+([\w\.,\s]+))"),
+    "python": re.compile(
+        rf"^(?:{PY_FROM_IMPORT_RE.pattern.lstrip('^')}|{PY_IMPORT_RE.pattern.lstrip('^')})"
+    ),
     "js": re.compile(r"""['"]([^'"]+)['"]"""),
     "go": re.compile(r"""['"]([^'"]+)['"]"""),
     "rust": re.compile(r"use\s+([\w:]+)"),
-    "java": re.compile(r"import\s+(?:static\s+)?([\w\.\*]+)"),
+    "java": JAVA_IMPORT_RE,
     "c": re.compile(r"""[<"]([^>"]+)[>"]"""),
     # C# `using System.Text;` / `using static System.Math;` / `using J = A.B.C;`
     "csharp": re.compile(r"using\s+(?:static\s+)?(?:[\w.]+\s*=\s*)?([\w.]+)"),
@@ -461,7 +467,7 @@ _IMPORT_RE = {
         r"import\s+(?:typealias|struct|class|enum|protocol|let|var|func\s+)?([\w.]+)"
     ),
     # Ruby `require "foo"` / `require_relative "bar"` / `load "baz.rb"`
-    "ruby": re.compile(r"""(?:require_relative|require|load)\s*\(?\s*['"]([^'"]+)['"]"""),
+    "ruby": RUBY_REQUIRE_RE,
     # Bash `source ./lib.sh` / `. ./lib.sh`
     "bash": re.compile(r"""(?:source|\.)\s+['"]?([^'"\s]+)['"]?"""),
 }
