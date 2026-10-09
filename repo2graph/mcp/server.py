@@ -343,10 +343,19 @@ def serve(
 
     async def _call_tool_2x(ctx: Any, params: Any) -> Any:
         text = await _call_tool_handler(ctx, params)
-        return mcp.types.CallToolResult(
-            content=[TextContent(type="text", text=text)],
-            isError=isinstance(text, ToolError),
-        )
+        content = [TextContent(type="text", text=text)]
+        is_error = isinstance(text, ToolError)
+        next_cursor = getattr(text, "next_cursor", None)
+        if next_cursor:
+            # The cursor is also the text's last line, so a client that drops
+            # `_meta` loses nothing; an SDK without `_meta` just goes without it.
+            try:
+                return mcp.types.CallToolResult(
+                    content=content, isError=is_error, _meta={"nextCursor": next_cursor}
+                )
+            except TypeError:
+                pass
+        return mcp.types.CallToolResult(content=content, isError=is_error)
 
     try:
         mcp_server = server_cls(

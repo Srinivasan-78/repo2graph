@@ -371,6 +371,11 @@ CHARS_PER_TOKEN = 4
 MAP_BUDGET_FRAC = 0.2  # at most this share of the budget goes to the map
 MAP_ENTRYPOINTS = 10  # entry points listed in the map prepend
 PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
+# Ranked candidates a paged pack_context draws seeds from. Every page orders the
+# same fixed window, so page boundaries cannot shift as the offset grows -- a
+# window that grew with the offset would let a late candidate outrank a demoted
+# test seed and move it between pages.
+PAGED_SEED_WINDOW = 600
 
 
 def read_jsonl(path: Path) -> list[Record]:
@@ -1184,6 +1189,7 @@ class Index:
         per_hop: int = 6,
         min_confidence: float = 1.0,
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
+        max_results: int | None = None,
     ) -> list[tuple[str, str, str, str]]:
         """Traverse graph outward from seed nodes.
 
@@ -1194,6 +1200,7 @@ class Index:
             per_hop: Max neighbors admitted per hop.
             min_confidence: Minimum confidence threshold for CALLS and TESTS edges.
             edge_dirs: Direction filter mapping per edge type.
+            max_results: Stop once this many neighbours are found (None: no cap).
 
         Returns:
             List of (dst_node_id, edge_type, direction, src_node_id) tuples.
@@ -1229,6 +1236,8 @@ class Index:
                     seen.add(dst)
                     nxt.append(dst)
                     order.append((dst, etype, direction, nid))
+                    if max_results is not None and len(order) >= max_results:
+                        return order
                     added_for_nid += 1
                     if added_for_nid >= per_hop or len(nxt) >= cap:
                         break
@@ -1392,6 +1401,7 @@ class Index:
         edge_types: Iterable[str] | None = None,
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
         expansion: str | None = None,
+        seed_offset: int | None = None,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -1428,11 +1438,20 @@ class Index:
             edge_types: Edge types graph expansion may follow. None means
                 DEFAULT_EDGE_TYPES; name `TESTS` here to pull in the tests that
                 reach a seed (it is never followed by default).
+            seed_offset: Page through seeds instead of packing the top `k`: skip
+                the first `seed_offset` eligible seeds of a fixed
+                `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
+                first seed that does not fit (the map is only packed on the
+                first page). None (the default) is the unpaged behaviour.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
-            'tokens_used', 'tokens_budget', and 'truncated'.
+            'tokens_used', 'tokens_budget', and 'truncated'; when paging, also
+            'next_seed_offset' (None on the last page) and 'skipped_seeds'.
         """
+        paged = seed_offset is not None
+        skip = max(0, seed_offset or 0)
+        more_seeds = False
         measure_tokens = count_tokens if callable(count_tokens) else _DEFAULT_MEASURE
         use_tokens = budget_tokens is not None
         # len is the character measure, and it is additive, so the cumulative
@@ -1479,7 +1498,7 @@ class Index:
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
         seed_limit = k if precision_first else k * 3
-        seed_window = ranked[:seed_limit]
+        seed_window = ranked[: PAGED_SEED_WINDOW if paged else seed_limit]
         if not asks_tests:
             seed_window = self._demote_test_seeds(seed_window)
         for s, i in seed_window:
@@ -1507,11 +1526,21 @@ class Index:
             ):
                 seen_nodes.add(nid)
                 continue
+            if paged:
+                if skip:
+                    # An earlier page's seed: its node goes into `seen_nodes`,
+                    # so expansion does not hand it back as a neighbour either.
+                    seen_nodes.add(nid)
+                    skip -= 1
+                    continue
+                if len(seeds) >= k:
+                    more_seeds = True
+                    break
             seen_nodes.add(nid)
             if exclude_secrets:
                 c = self._served(c)
             seeds.append({**c, "score": round(s, 3), "why": "seed"})
-            if len(seeds) >= k:
+            if not paged and len(seeds) >= k:
                 break
 
         graph_neighbours: list[Record] = []
@@ -1602,7 +1631,8 @@ class Index:
                     if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
                         break
 
-        full_map = self.map_prepend()
+        # A later page leaves the map out: page one already paid for it.
+        full_map = "" if paged and seed_offset else self.map_prepend()
         shown_map = full_map
         if bounded:
             shown_map = _fit_lines(
@@ -1617,16 +1647,23 @@ class Index:
         def fits(block: str) -> bool:
             return measure(head + body + block) <= budget
 
+        fitted_seeds = 0
         for c in seeds:
             text = c.get("text") or ""
             block = _cite_block(c, text)
             if not bounded:
                 picked.append((c, text))
+                fitted_seeds += 1
             elif fits(block):
                 picked.append((c, text))
                 body += block
+                fitted_seeds += 1
             else:
                 truncated = True
+                if paged:
+                    # A page is a prefix of the seed order, so the seed that did
+                    # not fit opens the next page instead of being lost.
+                    break
         for c in graph_neighbours:
             if not picked:
                 # A neighbour without a seed is context without a question:
@@ -1675,7 +1712,19 @@ class Index:
         )
         markdown = head + "".join(_cite_block(c, text) for c, text in picked)
         chunks = [{**c, "text": text} for c, text in picked]
+        paging: dict[str, Any] = {}
+        if paged:
+            # A seed too large for the whole page budget can never fit, so it is
+            # stepped over (and reported) rather than handed back forever.
+            skipped = 1 if seeds and fitted_seeds == 0 else 0
+            consumed = fitted_seeds + skipped
+            remaining = more_seeds or consumed < len(seeds)
+            paging = {
+                "next_seed_offset": (seed_offset or 0) + consumed if remaining else None,
+                "skipped_seeds": skipped,
+            }
         return {
+            **paging,
             "markdown": markdown,
             "chunks": chunks,
             "seeds": [c for c in chunks if c["why"] == "seed"],
