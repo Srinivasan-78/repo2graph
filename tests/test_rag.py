@@ -2083,3 +2083,30 @@ def test_plain_http_ollama_off_loopback_warns(host, warns, capsys):
 
     _ollama_base(host)
     assert ("unencrypted" in capsys.readouterr().err) is warns
+
+
+@pytest.mark.parametrize("asked", ["validates", "validating", "validation", "validated"])
+def test_query_inflection_finds_the_base_identifier(tmp_path, asked):
+    """#382: `validates`/`validation` did not match a symbol named `validate`.
+    Stems are added beside the original term, query side only."""
+    from repo2graph.query import Index
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "check.py").write_text(
+        "def validate(token):\n    return bool(token)\n", encoding="utf8"
+    )
+    (repo / "other.py").write_text("def unrelated():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    top = Index(out).retrieve(f"where does {asked} happen", k=1)
+    assert top and top[0]["path"] == "check.py", top
+
+
+def test_stem_variants_leave_short_and_double_s_words_alone():
+    from repo2graph.query import stem_variants
+
+    assert stem_variants("class") == []
+    assert stem_variants("uses") == []  # too short to strip safely
+    assert "parser" in stem_variants("parsers")
+    assert "validate" in stem_variants("validation")

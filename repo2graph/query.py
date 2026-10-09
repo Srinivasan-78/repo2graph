@@ -142,6 +142,32 @@ QUERY_STOPWORDS = frozenset(
     use used uses using was what when where which who why will with would you your""".split()
 )
 
+# Query-side suffix rules: (suffix, replacements). "validation" -> "validate",
+# "validating" -> "validat"/"validate", "parsers" -> "parser". Variants are
+# added *beside* the original term and only when the index's own vocabulary
+# has them, so an identifier literally named `validates` still matches exactly
+# and no term the corpus never uses can enter the score.
+_STEM_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ation", ("ate",)),
+    ("ing", ("", "e")),
+    ("ed", ("", "e")),
+    ("es", ("", "e")),
+    ("s", ("",)),
+)
+STEM_VARIANT_WEIGHT = 0.5
+
+
+def stem_variants(term: str) -> list[str]:
+    """Light, query-only stems of `term`. Never applied to the index side."""
+    out: list[str] = []
+    for suffix, repls in _STEM_RULES:
+        if len(term) > len(suffix) + 3 and term.endswith(suffix) and not term.endswith("ss"):
+            base = term[: -len(suffix)]
+            out.extend(base + r for r in repls if base + r != term)
+            break
+    return out
+
+
 # Which directions of an edge are useful when expanding from a node:
 # callees and callers for CALLS, the defining parent for DEFINES, the base
 # class for INHERITS, the imported module for IMPORTS.
@@ -824,9 +850,21 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        q = Counter(tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1])
+        terms = tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1]
+        # Question words stay in (#382 considered dropping them). Their idf is
+        # already near zero, and removing them moved a near-tie far enough that
+        # the demo's "route to persistence" answer lost app/store.py
+        # (test_demo.py) -- a ranking change with no benchmark behind it.
+        q: Counter[str] = Counter(terms)
+        weights: dict[str, float] = dict.fromkeys(q, 1.0)
+        for term in list(q):
+            for variant in stem_variants(term):
+                if variant not in q and variant in self.postings:
+                    q[variant] = q[term]
+                    weights[variant] = STEM_VARIANT_WEIGHT
         acc: dict[int, float] = defaultdict(float)
-        for term, qn in q.items():
+        for term, count in q.items():
+            qn = count * weights[term]
             posting = self.postings.get(term)
             if not posting:
                 continue
