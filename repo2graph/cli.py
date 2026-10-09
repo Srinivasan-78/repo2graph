@@ -1166,6 +1166,18 @@ def _unit_float(value: str) -> float:
     return f
 
 
+def _nonneg_float(value: str) -> float:
+    """argparse type: a finite float >= 0. Same reasoning as `_unit_float`:
+    `elapsed > nan` is always False, so a nan budget silently disables it."""
+    try:
+        f = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
+    if not math.isfinite(f) or f < 0:
+        raise argparse.ArgumentTypeError(f"expected a finite number >= 0, got {value!r}")
+    return f
+
+
 def _add_vector_flags(parser) -> None:
     """--vectors / --no-vectors / --embed-model, for `query` and `rag`.
 
@@ -1330,13 +1342,13 @@ def main(argv=None):
     )
     common.add_argument(
         "--max-memory-mb",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum estimated RAM usage in MB before triggering limit policy (0 = no limit)",
     )
     common.add_argument(
         "--max-build-seconds",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum wall-clock build time in seconds before triggering limit policy (0 = no limit)",
     )
@@ -1449,7 +1461,7 @@ def main(argv=None):
     )
     b.add_argument(
         "--lock-timeout",
-        type=float,
+        type=_nonneg_float,
         default=60.0,
         dest="lock_timeout",
         metavar="SECONDS",
@@ -1531,7 +1543,7 @@ def main(argv=None):
     )
     gh.add_argument(
         "--lock-timeout",
-        type=float,
+        type=_nonneg_float,
         default=60.0,
         dest="lock_timeout",
         metavar="SECONDS",

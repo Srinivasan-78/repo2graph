@@ -2616,21 +2616,19 @@ def test_build_has_no_dangling_edges(sample_graph):
 
 
 def test_dangling_edge_prune_drops_edges_to_unreadable_files(tmp_path, monkeypatch):
-    from pathlib import Path as _P
     import repo2graph.graph as graphmod
 
     (tmp_path / "a.py").write_text("from b import thing\nthing()\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
 
-    real_read_bytes = _P.read_bytes
+    real_safe_read = graphmod._safe_read_bytes
 
-    def flaky_read_bytes(self):
-        if self.name == "b.py":
+    def flaky_read_bytes(path):
+        if path.name == "b.py":
             raise OSError("simulated unreadable file")
-        return real_read_bytes(self)
+        return real_safe_read(path)
 
-    monkeypatch.setattr(graphmod.Path, "read_bytes", flaky_read_bytes, raising=False)
-    monkeypatch.setattr(_P, "read_bytes", flaky_read_bytes, raising=False)
+    monkeypatch.setattr(graphmod, "_safe_read_bytes", flaky_read_bytes)
     g = build(tmp_path, jobs=1)
     ids = set(g.nodes)
     assert "file:b.py" not in ids
@@ -3702,3 +3700,27 @@ def test_cmd_completion(capsys):
     assert main(["completion", "fish"]) == 0
     out = capsys.readouterr().out
     assert "register-python-argcomplete --shell fish repo2graph" in out
+
+
+@pytest.mark.parametrize("flag", ["--max-memory-mb", "--max-build-seconds", "--lock-timeout"])
+@pytest.mark.parametrize("bad", ["nan", "inf", "-1"])
+def test_float_budgets_reject_nan_inf_and_negative(tmp_path, flag, bad, capsys):
+    """#49: `elapsed > nan` is always False, so a nan budget silently disables it."""
+    with pytest.raises(SystemExit) as exc:
+        main(["build", str(tmp_path), flag, bad])
+    assert exc.value.code == 2
+    assert "finite number" in capsys.readouterr().err
+
+
+def test_chunked_file_imports_are_sorted_regardless_of_hash_seed(tmp_path):
+    """#40: `list(set(...))` made a chunked file's import order depend on
+    PYTHONHASHSEED, against the byte-identical-output guarantee."""
+    from repo2graph.graph import _chunk_and_parse
+    from repo2graph.parse import BuildConfig
+
+    src = "".join(f"import mod_{n}\n" for n in "qwertyuiopasdfghjklzxcvbnm")
+    f = tmp_path / "a.py"
+    f.write_text(src, encoding="utf8")
+    cfg = BuildConfig(max_file_bytes=64, chunk_large_files=True)
+    _, _, (_, _, pf, _) = _chunk_and_parse("a.py", f, "python", cfg, len(src))
+    assert pf.imports and pf.imports == sorted(pf.imports)
