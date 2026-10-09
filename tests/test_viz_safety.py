@@ -270,6 +270,7 @@ def test_search_focus_and_legend_ui_are_present(tmp_path):
         "CALLS_EXTERNAL",
         "INHERITS",
         "CO_CHANGE",
+        "TESTS",
     ):
         assert edge_type in html
 

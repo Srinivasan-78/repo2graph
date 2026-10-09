@@ -103,10 +103,22 @@ def tool_repo_search(
     return note + text
 
 
+def _min_confidence(value: Any) -> float:
+    """A 0..1 confidence floor from a client argument; anything else means 0.0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    conf = float(value)
+    return min(max(conf, 0.0), 1.0) if conf == conf else 0.0
+
+
 def tool_repo_neighbours(
-    index: Index, node_id: str, hops: Any = 1, limit: Any = MCP_NEIGHBOUR_LIMIT
+    index: Index,
+    node_id: str,
+    hops: Any = 1,
+    limit: Any = MCP_NEIGHBOUR_LIMIT,
+    min_confidence: Any = 0.0,
 ) -> str:
-    """Graph traversal from `node_id`."""
+    """Graph traversal from `node_id`, then the TESTS edges on `node_id` itself."""
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     if not node_id.strip():
         return ToolError(
@@ -121,6 +133,7 @@ def tool_repo_neighbours(
         )
     note = _defaulted_notes(hops=(hops, 1), limit=(limit, MCP_NEIGHBOUR_LIMIT))
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
+    floor = _min_confidence(min_confidence)
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
     for dst, etype, direction, src in index.expand(
@@ -128,7 +141,7 @@ def tool_repo_neighbours(
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
         edge_dirs=ALL_EDGE_DIRS,
-        min_confidence=0.0,
+        min_confidence=floor,
     ):
         target = index.nodes.get(dst, {})
         if index._is_secret_path(target.get("path") or ""):
@@ -139,11 +152,42 @@ def tool_repo_neighbours(
         lines.append(
             f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
         )
+    # TESTS is listed from the node's own adjacency rather than followed by
+    # `expand`: expansion visits each neighbour once, so a test that also
+    # calls the symbol directly would surface only as `CALLS in`, and the
+    # per-hop cap would hide the rest behind the structural edges listed first.
+    if not truncated:
+        for dst, direction, conf in _tests_of(index, node_id, floor):
+            if index._is_secret_path(index.nodes.get(dst, {}).get("path") or ""):
+                continue
+            if len(lines) - 1 >= limit:
+                truncated = True
+                break
+            lines.append(
+                f"- TESTS {direction}: {_label(index, dst)}"
+                f"{_edge_note(index, node_id, dst, 'TESTS')}"
+            )
     if truncated:
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
     return note + "\n".join(lines)
+
+
+def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, float]]:
+    """`node_id`'s TESTS edges at or above `floor`, most confident first."""
+    rows = []
+    for dst, etype, direction, edge in index.adj.get(node_id, ()):
+        if etype != "TESTS":
+            continue
+        try:
+            conf = float(edge.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        if conf >= floor:
+            rows.append((dst, direction, conf))
+    rows.sort(key=lambda r: (-r[2], r[0]))
+    return rows
 
 
 _AUX_CACHE: weakref.WeakKeyDictionary[Index, dict[str, Any]] = weakref.WeakKeyDictionary()

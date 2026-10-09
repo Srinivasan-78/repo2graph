@@ -202,7 +202,7 @@ runtime argument — see [`server.json`](../server.json).
 |---|---|---|
 | `repo_map` | none | Languages, hub files and top entry points, prefixed with a staleness note (#383) if the working tree has changed since the index was built. Stable across calls, so it caches. Read this first. |
 | `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. |
 | `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |

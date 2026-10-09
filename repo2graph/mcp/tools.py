@@ -244,6 +244,7 @@ def dispatch(
             str(args.get("node_id") or ""),
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
+            min_confidence=args.get("min_confidence", 0.0),
         )
     elif name == "repo_find_symbol":
         result = _find(

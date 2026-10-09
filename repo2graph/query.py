@@ -22,6 +22,7 @@ from .security import (
     _is_secret_path,
     redact_content,
 )
+from .testpaths import is_test_path
 
 __all__ = [
     "BM25_FORMAT",
@@ -178,6 +179,13 @@ DEFAULT_EDGE_DIRS = {
     "IMPORTS": ("out",),
 }
 DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
+# Edge types whose `confidence` can fall below 1.0 for a reason a caller may
+# want to filter on: an ambiguous name split across candidates. `TESTS` is
+# derived from CALLS paths and carries their confidence, so it is gated the
+# same way. `TESTS` is deliberately absent from DEFAULT_EDGE_DIRS: following it
+# by default would change what every pack contains. Pass it in `edge_types`
+# to opt in.
+CONFIDENCE_GATED_EDGE_TYPES = frozenset({"CALLS", "TESTS"})
 
 # "Follow every direction of every type" — an empty mapping, because expand()
 # reads `dirs.get(etype)` and treats a missing entry as "no direction filter".
@@ -255,43 +263,6 @@ _TEST_PATTERNS = (
 # tie-breaker, deliberately mild -- enough to lose a near-tie to real source,
 # never enough to bury a test that is the best answer by a distance.
 TEST_SEED_PENALTY = 0.6
-
-
-def is_test_path(path: str) -> bool:
-    """Whether a repo-relative path is test code, matched per path component.
-
-    `endswith("test.py")` is true of `latest.py`, `fastest.py` and
-    `manifest.py`, so the check is on components and known suffixes -- the bug
-    the original version of this predicate was written to fix, which is why the
-    property test in `tests/test_properties.py` pins separator invariance.
-
-    It lived in `impact.py` until that module was removed; retrieval is the only
-    remaining caller, so it lives here now.
-    """
-    parts = str(path or "").replace("\\", "/").lower().split("/")
-    if any(p in _TEST_DIR_NAMES or p.startswith("test_") for p in parts[:-1]):
-        return True
-    base = parts[-1]
-    return (
-        base in ("test.py", "conftest.py")
-        or base.startswith("test_")
-        or base.endswith(_TEST_BASENAME_SUFFIXES)
-    )
-
-
-_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
-_TEST_BASENAME_SUFFIXES = (
-    "_test.py",
-    "_test.go",
-    ".test.ts",
-    ".test.js",
-    ".test.tsx",
-    ".test.jsx",
-    ".spec.ts",
-    ".spec.js",
-    ".spec.tsx",
-    ".spec.jsx",
-)
 
 
 def classify_query(query: str) -> str:
@@ -1221,7 +1192,7 @@ class Index:
             hops: Traversal depth in hops.
             edge_types: Allowed edge type names.
             per_hop: Max neighbors admitted per hop.
-            min_confidence: Minimum confidence threshold for CALLS edges.
+            min_confidence: Minimum confidence threshold for CALLS and TESTS edges.
             edge_dirs: Direction filter mapping per edge type.
 
         Returns:
@@ -1248,7 +1219,7 @@ class Index:
                     allowed = dirs.get(etype)
                     if allowed is not None and direction not in allowed:
                         continue
-                    if etype == "CALLS":
+                    if etype in CONFIDENCE_GATED_EDGE_TYPES:
                         try:
                             conf = float(edge.get("confidence", 1.0))
                         except (ValueError, TypeError):
@@ -1454,6 +1425,9 @@ class Index:
             rerank_answerability: Re-rank seed candidates by how answer-shaped
                 they are before taking the top `k` -- see `_answerability`.
                 Pass False for the pre-2.3 ordering.
+            edge_types: Edge types graph expansion may follow. None means
+                DEFAULT_EDGE_TYPES; name `TESTS` here to pull in the tests that
+                reach a seed (it is never followed by default).
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',

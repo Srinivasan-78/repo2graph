@@ -88,7 +88,8 @@ TOOL_DESCRIPTIONS = {
         "Traverse code graph relationships from a known symbol or file node_id (callers, "
         "callees, base classes, definitions). Read-only, deterministic traversal, no side effects. "
         "When to use: use with a specific node_id (e.g. from repo_search citations) to inspect "
-        "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
+        "callers (CALLS in), callees (CALLS out), inheritance, definitions, or the tests that "
+        "reach a symbol through calls (TESTS in). When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
         "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
     ),
@@ -217,6 +218,13 @@ TOOL_SCHEMAS = {
                 "description": (
                     f"Maximum neighbor rows to return (default {MCP_NEIGHBOUR_LIMIT}, "
                     f"min 1, max {MCP_MAX_NEIGHBOURS})."
+                ),
+            },
+            "min_confidence": {
+                "type": "number",
+                "description": (
+                    "Drop CALLS and TESTS edges below this confidence, 0..1 (default 0.0: "
+                    "keep everything, marking ambiguous edges). 1.0 keeps only unambiguous ones."
                 ),
             },
         },

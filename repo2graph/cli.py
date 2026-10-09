@@ -1635,7 +1635,7 @@ def main(argv=None):
         default=[],
         dest="edge_types",
         metavar="TYPE",
-        help="follow only this edge type (CALLS, IMPORTS, INHERITS, DEFINES, CO_CHANGE); "
+        help="follow only this edge type (CALLS, IMPORTS, INHERITS, DEFINES, CO_CHANGE, TESTS); "
         "repeatable, overrides the preset's types",
     )
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")

@@ -31,13 +31,18 @@ EDGE_WEIGHT = {
     "DEFINES": 1.0,
     "CALLS_EXTERNAL": 0.75,
     "CONTAINS": 0.5,
+    # Mostly a shortcut over CALLS edges already drawn, so it should not be
+    # what decides which nodes make the cut.
+    "TESTS": 0.5,
 }
 MAX_NODES = 300
 LABEL_CHARS = 15
 # Stdlib and third-party call targets triple the edge count and tell you little
 # about the repo itself, so the map opens without them; the legend turns them on.
 HIDDEN_NODE_TYPES = ["external"]
-HIDDEN_EDGE_TYPES = ["CALLS_EXTERNAL"]
+# TESTS hides for the same reason: a test's direct calls are already drawn as
+# CALLS, so the map opens without the duplicate arrows.
+HIDDEN_EDGE_TYPES = ["CALLS_EXTERNAL", "TESTS"]
 
 # Node/edge type descriptions for the map's legend panel and (via export.py's
 # import of these names) manifest.json's node_types/edge_types.
@@ -65,6 +70,10 @@ EDGE_TYPES = {
     "CALLS_EXTERNAL": "symbol -> external, a name that resolved to nothing in-repo",
     "INHERITS": "symbol -> base class or interface",
     "CO_CHANGE": "file <-> file, edited together in 3+ of the commits read by --git-history",
+    "TESTS": (
+        "test symbol -> non-test symbol it reaches through at most 2 CALLS hops; "
+        "reachability, not assertion"
+    ),
 }
 
 

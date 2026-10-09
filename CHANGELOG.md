@@ -15,6 +15,16 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`TESTS` edges linking tests to the symbols they exercise (#393):**
+  every symbol defined in a test file gets a `TESTS` edge to each non-test symbol it reaches
+  through at most two `CALLS` hops (test helpers included), with `method: call-graph`, the
+  product of the path's `CALLS` confidences, the starting call site as `evidence`, and `hops`.
+  It means "reaches via calls", not "asserts on". `stats.json` gains `edge:TESTS`,
+  `testable_symbols`, `tested_symbols` and `tested_symbol_fraction`; `repo_neighbours` lists a
+  symbol's tests and takes `min_confidence`; `pack_context(edge_types=[...])` can opt in to
+  following `TESTS`, which default retrieval does not. `is_test_path` moved to
+  `repo2graph.testpaths` (still importable from `repo2graph.query`) and now also recognises
+  `*Test.java`, `*Tests.java`, `*Test.kt`, `*_spec.rb` and `*_test.rb`.
 - **Configurable resource limits and limit policies (#299):**
   Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
   alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.

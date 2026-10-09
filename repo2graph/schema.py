@@ -61,6 +61,7 @@ EdgeType = Literal[
     "CALLS_EXTERNAL",
     "INHERITS",
     "CO_CHANGE",
+    "TESTS",
 ]
 
 
@@ -110,7 +111,8 @@ class EdgeRecord(TypedDict, total=False):
     Everything below that is edge-type-specific — see `export.EDGE_TYPES` for
     which type carries what: `IMPORTS` carries `target`/`internal`, `CALLS` and
     `CALLS_EXTERNAL` carry the resolution fields, `INHERITS` carries
-    `raw_base`/`subtype`, and `CO_CHANGE` carries the sampling fields.
+    `raw_base`/`subtype`, `CO_CHANGE` carries the sampling fields, and `TESTS`
+    carries `hops`.
     """
 
     src: str
@@ -139,6 +141,8 @@ class EdgeRecord(TypedDict, total=False):
     cochange_count: int
     sampled_commits: int
     min_pairs: int
+    # TESTS: length of the best CALLS path from the test to `dst`.
+    hops: int
 
 
 class _NeighbourEdgeRequired(TypedDict):
@@ -294,7 +298,8 @@ class ManifestRecord(TypedDict, total=False):
 StatsRecord = dict[str, Any]
 """`stats.json`'s shape: dynamic `Counter` keys plus `export._stats_extra`'s
 fixed keys (`top_hub_nodes`, `languages`, `has_vectors`, `index_schema_version`,
-`limits_hit`, optionally `built_at_commit`, `co_change_hotspots`).
+`limits_hit`, `tested_symbol_fraction`, optionally `built_at_commit`,
+`co_change_hotspots`).
 
 `limits_hit` is always present and is `{}` when no resource ceiling bound the
 build. A consumer deciding whether an index is complete reads it rather than
