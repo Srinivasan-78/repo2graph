@@ -1387,28 +1387,22 @@ def main(argv=None):
         help="additional directory name to exclude as secret path (repeatable)",
     )
 
-    b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
-    b.add_argument("repo")
-    b.add_argument("--no-chunks", action="store_true")
-    b.add_argument(
-        "--max-call-candidates",
-        type=_posint,
-        default=5,
-        help="maximum number of candidates to keep for ambiguous calls",
-    )
-    b.add_argument(
+    # Flags for the two commands that write an index from source. Defined once:
+    # `build` and `github` carried eight identical copies of each (#47).
+    build_out = argparse.ArgumentParser(add_help=False)
+    build_out.add_argument(
         "--max-file-mb",
         type=_max_file_mb,
         default=1.5,
         help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--include-vendor",
         action="store_true",
         default=False,
         help="index files in vendor directories (default: off)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--exclude-dir",
         action="append",
         default=[],
@@ -1416,11 +1410,50 @@ def main(argv=None):
         metavar="NAME",
         help="additional directory name to exclude (repeatable)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--chunk-large-files",
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
+    build_out.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    build_out.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    build_out.add_argument(
+        "--lock-timeout",
+        type=_nonneg_float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    build_out.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
+
+    b = sub.add_parser(
+        "build", parents=[common, build_out], help="parse a repo into a graph + RAG chunks"
+    )
+    b.add_argument("repo")
+    b.add_argument("--no-chunks", action="store_true")
+    b.add_argument(
+        "--max-call-candidates",
+        type=_posint,
+        default=5,
+        help="maximum number of candidates to keep for ambiguous calls",
     )
     b.add_argument(
         "--incremental",
@@ -1431,39 +1464,12 @@ def main(argv=None):
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
     )
-    b.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    b.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    b.add_argument(
-        "--lock-timeout",
-        type=_nonneg_float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    b.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
-    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
         "github",
         aliases=["gh"],
-        parents=[common],
+        parents=[common, build_out],
         help="clone a GitHub repo (owner/repo or URL) and index it",
     )
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
@@ -1486,59 +1492,6 @@ def main(argv=None):
         type=_posint,
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
-    )
-    gh.add_argument(
-        "--max-file-mb",
-        type=_max_file_mb,
-        default=1.5,
-        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
-    )
-    gh.add_argument(
-        "--include-vendor",
-        action="store_true",
-        default=False,
-        help="index files in vendor directories (default: off)",
-    )
-    gh.add_argument(
-        "--exclude-dir",
-        action="append",
-        default=[],
-        dest="extra_exclude_dirs",
-        metavar="NAME",
-        help="additional directory name to exclude (repeatable)",
-    )
-    gh.add_argument(
-        "--chunk-large-files",
-        action="store_true",
-        default=False,
-        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
-    )
-    gh.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    gh.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    gh.add_argument(
-        "--lock-timeout",
-        type=_nonneg_float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    gh.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
     )
     gh.set_defaults(func=cmd_github)
 
