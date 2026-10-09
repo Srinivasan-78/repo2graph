@@ -280,3 +280,20 @@ def test_demo_graph_html_is_not_empty(demo_index):
     html = artifact_path(out, "graph.html").read_text(encoding="utf8")
     assert '"nodes":[]' not in html.replace(" ", "")
     assert "file:app/routes.py" in html or "routes.py" in html
+
+
+def test_materialize_refuses_to_overwrite_a_users_file(tmp_path):
+    """#451 D10: `demo --out .` would replace the user's own app/routes.py."""
+    rel = next(iter(DEMO_FILES))
+    mine = tmp_path / rel
+    mine.parent.mkdir(parents=True, exist_ok=True)
+    mine.write_text("my code\n", encoding="utf8")
+    with pytest.raises(FileExistsError, match=rel):
+        materialize(tmp_path)
+    assert mine.read_text(encoding="utf8") == "my code\n"
+    assert len(list(tmp_path.rglob("*.*"))) == 1  # nothing else written
+
+
+def test_materialize_twice_into_the_same_directory_is_fine(tmp_path):
+    materialize(tmp_path)
+    materialize(tmp_path)

@@ -6,6 +6,7 @@ stale lock detection, and clean recovery.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
@@ -64,6 +65,18 @@ class LockTimeoutError(TimeoutError):
     """Raised when an index build lock cannot be acquired within the timeout."""
 
 
+class LockUnavailableError(LockTimeoutError):
+    """The lock file cannot be created at all (read-only mount, no permission).
+
+    A subclass so every existing `except LockTimeoutError` still reports it.
+    """
+
+
+_UNWRITABLE_ERRNOS = frozenset(
+    {errno.EROFS, errno.EACCES, errno.EPERM, errno.ENOSPC, errno.ENOENT, errno.ENOTDIR}
+)
+
+
 class BuildLock:
     """Cross-platform advisory file lock for index builds."""
 
@@ -100,7 +113,15 @@ class BuildLock:
                 # file we locked. Either way this attempt did not win.
                 self._release_os_lock(fh)
                 fh.close()
-            except OSError:
+            except OSError as exc:
+                # Not contention: the lock file cannot be created at all. Retrying
+                # for the whole timeout and then blaming a holder that does not
+                # exist sends the user after the wrong problem.
+                if fh is None and exc.errno in _UNWRITABLE_ERRNOS:
+                    raise LockUnavailableError(
+                        f"cannot create build lock {self.lock_file}: {exc.strerror} "
+                        f"-- is the output directory's parent read-only?"
+                    ) from exc
                 if fh is not None:
                     try:
                         fh.close()

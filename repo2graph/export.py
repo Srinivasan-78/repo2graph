@@ -68,6 +68,11 @@ def atomic_write(path: Path, mode: str = "w", **open_kw: Any) -> Iterator[IO[Any
     try:
         with open(tmp, mode, **open_kw) as fh:
             yield fh
+            # Flushed to disk before the rename makes it visible: otherwise a
+            # power loss can leave the new name pointing at an empty file, which
+            # then passes every "does the index exist" check.
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -646,6 +651,7 @@ _SKIP_STAT_LABELS = (
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case-colliding files"),
     ("skipped_unreadable", "unreadable files"),
+    ("skipped_undecodable_path", "non-UTF-8 filenames"),
 )
 
 
@@ -1311,6 +1317,23 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
     return files if isinstance(files, dict) else {}
 
 
+def _fsync_dir(path: Path) -> None:
+    """Persist a directory's entries (POSIX). Windows cannot open a directory
+    for fsync, and NTFS journals renames itself, so there it is a no-op."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _atomic_dir_swap(staging: Path, target: Path) -> None:
     """Atomically replace target directory with staging directory.
 
@@ -1318,8 +1341,11 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     a rename dance: target -> backup, staging -> target, then remove backup.
     If the staging rename fails, we restore the backup.
     """
+    for d in (staging, *(p for p in staging.rglob("*") if p.is_dir())):
+        _fsync_dir(d)
     if not target.exists():
         staging.rename(target)
+        _fsync_dir(target.parent)
         return
 
     backup = target.parent / f".{target.name}.backup.{os.getpid()}"
@@ -1343,6 +1369,7 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
                 f"(swap: {swap_exc}; restore: {restore_exc})"
             ) from swap_exc
         raise
+    _fsync_dir(target.parent)
     shutil.rmtree(backup, ignore_errors=True)
 
 

@@ -1956,3 +1956,42 @@ def test_audit_logging_is_off_by_default(mini_index):
 
     out = run_tool(mini_index, None, "repo_map", {}, audit=None)
     assert "# Repo map:" in out
+
+
+def test_auto_build_takes_the_build_lock(mini_repo, tmp_path, monkeypatch):
+    """#451 D3: two writers on one index must serialise, as `build` does."""
+    from repo2graph import lock as lockmod
+    from repo2graph.mcp import indexes
+
+    seen = []
+    real = lockmod.BuildLock
+
+    class Spy(real):
+        def acquire(self):
+            seen.append(self.lock_file)
+            return super().acquire()
+
+    monkeypatch.setattr(lockmod, "BuildLock", Spy)
+    out = tmp_path / "locked_idx"
+    indexes._build_index(mini_repo, out)
+    assert seen == [out.resolve().parent / ".locked_idx.r2glock"]
+
+
+def test_auto_built_index_ignores_everything(mini_repo, tmp_path):
+    """#453 S16: an index nobody asked for must not ride along on `git add -A`."""
+    from repo2graph.mcp import indexes
+
+    out = tmp_path / "auto_idx"
+    indexes._build_index(mini_repo, out)
+    lines = (out / ".gitignore").read_text(encoding="utf8").splitlines()
+    assert "*" in lines
+
+
+def test_auto_build_keeps_a_user_edited_gitignore(mini_repo, tmp_path):
+    from repo2graph.mcp import indexes
+
+    out = tmp_path / "auto_idx"
+    indexes._build_index(mini_repo, out)
+    (out / ".gitignore").write_text("local.json\nmine\n", encoding="utf8")
+    indexes._build_index(mini_repo, out)
+    assert (out / ".gitignore").read_text(encoding="utf8") == "local.json\nmine\n"

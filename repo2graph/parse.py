@@ -367,6 +367,10 @@ class BuildConfig:
 INDEX_MARKER_FORMAT = "repo2graph/"
 
 
+#: `.<out>.staging.<pid>.<hex8>` and `.<out>.backup.<pid>`, from export.dump_all.
+_SWAP_DIR_RE = re.compile(r"^\..+\.(?:staging\.\d+\.[0-9a-f]{8}|backup\.\d+)$")
+
+
 def _is_index_dir(d: Path) -> bool:
     """True when `d` is a repo2graph output directory (any build, any -o)."""
     manifest = d / "agent" / "manifest.json"
@@ -628,6 +632,15 @@ def discover(
         if _inside_index(rel.parts):
             continue
         rp = rel.as_posix()
+        # A filename that is not valid UTF-8 decodes to lone surrogates, which
+        # no UTF-8 writer downstream (JSONL, overview, HTML) can encode. Skip it
+        # and count it rather than crash the whole build on one file.
+        try:
+            rp.encode("utf8")
+        except UnicodeEncodeError:
+            if stats is not None:
+                stats["skipped_undecodable_path"] = stats.get("skipped_undecodable_path", 0) + 1
+            continue
         # Case collision deduplication on case-insensitive filesystems (W17)
         if os.name == "nt" or sys.platform == "darwin":
             rp_lower = rp.lower()
@@ -652,6 +665,13 @@ def discover(
         # in-progress lock file on disk -- skip it like any other dotfile
         # rather than indexing a "r2glock"-language node for it.
         if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
+            if stats is not None:
+                stats["skipped_dotfile"] += 1
+            continue
+        # dump_all's staging and backup siblings. A crash mid-swap leaves one
+        # behind holding a full copy of an index, which is not source; when the
+        # output lives under the root, discovery would otherwise index it.
+        if any(_SWAP_DIR_RE.match(part) for part in rel.parts[:-1]):
             if stats is not None:
                 stats["skipped_dotfile"] += 1
             continue

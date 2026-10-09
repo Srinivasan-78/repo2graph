@@ -452,12 +452,30 @@ STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
 def materialize(dest: Path) -> Path:
     """Write the bundled demo repository into `dest` and return it.
 
-    `dest` is created if needed. Existing files with the same names are
-    overwritten; nothing else in `dest` is touched, so pointing this at a
-    directory that already holds an index re-materialises the sources without
-    discarding the index.
+    `dest` is created if needed. A file already holding the demo's own bytes is
+    rewritten in place, so re-running into the same directory works and keeps
+    its index; any *other* file at one of the demo's paths is the user's, and
+    the whole call is refused before anything is written.
+
+    Raises:
+        FileExistsError: When a demo path already holds different content.
     """
     dest = Path(dest)
+    clashes = []
+    for rel, body in DEMO_FILES.items():
+        target = dest / rel
+        try:
+            if target.read_bytes() != body.encode("utf8"):
+                clashes.append(rel)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            clashes.append(rel)
+    if clashes:
+        raise FileExistsError(
+            f"{dest} already has files the demo would overwrite: {', '.join(sorted(clashes))}"
+            " -- pick an empty directory"
+        )
     for rel, body in DEMO_FILES.items():
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
