@@ -1505,7 +1505,7 @@ _CPP_SPLICE_RE = re.compile(rb"\\\r?\n")
 # `#` or its `%:` digraph, then blanks or /* */ comments, then any directive
 # that makes cpp open another file. `#embed` is C23.
 _CPP_INCLUDE_RE = re.compile(
-    rb"^[ \t]*(?:#|%:)(?:[ \t]|/\*.*?\*/)*(?:include|include_next|import|embed)\b[^\n]*",
+    rb"^[ \t]*(?:#|%:)(?:[ \t]|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)*(?:include|include_next|import|embed)\b[^\n]*",
     re.MULTILINE,
 )
 
