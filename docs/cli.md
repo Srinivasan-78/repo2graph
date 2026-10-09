@@ -462,7 +462,10 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   credentials.
 
 Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
-`claude-haiku-4-5` and `llama3.1`); pass `--model` to override.
+`claude-haiku-5-5` and `llama3.1`); pass `--model` to override. On
+`claude-haiku-5-5` thinking is turned off, since thinking tokens would come out
+of the 2,048-token answer. `--answer` also refuses a pack that leaves no room for
+that answer in a default model's context window.
 
 ## `index-status` — is this index current, and what is in it?
 

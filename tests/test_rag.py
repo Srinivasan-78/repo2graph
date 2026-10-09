@@ -1644,7 +1644,7 @@ def test_default_models_current_and_overridable():
     assert answer.DEFAULT_MODELS == {
         "gemini": "gemini-3.6-flash",
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-haiku-4-5",
+        "anthropic": "claude-haiku-5-5",
         "ollama": "llama3.1",
     }
     assert "claude-3-5-haiku" not in answer.DEFAULT_MODELS["anthropic"]
@@ -1655,7 +1655,9 @@ def test_default_models_current_and_overridable():
         "system",
         "user",
     )
-    assert payload["model"] == "claude-haiku-4-5"
+    assert payload["model"] == "claude-haiku-5-5"
+    # Haiku 5.5 thinks by default, out of the answer's MAX_TOKENS.
+    assert payload["thinking"] == {"type": "disabled"}
 
     _, _, overridden = answer._request(
         {"name": "anthropic", "value": "sk-test"},
@@ -2110,3 +2112,25 @@ def test_stem_variants_leave_short_and_double_s_words_alone():
     assert stem_variants("uses") == []  # too short to strip safely
     assert "parser" in stem_variants("parsers")
     assert "validate" in stem_variants("validation")
+
+
+def test_anthropic_thinking_field_only_for_models_that_accept_it():
+    """#55: `thinking: disabled` is a 400 on models where thinking is always on,
+    so only the listed defaults get it; an override is sent unchanged."""
+    import repo2graph.answer as answer
+
+    _, _, payload = answer._request(
+        {"name": "anthropic", "value": "k"}, "claude-opus-5-5", "s", "u"
+    )
+    assert "thinking" not in payload
+
+
+def test_answer_refuses_a_pack_with_no_room_for_the_reply(monkeypatch):
+    """#290: the prompt estimate plus MAX_TOKENS must fit the model's context."""
+    import repo2graph.answer as answer
+
+    monkeypatch.setitem(answer.CONTEXT_WINDOWS, "tiny-model", 3000)
+    with pytest.raises(SystemExit, match="does not fit tiny-model"):
+        answer._check_room_for_answer("tiny-model", "s" * 100, "u" * 8000)
+    answer._check_room_for_answer("tiny-model", "s", "u" * 100)
+    answer._check_room_for_answer("unknown-model", "s", "u" * 10_000_000)

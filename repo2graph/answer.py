@@ -56,11 +56,29 @@ PROVIDER_ENV = tuple(PROVIDER_MAP.values())
 DEFAULT_MODELS = {
     "gemini": "gemini-3.6-flash",
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5",
+    "anthropic": "claude-haiku-5-5",
     "ollama": "llama3.1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
+
+# Claude models that think by default and accept `thinking: disabled` at their
+# default effort. A short cited answer gains little from thinking, and thinking
+# tokens are spent out of MAX_TOKENS, so on these it is turned off. Other ids are
+# sent unchanged: some reject the field outright (thinking is always on), and
+# older ones do not think unless asked.
+ANTHROPIC_THINKING_OFF = frozenset({"claude-haiku-5-5"})
+
+# Context windows (tokens) of the default models, for the room-for-the-answer
+# check (#290). A model not listed here is not checked -- this is a guard
+# against an unbounded pack, not a capability database.
+CONTEXT_WINDOWS = {
+    "claude-haiku-5-5": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+    "gpt-4o-mini": 128_000,
+}
+#: Extra headroom on the prompt estimate: it is len // 4, not a tokenizer.
+TOKEN_ESTIMATE_MARGIN = 0.25
 
 SYSTEM_PROMPT = (
     "You are a code assistant answering strictly from the repository map and the "
@@ -218,6 +236,7 @@ def _request(
                 "max_tokens": MAX_TOKENS,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
+                **({"thinking": {"type": "disabled"}} if model in ANTHROPIC_THINKING_OFF else {}),
             },
         )
     if name == "gemini":
@@ -575,6 +594,24 @@ class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_SameOriginRedirect)
 
 
+def _check_room_for_answer(model: str, system: str, user: str) -> None:
+    """Refuse a prompt that leaves no room for MAX_TOKENS of answer (#290).
+
+    The prompt size is the 4-chars-per-token estimate plus a margin, because it
+    is an estimate. Only models in CONTEXT_WINDOWS are checked.
+    """
+    window = CONTEXT_WINDOWS.get(model)
+    if window is None:
+        return
+    estimate = int((len(system) + len(user)) / 4 * (1 + TOKEN_ESTIMATE_MARGIN))
+    if estimate + MAX_TOKENS > window:
+        raise SystemExit(
+            f"the pack is about {estimate:,} tokens (estimated); with {MAX_TOKENS:,} "
+            f"reserved for the answer it does not fit {model}'s {window:,}-token "
+            "context. Lower --budget / --budget-tokens."
+        )
+
+
 def stream_answer(
     pack: dict[str, Any] | None,
     model: str | None = None,
@@ -591,6 +628,7 @@ def stream_answer(
             + f" or {PROVIDER_ENV[-1]}"
         )
     system, user = build_prompt(pack)
+    _check_room_for_answer(model or DEFAULT_MODELS[spec["name"]], system, user)
     url, headers, payload = _request(spec, model, system, user)
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST"
