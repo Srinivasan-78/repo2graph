@@ -14,6 +14,7 @@ from typing import TypedDict, cast
 from tree_sitter import Node, Parser
 
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
 
 
 class ParseError(RuntimeError):
@@ -640,6 +641,12 @@ def discover(
         except UnicodeEncodeError:
             if stats is not None:
                 stats["skipped_undecodable_path"] = stats.get("skipped_undecodable_path", 0) + 1
+            continue
+        # A control or hidden character in a path forges structure wherever the
+        # path is printed: a newline starts a fake `[cite: ...]` header in a pack.
+        if has_unsafe_path_chars(rp):
+            if stats is not None:
+                stats["skipped_unsafe_path"] = stats.get("skipped_unsafe_path", 0) + 1
             continue
         # Case collision deduplication on case-insensitive filesystems (W17)
         if os.name == "nt" or sys.platform == "darwin":
@@ -1921,6 +1928,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"
             if kind and name:
+                name = clean_identifier(name)
                 bases_list, base_details = _bases_with_details(source, node, lang)
                 # Every base in one class header cites that header's line.
                 for _bd in base_details:
@@ -1939,8 +1947,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 elif lang == "kotlin" and ntype == "function_declaration" and not scope:
                     recv_type = _kotlin_receiver_type(source, node)
                 if recv_type:
-                    sym_scope = scope + (recv_type,)
-                qualname = ".".join(sym_scope + (name,))
+                    sym_scope = scope + (clean_identifier(recv_type),)
+                qualname = clean_identifier(".".join(sym_scope + (name,)), MAX_QUALNAME_CHARS)
                 start_line = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,

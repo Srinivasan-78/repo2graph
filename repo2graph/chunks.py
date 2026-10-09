@@ -20,6 +20,11 @@ def _process_chunk_content(
     text: str, nid: str, path: str, policy: str, g: Any
 ) -> tuple[str | None, int]:
     """Apply secret scanning and redaction policy to chunk text."""
+    from .security import count_hidden_unicode
+
+    hidden = count_hidden_unicode(text)
+    if hidden and hasattr(g, "stats"):
+        g.stats["hidden_unicode_chars"] += hidden
     if policy == "exclude-file":
         from .security import scan_content_secrets
 
