@@ -6,6 +6,7 @@ tests need no SDK at all, and SDK absence guard blocks the import on purpose to
 assert the error message a user without the extra actually sees.
 """
 
+import importlib
 import json
 import subprocess
 import sys
@@ -51,7 +52,7 @@ def _has_mcp():
         # after this module-level call runs at import time -- a `NameError`
         # here was swallowed by the broad `except Exception` below and every
         # gated test skipped regardless of what was installed.
-        from repo2graph.mcp import _sdk_major, _sdk_version
+        from repo2graph.mcp.server import _sdk_major, _sdk_version
 
         major = _sdk_major(_sdk_version(mcp))
         return major is None or major >= 2
@@ -952,16 +953,16 @@ def test_a_broken_server_module_is_also_an_instruction(mini_index, monkeypatch):
     mcp = mcp_module()
     _fake_sdk(monkeypatch, decorators=False, with_server_module=False)
     with pytest.raises(SystemExit) as exc:
-        mcp._require_sdk()
+        importlib.import_module("repo2graph.mcp.server")._require_sdk()
     assert mcp.SDK_SPEC in str(exc.value), str(exc.value)
 
 
 def test_a_supported_sdk_passes_the_guard(monkeypatch):
     """R-8 (d): the guard must not become a blanket refusal -- an SDK that
     does carry the API serve() needs, and is 2.x or newer, is accepted."""
-    mcp = mcp_module()
+    mcp_module()
     fake = _fake_sdk(monkeypatch, decorators=True, version="2.2.0")
-    assert mcp._require_sdk() is fake
+    assert importlib.import_module("repo2graph.mcp.server")._require_sdk() is fake
 
 
 def test_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
@@ -977,7 +978,7 @@ def test_a_1x_sdk_is_refused_at_startup_not_hung(monkeypatch):
     mcp = mcp_module()
     _fake_sdk(monkeypatch, decorators=True, version="1.30.0")
     with pytest.raises(SystemExit) as exc:
-        mcp._require_sdk()
+        importlib.import_module("repo2graph.mcp.server")._require_sdk()
     assert "1.30.0" in str(exc.value)
     assert mcp.SDK_SPEC in str(exc.value)
     assert "#407" in str(exc.value)
@@ -1146,7 +1147,7 @@ def test_auto_build_is_opt_in_so_a_bare_open_index_still_refuses(tmp_path):
 def test_an_existing_index_is_never_rebuilt(mini_index, mini_repo, monkeypatch):
     """Passing a repo must not cost a rebuild when the index is already there."""
     mcp = mcp_module()
-    mcp._INDEXES.clear()
+    importlib.import_module("repo2graph.mcp.indexes")._INDEXES.clear()
 
     def _boom(*a, **k):
         raise AssertionError("rebuilt an index that already existed")
@@ -1165,7 +1166,7 @@ def test_serve_does_not_build_during_the_handshake(mini_repo, tmp_path, monkeypa
     import asyncio
 
     mcp = mcp_module()
-    mcp._INDEXES.clear()
+    importlib.import_module("repo2graph.mcp.indexes")._INDEXES.clear()
     _fake_sdk(monkeypatch, decorators=True, version="2.2.0")
     monkeypatch.setattr(
         mcp, "_build_index", lambda *a, **k: pytest.fail("built during the handshake")
@@ -1748,8 +1749,8 @@ def test_concurrent_open_index_builds_the_index_exactly_once(
     import time
 
     mcp = mcp_module()
-    mcp._INDEXES.clear()
-    mcp._INDEX_MTIMES.clear()
+    importlib.import_module("repo2graph.mcp.indexes")._INDEXES.clear()
+    importlib.import_module("repo2graph.mcp.indexes")._INDEX_MTIMES.clear()
 
     out = tmp_path / "raced_idx"
     builds = []
@@ -1794,9 +1795,9 @@ def test_concurrent_open_index_builds_the_index_exactly_once(
 
 @pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
 def test_int_coerces_non_finite_floats_to_the_fallback(bad):
-    mcp = mcp_module()
-    assert mcp._int(bad, 7) == 7
-    assert mcp._clamp(bad, 7, 1, 10) == 7
+    mcp_module()
+    assert importlib.import_module("repo2graph.mcp.guardrails")._int(bad, 7) == 7
+    assert importlib.import_module("repo2graph.mcp.guardrails")._clamp(bad, 7, 1, 10) == 7
 
 
 @pytest.mark.parametrize(
@@ -1828,7 +1829,7 @@ def test_a_non_finite_limit_or_depth_is_also_bad_input(mini_index):
     mcp = mcp_module()
     idx = Index(mini_index)
     mcp.dispatch(idx, "repo_neighbours", {"node_id": SYM_ROUTE, "limit": 1e999, "hops": 1e999})
-    assert mcp._int(json.loads("1e999"), 2) == 2
+    assert importlib.import_module("repo2graph.mcp.guardrails")._int(json.loads("1e999"), 2) == 2
 
 
 # ==========================================================================
