@@ -340,6 +340,39 @@ def asks_about_tests(query: str) -> bool:
     return bool(q) and any(re.search(pat, q) for pat in _TEST_PATTERNS)
 
 
+# Named expansion policies for pack_context (#289). Each is (edge types, per-type
+# directions, CALLS confidence floor); None in a slot means "the default".
+# `rag-default` is today's behaviour exactly, so choosing no preset changes
+# nothing. CO_CHANGE is only ever followed when a preset or caller names it.
+EXPANSION_PRESETS: dict[
+    str, tuple[frozenset[str] | None, dict[str, tuple[str, ...]] | None, float | None]
+] = {
+    "rag-default": (None, None, None),
+    # Where does this go and what does it use: calls and imports both ways.
+    "navigation": (
+        frozenset({"CALLS", "IMPORTS"}),
+        {"CALLS": ("out", "in"), "IMPORTS": ("out", "in")},
+        1.0,
+    ),
+    # What depends on this: callers, importers, subclasses, and files that
+    # historically change with it. DEFINES-in climbs from a symbol seed to its
+    # file, which is where CO_CHANGE edges live; use hops >= 2 to reach them.
+    "impact-analysis": (
+        frozenset({"CALLS", "IMPORTS", "INHERITS", "DEFINES", "CO_CHANGE"}),
+        {
+            "CALLS": ("in",),
+            "IMPORTS": ("in",),
+            "INHERITS": ("in",),
+            "DEFINES": ("in",),
+            "CO_CHANGE": ("out", "in"),
+        },
+        None,
+    ),
+    # Only edges the resolver was certain of; never history-derived ones.
+    "strict": (frozenset(DEFAULT_EDGE_DIRS), dict(DEFAULT_EDGE_DIRS), 1.0),
+}
+
+
 def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
     """The traversal filter a question shape implies, or None to keep the default."""
     if shape == "callers":
@@ -1385,8 +1418,17 @@ class Index:
         conditional_expansion: bool = False,
         precision_first: bool = False,
         rerank_answerability: bool = True,
+        edge_types: Iterable[str] | None = None,
+        edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
+        expansion: str | None = None,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
+
+        Graph expansion follows DEFAULT_EDGE_DIRS (CO_CHANGE excluded), steered
+        by the question's shape. `expansion` names an EXPANSION_PRESETS policy;
+        `edge_types` and `edge_dirs` override its types and directions, and an
+        explicit `min_confidence` below 1.0 overrides its floor. Each neighbour's
+        `why` names the edge type and direction that admitted it.
 
         Args:
             query: Question or symbol query string.
@@ -1503,6 +1545,26 @@ class Index:
         # ALL_EDGE_DIRS on purpose, so `repo2graph query` is never narrowed by
         # this; only the packed-context path routes.
         shape_dirs = edge_dirs_for(shape)
+        expand_types: frozenset[str] | None = None
+        if expansion is not None:
+            if expansion not in EXPANSION_PRESETS:
+                raise ValueError(
+                    f"unknown expansion preset {expansion!r}; "
+                    f"expected one of {', '.join(EXPANSION_PRESETS)}"
+                )
+            p_types, p_dirs, p_conf = EXPANSION_PRESETS[expansion]
+            expand_types = p_types
+            if p_dirs is not None:
+                shape_dirs = p_dirs
+            if p_conf is not None and min_confidence >= 1.0:
+                min_confidence = p_conf
+        if edge_types is not None:
+            expand_types = frozenset(edge_types)
+        if edge_dirs is not None:
+            shape_dirs = dict(edge_dirs)
+        elif expand_types is not None and shape_dirs is not None:
+            # A named type with no direction rule here is followed both ways.
+            shape_dirs = {t: shape_dirs.get(t, ("out", "in")) for t in expand_types}
         if expand_graph and seeds:
             if precision_first:
                 for seed_chunk in seeds:
@@ -1511,6 +1573,7 @@ class Index:
                     for nid, etype, direction, src in self.expand(
                         [seed_chunk["node_id"]],
                         hops=hops,
+                        edge_types=expand_types,
                         min_confidence=min_confidence,
                         edge_dirs=shape_dirs,
                     ):
@@ -1540,6 +1603,7 @@ class Index:
                 for nid, etype, direction, src in self.expand(
                     [c["node_id"] for c in seeds],
                     hops=hops,
+                    edge_types=expand_types,
                     min_confidence=min_confidence,
                     edge_dirs=shape_dirs,
                 ):

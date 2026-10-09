@@ -2134,3 +2134,88 @@ def test_answer_refuses_a_pack_with_no_room_for_the_reply(monkeypatch):
         answer._check_room_for_answer("tiny-model", "s" * 100, "u" * 8000)
     answer._check_room_for_answer("tiny-model", "s", "u" * 100)
     answer._check_room_for_answer("unknown-model", "s", "u" * 10_000_000)
+
+
+def _cochange_index(tmp_path):
+    """Two files that never reference each other but always change together."""
+    import subprocess
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "billing.py").write_text(
+        "RATE = 3\nCURRENCY = 'EUR'\n\n\ndef charge_invoice():\n    return RATE\n", encoding="utf8"
+    )
+    (repo / "ledger.py").write_text(
+        "BOOK = 'main'\nPERIOD = 12\n\n\ndef post_entry():\n    return BOOK\n", encoding="utf8"
+    )
+    git = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+    for i in range(4):
+        for f in ("billing.py", "ledger.py"):
+            (repo / f).write_text((repo / f).read_text() + f"# {i}\n", encoding="utf8")
+        subprocess.run([*git, "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "commit", "-qm", str(i)], check=True, stdin=subprocess.DEVNULL)
+    out = tmp_path / "idx"
+    main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--formats",
+            "jsonl",
+            "--git-history",
+            "10",
+            "--cochange-min",
+            "2",
+        ]
+    )
+    return out
+
+
+def test_expansion_presets_choose_which_edges_are_walked(tmp_path):
+    """#289: CO_CHANGE is never walked by default, and a preset (or --edge-type)
+    can opt into it; `why` names the edge that admitted each neighbour."""
+    import shutil
+
+    from repo2graph.query import Index
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    idx = Index(_cochange_index(tmp_path))
+    q = "charge invoice"
+    default = {c["path"] for c in idx.pack_context(q, k=1)["neighbors"]}
+    assert "ledger.py" not in default
+    impact = idx.pack_context(q, k=1, hops=2, expansion="impact-analysis")["neighbors"]
+    assert any(c["path"] == "ledger.py" and c["why"].startswith("CO_CHANGE") for c in impact)
+    only = idx.pack_context(q, k=1, hops=2, edge_types=["DEFINES", "CO_CHANGE"])["neighbors"]
+    assert "ledger.py" in {c["path"] for c in only}
+    with pytest.raises(ValueError, match="unknown expansion preset"):
+        idx.pack_context(q, expansion="everything")
+
+
+def test_rag_cli_takes_expansion_and_edge_type(tmp_path, capsys):
+    import shutil
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    out = _cochange_index(tmp_path)
+    capsys.readouterr()
+    main(
+        [
+            "rag",
+            "charge invoice",
+            "-o",
+            str(out),
+            "-k",
+            "1",
+            "--hops",
+            "2",
+            "--expansion",
+            "impact-analysis",
+            "--format",
+            "json",
+        ]
+    )
+    pack = json.loads(capsys.readouterr().out)
+    assert "ledger.py" in {c["path"] for c in pack["neighbors"]}

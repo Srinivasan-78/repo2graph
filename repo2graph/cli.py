@@ -792,6 +792,8 @@ def cmd_rag(args):
         budget_tokens=getattr(args, "budget_tokens", None),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        expansion=getattr(args, "expansion", None),
+        edge_types=getattr(args, "edge_types", None) or None,
     )
     if args.answer:
         from .answer import stream_answer
@@ -1620,6 +1622,21 @@ def main(argv=None):
         help="alias of --min-conf",
     )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
+    r.add_argument(
+        "--expansion",
+        choices=("rag-default", "navigation", "impact-analysis", "strict"),
+        default=None,
+        help="which edges graph expansion follows (default: rag-default)",
+    )
+    r.add_argument(
+        "--edge-type",
+        action="append",
+        default=[],
+        dest="edge_types",
+        metavar="TYPE",
+        help="follow only this edge type (CALLS, IMPORTS, INHERITS, DEFINES, CO_CHANGE); "
+        "repeatable, overrides the preset's types",
+    )
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
     r.add_argument(
         "--answer",
