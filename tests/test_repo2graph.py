@@ -3724,3 +3724,24 @@ def test_chunked_file_imports_are_sorted_regardless_of_hash_seed(tmp_path):
     cfg = BuildConfig(max_file_bytes=64, chunk_large_files=True)
     _, _, (_, _, pf, _) = _chunk_and_parse("a.py", f, "python", cfg, len(src))
     assert pf.imports and pf.imports == sorted(pf.imports)
+
+
+def test_build_and_github_share_their_index_writing_flags(capsys):
+    """#461 #47: the eight flags were copied into both parsers; they now come
+    from one parent, so the two commands cannot drift apart."""
+    shared = (
+        "--max-file-mb",
+        "--include-vendor",
+        "--exclude-dir",
+        "--chunk-large-files",
+        "--allow-symlink-out",
+        "--force",
+        "--lock-timeout",
+        "--parse-policy",
+    )
+    for cmd in ("build", "github"):
+        with pytest.raises(SystemExit):
+            main([cmd, "--help"])
+        out = capsys.readouterr().out
+        for flag in shared:
+            assert flag in out, (cmd, flag)
