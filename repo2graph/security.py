@@ -551,6 +551,53 @@ def _json_secret_spans(text: str) -> list[tuple[int, int]]:
     ]
 
 
+# Bidirectional overrides/isolates and zero-width characters: invisible in a
+# rendered view, so text carrying them can read differently to a person than to
+# a model or a compiler (CVE-2021-42574, "Trojan Source"). U+FEFF is included
+# because past offset 0 it is a zero-width no-break space, not a BOM.
+HIDDEN_UNICODE_RE = re.compile("[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+# Everything that can break a line or a header for some reader: C0 controls
+# (tab included), DEL, C1 controls, and the Unicode line/paragraph separators.
+_CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+#: Cap on a symbol's name and qualname. Real identifiers are far shorter; the
+#: cap exists so a hostile repository cannot bloat every artifact that repeats
+#: the name (nodes, edges, repo map) or make an index too big to load.
+MAX_SYMBOL_NAME_CHARS = 256
+MAX_QUALNAME_CHARS = 1024
+
+
+def _escape_char(m: re.Match[str]) -> str:
+    return f"\\u{ord(m.group(0)):04x}"
+
+
+def has_unsafe_path_chars(path: str) -> bool:
+    """True if `path` holds a control, line-separator or hidden character.
+
+    Such a path can forge structure wherever it is printed -- a newline in a
+    filename starts a new `[cite: ...]` header in a pack -- so discovery drops it.
+    """
+    return bool(_CONTROL_RE.search(path) or HIDDEN_UNICODE_RE.search(path))
+
+
+def clean_identifier(name: str, cap: int = MAX_SYMBOL_NAME_CHARS) -> str:
+    """`name` with control and hidden characters spelled out as `\\uXXXX`, capped."""
+    name = _CONTROL_RE.sub(_escape_char, name)
+    name = HIDDEN_UNICODE_RE.sub(_escape_char, name)
+    return name[:cap]
+
+
+def count_hidden_unicode(text: str) -> int:
+    return len(HIDDEN_UNICODE_RE.findall(text))
+
+
+def escape_hidden_unicode(text: str) -> str:
+    """For text already inside a JSON string literal: `\\uXXXX` escapes that
+    decode back to the same character, so the data is unchanged but the raw
+    file no longer carries an invisible override."""
+    return HIDDEN_UNICODE_RE.sub(_escape_char, text)
+
+
 # Sanitization bounds
 REDACTION_HASH_CHARS = 8
 MAX_VALUE_CHARS = 512

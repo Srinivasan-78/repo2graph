@@ -20,6 +20,7 @@ from typing import IO, TYPE_CHECKING, Any
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
 from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
+from .security import escape_hidden_unicode
 from .viz import (
     EDGE_TYPES,
     MAX_NODES,
@@ -163,7 +164,7 @@ def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
     n = 0
     with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for r in rows:
-            line = (
+            line = escape_hidden_unicode(
                 json.dumps(r, ensure_ascii=False, default=str)
                 .replace("\u2028", "\\u2028")
                 .replace("\u2029", "\\u2029")
@@ -652,6 +653,7 @@ _SKIP_STAT_LABELS = (
     ("skipped_case_collision", "case-colliding files"),
     ("skipped_unreadable", "unreadable files"),
     ("skipped_undecodable_path", "non-UTF-8 filenames"),
+    ("skipped_unsafe_path", "filenames with control or hidden characters"),
 )
 
 

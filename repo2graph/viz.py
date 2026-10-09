@@ -7,6 +7,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from .security import HIDDEN_UNICODE_RE
+
 
 # The Neo4j browser palette, so the map reads the way their graph view does.
 NODE_COLORS = {
@@ -160,6 +162,10 @@ def write_html(g: Any, path: Path, max_nodes: int = MAX_NODES) -> dict[str, Any]
         .replace("\u2028", "\\u2028")
         .replace("\u2029", "\\u2029")
     )
+    # Bidi overrides and zero-width characters are invisible on the page, which
+    # is the whole problem with them. Spell them out as the visible text
+    # `\u202e` (an escaped backslash, so JSON.parse yields the six characters).
+    blob = HIDDEN_UNICODE_RE.sub(lambda m: f"\\\\u{ord(m.group(0)):04x}", blob)
     # Single-pass replace prevents __R2G_DATA__ in repo title from expanding
     replacements = {
         "__R2G_DATA__": blob,
