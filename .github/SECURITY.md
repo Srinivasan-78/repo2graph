@@ -102,9 +102,9 @@ secret scanner (such as gitleaks or trufflehog) before indexing and over generat
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**. Of its ten tools, the eight that
+The **MCP server goes further and makes this unconditional**. Of its nine tools, the seven that
 can return repository content — `repo_map`, `repo_search`, `repo_neighbours`,
-`repo_find_symbol`, `repo_read`, `repo_path_between`, `repo_impact` and `repo_blast_radius` —
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius` —
 exclude secrets always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
 `repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
 directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
