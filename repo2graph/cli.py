@@ -628,6 +628,17 @@ def _rag_index_dir(args) -> Path:
         parse_spec(target)
     except ValueError:
         raise SystemExit(f"cannot resolve target {target!r}: {RAG_TARGET_HELP}") from None
+    # `src/app` is a valid owner/repo spelling too. A target written as a path,
+    # or whose first component exists here, is a mistyped local path: stop
+    # rather than send a clone to github.com with the user's token.
+    if "://" not in target and not target.startswith("git@"):
+        head = target.split("/", 1)[0]
+        if target.startswith((".", "/", "~", "\\")) or "\\" in target or Path(head).exists():
+            raise SystemExit(
+                f"{target!r} is not a directory or an index here; refusing to treat it "
+                "as a GitHub repository. For a remote, use https://github.com/owner/repo."
+            )
+    sys.stderr.write(f"note: {target!r} is not a local path; fetching it from GitHub\n")
     index_github(target, out, formats="jsonl,overview")
     return out
 

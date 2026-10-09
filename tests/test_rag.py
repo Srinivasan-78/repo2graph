@@ -1253,6 +1253,21 @@ def test_rag_target_resolution_github_spec(monkeypatch, tmp_path):
     assert pack_context_calls[0][0][0] == "auth query"
 
 
+@pytest.mark.parametrize("typo", ["src/app", "./src/app", "../x/y"])
+def test_rag_mistyped_local_path_never_clones(monkeypatch, tmp_path, typo):
+    """#452 N1: `src/app` is also a valid owner/repo spelling, so a typo in a
+    local path used to become a clone from github.com with the user's token."""
+    import repo2graph.fetch as fetch
+
+    (tmp_path / "src").mkdir()
+    monkeypatch.chdir(tmp_path)
+    called = []
+    monkeypatch.setattr(fetch, "index_github", lambda *a, **k: called.append(a))
+    with pytest.raises(SystemExit, match="not a directory or an index|cannot resolve"):
+        main(["rag", typo, "q", "-o", str(tmp_path / "idx")])
+    assert called == []
+
+
 def test_rag_cli_answer_integration(monkeypatch, rag_out):
     """Item 6 (S-7): `rag --answer` forwards provider and model to stream_answer."""
     import repo2graph.answer as answer
@@ -2033,3 +2048,38 @@ def test_verify_rag_function(tmp_path):
     assert report["index"] == str(tmp_path)
     assert report["vectors_present"] is False
     assert error is not None and "no vectors" in error
+
+
+def test_pick_provider_refuses_to_guess_between_two_providers():
+    """#452 N3: the destination of the user's source must be chosen, not inferred
+    from whichever credentials happen to be exported."""
+    from repo2graph.answer import pick_provider
+
+    env = {"OPENAI_API_KEY": "sk-x", "ANTHROPIC_API_KEY": "sk-ant-y"}
+    with pytest.raises(SystemExit, match="--provider"):
+        pick_provider(env=env)
+    assert pick_provider(env=env, provider="openai")["name"] == "openai"
+
+
+def test_pick_provider_one_credential_is_used_and_google_key_counts_once():
+    from repo2graph.answer import pick_provider
+
+    assert pick_provider(env={"OPENAI_API_KEY": "sk-x"})["name"] == "openai"
+    both = {"GEMINI_API_KEY": "a", "GOOGLE_API_KEY": "b"}
+    assert pick_provider(env=both)["env"] == "GEMINI_API_KEY"
+
+
+@pytest.mark.parametrize(
+    "host,warns",
+    [
+        ("127.0.0.1:11434", False),
+        ("http://localhost:11434", False),
+        ("http://10.0.0.5:11434", True),
+        ("https://ollama.example.com", False),
+    ],
+)
+def test_plain_http_ollama_off_loopback_warns(host, warns, capsys):
+    from repo2graph.answer import _ollama_base
+
+    _ollama_base(host)
+    assert ("unencrypted" in capsys.readouterr().err) is warns
