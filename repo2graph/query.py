@@ -851,10 +851,12 @@ class Index:
         """
         # Support single-character identifiers matching declared symbols:
         terms = tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1]
-        # Question words stay in (#382 considered dropping them). Their idf is
-        # already near zero, and removing them moved a near-tie far enough that
-        # the demo's "route to persistence" answer lost app/store.py
-        # (test_demo.py) -- a ranking change with no benchmark behind it.
+        # Question words stay in (#382 tried dropping them, twice). Their idf
+        # is already near zero, and in a code index they are not noise: "from"
+        # matches SQL `FROM`, and even "an" alone ("rather than an argument")
+        # was the margin that kept app/store.py in the demo's "route to
+        # persistence" answer (test_demo.py). Even a set limited to words that
+        # are no language's keyword lost it.
         q: Counter[str] = Counter(terms)
         weights: dict[str, float] = dict.fromkeys(q, 1.0)
         for term in list(q):
