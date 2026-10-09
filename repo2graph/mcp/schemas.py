@@ -82,7 +82,8 @@ TOOL_DESCRIPTIONS = {
         "or finding error strings. When NOT to use: do not use when you already have a "
         "symbol node_id and want callers/callees (use repo_neighbours); do not use for broad "
         "repo layout (use repo_map). Output: markdown citation blocks `[cite: path:start-end]` "
-        "bounded by budget_tokens."
+        'bounded by budget_tokens. To page, pass cursor="" then each `next_cursor:` token '
+        "from the reply's last line."
     ),
     "repo_neighbours": (
         "Traverse code graph relationships from a known symbol or file node_id (callers, "
@@ -91,7 +92,8 @@ TOOL_DESCRIPTIONS = {
         "callers (CALLS in), callees (CALLS out), inheritance, definitions, or the tests that "
         "reach a symbol through calls (TESTS in). When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
-        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`. "
+        'To page past limit, pass cursor="" then each `next_cursor:` token from the reply\'s last line.'
     ),
     "repo_find_symbol": (
         "Look up a symbol or file's node_id by name, for feeding into repo_neighbours, "
@@ -154,6 +156,13 @@ TOOL_DESCRIPTIONS = {
 
 BUILD_CAPABLE_TOOLS = frozenset(TOOL_DESCRIPTIONS) - {"repo_build_status"}
 
+# Paging is opt-in (#389): omitting `cursor` returns exactly the unpaged answer.
+_CURSOR_DESCRIPTION = (
+    'Opt-in paging. Omit for one unpaged answer. Pass "" for the first page of {page}; '
+    "while more remain the reply ends with a `next_cursor: <token>` line (also "
+    "_meta.nextCursor). Pass that token back, other arguments unchanged, for the next page."
+)
+
 TOOL_SCHEMAS = {
     "repo_map": {"type": "object", "properties": {}},
     "repo_search": {
@@ -186,6 +195,10 @@ TOOL_SCHEMAS = {
                     f"Maximum token ceiling for returned markdown pack (default {MCP_BUDGET_TOKENS}, "
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="k seed results"),
             },
             # `neighbours` and `max_neighbours` were advertised here and are
             # gone deliberately. Citation mode measured worse than the default
@@ -226,6 +239,10 @@ TOOL_SCHEMAS = {
                     "Drop CALLS and TESTS edges below this confidence, 0..1 (default 0.0: "
                     "keep everything, marking ambiguous edges). 1.0 keeps only unambiguous ones."
                 ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="limit rows"),
             },
         },
         "required": ["node_id"],

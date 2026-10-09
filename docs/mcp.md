@@ -201,8 +201,8 @@ runtime argument — see [`server.json`](../server.json).
 | Tool | Arguments | What comes back |
 |---|---|---|
 | `repo_map` | none | Languages, hub files and top entry points, prefixed with a staleness note (#383) if the working tree has changed since the index was built. Stable across calls, so it caches. Read this first. |
-| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. |
+| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens`, `cursor` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. Pass `cursor` to page through further seeds ([Pagination](#pagination-389)). |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence`, `cursor` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. Pass `cursor` to page past `limit` ([Pagination](#pagination-389)). |
 | `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |
@@ -270,6 +270,8 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | `node_id` (length) | `repo_neighbours`, `repo_path_between`, `repo_blast_radius` | — | — | 2 000 chars |
 | `path` (length) | `repo_read` | — | — | 2 000 chars |
 | `task_id` (length) | `repo_build_status` | — | — | 200 chars |
+| rows reachable by paging | `repo_neighbours` | — | — | 1 000 |
+| seed candidates reachable by paging | `repo_search` | — | — | 600 ranked chunks |
 
 `repo_neighbours`, `repo_find_symbol`'s results, `repo_path_between` and
 `repo_blast_radius` all take/return ids in the same shape the rest of the
@@ -294,6 +296,51 @@ it, but the result carries **`isError: true`** so a client can tell it from a
 real (possibly short) answer. This holds on the stdio server and on the HTTP
 transport. An empty result is never
 used to mean "error".
+
+### Pagination (#389)
+
+`repo_search` and `repo_neighbours` take an optional string `cursor`. Paging is
+**opt-in**: a call without `cursor` (or with `cursor: null`) returns exactly
+what it always has, byte for byte, and never a continuation.
+
+- **Start** with `cursor: ""`. That is the first page.
+- **Continue** while the reply's last line is `next_cursor: <token>` — a blank
+  line, then that literal prefix and an opaque token with no spaces. Call the
+  same tool again with `cursor: "<token>"` and the same `query`/`node_id` and
+  `hops`. The token is also returned as `_meta.nextCursor` on the
+  `CallToolResult`, for clients that read structured metadata.
+- **Stop** when a page has no `next_cursor:` line: that was the last page.
+
+What a page is:
+
+| Tool | One page | Free to change between pages |
+| --- | --- | --- |
+| `repo_neighbours` | The next `limit` rows (max 50) of one deterministic walk. Pages are disjoint and together list every neighbour, up to 1 000. The header says which rows it holds: `neighbours of X (rows 51-60):`. | `limit` |
+| `repo_search` | The next `k` seeds (max 50) of a fixed 600-candidate ranking, with their graph neighbours, cut at the first seed that does not fit the budget — that seed opens the next page rather than being dropped. The repo map is only on the first page. A later page never repeats an earlier page's seeds. | `k`, `budget_tokens` |
+
+Every page is held to the same ceilings as an unpaged reply: `limit` ≤ 50
+rows, `k` ≤ 50, and at most `budget_tokens` (itself ≤ 12 000) tokens with the
+`next_cursor:` line included. Paging adds pages; it never makes one bigger.
+
+Two deliberate differences from the unpaged answer: an unpaged
+`repo_neighbours` samples at most six edges per node per hop (so a symbol with
+60 callers shows six of them), while paging walks every edge so later pages
+can reach the rest; and an unpaged `repo_search` may pack a later, smaller
+seed after skipping one that did not fit, while a page stops at that seed.
+
+The token is self-contained and signed (HMAC under a key drawn when the server
+starts), so the server keeps no paging state at all. It is refused, with a
+`isError: true` reply saying what to do, when it:
+
+- comes from an earlier build of the index — `index was rebuilt; re-run the
+  query without cursor`;
+- was altered, is not a cursor at all, or came from another server process
+  (cursors do not survive a restart);
+- belongs to a different tool, `query`/`node_id` or `hops`;
+- is older than 10 minutes.
+
+Re-run the call with `cursor: ""` to start over. Paged replies are not served
+from the result cache, since each carries a freshly issued token.
 
 ### `repo_find_symbol`
 

@@ -30,6 +30,14 @@ makes keeping it current a release-blocking step rather than a good intention.
   `rag <source-dir>` auto-build and the MCP auto-build. A command-line flag
   still wins, and `explain-path` names the file when one of its settings
   decided a path. No config file, no change.
+- **Cursor pagination for `repo_neighbours` and `repo_search` (#389):**
+  An optional `cursor` argument opts into paging (`cursor: ""` for the first page). While more
+  remains, a page ends with a `next_cursor: <token>` line and carries the same token as
+  `_meta.nextCursor`. Every page keeps the per-call clamps and the 12 000-token ceiling, so
+  neighbour 51+ of a symbol is now reachable. Cursors are self-contained and HMAC-signed (no
+  server state), expire after 10 minutes, and are refused with an actionable error once the index
+  is rebuilt. Calls without `cursor` are byte-identical to before. See docs/mcp.md, "Pagination".
+
 - **Configurable resource limits and limit policies (#299):**
   Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
   alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.

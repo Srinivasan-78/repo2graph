@@ -214,3 +214,70 @@ def test_a_garbage_frame_does_not_kill_the_server(mini_index):
     finally:
         proc.kill()
         proc.wait(timeout=10)
+
+
+# Paging over the real transport (#389).
+import os  # noqa: E402
+
+from conftest import REPO_ROOT  # noqa: E402
+from test_mcp_pagination import HUB, build_index, write_fan_repo  # noqa: E402
+
+
+def _server_params_this_checkout(index_dir):
+    from mcp import StdioServerParameters
+
+    # The child must import this checkout, not whatever copy is installed.
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH")]))
+    return StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "repo2graph.mcp", "--out", str(index_dir)],
+        env=env,
+        cwd=str(REPO_ROOT),
+    )
+
+
+def test_official_client_pages_repo_neighbours_to_the_end(tmp_path):
+    import anyio
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    index_dir = build_index(write_fan_repo(tmp_path), tmp_path / "idx")
+
+    async def scenario():
+        rows: list[str] = []
+        pages = 0
+        async with stdio_client(_server_params_this_checkout(index_dir)) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                cursor: str | None = ""
+                while cursor is not None:
+                    result = await session.call_tool(
+                        "repo_neighbours", {"node_id": HUB, "limit": 50, "cursor": cursor}
+                    )
+                    assert not result.is_error, _text(result)
+                    text = _text(result)
+                    pages += 1
+                    rows += [ln for ln in text.split("\n") if ln.startswith("- ")]
+                    meta = result.meta or {}
+                    cursor = meta.get("nextCursor")
+                    last = text.rsplit("\n", 1)[-1]
+                    if cursor is None:
+                        assert not last.startswith("next_cursor: ")
+                    else:
+                        assert last == f"next_cursor: {cursor}"
+                    assert pages < 20
+
+                bad = await session.call_tool(
+                    "repo_neighbours", {"node_id": HUB, "cursor": "not-a-cursor"}
+                )
+                assert bad.is_error and "cursor" in _text(bad)
+                again = await session.call_tool("repo_neighbours", {"node_id": HUB})
+                assert not again.is_error and "next_cursor" not in _text(again)
+                assert not (again.meta or {}).get("nextCursor")
+        return rows, pages
+
+    rows, pages = anyio.run(scenario)
+    assert pages == 2
+    assert len(rows) == len(set(rows)) == 61
+    assert any("caller_59" in r for r in rows)

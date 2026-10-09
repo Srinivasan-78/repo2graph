@@ -191,8 +191,14 @@ def dispatch(
     if name not in TOOL_DESCRIPTIONS:
         return ToolError(f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}.")
 
+    # A paging call (#389) passes `cursor` through only when the caller sent
+    # one, so an unpaged call reaches its handler exactly as it always did.
+    # Pages are not cached: each carries a freshly issued, expiring cursor, and
+    # a cached page would hand back one minted before the last rebuild.
+    paging = {"cursor": args["cursor"]} if args.get("cursor") is not None else {}
+
     key = None
-    if cache is not None and name in CACHEABLE_TOOLS:
+    if cache is not None and name in CACHEABLE_TOOLS and not paging:
         key = make_key(name, args)
         hit = cache.get(key)
         if hit is not None:
@@ -229,6 +235,7 @@ def dispatch(
             k=args.get("k", 8),
             hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
+            **paging,
             # `neighbours` and `max_neighbours` are no longer forwarded, and no
             # longer advertised in TOOL_SCHEMAS["repo_search"] either. They were
             # once unreachable here by accident, which was a bug; they are
@@ -245,6 +252,7 @@ def dispatch(
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
             min_confidence=args.get("min_confidence", 0.0),
+            **paging,
         )
     elif name == "repo_find_symbol":
         result = _find(
