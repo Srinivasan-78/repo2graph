@@ -1995,3 +1995,25 @@ def test_auto_build_keeps_a_user_edited_gitignore(mini_repo, tmp_path):
     (out / ".gitignore").write_text("local.json\nmine\n", encoding="utf8")
     indexes._build_index(mini_repo, out)
     assert (out / ".gitignore").read_text(encoding="utf8") == "local.json\nmine\n"
+
+
+@pytest.mark.parametrize(
+    "tool,args", [("repo_search", {"query": "gateway"}), ("repo_find_symbol", {"name": "gateway"})]
+)
+def test_content_tools_carry_the_staleness_note_too(mini_repo, mini_index, tool, args):
+    """#454 AI4: only repo_map warned, so "no callers" from any other tool read
+    as fact against an index the working tree had moved past."""
+    import os
+    import time
+
+    from repo2graph.mcp.server import run_tool
+
+    fresh = run_tool(mini_index, mini_repo, tool, args)
+    assert "index may be stale" not in fresh
+
+    gateway = mini_repo / "pkg" / "gateway.py"
+    gateway.write_text(gateway.read_text(encoding="utf8") + "\n# changed after the build\n")
+    future = time.time() + 5
+    os.utime(gateway, (future, future))
+    stale = run_tool(mini_index, mini_repo, tool, args)
+    assert stale.startswith("_note: index may be stale")

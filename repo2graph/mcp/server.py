@@ -17,6 +17,7 @@ from .tools import (
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
     ToolError,
+    _staleness_note,
     dispatch,
     open_index,
     open_index_or_task,
@@ -71,8 +72,6 @@ def _require_sdk() -> Any:
         import mcp
     except ImportError:
         raise SystemExit(MISSING_SDK) from None
-    if mcp is None:
-        raise SystemExit(MISSING_SDK)
     try:
         from mcp.server import Server as _Server  # noqa: F401
     except ImportError as exc:
@@ -231,7 +230,33 @@ def _dispatch_tool(
     )
     if pending is not None:
         return pending
-    return dispatch(index, name, args, cache=cache, tasks=tasks)
+    text = dispatch(index, name, args, cache=cache, tasks=tasks)
+    # repo_map already leads with this note. Every other tool that cites line
+    # numbers or reports edges is just as wrong on a stale index -- "no callers"
+    # reads as fact -- so it carries the same warning.
+    if (
+        index is not None
+        and name in _STALENESS_NOTED_TOOLS
+        and isinstance(text, str)
+        and not isinstance(text, ToolError)
+    ):
+        note = _staleness_note(index)
+        if note:
+            text = note + text
+    return text
+
+
+_STALENESS_NOTED_TOOLS = frozenset(
+    {
+        "repo_search",
+        "repo_neighbours",
+        "repo_find_symbol",
+        "repo_read",
+        "repo_path_between",
+        "repo_impact",
+        "repo_blast_radius",
+    }
+)
 
 
 def _audit(

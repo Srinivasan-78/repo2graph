@@ -1095,34 +1095,6 @@ def cmd_explain(args) -> int:
         return 1
 
 
-def _git_ref_exists(repo: Path, ref: str) -> bool:
-    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see CONTRIBUTING.md)."""
-    import subprocess
-
-    from .integrity import GIT_HARDENING_ARGS, _clean_git_env
-
-    try:
-        proc = subprocess.run(
-            [
-                "git",
-                *GIT_HARDENING_ARGS,
-                "-C",
-                str(repo),
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                f"{ref}^{{commit}}",
-            ],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-            env=_clean_git_env(),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return True  # cannot tell: do not claim it is missing
-    return proc.returncode == 0
-
-
 def _nonneg(value: str) -> int:
     """argparse type: a base-10 int >= 0 (0 has a defined meaning for every
     numeric flag here; a negative silently mis-slices or breaks a subprocess)."""
