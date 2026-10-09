@@ -5,6 +5,7 @@ asks for it, and no provider SDK is used — stdlib `urllib.request` only, so th
 core install stays pure Python. The provider is chosen from the environment.
 """
 
+import ipaddress
 import json
 import os
 import secrets
@@ -117,7 +118,11 @@ def pick_provider(
     env: dict[str, str] | os._Environ[str] | Any | None = None,
     provider: str | None = None,
 ) -> dict[str, str] | None:
-    """The configured provider, or first in GEMINI > OPENAI > ANTHROPIC > OLLAMA order."""
+    """The requested provider, or the only configured one.
+
+    `GOOGLE_API_KEY` is accepted as a fallback for `GEMINI_API_KEY`. With two
+    or more providers configured and none requested, this refuses to choose.
+    """
     env = os.environ if env is None else env
     if provider is not None:
         if provider not in PROVIDER_MAP:
@@ -131,21 +136,26 @@ def pick_provider(
         if not value:
             raise SystemExit(f"provider {provider!r} requested but {env_var} is not set")
         return {"name": provider, "env": env_var, "value": value}
-    gemini_key = (env.get("GEMINI_API_KEY") or "").strip()
-    if gemini_key:
-        return {"name": "gemini", "env": "GEMINI_API_KEY", "value": gemini_key}
-    google_key = (env.get("GOOGLE_API_KEY") or "").strip()
-    if google_key:
-        return {"name": "gemini", "env": "GOOGLE_API_KEY", "value": google_key}
+    found = []
     for name, var in (
+        ("gemini", "GEMINI_API_KEY"),
+        ("gemini", "GOOGLE_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("ollama", "OLLAMA_HOST"),
     ):
         value = (env.get(var) or "").strip()
-        if value:
-            return {"name": name, "env": var, "value": value}
-    return None
+        if value and name not in {f["name"] for f in found}:
+            found.append({"name": name, "env": var, "value": value})
+    # Which company receives the user's source must be a choice, not whichever
+    # credential happens to be exported in this shell.
+    if len(found) > 1:
+        names = ", ".join(f"{f['name']} ({f['env']})" for f in found)
+        raise SystemExit(
+            f"several LLM providers are configured: {names}. "
+            "Pick one with --provider; repo2graph will not guess where to send your code."
+        )
+    return found[0] if found else None
 
 
 def build_prompt(pack: dict[str, Any] | None, *, nonce: str | None = None) -> tuple[str, str]:
@@ -254,7 +264,21 @@ def _ollama_base(value: str) -> str:
     parts = urllib.parse.urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
+    if parts.scheme == "http" and not _is_loopback(parts.hostname or ""):
+        sys.stderr.write(
+            f"warning: OLLAMA_HOST={value!r} is plain HTTP to a non-loopback host; "
+            "your code and the answer cross the network unencrypted\n"
+        )
     return base
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _delta(name: str, raw: bytes) -> str:
