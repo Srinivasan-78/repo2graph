@@ -1969,6 +1969,8 @@ def format_pack(results: Iterable[Record]) -> str:
     out: list[str] = []
     for r in results:
         path = r.get("path") or ""
+        if r.get("repo"):
+            path = f"{r['repo']}:{path}"
         qual = r.get("qualname") or r.get("name") or ""
         why = r.get("why") or ""
         text = r.get("text") or ""

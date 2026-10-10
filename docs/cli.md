@@ -262,6 +262,7 @@ functions around each answer come along too.
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to read. |
+| `--index` | unset | Search this index; repeat it to search several repositories at once (replaces `-o`). Results are merged by rank, held to one budget, and each names its repository: `billing:invoice.py`, `[cite: billing:invoice.py:1-2]`. A missing index is skipped with a warning. Not with `--vectors`. |
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
@@ -320,6 +321,7 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to read, or to write when a target has to be indexed first. |
+| `--index` | unset | Search this index; repeat it to search several repositories at once (replaces `-o`). Results are merged by rank, held to one budget, and each names its repository: `billing:invoice.py`, `[cite: billing:invoice.py:1-2]`. A missing index is skipped with a warning. Not with `--vectors`. |
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |

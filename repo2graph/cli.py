@@ -723,6 +723,21 @@ def cmd_query(args):
     _warn_retired_retrieval_flags(args)
     from .query import Index, format_pack
 
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        res = federated.retrieve(
+            indexes,
+            args.query,
+            args.budget,
+            k=args.k,
+            hops=args.hops,
+            min_confidence=getattr(args, "min_conf", None),
+            exclude_secrets=not getattr(args, "include_secrets", False),
+        )
+        _emit(json.dumps(res, indent=2) if args.format == "json" or args.json else format_pack(res))
+        return 0
+
     out = Path(args.out)
     # Index reads all three, and `build --formats overview` writes chunks.jsonl
     # without the graph files -- checking only chunks turned that combination
@@ -922,10 +937,43 @@ def cmd_verify_rag(args):
     return 0
 
 
+def _federated(args):
+    """The --index set, or None; refuses combinations that do not federate (#396)."""
+    dirs = getattr(args, "indexes", None)
+    if not dirs:
+        return None
+    if getattr(args, "vectors", None):
+        raise SystemExit("error: --vectors searches one index's embeddings; drop it with --index")
+    if getattr(args, "target", None):
+        raise SystemExit("error: give either a target or --index, not both")
+    from .federated import open_indexes
+
+    return open_indexes(dirs)
+
+
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
     _warn_retired_retrieval_flags(args)
     from .query import Index
+
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        return _rag_output(
+            args,
+            federated.pack_context(
+                indexes,
+                args.query,
+                k=args.k,
+                hops=args.hops,
+                budget_chars=args.budget,
+                budget_tokens=getattr(args, "budget_tokens", None),
+                count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+                min_confidence=args.min_conf,
+                expand_graph=not args.no_expand,
+                exclude_secrets=not getattr(args, "include_secrets", False),
+            ),
+        )
 
     out = _rag_index_dir(args)
     _require_index(out, "chunks.jsonl")
@@ -960,6 +1008,10 @@ def cmd_rag(args):
         count_tokens=_token_counter(getattr(args, "tokenizer", None)),
         token_margin=getattr(args, "token_margin", 0.0) or 0.0,
     )
+    return _rag_output(args, pack)
+
+
+def _rag_output(args, pack):
     if args.answer:
         from .answer import stream_answer
 
@@ -1741,6 +1793,15 @@ def main(argv=None):
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
     q.add_argument("query")
     q.add_argument("-o", "--out", default=".r2g")
+    q.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
+    )
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
     q.add_argument(
@@ -1866,6 +1927,15 @@ def main(argv=None):
         type=_unit_float,
         default=argparse.SUPPRESS,
         help="alias of --min-conf",
+    )
+    r.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
     )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
     r.add_argument(
