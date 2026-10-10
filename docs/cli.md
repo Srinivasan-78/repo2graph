@@ -83,7 +83,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-build-seconds` | `0` (no limit) | Stop or truncate when wall-clock build duration exceeds N seconds. |
 | `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. With no policy given, `--max-nodes` alone fails rather than warns. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
-| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
+| `--viz-nodes` | `300` | Node cap in `graph.html`'s detail view. `0` draws an empty graph; `all` draws every node, up to the page's 12 MB limit. Above the cap the page opens on a directory summary of every node (see `map`). |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
 | `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
@@ -420,6 +420,22 @@ repo2graph map -o .r2g --viz-nodes 80    # redraw graph.html with fewer dots
 repo2graph stats -o .r2g                 # raw stats.json, verbatim (default)
 repo2graph stats -o .r2g --format text   # human-readable quality summary
 ```
+
+**When the graph is bigger than `--viz-nodes`**, `graph.html` says so in a banner
+on the page itself (how many of how many nodes it draws, and by what rule), and
+opens on a **Directories** view instead: every node in the graph counted in one of
+at most 60 directory groups, with the `CALLS`, `IMPORTS`, `INHERITS` and other
+relationships between two groups drawn as one link whose width is how many there
+are. The groups are cut by carving out the biggest directory, wherever it is,
+until there are 60; a name ending `/…` is the rest of a directory whose biggest
+parts are shown separately. Click a group to see its size and best-connected
+members, then **Show its nodes** to switch to the detail view filtered to it. The
+legend filters by node type, relationship and language in either view.
+
+The embedded data is capped at 12 MB: past that (`--viz-nodes all` on a large
+repository) the detail view is halved until the page fits, and the banner says it
+was cut for size. The page is still deterministic: the same graph writes the same
+bytes.
 
 `stats` prints `agent/stats.json` verbatim by default — that has always been the
 default, and `--json` is just an explicit way to ask for it. Pass `--format text`
