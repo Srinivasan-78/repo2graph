@@ -362,9 +362,7 @@ DOCKER_AUTH_RE = re.compile(r"\"auth\"\s*:\s*\"(?P<value>[A-Za-z0-9+/]{12,1024}=
 # signal rather than the key.
 _K8S_SECRET_KIND_RE = re.compile(r"(?m)^kind:[ \t]*[\"']?Secret[\"']?[ \t]*$")
 _K8S_DATA_RE = re.compile(r"(?m)^(?P<indent>[ \t]*)(?:data|stringData):[ \t]*$")
-_K8S_ENTRY_RE = re.compile(
-    r"[ \t]+[\"']?[-\w.]{1,253}[\"']?:[ \t]*(?P<value>\S{1,65536})[ \t]*\r?$"
-)
+_K8S_KEY_RE = re.compile(r"[ \t]+[\"']?[-\w.]{1,253}[\"']?:")
 
 
 def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
@@ -386,9 +384,15 @@ def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
             lead = len(line) - len(line.lstrip(" \t"))
             if line.strip() and lead <= indent:
                 break
-            m = _K8S_ENTRY_RE.match(line)
-            if m:
-                spans.append((pos + m.start("value"), pos + m.end("value")))
+            # The value after `key:`, or the whole of a line continuing a
+            # multi-line value (a `|`/`>` block or a wrapped scalar), spaces
+            # inside it included.
+            m = _K8S_KEY_RE.match(line)
+            start = m.end() if m else lead
+            end = len(line.rstrip(" \t\r"))
+            start = end - len(line[start:end].lstrip(" \t"))
+            if start < end:
+                spans.append((pos + start, pos + end))
             pos = eol + 1
     return spans
 

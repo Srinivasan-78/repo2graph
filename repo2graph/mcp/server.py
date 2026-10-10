@@ -13,6 +13,7 @@ from .. import __version__
 from ..audit import timer as audit_timer
 from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .guardrails import INDEX_DIRNAME
+from .pagination import PagedText
 from .tools import (
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
@@ -242,7 +243,12 @@ def _dispatch_tool(
     ):
         note = _staleness_note(index)
         if note:
+            # `note + text` is a plain str; keep a page's cursor for _meta.nextCursor.
+            cursor = getattr(text, "next_cursor", None)
             text = note + text
+            if cursor:
+                text = PagedText(text)
+                text.next_cursor = cursor
     return text
 
 

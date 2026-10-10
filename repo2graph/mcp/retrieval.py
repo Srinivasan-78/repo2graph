@@ -188,7 +188,7 @@ def tool_repo_neighbours(
     floor = _min_confidence(min_confidence)
     if cursor is not None:
         return _paged_neighbours(
-            index, node_id, _clamp(hops, 1, 0, MCP_MAX_HOPS), limit, cursor, note
+            index, node_id, _clamp(hops, 1, 0, MCP_MAX_HOPS), limit, floor, cursor, note
         )
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
@@ -247,16 +247,19 @@ def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, 
 
 
 def _paged_neighbours(
-    index: Index, node_id: str, hops: int, limit: int, cursor: Any, note: str
+    index: Index, node_id: str, hops: int, limit: int, floor: float, cursor: Any, note: str
 ) -> str:
     """One page of `repo_neighbours`: rows [offset, offset + limit) of the full walk.
 
     The unpaged answer samples at most six edges per node per hop, which is
     why a symbol with sixty callers showed six. A page has to be a window on
     one complete, deterministic order or later pages could not reach the rest,
-    so this walks every edge of each hop, bounded in total instead.
+    so this walks every edge of each hop, bounded in total instead. The node's
+    own TESTS edges follow the walk, as in the unpaged answer.
     """
-    digest = args_digest("repo_neighbours", {"node_id": node_id, "hops": hops})
+    digest = args_digest(
+        "repo_neighbours", {"node_id": node_id, "hops": hops, "min_confidence": floor}
+    )
     identity = index_identity(index)
     try:
         offset = decode_cursor(cursor, "repo_neighbours", digest, identity)
@@ -267,10 +270,13 @@ def _paged_neighbours(
         hops=hops,
         edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
         edge_dirs=ALL_EDGE_DIRS,
-        min_confidence=0.0,
+        min_confidence=floor,
         per_hop=MCP_MAX_PAGED_NEIGHBOURS,
         max_results=MCP_MAX_PAGED_NEIGHBOURS + 1,
     )
+    walk += [
+        (dst, "TESTS", direction, node_id) for dst, direction, _ in _tests_of(index, node_id, floor)
+    ]
     capped = len(walk) > MCP_MAX_PAGED_NEIGHBOURS
     rows = [
         row

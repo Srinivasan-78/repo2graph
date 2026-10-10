@@ -1323,13 +1323,14 @@ def load_parse_cache_report(outdir: Path, config: Any = None) -> tuple[dict[str,
     from .parse import grammar_fingerprint, parse_cache_identity
 
     out = Path(outdir)
+    cache_path = path(out, "parse.cache.json")
+    # Checked first: a first build has no local.json either, and is not foreign.
+    if not cache_path.exists():
+        return {}, None
     if is_foreign_index(out):
         return {}, "the index was built on another machine"
 
     try:
-        cache_path = path(out, "parse.cache.json")
-        if not cache_path.exists():
-            return {}, None
         if cache_path.is_symlink():
             return {}, "parse.cache.json is a symlink"
         try:

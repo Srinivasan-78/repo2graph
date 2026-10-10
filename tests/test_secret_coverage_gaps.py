@@ -325,6 +325,26 @@ def test_k8s_secret_data_values_are_redacted():
     assert "name: db" in out and out.count("\n") == _K8S_SECRET.count("\n")
 
 
+def test_k8s_secret_multiline_and_spaced_values_are_redacted():
+    from repo2graph.security import redact_content
+
+    src = (
+        "kind: Secret\n"
+        "stringData:\n"
+        "  dsn: postgres admin hunter2\n"
+        "  app.conf: |\n"
+        "    upstream_user=admin\n"
+        "    token=Zq8vLmN2pR\n"
+        "metadata:\n"
+        "  name: db\n"
+    )
+    out, _ = redact_content(src)
+    for leaked in ("hunter2", "upstream_user=admin", "Zq8vLmN2pR"):
+        assert leaked not in out, out
+    assert "  app.conf: " in out and "name: db" in out
+    assert out.count("\n") == src.count("\n")
+
+
 def test_configmap_data_is_not_treated_as_secret():
     from repo2graph.security import redact_content
 

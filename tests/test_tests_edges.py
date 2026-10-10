@@ -163,6 +163,24 @@ def test_repo_neighbours_surfaces_tests_and_filters_by_confidence(built):
     assert "test_shared" not in strict, strict
 
 
+def test_paged_repo_neighbours_lists_tests_and_honours_min_confidence(built):
+    """A cursor pages the same answer: TESTS rows included, the same floor applied."""
+    from repo2graph.mcp import dispatch
+
+    _src, out, _edges, _nodes = built
+    idx = Index(out)
+    left = "sym:src/left.py::shared"
+    loose = dispatch(idx, "repo_neighbours", {"node_id": left, "limit": 50, "cursor": ""})
+    assert any(ln.startswith("- TESTS in:") and "test_shared" in ln for ln in loose.split("\n")), (
+        loose
+    )
+
+    args = {"node_id": left, "limit": 50, "min_confidence": 1.0, "cursor": ""}
+    strict = dispatch(idx, "repo_neighbours", args)
+    assert "TESTS" not in strict, strict
+    assert "test_shared" not in strict, strict
+
+
 def test_rag_expansion_does_not_follow_tests_unless_asked(built):
     _src, out, _edges, _nodes = built
     idx = Index(out)

@@ -592,6 +592,16 @@ def test_a_changed_parse_option_invalidates_the_cache_and_says_why(tmp_path, rec
     assert "chunk_large_files" in stats["parse_cache_invalidated"]
 
 
+def test_a_first_incremental_build_reports_no_discarded_cache(tmp_path, capsys):
+    """No index yet is not a foreign index: there is no cache to discard."""
+    from repo2graph.export import load_parse_cache_report
+
+    out = tmp_path / "idx"
+    assert load_parse_cache_report(out) == ({}, None)
+    build(write_repo(tmp_path), out, incremental=True)
+    assert "parse cache was discarded" not in capsys.readouterr().err
+
+
 def test_a_language_table_edit_invalidates_the_cache(tmp_path, monkeypatch):
     """#302: editing LANG_CFG changes every extraction without touching the
     grammars or PARSE_CACHE_FORMAT."""

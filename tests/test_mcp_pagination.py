@@ -8,6 +8,7 @@ not reachable at all before.
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 from pathlib import Path
 
@@ -123,6 +124,16 @@ def test_cursor_is_in_the_text_and_on_the_result(fan_index):
     # The last page has nothing to continue to, and says nothing about it.
     assert pages[-1].next_cursor is None
     assert NEXT_CURSOR_PREFIX not in pages[-1]
+
+
+def test_a_stale_index_note_keeps_the_cursor_on_the_result(fan_index, monkeypatch):
+    # `repo2graph.mcp.server` the attribute is a ServerWrapper; patch the module.
+    server = importlib.import_module("repo2graph.mcp.server")
+    monkeypatch.setattr(server, "_staleness_note", lambda index: "_note: stale._\n\n")
+    page = run_tool(fan_index, None, "repo_neighbours", {"node_id": HUB, "cursor": ""})
+    assert page.startswith("_note: stale._")
+    assert isinstance(page, PagedText)
+    assert page.next_cursor and _last_line_cursor(page) == page.next_cursor
 
 
 def test_a_page_that_is_complete_has_no_cursor(fan_index):
