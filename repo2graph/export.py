@@ -650,6 +650,7 @@ _SKIP_STAT_LABELS = (
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
     ("skipped_secret", "secret / credential files"),
+    ("skipped_secret_dir_source", "of which source files under secret-named directories"),
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case-colliding files"),
     ("skipped_unreadable", "unreadable files"),

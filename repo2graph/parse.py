@@ -597,6 +597,7 @@ def discover(
                 walk_skip_dirs.discard(part)
 
     root = root.resolve()
+    secret_dir_source = 0
     files = _git_files(root)
     if files is not None:
         if stats is not None:
@@ -739,6 +740,13 @@ def discover(
             ):
                 if stats is not None:
                     stats["skipped_secret"] += 1
+                    # Source code dropped only for living under a `secrets/`-
+                    # style directory is often the secret-handling code itself,
+                    # not a secret: count it apart so the drop is visible.
+                    if Path(rp).suffix.lower() in EXT_LANG and not _is_secret_path(
+                        rel.name, extra_keywords=config.extra_secret_keywords
+                    ):
+                        secret_dir_source += 1
                 continue
         if include_globs and not matches_any(rp, include_globs):
             continue
@@ -767,6 +775,14 @@ def discover(
                 stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
             continue
         yield rp, abspath
+
+    if secret_dir_source:
+        if stats is not None:
+            stats["skipped_secret_dir_source"] = secret_dir_source
+        diagnostic(
+            f"note: {secret_dir_source} source file(s) under secret-named directories "
+            "were not indexed; pass --include-secrets to index them"
+        )
 
 
 # `Callable[..., Parser]`, not `Callable[[str], Parser]`: the two supported

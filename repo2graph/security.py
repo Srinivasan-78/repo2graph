@@ -282,11 +282,15 @@ PEM_END_RE = re.compile(
 # a `PuTTY-User-Key-File-N:` header -- so it cannot be paired and is matched as
 # a plain single-line marker in CONTENT_SECRET_PATTERNS instead.
 PUTTY_KEY_RE = re.compile(r"PuTTY-User-Key-File-\d+:")
+# The header alone is diagnostic -- it never appears outside an actual Ansible
+# Vault payload. `_ansible_vault_spans` extends a match over the hex lines below.
+_ANSIBLE_VAULT_RE = re.compile(r"\$ANSIBLE_VAULT;1\.[12];AES256")
+_HEX_LINE_RE = re.compile(r"[ \t]*[0-9a-fA-F]{1,512}[ \t]*\r?")
 
 # Types whose spans are computed by a dedicated pass rather than by running
 # their entry below over the text. The entry is still the shape test used by
 # `_classify_secret_shape`.
-PAIRED_TYPES = frozenset({"private_key"})
+PAIRED_TYPES = frozenset({"private_key", "ansible_vault_blob"})
 
 # Content scanning patterns: (type_name, regex)
 #
@@ -317,9 +321,7 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("sendgrid_key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
     ("telegram_bot_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
     ("hashicorp_vault_token", re.compile(r"\bhv[sb]\.[A-Za-z0-9_-]{20,}\b")),
-    # The header alone is diagnostic -- it never appears outside an actual
-    # Ansible Vault payload, so no value-shape test is needed to confirm it.
-    ("ansible_vault_blob", re.compile(r"\$ANSIBLE_VAULT;1\.[12];AES256")),
+    ("ansible_vault_blob", _ANSIBLE_VAULT_RE),
     # A SAS query string is a bearer credential by itself: anyone holding the
     # full `sv=...&...&sig=...` string has the access it grants, with no
     # further secret needed. `sv=` (signed version) and a trailing `sig=`
@@ -394,6 +396,27 @@ def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
             if start < end:
                 spans.append((pos + start, pos + end))
             pos = eol + 1
+    return spans
+
+
+def _ansible_vault_spans(text: str) -> list[tuple[int, int]]:
+    """The vault header plus the hex payload lines under it.
+
+    The ciphertext is what an offline password guess runs against, so it goes
+    with the header rather than staying in clear beneath a redacted first line.
+    """
+    spans: list[tuple[int, int]] = []
+    for m in _ANSIBLE_VAULT_RE.finditer(text):
+        end = m.end()
+        pos = text.find("\n", end) + 1
+        while 0 < pos < len(text):
+            eol = text.find("\n", pos)
+            eol = len(text) if eol < 0 else eol
+            if not _HEX_LINE_RE.fullmatch(text, pos, eol):
+                break
+            end = eol
+            pos = eol + 1
+        spans.append((m.start(), end))
     return spans
 
 
@@ -773,6 +796,7 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
 
     # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
     findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
+    findings.extend(("ansible_vault_blob", start, end) for start, end in _ansible_vault_spans(text))
 
     # 1c. Docker registry logins and Kubernetes Secret payloads.
     for m in DOCKER_AUTH_RE.finditer(text):
