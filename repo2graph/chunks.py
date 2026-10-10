@@ -227,6 +227,12 @@ def iter_chunks(
         if path not in src_cache:
             try:
                 raw = (g.root / path).read_bytes()
+                if path.lower().endswith(".ipynb"):
+                    # The code cells at their own lines, not the JSON around
+                    # them (#398): outputs can be megabytes of base64 images.
+                    from .parse import notebook_code
+
+                    raw = notebook_code(raw)
                 src_cache[path] = _decode_source(raw)
             except OSError:
                 src_cache[path] = ""
@@ -286,6 +292,18 @@ def iter_chunks(
             f"# file: {n['path']}",
             f"# {n['kind']}: {n['qualname']}  (lines {n['start_line']}-{n['end_line']}, {n['lang']})",
         ]
+        if n["path"].lower().endswith(".ipynb"):
+            # A notebook is read by cell, not by line of JSON (#398).
+            cell = next(
+                (
+                    ln
+                    for ln in reversed(lines[: n["start_line"]])
+                    if ln.startswith("# cell ") and ln[7:].isdigit()
+                ),
+                None,
+            )
+            if cell:
+                header.append(f"# notebook {cell[2:]}")
         if n.get("entrypoint"):
             header.append("# entry point: nothing in this repo calls it — a flow starts here")
         if bases:

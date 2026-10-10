@@ -35,6 +35,7 @@ from .parse import (
     CONFIG_EXT,
     DOC_EXT,
     SUPER_RECEIVERS,
+    EMBEDDED_LANGS,
     EXT_LANG,
     ImportDetail,
     ParseError,
@@ -45,7 +46,7 @@ from .parse import (
     symbol_parent_key,
     discover,
     parse_source,
-    sniff_header_lang,
+    refine_lang,
 )
 from .testpaths import is_test_path
 
@@ -491,6 +492,8 @@ _IMPORT_RE = {
     "ruby": RUBY_REQUIRE_RE,
     # Bash `source ./lib.sh` / `. ./lib.sh`
     "bash": re.compile(r"""(?:source|\.)\s+['"]?([^'"\s]+)['"]?"""),
+    # Terraform `source = "./modules/vpc"` inside a `module` block
+    "hcl": re.compile(r'source\s*=\s*"([^"]+)"'),
 }
 
 
@@ -547,6 +550,7 @@ def import_targets(raw: str, lang: str) -> list[str]:
         "kotlin": "java",
         "scala": "java",
         "cpp": "c",
+        "objc": "c",
     }.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
@@ -640,7 +644,7 @@ def resolve_import(
                 if base.endswith(js):  # TS sources are imported with .js specifiers
                     stems.append(base[: -len(js)])
             for stem in stems:
-                for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts"):
+                for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts", ".vue", ".svelte"):
                     cands += [stem + ext, f"{stem}/index{ext}"]
             cands.append(base)
         else:
@@ -658,8 +662,18 @@ def resolve_import(
             cands = []  # module path known: anything outside it is a third-party package
         else:
             cands = _go_dir_by_tail(ctx).get(target.split("/")[-1], [])[:1]
-    elif lang in ("c", "cpp"):
+    elif lang in ("c", "cpp", "objc"):
         cands = by_name.get(target.split("/")[-1], [])[:1]
+    elif lang == "hcl":
+        # A local module is a directory: its `main.tf`, else its first `.tf`.
+        if target.startswith("."):
+            base = Path(src_dir, target).as_posix()
+            base = re.sub(r"/\./", "/", base)
+            while "/../" in base:
+                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
+            base = base.removeprefix("./").rstrip("/")
+            cands = [f"{base}/main.tf"]
+            cands += [p for p in by_dir.get(base, []) if p.endswith(".tf")][:1]
     elif lang == "java":
         rel = target.replace(".", "/") + ".java"
         cands = [rel]
@@ -945,7 +959,8 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     # this, a `.h` over the chunking threshold (an amalgamated single-header
     # C++ library is the ordinary case) took the C grammar regardless of
     # content, unlike every smaller `.h` in the same build.
-    sniff_header = lang == "c" and abspath.suffix.lower() == ".h"
+    # `.m` (Objective-C or MATLAB, #398) is settled the same way.
+    sniff_header = (lang, abspath.suffix.lower()) in (("c", ".h"), ("objc", ".m"))
 
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
@@ -996,10 +1011,10 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 continue
 
             if sniff_header:
-                lang = sniff_header_lang(buf)
+                lang = refine_lang(lang, abspath.suffix.lower(), buf)[0]
                 sniff_header = False
 
-            pf = parse_source(buf, lang, filepath=None)
+            pf = parse_source(buf, lang, filepath=None) if lang else None
             if pf is None:
                 line_offset += buf.count(b"\n")
                 continue
@@ -1163,7 +1178,7 @@ def _read_and_parse(item):
     try:
         st = abspath.lstat()
         size = st.st_size
-        if size > config.max_file_bytes and config.chunk_large_files:
+        if size > config.max_file_bytes and config.chunk_large_files and lang not in EMBEDDED_LANGS:
             return _chunk_and_parse(rel, abspath, lang, config, size)
     except OSError:
         pass
@@ -1172,12 +1187,11 @@ def _read_and_parse(item):
         raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
-    if lang == "c" and abspath.suffix.lower() == ".h":
-        lang = sniff_header_lang(raw)
+    lang, code = refine_lang(lang, abspath.suffix.lower(), raw)
     policy = getattr(config, "parse_policy", "best-effort")
     pf = None
     try:
-        pf = parse_source(raw, lang, filepath=abspath) if lang else None
+        pf = parse_source(code, lang, filepath=abspath) if lang else None
     except Exception as exc:
         if policy == "strict":
             raise ParseError(
@@ -1388,8 +1402,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         except OSError:
             results[rel] = (rel, lang, None)
             continue
-        if lang == "c" and abspath.suffix.lower() == ".h":
-            lang = sniff_header_lang(raw)
+        lang = refine_lang(lang, abspath.suffix.lower(), raw)[0]
         digest = hashlib.sha256(raw).hexdigest()
         entry = cache.get(rel)
         read = None

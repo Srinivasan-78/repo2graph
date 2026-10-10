@@ -1,5 +1,6 @@
 """Discovery, language configs, and tree-sitter based symbol/call extraction."""
 
+import json
 import os
 import re
 import stat as statmod
@@ -80,6 +81,16 @@ EXT_LANG = {
     ".sh": "bash",
     ".bash": "bash",
     ".lua": "lua",
+    # `.m` is also MATLAB: `refine_lang` keeps it only with an Objective-C signal.
+    ".m": "objc",
+    ".mm": "objc",
+    ".tf": "hcl",
+    ".hcl": "hcl",
+    # Not grammars of their own: `refine_lang` hands the code inside them to
+    # the JavaScript/TypeScript or Python parser (#398).
+    ".vue": "vue",
+    ".svelte": "svelte",
+    ".ipynb": "ipynb",
 }
 
 # `.h` is the single ambiguous extension in EXT_LANG: it defaults to "c" there
@@ -105,15 +116,120 @@ CPP_HEADER_HINTS = (
 )
 
 
+# Directives no C, C++ or MATLAB file contains. `@interface`/`@protocol`
+# settle a `.h` as Objective-C before the C++ hints are consulted, and any of
+# these keeps a `.m` file as Objective-C rather than MATLAB (#398).
+OBJC_HINTS = (b"@interface", b"@implementation", b"@protocol", b"#import")
+
+
 def sniff_header_lang(raw: bytes) -> str:
-    """Guess "c" or "cpp" for a `.h` file from its content (#377).
+    """Guess "c", "cpp" or "objc" for a `.h` file from its content (#377).
 
     Cheap and best-effort: any single C++ signal anywhere in `raw` wins,
     since a plain C header contains none of `CPP_HEADER_HINTS` in ordinary
     (non-comment, non-string) code. Callers pass the bytes they already read
     for hashing/parsing -- this never opens the file itself.
     """
+    if b"@interface" in raw or b"@protocol" in raw:
+        return "objc"
     return "cpp" if any(h in raw for h in CPP_HEADER_HINTS) else "c"
+
+
+_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
+_TS_LANG_ATTR_RE = re.compile(r"""\blang\s*=\s*["']?(tsx|ts|typescript)\b""", re.I)
+
+
+def component_script(raw: bytes) -> tuple[str, bytes]:
+    """The `<script>` blocks of a Vue or Svelte component, at their own lines.
+
+    Everything outside them becomes empty lines, so every line number the
+    JavaScript/TypeScript parser reports is the line in the `.vue`/`.svelte`
+    file. A `lang="ts"` on any block parses them all as TypeScript.
+    """
+    text = raw.decode("utf-8", "replace")
+    parts: list[str] = []
+    lang, pos = "javascript", 0
+    for m in _SCRIPT_RE.finditer(text):
+        parts.append("\n" * text.count("\n", pos, m.start(2)))
+        parts.append(m.group(2))
+        pos = m.end(2)
+        attr = _TS_LANG_ATTR_RE.search(m.group(1))
+        if attr:
+            lang = "tsx" if attr.group(1).lower() == "tsx" else "typescript"
+    parts.append("\n" * text.count("\n", pos))
+    return lang, "".join(parts).encode("utf8")
+
+
+# nbformat writes one cell key per line, sorted, so `cell_type` comes before
+# `source` and both sit at the same indent; a key at any other indent is
+# inside an output or metadata and is not the cell's.
+_NB_CELL_TYPE_RE = re.compile(r'^(\s*)"cell_type"\s*:\s*"(\w+)"')
+_NB_SOURCE_RE = re.compile(r'^(\s*)"source"\s*:\s*\[\s*$')
+_NB_STRING_RE = re.compile(r'^\s*("(?:[^"\\]|\\.)*")\s*,?\s*$')
+_NB_MAGIC_RE = re.compile(r"^\s*[%!?]")
+
+
+def notebook_code(raw: bytes) -> bytes:
+    """A Jupyter notebook's code cells, each at the lines it occupies in the file.
+
+    Every other line becomes empty, so the Python parser's line numbers are
+    the notebook's own and a citation opens on the right line of the `.ipynb`.
+    The `"source": [` line of each code cell becomes `# cell N` (N counts
+    every cell from 1, as Jupyter shows them), so a chunk names its cell.
+    IPython magics and shell escapes (`%time`, `!pip`) become empty lines.
+    A notebook not written one source line per JSON line (minified) yields
+    nothing rather than wrong line numbers.
+    """
+    lines = raw.decode("utf-8", "replace").split("\n")
+    out = [""] * len(lines)
+    cell, cell_type, indent, in_source = 0, "", None, False
+    for i, line in enumerate(lines):
+        if in_source:
+            m = _NB_STRING_RE.match(line)
+            if m is None:
+                in_source = False
+            elif cell_type == "code":
+                try:
+                    code = json.loads(m.group(1))
+                except ValueError:
+                    code = ""
+                code = code.rstrip("\r\n").replace("\r", "").replace("\n", " ")
+                out[i] = "" if _NB_MAGIC_RE.match(code) else code
+            continue
+        if m := _NB_CELL_TYPE_RE.match(line):
+            if indent is None or len(m.group(1)) == indent:
+                indent = len(m.group(1))
+                cell += 1
+                cell_type = m.group(2)
+        elif (m := _NB_SOURCE_RE.match(line)) and len(m.group(1)) == indent:
+            in_source = True
+            if cell_type == "code":
+                out[i] = f"# cell {cell}"
+    return "\n".join(out).encode("utf8")
+
+
+def refine_lang(lang: str | None, suffix: str, raw: bytes) -> tuple[str | None, bytes]:
+    """The language to parse a file as, and the bytes to give that parser.
+
+    `EXT_LANG` maps an extension; this settles what the extension cannot:
+    a `.h` header's C, C++ or Objective-C (#377), a `.m` file's Objective-C
+    or MATLAB (None: not parsed), and the code inside a Vue or Svelte
+    component or a notebook (#398). Line numbers are always the file's own.
+    """
+    if lang == "c" and suffix == ".h":
+        return sniff_header_lang(raw), raw
+    if lang == "objc" and suffix == ".m":
+        return ("objc" if any(h in raw for h in OBJC_HINTS) else None), raw
+    if lang in ("vue", "svelte"):
+        return component_script(raw)
+    if lang == "ipynb":
+        return "python", notebook_code(raw)
+    return lang, raw
+
+
+# Languages read through `refine_lang` as a whole file: their code cannot be
+# found in an arbitrary slice, so `--chunk-large-files` does not slice them.
+EMBEDDED_LANGS = frozenset({"vue", "svelte", "ipynb"})
 
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
@@ -283,6 +399,29 @@ LANG_CFG: dict[str, LangConfig] = {
     },
     "lua": {
         "kind_map": {"function_declaration": "function"},
+        "call_types": {"function_call"},
+        "import_types": set(),
+        "doc": "line",
+    },
+    "objc": {
+        "kind_map": {
+            # A category (`@interface Cache (Extra)`) is the same node type
+            # and the same first identifier, so its methods join the class.
+            "class_interface": "class",
+            "class_implementation": "class",
+            "protocol_declaration": "protocol",
+            "method_definition": "method",
+            "function_definition": "function",
+        },
+        "call_types": {"call_expression", "message_expression"},
+        "import_types": {"preproc_include"},
+        "doc": "line",
+    },
+    "hcl": {
+        # Resolved per node by `_hcl_symbol`: a top-level block is named by its
+        # Terraform address (`aws_s3_bucket.logs`, `var.env`, `module.vpc`),
+        # and each attribute of a top-level `locals` block is `local.<name>`.
+        "kind_map": {"block": "hcl", "attribute": "hcl"},
         "call_types": {"function_call"},
         "import_types": set(),
         "doc": "line",
@@ -1241,6 +1380,77 @@ _ATTR_OR_COMMENT_TYPES = (
 _COMMENT_TYPES = ("comment", "line_comment", "block_comment", "doc_comment")
 
 
+# Terraform's address prefix per block type; `resource` has none.
+_HCL_PREFIX = {"variable": "var", "module": "module", "output": "output", "provider": "provider"}
+# Heads of references that name no block: `count.index`, `each.value`, ...
+_HCL_NOT_BLOCKS = frozenset({"count", "each", "path", "self", "terraform"})
+
+
+def _hcl_words(src: bytes, block) -> list[str]:
+    """A block's type and labels: `resource "aws_s3_bucket" "logs"` -> 3 words."""
+    words = []
+    for c in block.children:
+        if c.type == "identifier":
+            words.append(_text(src, c))
+        elif c.type == "string_lit":
+            words.append(_text(src, c).strip('"'))
+        elif c.type == "block_start":
+            break
+    return words
+
+
+def _hcl_symbol(src: bytes, node) -> tuple[str | None, str | None]:
+    """(kind, Terraform address) of a top-level block or local; else (None, None).
+
+    Only top-level blocks are symbols: a nested `lifecycle {}` or `ingress {}`
+    belongs to its resource. Every attribute of a top-level `locals` block is
+    its own symbol, `local.<name>`, since that is how it is referenced.
+    """
+    body = node.parent
+    if node.type == "attribute":
+        block = body.parent if body is not None else None
+        if (
+            block is None
+            or block.type != "block"
+            or _hcl_words(src, block) != ["locals"]
+            or block.parent is None
+            or block.parent.parent is None
+            or block.parent.parent.type != "config_file"
+        ):
+            return None, None
+        ident = next((c for c in node.children if c.type == "identifier"), None)
+        return ("local", f"local.{_text(src, ident)}") if ident is not None else (None, None)
+    if body is None or body.parent is None or body.parent.type != "config_file":
+        return None, None
+    words = _hcl_words(src, node)
+    if not words:
+        return None, None
+    btype, labels = words[0], words[1:]
+    if btype == "resource" and len(labels) >= 2:
+        return "resource", f"{labels[0]}.{labels[1]}"
+    if btype == "data" and len(labels) >= 2:
+        return "data", f"data.{labels[0]}.{labels[1]}"
+    if btype in _HCL_PREFIX and labels:
+        return btype, f"{_HCL_PREFIX[btype]}.{labels[0]}"
+    if labels:
+        return "block", ".".join(words)
+    return None, None
+
+
+def _hcl_reference(src: bytes, node) -> str | None:
+    """The address a `variable_expr` refers to: `aws_s3_bucket.logs.arn` -> `aws_s3_bucket.logs`."""
+    head = _text(src, node)
+    if head in _HCL_NOT_BLOCKS:
+        return None
+    attrs: list[str] = []
+    sib = node.next_named_sibling
+    while sib is not None and sib.type == "get_attr" and len(attrs) < 2:
+        attrs.append(_text(src, sib).lstrip(".").strip())
+        sib = sib.next_named_sibling
+    need = 2 if head == "data" else 1
+    return ".".join([head, *attrs[:need]]) if len(attrs) >= need else None
+
+
 def _docstring(src: bytes, node, lang: str) -> str:
     if lang == "python":
         body = node.child_by_field_name("body")
@@ -1459,6 +1669,17 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
     """Extract supertype names along with their relationship subtype and raw expression."""
     out: list[str] = []
     details: list[dict] = []
+    if lang == "objc" and node.type == "class_interface":
+        # `@interface Cache : NSObject <Store, Codable>`
+        sup = node.child_by_field_name("superclass")
+        if sup is not None:
+            out.append(_text(src, sup))
+            details.append({"name": out[-1], "subtype": "EXTENDS", "raw": out[-1]})
+        for c in node.children:
+            if c.type == "parameterized_arguments":
+                for t in c.named_children:
+                    out.append(_text(src, t).strip())
+                    details.append({"name": out[-1], "subtype": "IMPLEMENTS", "raw": out[-1]})
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
@@ -1830,7 +2051,13 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
         )
         return details
 
-    elif lang in ("c", "cpp"):
+    elif lang == "hcl":
+        m = re.search(r'source\s*=\s*"([^"]+)"', raw_clean)
+        if m:
+            details.append(ImportDetail(raw=raw_clean, module=m.group(1)))
+            return details
+
+    elif lang in ("c", "cpp", "objc"):
         m = re.search(r"""([<"])([^>"]+)[>"]""", raw_clean)
         if m:
             module = m.group(2)
@@ -2028,6 +2255,24 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 if raw:
                     imports.append(raw[:300])
                     imports_full.append((raw, node.start_point[0] + 1))
+        elif lang == "hcl" and owner is not None:
+            if ntype == "variable_expr" and (ref := _hcl_reference(source, node)):
+                # A reference between blocks is Terraform's dependency edge;
+                # it is recorded as a call so it resolves like one.
+                owner.calls.append(ref)
+                owner.call_details.append(
+                    {"name": ref, "kind": "static", "line": node.start_point[0] + 1}
+                    | _receiver_fields("", False)
+                )
+            elif (
+                ntype == "attribute"
+                and owner.kind == "module"
+                and node.named_children
+                and _text(source, node.named_children[0]) == "source"
+            ):
+                raw = _text(source, node).strip()
+                imports.append(raw[:300])
+                imports_full.append((raw, node.start_point[0] + 1))
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
@@ -2072,6 +2317,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 # The specifier's `name` field is the target; the symbol is the
                 # alias, so `name` has to be replaced, not just the kind.
                 name, kind = (alias_name, "alias") if alias_name else (name, None)
+            elif kind == "hcl":
+                kind, name = _hcl_symbol(source, node) if owner is None else (None, None)
             if kind and lang == "kotlin" and ntype == "class_declaration":
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"

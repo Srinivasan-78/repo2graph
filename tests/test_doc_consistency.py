@@ -68,6 +68,8 @@ LANGUAGE_TOKENS = {
     "scala": r"\bScala\b",
     "bash": r"\bBash\b",
     "lua": r"\bLua\b",
+    "objc": r"\bObjective-C\b",
+    "hcl": r"\bHCL\b",
 }
 
 

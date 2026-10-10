@@ -215,6 +215,40 @@ function top()
 end
 """,
     ),
+    "objc": (
+        "m.m",
+        """@implementation A
+- (void)run {
+    puts("mk_run1");
+}
+- (void)run {
+    puts("mk_run2");
+}
+- (void)step {
+    puts("mk_step");
+}
+@end
+void top(void) {
+    puts("mk_top");
+}
+""",
+    ),
+    "hcl": (
+        "m.tf",
+        """resource "a" "run" {
+  name = "mk_run1"
+}
+resource "a" "run" {
+  name = "mk_run2"
+}
+variable "step" {
+  default = "mk_step"
+}
+locals {
+  top = "mk_top"
+}
+""",
+    ),
 }
 
 
@@ -325,6 +359,19 @@ EXPECTED: dict[str, dict[str, set[str]]] = {
     },
     "bash": {"step": {"mk_step"}, "top": {"mk_top1"}, "top@L7": {"mk_top2"}},
     "lua": {"A.run": {"mk_run"}, "step": {"mk_step"}, "top": {"mk_top"}},
+    "objc": {
+        "A": {"mk_run1", "mk_run2", "mk_step"},
+        "A.run": {"mk_run1"},
+        "A.run@L5": {"mk_run2"},
+        "A.step": {"mk_step"},
+        "top": {"mk_top"},
+    },
+    "hcl": {
+        "a.run": {"mk_run1"},
+        "a.run@L4": {"mk_run2"},
+        "var.step": {"mk_step"},
+        "local.top": {"mk_top"},
+    },
 }
 
 

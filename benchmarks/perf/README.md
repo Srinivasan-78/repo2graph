@@ -59,4 +59,4 @@ What it says, in order of cost:
   for a repository this size.
 - **Memory is about 33 KB per file**, almost all of it the in-memory graph.
   Budget 2 GB for a 50,000-file build; `--max-files` and `--max-nodes` bound
-  it (`docs/cli.md`).
+  it ([docs/cli.md](../../docs/cli.md)).
