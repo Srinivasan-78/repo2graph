@@ -320,10 +320,25 @@ def default_embedder(name: str | None = None) -> _SentenceTransformerEmbedder:
     must import on a bare install, and only this function needs the extra.
     """
     model_id = name or DEFAULT_MODEL
+    repo_id, revision = split_model_spec(model_id)
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:
         raise RuntimeError(
             'embedding needs the optional `rag` extra: pip install "repo2graph[rag]"'
         ) from None
-    return _SentenceTransformerEmbedder(SentenceTransformer(model_id), model_id)
+    kwargs = {"revision": revision} if revision else {}
+    return _SentenceTransformerEmbedder(SentenceTransformer(repo_id, **kwargs), model_id)
+
+
+def split_model_spec(spec: str) -> tuple[str, str | None]:
+    """`"org/model@<commit>"` -> `("org/model", "<commit>")`; no `@` -> no revision.
+
+    A revision pins the download to one Hugging Face commit (#452). It stays
+    part of the model id recorded in `vectors.meta.json`, so the query side's
+    model check refuses any other revision of the same model.
+    """
+    repo_id, sep, revision = spec.rpartition("@")
+    if not sep or not repo_id or not revision or "/" in revision:
+        return spec, None
+    return repo_id, revision

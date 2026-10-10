@@ -1249,7 +1249,7 @@ def _add_vector_flags(parser) -> None:
         dest="embed_model",
         default=None,
         help="sentence-transformers model used to embed the query for "
-        f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})",
+        f"--vectors; must match the index, @<commit> pin included (default: {EMBED_DEFAULT_MODEL})",
     )
 
 
@@ -1768,7 +1768,8 @@ def main(argv=None):
         "--embed-model",
         dest="model",
         default=None,
-        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})",
+        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL}); "
+        "append @<commit> to pin a Hugging Face revision, e.g. MODEL@1a2b3c",
     )
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument(

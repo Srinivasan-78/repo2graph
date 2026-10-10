@@ -357,7 +357,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to embed. |
-| `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. |
+| `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. Append `@<commit>` to pin the Hugging Face revision; the pin is part of the model id stored with the vectors, so the query side names it the same way. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
 | `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. `rag_extra_installed` is always `true`/`false`, even for an index with no vectors. |
