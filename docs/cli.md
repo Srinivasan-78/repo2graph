@@ -92,6 +92,8 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
 | `--watch` | off | After building, keep watching and rebuild incrementally when the tree changes. `--watch-interval` (default 1 s, raised on large trees) and `--watch-quiet` (default 1 s of stillness before rebuilding). |
+| `--neo4j-uri` | unset | After building, push `graph.cypher` to this Neo4j HTTP endpoint, e.g. `http://localhost:7474` (Memgraph serves the same API). Needs `cypher` in `--formats`. Credentials come from `NEO4J_USER` (default `neo4j`) and `NEO4J_PASSWORD`, never a flag. Statements go in batches of 500; every one is a `MERGE` behind a uniqueness constraint, so pushing again is safe, and a failure says how many were applied. |
+| `--neo4j-database` | `neo4j` | Database to push into. |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |

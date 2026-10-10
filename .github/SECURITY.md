@@ -47,6 +47,9 @@ Every exception is something you ask for by name:
   serves on first use. Once it is cached, `HF_HUB_OFFLINE=1` makes later runs request nothing;
   pin the download to one commit with `--model MODEL@<commit>` (and the same `--embed-model` on
   the query side).
+- `build --neo4j-uri URL` sends the graph (names, paths, signatures, docstrings and edges, but
+  no function bodies) to that Neo4j server after building, naming the host on stderr first.
+  Without the flag `build` opens no socket.
 - `rag --tokenizer tiktoken` lets the `tiktoken` package fetch its BPE table on first use
   (cached afterwards). The other tokenizers are local arithmetic.
 - `repo2graph rag --answer` sends the assembled context pack (real file content) to an LLM

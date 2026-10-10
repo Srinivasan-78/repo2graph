@@ -161,6 +161,8 @@ def _require_history_for_authors(args) -> None:
 
 def cmd_build(args):
     _require_history_for_authors(args)
+    if getattr(args, "neo4j_uri", None) and "cypher" not in parse_formats(args.formats):
+        raise SystemExit("error: --neo4j-uri pushes graph.cypher; add cypher to --formats")
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
@@ -297,9 +299,21 @@ def cmd_build(args):
     report["performance"] = _build_performance(
         g, outdir, written, built - started, time.monotonic() - built, chunk_chars[0]
     )
+    if getattr(args, "neo4j_uri", None):
+        report["neo4j"] = _push_neo4j(args, outdir)
     _emit(json.dumps(report, indent=2))
     if getattr(args, "watch", False):
         _watch_and_rebuild(args, repo_path, outdir, config)
+
+
+def _push_neo4j(args, outdir: Path) -> dict:
+    from .neo4j import PushError, push
+
+    try:
+        applied = push(artifact_path(outdir, "graph.cypher"), args.neo4j_uri, args.neo4j_database)
+    except (PushError, ValueError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    return {"statements": applied, "database": args.neo4j_database}
 
 
 def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
@@ -1650,6 +1664,19 @@ def main(argv=None):
         type=_posint,
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
+    )
+    b.add_argument(
+        "--neo4j-uri",
+        default=None,
+        metavar="URL",
+        help="after building, push graph.cypher to this Neo4j HTTP endpoint "
+        "(e.g. http://localhost:7474); credentials from NEO4J_USER / NEO4J_PASSWORD",
+    )
+    b.add_argument(
+        "--neo4j-database",
+        default="neo4j",
+        metavar="NAME",
+        help="database to push into with --neo4j-uri (default: neo4j)",
     )
     b.add_argument(
         "--watch",
