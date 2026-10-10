@@ -91,6 +91,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/architecture.md](architecture.md#what-gets-excluded-and-by-which-layer)**. |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
+| `--watch` | off | After building, keep watching and rebuild incrementally when the tree changes. `--watch-interval` (default 1 s, raised on large trees) and `--watch-quiet` (default 1 s of stillness before rebuilding). |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
@@ -173,6 +174,20 @@ a full build overwrites the cache and puts you back on a known-good footing.
 Cache entries written by a different cache format are ignored automatically, as
 is a cache that is missing, unreadable or corrupt; each of those degrades to a
 full build rather than to a wrong one.
+
+### `--watch`
+
+`repo2graph build . --watch` builds once, then polls the tree and rebuilds with
+`--incremental` whenever it changes, printing each build's report as it goes.
+A change starts a quiet period that every further change restarts, so a save,
+a `git checkout` or a formatter run touching fifty files is one rebuild. Polling
+lists the tree the way discovery does (the output directory, `.git`,
+`node_modules` and the other skipped directories left out, dotfiles and `~`
+backups ignored) and compares sizes and modification times: standard library
+only, a stat per file. Trees over 50,000 files are polled less often, one second
+per 50,000 files. Ctrl-C stops it; a rebuild that is interrupted leaves the
+previous index in place and no lock behind, because it runs under the same build
+lock and atomic swap as any build.
 
 ### Config file
 

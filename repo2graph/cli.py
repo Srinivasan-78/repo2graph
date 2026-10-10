@@ -298,6 +298,32 @@ def cmd_build(args):
         g, outdir, written, built - started, time.monotonic() - built, chunk_chars[0]
     )
     _emit(json.dumps(report, indent=2))
+    if getattr(args, "watch", False):
+        _watch_and_rebuild(args, repo_path, outdir, config)
+
+
+def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
+    """After the first build, rebuild incrementally on every settled change (#392)."""
+    from .parse import DEFAULT_SKIP_DIRS
+    from .watch import poll_interval, snapshot, watch
+
+    skip = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip.discard("vendor")
+
+    def take():
+        return snapshot(repo_path, skip, outdir)
+
+    interval = poll_interval(len(take()), args.watch_interval)
+    diagnostic(
+        f"watching {repo_path} every {interval:g}s; rebuilding {args.watch_quiet:g}s after "
+        "the last change (Ctrl-C to stop)"
+    )
+    again = argparse.Namespace(**{**vars(args), "watch": False, "incremental": True})
+    try:
+        watch(take, lambda: cmd_build(again), interval=interval, quiet=args.watch_quiet)
+    except KeyboardInterrupt:
+        diagnostic("stopped watching")
 
 
 def _token_counter(spec):
@@ -1624,6 +1650,26 @@ def main(argv=None):
         type=_posint,
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
+    )
+    b.add_argument(
+        "--watch",
+        action="store_true",
+        help="after building, keep watching the tree and rebuild incrementally on each change",
+    )
+    b.add_argument(
+        "--watch-interval",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds between polls (default: 1; raised automatically on large trees)",
+    )
+    b.add_argument(
+        "--watch-quiet",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds the tree must be still before a rebuild, so a burst of saves "
+        "costs one rebuild (default: 1)",
     )
     b.add_argument(
         "--incremental",
