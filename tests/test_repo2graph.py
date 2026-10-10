@@ -338,6 +338,13 @@ def test_resolve_import_go_uses_module_path():
     assert resolve_import("github.com/other/pkg", "cmd/app/main.go", "go", files, ctx) is None
 
 
+def test_resolve_import_go_without_module_matches_the_first_dir_by_tail():
+    files = {"a/store/doc.md", "b/store/s.go", "c/store/t.go", "cmd/main.go"}
+    ctx = path_index(files)
+    assert resolve_import("x.com/any/store", "cmd/main.go", "go", files, ctx) == "b/store/s.go"
+    assert resolve_import("x.com/any/missing", "cmd/main.go", "go", files, ctx) is None
+
+
 # ---------- graph ----------
 
 

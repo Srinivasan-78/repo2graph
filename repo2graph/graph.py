@@ -571,6 +571,23 @@ def path_index(file_index) -> dict:
     return {"by_name": by_name, "by_dir": by_dir}
 
 
+def _go_dir_by_tail(ctx: dict) -> dict[str, list[str]]:
+    """Last directory name -> the first .go file under it, directories in sorted order.
+
+    Built once per `ctx` rather than once per import: without go.mod, every Go
+    import used to sort and walk all directories (#456 P2).
+    """
+    table = ctx.get("go_dir_by_tail")
+    if table is None:
+        table = {}
+        for d, paths in sorted(ctx["by_dir"].items()):
+            first = next((p for p in paths if p.endswith(".go")), None)
+            if first is not None:
+                table.setdefault(d.split("/")[-1], [first])
+        ctx["go_dir_by_tail"] = table
+    return table
+
+
 def resolve_import(
     target: str, from_path: str, lang: str, file_index: set[str], ctx: dict | None = None
 ) -> str | None:
@@ -638,14 +655,7 @@ def resolve_import(
         elif module:
             cands = []  # module path known: anything outside it is a third-party package
         else:
-            tail = target.split("/")[-1]
-            cands = [
-                p
-                for d, paths in sorted(by_dir.items())
-                if d.split("/")[-1] == tail
-                for p in paths
-                if p.endswith(".go")
-            ][:1]
+            cands = _go_dir_by_tail(ctx).get(target.split("/")[-1], [])[:1]
     elif lang in ("c", "cpp"):
         cands = by_name.get(target.split("/")[-1], [])[:1]
     elif lang == "java":
