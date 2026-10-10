@@ -264,6 +264,38 @@ _STALENESS_NOTED_TOOLS = frozenset(
 )
 
 
+def run_resource_read(
+    index_dir: str | Path,
+    uri: str,
+    audit: Any = None,
+    *,
+    allow_foreign_index: bool = False,
+) -> tuple[str, str]:
+    """Read one MCP resource from an existing index, audited like a tool call (#388).
+
+    Raises:
+        ValueError: An unknown URI, or no index to read it from yet.
+    """
+    from .resources import read_resource
+
+    args = {"uri": uri}
+    with audit_timer() as elapsed:
+        try:
+            try:
+                index = open_index(index_dir, allow_foreign_index=allow_foreign_index)
+            except SystemExit as exc:
+                raise ValueError(
+                    f"no index to read yet ({exc}); a tool call builds one when the server "
+                    "was given a repository"
+                ) from None
+            text, mime = read_resource(index, uri)
+        except ValueError as exc:
+            _audit(audit, "resources/read", args, elapsed, error=exc)
+            raise
+    _audit(audit, "resources/read", args, elapsed, text=text)
+    return text, mime
+
+
 def _audit(
     audit: Any,
     name: str,
@@ -363,14 +395,61 @@ def serve(
                 pass
         return mcp.types.CallToolResult(content=content, isError=is_error)
 
-    try:
-        mcp_server = server_cls(
-            server.name,
-            version=server.version,
-            on_list_tools=_list_tools_2x,
-            on_call_tool=_call_tool_2x,
+    from .resources import get_prompt, list_prompts, list_resources
+
+    async def _list_resources(ctx: Any, params: Any) -> Any:
+        return mcp.types.ListResourcesResult(
+            resources=[mcp.types.Resource(**r) for r in list_resources(index_dir)]
         )
-    except TypeError:
+
+    async def _read_resource(ctx: Any, params: Any) -> Any:
+        uri = str(params.uri)
+        text, mime = run_resource_read(
+            index_dir, uri, audit=audit, allow_foreign_index=allow_foreign_index
+        )
+        return mcp.types.ReadResourceResult(
+            contents=[mcp.types.TextResourceContents(uri=uri, mime_type=mime, text=text)]
+        )
+
+    async def _list_prompts(ctx: Any, params: Any) -> Any:
+        return mcp.types.ListPromptsResult(
+            prompts=[
+                mcp.types.Prompt(
+                    name=p["name"],
+                    description=p["description"],
+                    arguments=[mcp.types.PromptArgument(**a) for a in p["arguments"]],
+                )
+                for p in list_prompts()
+            ]
+        )
+
+    async def _get_prompt(ctx: Any, params: Any) -> Any:
+        description, message = get_prompt(params.name, params.arguments)
+        return mcp.types.GetPromptResult(
+            description=description,
+            messages=[
+                mcp.types.PromptMessage(role="user", content=TextContent(type="text", text=message))
+            ],
+        )
+
+    tool_handlers = {"on_list_tools": _list_tools_2x, "on_call_tool": _call_tool_2x}
+    extra_handlers = {
+        "on_list_resources": _list_resources,
+        "on_read_resource": _read_resource,
+        "on_list_prompts": _list_prompts,
+        "on_get_prompt": _get_prompt,
+    }
+    # Newest registration first. An SDK without the resource and prompt hooks
+    # still gets the tools; only one with no keyword handlers at all falls back
+    # to a bare server.
+    mcp_server: Any = None
+    for handlers in ({**tool_handlers, **extra_handlers}, tool_handlers):
+        try:
+            mcp_server = server_cls(server.name, version=server.version, **handlers)
+            break
+        except TypeError:
+            continue
+    else:
         mcp_server = server_cls(server.name, version=server.version)
 
     async def _run() -> None:
