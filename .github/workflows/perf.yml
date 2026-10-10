@@ -1,0 +1,68 @@
+name: Build Performance
+
+# Weekly rather than per PR (#304): six synthetic repositories take a few
+# minutes, and a time gate is only meaningful against a steady runner class.
+# scripts/perf_bench.py scales the time limits by a CPU calibration, so a
+# slower runner is not reported as a regression.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  perf:
+    name: Build performance gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev,mcp]"
+
+      - name: Measure and compare with the baseline
+        run: python scripts/perf_bench.py --check --output perf-results.json
+
+      - name: Summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          path, summary = "perf-results.json", os.environ.get("GITHUB_STEP_SUMMARY")
+          if not summary or not os.path.exists(path):
+              raise SystemExit(0)
+          data = json.load(open(path, encoding="utf8"))
+          cols = ["files", "build_seconds", "incremental_seconds", "peak_rss_mb",
+                  "output_bytes", "query_ms", "mcp_cold_ms", "mcp_warm_ms"]
+          with open(summary, "a", encoding="utf8") as fh:
+              fh.write("### Build performance\n\n| fixture | " + " | ".join(cols) + " |\n")
+              fh.write("|" + " --- |" * (len(cols) + 1) + "\n")
+              for name, row in data.items():
+                  if not name.startswith("_"):
+                      fh.write(f"| {name} | " + " | ".join(str(row.get(c, "")) for c in cols) + " |\n")
+          PY
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: perf-results
+          path: perf-results.json
+          if-no-files-found: ignore
