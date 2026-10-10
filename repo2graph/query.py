@@ -412,6 +412,26 @@ def read_jsonl(path: Path) -> list[Record]:
     return rows
 
 
+# A one-letter `a`/`I` followed by another word is the English article or
+# pronoun, not an identifier. Admitting it made "how does URL resolution reach
+# a view" rank every class named `A` in Django above anything about URLs (#382).
+_ARTICLE_RE = re.compile(r"(?<![A-Za-z0-9_`])[aAI](?=\s+[A-Za-z])")
+
+
+def _single_char_idents(query: str) -> list[str]:
+    """The one-character identifiers a query names, skipping `a`/`I` used as words.
+
+    `T`, `f` and `x` always count; `a` counts when it reads as code -- last in
+    the query, before `(` or `.`, or in backticks -- but not in "reach a view".
+    """
+    articles = {m.start() for m in _ARTICLE_RE.finditer(query)}
+    return [
+        m.group()
+        for m in IDENT_RE.finditer(query)
+        if len(m.group()) == 1 and m.start() not in articles
+    ]
+
+
 def count_tokens(text: str) -> int:
     """The default token estimate: len(text) // CHARS_PER_TOKEN, never 0 for a
     non-empty string (a block that costs nothing would defeat any budget)."""
@@ -859,7 +879,7 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        terms = tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1]
+        terms = tokenize(query) + [t.lower() for t in _single_char_idents(query)]
         # Question words stay in (#382 tried dropping them, twice). Their idf
         # is already near zero, and in a code index they are not noise: "from"
         # matches SQL `FROM`, and even "an" alone ("rather than an argument")
@@ -1011,8 +1031,10 @@ class Index:
 
     def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
         """Apply multiplier to BM25 scores for chunks matching query identifier names."""
-        # IDENT_RE supports single-character identifier names:
-        idents = set(IDENT_RE.findall(query))
+        # IDENT_RE supports single-character identifier names, minus the
+        # English words `a` and `I` (see `_single_char_idents`):
+        idents = {t for t in IDENT_RE.findall(query) if len(t) > 1}
+        idents |= set(_single_char_idents(query))
         if not idents:
             return
         lowered = {t.lower() for t in idents}
