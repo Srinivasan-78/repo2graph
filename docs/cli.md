@@ -113,6 +113,21 @@ Artifacts are staged in a sibling temp directory and atomically swapped into
 behind. The previous build is restored on failure. Files written by subsequent
 commands (`embed`, `github`) are preserved across rebuilds.
 
+### Large repositories and memory
+
+The whole graph is held in memory while it is built and exported, and the
+GraphML and Cypher writers each hold their own rendering of it. On a repository
+with hundreds of thousands of symbols that reaches gigabytes. If an agent or
+`rag` is the only consumer, skip the two export formats:
+
+```bash
+repo2graph build . --formats jsonl,overview,html
+```
+
+`--max-memory-mb` and `--max-build-seconds` stop a build that grows past a
+ceiling, and `--max-files`, `--max-nodes` and `--max-edges` cap its size; with the
+default `--limit-policy warn`, every cut is recorded in `stats.json`.
+
 ### `--incremental`
 
 Every build writes `agent/parse.cache.json`: each file's sha256 alongside the
@@ -144,6 +159,47 @@ a full build overwrites the cache and puts you back on a known-good footing.
 Cache entries written by a different cache format are ignored automatically, as
 is a cache that is missing, unreadable or corrupt; each of those degrades to a
 full build rather than to a wrong one.
+
+### Config file
+
+Options a project always builds with can live in the repository instead of on
+every command line, in CI and for the MCP server alike:
+
+```toml
+# pyproject.toml
+[tool.repo2graph]
+git-history = 500
+viz-nodes = 600
+exclude = ["vendor/**", "**/generated/**"]
+secret-keywords = ["corp-token", "internal-key"]
+secret-dirs = ["deploy/secrets"]
+```
+
+The same keys can go at the top level of a `.repo2graph.toml` in the repository
+root. Precedence, most specific first:
+
+1. a flag on the command line;
+2. `[tool.repo2graph]` in the repo's `pyproject.toml`;
+3. `.repo2graph.toml` in the repo root;
+4. the built-in defaults above.
+
+Keys are spelled like the flags they stand in for: `include`, `exclude`,
+`exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
+`git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
+`"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
+choices; `chunk-large-files` and `include-vendor` `true`/`false`. A list given
+on the command line replaces the file's list rather than adding to it, and a
+flag typed at its default value (`--git-history 0`) still beats the file. An
+unknown key or a mistyped value stops the build with an error naming the file
+and the key.
+
+`build`, the auto-build `rag <source-dir>` runs, and the MCP server's auto-build
+all read it; `explain-path` does too, and names the file when one of its rules
+decided a path (`Path matches exclude glob 'gen/**' from pyproject.toml
+[tool.repo2graph] exclude`). `github` does not read the cloned repository's
+file. Reading TOML needs Python 3.11+, or the `tomli` package on 3.10; without
+either, a config file is skipped with a one-line note on stderr. With no config
+file, nothing changes.
 
 ## `github` — map a project you do not have locally
 
@@ -178,6 +234,7 @@ functions around each answer come along too.
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
+| `--retrieve-budget-chars` | — | Alias of `--budget` whose name says what it caps: retrieved chunk text, in characters. |
 | `--min-conf`, `--min-confidence` | off | Drop `CALLS` arrows below this confidence. |
 | `--format` | `text` | `text` or `json`. `--json` is the old spelling of `--format json`. |
 | `--include-secrets` | off | Include secret-looking files (`.env`, keys, credentials) in the results. Off by default **even if the index was built with `--include-secrets`** — see [Secrets at query time](#secrets-at-query-time). |
@@ -236,10 +293,14 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
+| `--context-budget-chars` | — | Alias of `--budget`: rendered context, in characters. |
+| `--context-budget-tokens` | — | Alias of `--budget-tokens`: rendered context, in estimated tokens. |
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
 | `--no-expand` | off | Text search only, no arrow walking. |
+| `--expansion` | `rag-default` | Which arrows to walk. `navigation`: calls and imports, both ways. `impact-analysis`: callers, importers, subclasses and co-changed files (co-change links files, so use `--hops 2` or more from a function). `strict`: only edges the resolver was certain of, never git history. `rag-default` is the behaviour with no flag. |
+| `--edge-type` | preset's | Walk only this edge type (`CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE`, `TESTS`). Repeatable; overrides the preset's types. Each neighbour's `why` says which edge admitted it. |
 | `--format` | `markdown` | `markdown` for the pack, `json` for the pack plus its parts. |
 | `--answer` | off | Send the pack to an LLM and stream the answer. [See the warning](#answer-sends-your-code-elsewhere). |
 | `--model` | provider default | Override the best-effort default model, only with `--answer`. |
@@ -347,6 +408,48 @@ So the same number gives you less code from `rag` than from `query`. That is on
 purpose: `query`'s accounting is what it has always done and programs depend on
 it, while `rag` has to promise an LLM that the thing it is handed fits.
 
+The longer names say which stage and which unit each one caps:
+`query --retrieve-budget-chars`, `rag --context-budget-chars` and
+`rag --context-budget-tokens`. The short names keep working.
+
+```
+retrieve ──► expand ──► pack ──────────────► clamp (MCP only)
+   │                     │                       │
+   query --budget        rag --budget /          12k-token ceiling,
+   (chunk text, chars)   --budget-tokens         re-measured after
+                         (rendered markdown)     rendering
+```
+
+`rag --format json` and `Index.pack_context()` report both sides so nothing has to
+be inferred from flag names:
+
+| Field | Meaning |
+|---|---|
+| `source_text_chars` | Characters of chunk text selected. |
+| `rendered_context_chars` | Characters actually rendered (`len(markdown)`); larger, because headers and the map count. |
+| `tokens_used` | Tokens of the rendered markdown, by `token_count_method`. |
+| `token_count_method` | `heuristic` (4 characters per token) unless you passed your own `count_tokens`. An estimate: dense code and CJK run higher. |
+| `budget_exhausted` | Something was cut to fit. |
+| `omitted_chunk_count` | Candidate chunks left out entirely. |
+
+## Conventions
+
+Every command follows these, so a flag you have not used yet behaves the way the
+others do:
+
+- **`0` means unlimited** for every numeric ceiling (`--max-files`, `--max-nodes`,
+  `--max-edges`, `--max-bytes`, `--max-chunks`, `--max-memory-mb`,
+  `--max-build-seconds`, the budgets). Three flags give `0` a different job, and
+  their help says so: `--jobs 0` is one worker per CPU, `github --depth 0` is full
+  history, and `--viz-nodes 0` draws an empty map (`--viz-nodes all` is the
+  unlimited spelling).
+- **Units are part of the meaning.** Budgets are characters unless the flag says
+  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`
+  and `--max-build-seconds` are seconds. Numbers must be finite and `>= 0`.
+- **Lists are repeatable flags** (`--secret-keyword a --secret-keyword b`), except
+  `--formats`, which takes one comma-separated value.
+- **A renamed flag keeps its old name** as an alias, so scripts do not break.
+
 ## How retrieval works
 
 1. **Text search first.** BM25, the standard word-matching score, with one twist:
@@ -402,7 +505,10 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   credentials.
 
 Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`,
-`claude-haiku-4-5` and `llama3.1`); pass `--model` to override.
+`claude-haiku-5-5` and `llama3.1`); pass `--model` to override. On
+`claude-haiku-5-5` thinking is turned off, since thinking tokens would come out
+of the 2,048-token answer. `--answer` also refuses a pack that leaves no room for
+that answer in a default model's context window.
 
 ## `index-status` — is this index current, and what is in it?
 
@@ -532,8 +638,10 @@ holding a repo2graph `agent/manifest.json` (an earlier build's index), and
 `explain-path` reports those as `output_dir` / `index_dir` at step 2 — so
 `explain-path .r2g/agent/nodes.jsonl` says EXCLUDED, as the build behaves. It
 never opens the index. It also takes no size flags, so it cannot explain a build that used them: the size check
-below is always evaluated against the 1.5 MB `--max-file-mb` default with
-`--chunk-large-files` off, whatever the build was actually run with.
+below is evaluated against the 1.5 MB `--max-file-mb` default with
+`--chunk-large-files` off, whatever the build was actually run with, unless the
+repo's [config file](#config-file) sets them. A decision made by a config-file
+setting names that file in `reason` and in an extra `source` field.
 
 ```bash
 $ repo2graph explain-path repo2graph/cli.py

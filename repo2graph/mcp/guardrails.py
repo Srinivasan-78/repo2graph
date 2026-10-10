@@ -20,6 +20,9 @@ MCP_MAX_BUDGET_TOKENS = 12000
 MCP_NEIGHBOUR_LIMIT = 20
 MCP_MAX_NEIGHBOURS = 50
 MCP_MAX_SEARCH_NEIGHBOURS = 50
+# Rows reachable by paging `repo_neighbours` (#389): pages walk every edge of a
+# hop rather than sampling a few per node, so the walk itself needs a bound.
+MCP_MAX_PAGED_NEIGHBOURS = 1000
 
 # Graph hop and candidate bounds.
 MCP_MAX_HOPS = 4

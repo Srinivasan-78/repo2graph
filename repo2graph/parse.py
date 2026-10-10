@@ -9,9 +9,24 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from tree_sitter import Node, Parser
+
+from .events import diagnostic
+from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
+
+if TYPE_CHECKING:
+    from .config import RepoConfig
+
+
+# Import-statement patterns shared with graph._IMPORT_RE, which composes its
+# table from these, so the two readers of an import line cannot drift (#461 #37).
+PY_FROM_IMPORT_RE = re.compile(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)")
+PY_IMPORT_RE = re.compile(r"^import\s+([\w\.,\s]+)")
+JAVA_IMPORT_RE = re.compile(r"import\s+(?:static\s+)?([\w\.\*]+)")
+RUBY_REQUIRE_RE = re.compile(r"""(?:require_relative|require|load)\s*\(?\s*['"]([^'"]+)['"]""")
 
 
 class ParseError(RuntimeError):
@@ -365,6 +380,10 @@ class BuildConfig:
 INDEX_MARKER_FORMAT = "repo2graph/"
 
 
+#: `.<out>.staging.<pid>.<hex8>` and `.<out>.backup.<pid>`, from export.dump_all.
+_SWAP_DIR_RE = re.compile(r"^\..+\.(?:staging\.\d+\.[0-9a-f]{8}|backup\.\d+)$")
+
+
 def _is_index_dir(d: Path) -> bool:
     """True when `d` is a repo2graph output directory (any build, any -o)."""
     manifest = d / "agent" / "manifest.json"
@@ -406,8 +425,7 @@ def _git_files(root: Path):
         out = subprocess.run(
             [
                 "git",
-                "-c",
-                "core.quotepath=false",
+                *GIT_HARDENING_ARGS,
                 "-C",
                 str(root),
                 "ls-files",
@@ -418,6 +436,7 @@ def _git_files(root: Path):
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
+            env=_clean_git_env(),
         )
         if out.returncode != 0:
             return None
@@ -528,8 +547,7 @@ def _count_gitignored(root: Path) -> int:
         out = subprocess.run(
             [
                 "git",
-                "-c",
-                "core.quotepath=false",
+                *GIT_HARDENING_ARGS,
                 "-C",
                 str(root),
                 "ls-files",
@@ -537,10 +555,15 @@ def _count_gitignored(root: Path) -> int:
                 "--others",
                 "--ignored",
                 "--exclude-standard",
+                # One entry per ignored directory rather than one per file in
+                # it: a node_modules or venv otherwise costs a full walk and a
+                # multi-megabyte listing on every build, just to be counted.
+                "--directory",
             ],
             capture_output=True,
             stdin=subprocess.DEVNULL,
             timeout=60,
+            env=_clean_git_env(),
         )
         if out.returncode != 0:
             return 0
@@ -583,6 +606,18 @@ def discover(
         files = _walk_files(root, skip_dirs=walk_skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
+        # Not a git checkout is ordinary. A checkout where git itself failed
+        # (git missing, dubious ownership, a corrupt index) is not: the walk
+        # ignores .gitignore, so untracked and ignored files -- build output,
+        # local secrets -- are indexed with nothing saying the file set changed.
+        if (root / ".git").exists():
+            if stats is not None:
+                stats["discovery_git_failed"] = 1
+            diagnostic(
+                f"warning: {root} is a git checkout but `git ls-files` failed; "
+                "falling back to a directory walk that does not honour .gitignore, "
+                "so untracked and ignored files will be indexed"
+            )
 
     # Discovery order *is* artifact order: node ids are emitted in the order
     # files are parsed, and edges and chunks follow the nodes. `git ls-files`
@@ -626,6 +661,21 @@ def discover(
         if _inside_index(rel.parts):
             continue
         rp = rel.as_posix()
+        # A filename that is not valid UTF-8 decodes to lone surrogates, which
+        # no UTF-8 writer downstream (JSONL, overview, HTML) can encode. Skip it
+        # and count it rather than crash the whole build on one file.
+        try:
+            rp.encode("utf8")
+        except UnicodeEncodeError:
+            if stats is not None:
+                stats["skipped_undecodable_path"] = stats.get("skipped_undecodable_path", 0) + 1
+            continue
+        # A control or hidden character in a path forges structure wherever the
+        # path is printed: a newline starts a fake `[cite: ...]` header in a pack.
+        if has_unsafe_path_chars(rp):
+            if stats is not None:
+                stats["skipped_unsafe_path"] = stats.get("skipped_unsafe_path", 0) + 1
+            continue
         # Case collision deduplication on case-insensitive filesystems (W17)
         if os.name == "nt" or sys.platform == "darwin":
             rp_lower = rp.lower()
@@ -650,6 +700,13 @@ def discover(
         # in-progress lock file on disk -- skip it like any other dotfile
         # rather than indexing a "r2glock"-language node for it.
         if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
+            if stats is not None:
+                stats["skipped_dotfile"] += 1
+            continue
+        # dump_all's staging and backup siblings. A crash mid-swap leaves one
+        # behind holding a full copy of an index, which is not source; when the
+        # output lives under the root, discovery would otherwise index it.
+        if any(_SWAP_DIR_RE.match(part) for part in rel.parts[:-1]):
             if stats is not None:
                 stats["skipped_dotfile"] += 1
             continue
@@ -757,6 +814,41 @@ def grammar_fingerprint() -> str:
         except Exception:  # noqa: BLE001 - any lookup failure is "unknown"; see docstring
             parts.append(f"{dist}=unknown")
     return " ".join(parts)
+
+
+@lru_cache(maxsize=1)
+def lang_config_fingerprint() -> str:
+    """Digest of `LANG_CFG`, the node-type tables extraction is driven by.
+
+    Editing a kind map or a call-node list changes what every cached parse
+    would now contain, exactly like a grammar upgrade does, and is just as easy
+    to make without remembering to bump `PARSE_CACHE_FORMAT`.
+    """
+    import hashlib
+    import json
+
+    def _norm(o):
+        if isinstance(o, (set, frozenset)):
+            return sorted(o, key=repr)
+        return repr(o)
+
+    blob = json.dumps(LANG_CFG, sort_keys=True, default=_norm)
+    return hashlib.sha256(blob.encode("utf8")).hexdigest()[:16]
+
+
+def parse_cache_identity(config: "BuildConfig | None") -> dict[str, str]:
+    """Everything besides a file's bytes that decides what its cached parse holds.
+
+    Compared field by field on load, so a mismatch can say which one changed.
+    """
+    config = config or BuildConfig()
+    return {
+        "grammars": grammar_fingerprint(),
+        "lang_config": lang_config_fingerprint(),
+        "max_file_bytes": str(config.max_file_bytes),
+        "chunk_large_files": str(bool(config.chunk_large_files)),
+        "secret_policy": str(config.secret_policy),
+    }
 
 
 @lru_cache(maxsize=None)
@@ -1410,6 +1502,109 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
 
 _cpp_available_cache: bool | None = None
 
+# Backslash-newline splices are joined before directives are recognised, so
+# "#\<newline>include" is still an include; drop them first.
+_CPP_SPLICE_RE = re.compile(rb"\\\r?\n")
+# `#` or its `%:` digraph, then blanks or /* */ comments, then any directive
+# that makes cpp open another file. `#embed` is C23.
+_CPP_INCLUDE_RE = re.compile(
+    rb"^[ \t]*(?:#|%:)(?:[ \t]|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)*(?:include|include_next|import|embed)\b[^\n]*",
+    re.MULTILINE,
+)
+
+
+CPP_TIMEOUT = 10
+_CPP_READ_BLOCK = 1 << 16
+
+
+def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[int, bytes | None]:
+    """Preprocess `source` on stdin; return (returncode, output or None if over `limit`).
+
+    Streamed rather than `run(capture_output=True)`: macros expand
+    exponentially (`#define A B B`, `#define B C C`, ...), so a few hundred
+    bytes of hostile source can make cpp print gigabytes, all of which
+    `capture_output` would hold in this process before any size check ran.
+    Here the read stops one byte past `limit` and cpp is killed.
+
+    Never pass text=True to a subprocess reading cpp output on Windows -- it
+    decodes with the cp1252 locale and raises UnicodeDecodeError on UTF-8
+    source. tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
+    """
+    import threading
+
+    proc = subprocess.Popen(
+        ["cpp", "-w", "-P", "-undef", "-"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    stdin, stdout = proc.stdin, proc.stdout
+
+    def _feed() -> None:
+        try:
+            stdin.write(source)
+        except OSError:
+            pass  # cpp exited early or was killed: nothing left to feed
+        finally:
+            try:
+                stdin.close()
+            except OSError:
+                pass
+
+    got: list[bytes] = []
+
+    def _drain() -> None:
+        buf = bytearray()
+        try:
+            while len(buf) <= limit:
+                block = stdout.read(min(_CPP_READ_BLOCK, limit + 1 - len(buf)))
+                if not block:
+                    break
+                buf.extend(block)
+        except (OSError, ValueError):
+            pass
+        got.append(bytes(buf))
+
+    writer = threading.Thread(target=_feed, daemon=True)
+    reader = threading.Thread(target=_drain, daemon=True)
+    writer.start()
+    reader.start()
+    reader.join(timeout)
+    timed_out = reader.is_alive()
+    over = bool(got) and len(got[0]) > limit
+    if timed_out or over:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    reader.join(1)
+    writer.join(1)
+    try:
+        stdout.close()
+    except OSError:
+        pass
+    try:
+        rc = proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        rc = -1
+    if timed_out:
+        raise subprocess.TimeoutExpired(proc.args, timeout)
+    if over:
+        return 0, None
+    return rc, got[0] if got else b""
+
+
+def _strip_cpp_includes(source: bytes) -> bytes:
+    """`source` with every file-opening directive blanked, for the cpp retry.
+
+    The retry only needs this file's own macros expanded, and its output is
+    only scored, never adopted. Following includes would let an untrusted file
+    point cpp at `/dev/zero`, a FIFO or any readable path on the machine.
+    Line numbers are irrelevant here (`-P` drops them anyway).
+    """
+    return _CPP_INCLUDE_RE.sub(b"", _CPP_SPLICE_RE.sub(b"", source))
+
 
 def _cpp_available() -> bool:
     """Is a usable `cpp` on PATH? Memoizing only a successful probe.
@@ -1457,7 +1652,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
     details: list[ImportDetail] = []
     if lang == "python":
         # from ... import ...
-        m = re.match(r"^from\s+(\.*[\w.]*)\s+import\s+([\w\s,*()]+)", raw_clean)
+        m = PY_FROM_IMPORT_RE.match(raw_clean)
         if m:
             module = m.group(1) or ""
             names_part = m.group(2).replace("(", " ").replace(")", " ")
@@ -1483,7 +1678,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
                     )
             return details
         # import a as b, c as d
-        m2 = re.match(r"^import\s+([\w\.,\s]+)", raw_clean)
+        m2 = PY_IMPORT_RE.match(raw_clean)
         if m2:
             for p in m2.group(1).split(","):
                 p = p.strip()
@@ -1578,7 +1773,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
             return details
 
     elif lang in ("java", "kotlin", "scala"):
-        m = re.search(r"import\s+(?:static\s+)?([\w\.\*]+)", raw_clean)
+        m = JAVA_IMPORT_RE.search(raw_clean)
         if m:
             full = m.group(1)
             parts = full.rsplit(".", 1)
@@ -1683,7 +1878,7 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
             return details
 
     elif lang == "ruby":
-        m = re.search(r"""(?:require|require_relative|load)\s*\(?\s*['"]([^'"]+)['"]""", raw_clean)
+        m = RUBY_REQUIRE_RE.search(raw_clean)
         if m:
             mod = m.group(1)
             details.append(ImportDetail(raw=raw_clean, module=mod, name=mod.rsplit("/", 1)[-1]))
@@ -1750,36 +1945,23 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
             _cpp_available()
         ):
             try:
-                out = subprocess.run(
-                    ["cpp", "-w", "-P", "-undef", str(filepath)],
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    timeout=10,
-                )
-                if out.returncode == 0:
-                    # Never pass text=True to a subprocess reading git/cpp output on
-                    # Windows -- it decodes with the cp1252 locale and raises
-                    # UnicodeDecodeError on UTF-8 source. Capture raw bytes instead;
-                    # tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
-                    cpp_bytes = out.stdout
-                    if len(cpp_bytes) <= 2 * len(source):
-                        cpp_tree = parser.parse(cpp_bytes)
-                        cpp_errors = _count_errors(cpp_tree.root_node)
-                        if cpp_errors < errors:
-                            # Do not adopt cpp_bytes or cpp_tree.
-                            # cpp is invoked with -P, which strips
-                            # `# <linenum> "<file>"` markers, so
-                            # preprocessed row numbers cannot be mapped
-                            # back to the on-disk file. chunks.py always
-                            # slices the original, and storing cpp rows
-                            # desyncs every citation. used_cpp still
-                            # records that a macro-aware retry produced
-                            # fewer ERROR nodes.
-                            used_cpp = True
-                    else:
-                        import logging
-
-                        logging.warning(f"cpp output for {filepath} is too large, skipping")
+                rc, cpp_bytes = _run_cpp(_strip_cpp_includes(source), 2 * len(source))
+                if rc == 0 and cpp_bytes is None:
+                    diagnostic(
+                        f"repo2graph: warning: cpp output for {filepath} is too large, skipping"
+                    )
+                elif rc == 0 and cpp_bytes is not None:
+                    cpp_tree = parser.parse(cpp_bytes)
+                    cpp_errors = _count_errors(cpp_tree.root_node)
+                    if cpp_errors < errors:
+                        # Do not adopt cpp_bytes or cpp_tree. cpp is invoked
+                        # with -P, which strips `# <linenum> "<file>"` markers,
+                        # so preprocessed row numbers cannot be mapped back to
+                        # the on-disk file. chunks.py always slices the
+                        # original, and storing cpp rows desyncs every
+                        # citation. used_cpp still records that a macro-aware
+                        # retry produced fewer ERROR nodes.
+                        used_cpp = True
             except (OSError, subprocess.SubprocessError):
                 pass
 
@@ -1878,6 +2060,7 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"
             if kind and name:
+                name = clean_identifier(name)
                 bases_list, base_details = _bases_with_details(source, node, lang)
                 # Every base in one class header cites that header's line.
                 for _bd in base_details:
@@ -1896,8 +2079,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 elif lang == "kotlin" and ntype == "function_declaration" and not scope:
                     recv_type = _kotlin_receiver_type(source, node)
                 if recv_type:
-                    sym_scope = scope + (recv_type,)
-                qualname = ".".join(sym_scope + (name,))
+                    sym_scope = scope + (clean_identifier(recv_type),)
+                qualname = clean_identifier(".".join(sym_scope + (name,)), MAX_QUALNAME_CHARS)
                 start_line = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,
@@ -1991,8 +2174,13 @@ def explain_path(
     config: BuildConfig | None = None,
     include_globs=None,
     exclude_globs=None,
+    repo_config: "RepoConfig | None" = None,
 ) -> dict:
     """Evaluate a path against the 10 inclusion/exclusion precedence rules.
+
+    `repo_config` holds the settings a config file supplied (#391); a decision
+    one of them made names that file instead of the CLI flag, and carries it
+    as `source`.
 
     Returns a dict with:
         path: target path
@@ -2004,6 +2192,7 @@ def explain_path(
     """
     if config is None:
         config = BuildConfig()
+    file_values = repo_config.values if repo_config is not None else {}
     root_path = Path(root).resolve()
     target_path = Path(target)
     if not target_path.is_absolute():
@@ -2048,6 +2237,19 @@ def explain_path(
         skip_dirs.discard("vendor")
     skip_part = next((part for part in rel.parts if part in skip_dirs), None)
     if skip_part is not None:
+        if skip_part not in DEFAULT_SKIP_DIRS and skip_part in file_values.get(
+            "extra_exclude_dirs", ()
+        ):
+            source = cast("RepoConfig", repo_config).label("extra_exclude_dirs")
+            return {
+                "path": str(target_path),
+                "relative_path": rel_str,
+                "included": False,
+                "rule": "skip_dir",
+                "reason": f"Path component '{skip_part}' is excluded by {source}",
+                "source": source,
+                "precedence_step": 2,
+            }
         cat = "dot-directory" if skip_part.startswith(".") else "vendor/build directory"
         return {
             "path": str(target_path),
@@ -2076,8 +2278,7 @@ def explain_path(
             p = subprocess.run(
                 [
                     "git",
-                    "-c",
-                    "core.quotepath=false",
+                    *GIT_HARDENING_ARGS,
                     "-C",
                     str(root_path),
                     "check-ignore",
@@ -2087,6 +2288,7 @@ def explain_path(
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 timeout=5,
+                env=_clean_git_env(),
             )
             if p.returncode == 0:
                 return {
@@ -2154,7 +2356,7 @@ def explain_path(
 
     # Step 8: Include globs
     if include_globs and not matches_any(rel_str, include_globs):
-        return {
+        res = {
             "path": str(target_path),
             "relative_path": rel_str,
             "included": False,
@@ -2162,6 +2364,11 @@ def explain_path(
             "reason": f"Path does not match any --include glob: {include_globs}",
             "precedence_step": 8,
         }
+        if "include" in file_values:
+            source = cast("RepoConfig", repo_config).label("include")
+            res["reason"] = f"Path does not match any glob in {source}: {include_globs}"
+            res["source"] = source
+        return res
 
     # Step 9: Exclude globs
     if exclude_globs and matches_any(rel_str, exclude_globs):
@@ -2170,7 +2377,7 @@ def explain_path(
         # `--exclude-group` expands to as many as 60 globs -- echoing all of
         # them buries the answer in the evidence.
         matched = next((g for g in exclude_globs if matches_any(rel_str, [g])), None)
-        return {
+        res = {
             "path": str(target_path),
             "relative_path": rel_str,
             "included": False,
@@ -2179,6 +2386,11 @@ def explain_path(
             "matched_glob": matched,
             "precedence_step": 9,
         }
+        if matched in file_values.get("exclude", ()):
+            source = cast("RepoConfig", repo_config).label("exclude")
+            res["reason"] = f"Path matches exclude glob {matched!r} from {source}"
+            res["source"] = source
+        return res
 
     # Step 10: Binary check
     if is_binary(target_path):

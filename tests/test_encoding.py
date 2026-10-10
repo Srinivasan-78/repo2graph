@@ -298,3 +298,27 @@ def test_write_jsonl_escapes_u2028_and_u2029(tmp_path):
 
     # json.loads on each line also preserves the original strings
     assert [json.loads(line) for line in lines_split] == records
+
+
+@pytest.mark.skipif(
+    sys.platform in ("win32", "darwin"), reason="needs a filesystem that stores raw bytes"
+)
+def test_non_utf8_filename_is_skipped_not_fatal(tmp_path):
+    """#451 D8: a Latin-1 filename decoded to lone surrogates and crashed the
+    first UTF-8 writer (overview.md) at the end of an otherwise good build."""
+    import os
+
+    from repo2graph.cli import main
+
+    root = tmp_path / "src"
+    root.mkdir()
+    try:
+        with open(os.fsencode(root) + b"/caf\xe9.py", "wb") as fh:
+            fh.write(b"def f():\n    pass\n")
+    except OSError:
+        pytest.skip("filesystem rejects non-UTF-8 names")
+    (root / "ok.py").write_text("def g():\n    pass\n", encoding="utf8")
+    out = tmp_path / "out"
+    assert main(["build", str(root), "-o", str(out)]) in (0, None)
+    stats = json.loads((out / "agent" / "stats.json").read_text(encoding="utf8"))
+    assert stats["skipped_undecodable_path"] == 1

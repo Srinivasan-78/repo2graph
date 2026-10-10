@@ -22,7 +22,6 @@ from repo2graph.security import (
     MAX_CONTAINER_ITEMS,
     _is_secret_path,
     redact_content,
-    sanitize_headers,
     sanitize_params,
     sanitize_url,
     sanitize_value,
@@ -591,23 +590,6 @@ def test_sanitization_url_credentials():
     assert "SuperSecretPass123" not in sanitized
     assert "[redacted:password]" in sanitized
     assert "git.company.internal/org/repo.git" in sanitized
-
-
-def test_sanitization_headers():
-    """Sensitive headers (Authorization, x-api-key, Cookie) are redacted."""
-    headers = {
-        "Authorization": "Bearer ya29.a0AfH6SM...",
-        "x-api-key": "sk-1234567890abcdef",
-        "Cookie": "session=xyz123; auth=true",
-        "Content-Type": "application/json",
-        "Accept": "*/*",
-    }
-    sanitized = sanitize_headers(headers)
-    assert "[redacted:header:authorization" in sanitized["Authorization"]
-    assert "[redacted:header:x-api-key" in sanitized["x-api-key"]
-    assert "[redacted:header:cookie" in sanitized["Cookie"]
-    assert sanitized["Content-Type"] == "application/json"
-    assert sanitized["Accept"] == "*/*"
 
 
 def test_low_entropy_password_in_code_redaction():

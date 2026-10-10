@@ -1,4 +1,3 @@
-import logging
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,6 +20,29 @@ def _reset_cpp_probe_cache():
     parse_mod._cpp_available_cache = None
     yield
     parse_mod._cpp_available_cache = None
+
+
+_REAL_RUN_CPP = parse_mod._run_cpp
+
+
+@pytest.fixture(autouse=True)
+def _preprocess_via_subprocess_run(monkeypatch):
+    """The tests below script cpp by patching `subprocess.run`. `_run_cpp`
+    streams through Popen instead, so route it through `run` here, keeping
+    its contract (None when over the limit). `_run_cpp` itself is exercised
+    against a real cpp at the end of this file."""
+
+    def via_run(source, limit, timeout=parse_mod.CPP_TIMEOUT):
+        out = subprocess.run(
+            ["cpp", "-w", "-P", "-undef", "-"],
+            input=source,
+            capture_output=True,
+            timeout=timeout,
+        )
+        data = out.stdout
+        return out.returncode, (None if len(data) > limit else data)
+
+    monkeypatch.setattr(parse_mod, "_run_cpp", via_run)
 
 
 def test_cpp_parse_pass_1():
@@ -92,7 +114,7 @@ def test_cpp_parse_cpp_unavailable(mock_run):
 
 
 @patch("subprocess.run")
-def test_cpp_parse_cpp_too_large(mock_run, caplog):
+def test_cpp_parse_cpp_too_large(mock_run, capsys):
     source = b"#define MACRO { error \nint main() MACRO }"
 
     def mock_run_impl(cmd, **kwargs):
@@ -104,13 +126,12 @@ def test_cpp_parse_cpp_too_large(mock_run, caplog):
 
     mock_run.side_effect = mock_run_impl
 
-    with caplog.at_level(logging.WARNING):
-        pf = parse_source(source, "c", filepath="test.c")
+    pf = parse_source(source, "c", filepath="test.c")
 
     # Should skip cpp and use Pass 1
     assert pf.parse_errors > 0
     assert not pf.used_cpp
-    assert "is too large, skipping" in caplog.text
+    assert "is too large, skipping" in capsys.readouterr().err
 
 
 # X-macro at file scope that tree-sitter cannot parse (ERROR on the later
@@ -296,4 +317,76 @@ def test_both_cpp_invocations_close_stdin(mock_run):
 
     assert mock_run.call_args_list, "the cpp fallback never ran"
     for call in mock_run.call_args_list:
-        assert call.kwargs.get("stdin") is subprocess.DEVNULL, call
+        if "--version" in call.args[0]:
+            assert call.kwargs.get("stdin") is subprocess.DEVNULL, call
+        else:
+            # #475: the source goes in on stdin, so the child never sees ours.
+            assert isinstance(call.kwargs.get("input"), bytes), call
+            assert "stdin" not in call.kwargs, call
+
+
+@patch("subprocess.run")
+def test_cpp_retry_never_names_the_file_or_follows_includes(mock_run):
+    """#475: cpp resolves #include, so an untrusted file could point it at
+    /dev/zero or any readable path. The retry feeds the source on stdin with
+    every file-opening directive blanked, in all the spellings cpp accepts."""
+    source = (
+        b'#include "/dev/zero"\n'
+        b"  # include </etc/passwd>\n"
+        b'%:include "/dev/zero"\n'
+        b'#/* c */include_next "/dev/zero"\n'
+        b'#\\\ninclude "/dev/zero"\n'
+        b'#embed "/dev/zero"\n'
+        b"#import <x>\n"
+        b"#define MACRO { error \nint main() MACRO }\n"
+    )
+
+    def mock_run_impl(cmd, **kwargs):
+        if "--version" in cmd:
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=0, stdout=b"int main() { return 0; }")
+
+    mock_run.side_effect = mock_run_impl
+    parse_source(source, "c", filepath="evil.c")
+
+    (pre,) = [c for c in mock_run.call_args_list if "--version" not in c.args[0]]
+    assert pre.args[0][-1] == "-" and "evil.c" not in pre.args[0]
+    fed = pre.kwargs["input"]
+    assert b"/dev/zero" not in fed and b"/etc/passwd" not in fed and b"<x>" not in fed
+    assert b"#define MACRO" in fed
+
+
+def _require_cpp():
+    if shutil.which("cpp") is None:
+        pytest.skip("cpp preprocessor not available")
+
+
+def test_run_cpp_stops_a_macro_bomb_at_the_limit():
+    """#456 P4: 40 doubling macros expand to ~2^40 tokens. capture_output held
+    all of it in this process before the size check ran; the stream stops one
+    byte past the limit and kills cpp."""
+    _require_cpp()
+    bomb = (
+        b"#define A0 x\n"
+        + b"".join(b"#define A%d A%d A%d\n" % (i, i - 1, i - 1) for i in range(1, 40))
+        + b"A39\n"
+    )
+    rc, out = _REAL_RUN_CPP(bomb, 2 * len(bomb), timeout=30)
+    assert out is None
+
+
+def test_run_cpp_returns_small_output_whole():
+    _require_cpp()
+    rc, out = _REAL_RUN_CPP(b"#define M {\nint main() M }\n", 1000)
+    assert rc == 0 and out is not None and b"int main() {" in out
+
+
+def test_include_strip_is_linear_on_nested_comment_lookalikes():
+    """CodeQL py/redos: `/\\*.*?\\*/` inside a repeated group backtracked
+    exponentially on `#/*` followed by many `*//*`."""
+    import time
+
+    evil = b"#/*" + b"*//*" * 20000
+    t0 = time.monotonic()
+    parse_mod._strip_cpp_includes(evil)
+    assert time.monotonic() - t0 < 1.0

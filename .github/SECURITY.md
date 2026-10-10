@@ -72,6 +72,18 @@ prompts.
 Scope is strictly bounded to `--answer`: a plain `repo2graph query` or `repo2graph rag` invocation makes no
 network requests and sends no text to any model.
 
+## Indexing an untrusted checkout
+
+Discovery runs `git` inside the target repository, and git honours that repository's own
+`.git/config`. Every git invocation repo2graph makes therefore overrides the settings that can run
+a command — `core.fsmonitor`, `diff.external` and `core.hooksPath` — and drops `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_CONFIG_*` from the environment it passes, so neither the
+checkout nor an ambient variable can run code or redirect which repository is read.
+
+One network caveat: in a *partial* clone (`git clone --filter=blob:none`), git fetches missing
+objects from the remote on demand, so `--git-history` can make network requests that a build is
+otherwise documented not to make. Index a full clone (`fetch-depth: 0` in Actions) to avoid it.
+
 ## Index trust model
 
 A `repo2graph` index (`.r2g` directory) is **trusted input equivalent to source code**. An index carries
@@ -90,9 +102,9 @@ secret scanner (such as gitleaks or trufflehog) before indexing and over generat
 `repo2graph rag --answer` also enables `pack_context(exclude_secrets=True)`, which drops dotfiles
 and secret-shaped paths (`.env`, credential stores, etc.) from the pack before it's sent anywhere.
 
-The **MCP server goes further and makes this unconditional**. Of its ten tools, the eight that
+The **MCP server goes further and makes this unconditional**. Of its nine tools, the seven that
 can return repository content — `repo_map`, `repo_search`, `repo_neighbours`,
-`repo_find_symbol`, `repo_read`, `repo_path_between`, `repo_impact` and `repo_blast_radius` —
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius` —
 exclude secrets always, with no flag to turn it off. (The remaining two, `repo_cache_stats` and
 `repo_build_status`, report on the server itself and never read a chunk.) A human running the CLI
 directly chose to see `.env` in local output; an agent calling the MCP server unattended does not
@@ -195,10 +207,10 @@ execution is required. The container image:
 - Ships `git`, because discovery prefers `git ls-files` and falls back to `os.walk`, which does not
   honour `.gitignore` — without git the image would index a different file set than every other way
   of running the same build.
-- Sets `safe.directory=*` through `GIT_CONFIG_*` environment variables rather than a config file:
-  the documented run mounts a host checkout at `/repo`, git refuses a tree owned by another UID
-  with "detected dubious ownership", and `--read-only` leaves no writable `HOME` for a config file.
-  Scoped to an image whose only job is reading the one repository mounted into it.
+- Trusts exactly `/repo` through `safe.directory` in the image's system git config, written at
+  build time: the documented run mounts a host checkout there, git refuses a tree owned by another
+  UID with "detected dubious ownership", and `--read-only` leaves no writable `HOME` for a config
+  file. Mount the repository anywhere else and git will refuse it rather than trust it.
 
 The image never calls an LLM and never opens a listening socket.
 

@@ -300,3 +300,62 @@ def test_conventional_non_secret_usernames_are_left_alone():
 def test_a_remote_with_no_credentials_is_unchanged():
     for url in ("https://github.com/o/r.git", "git@github.com:o/r.git"):
         assert sanitize_url(url) == url
+
+
+# #453: formats stored in repositories by convention.
+_K8S_SECRET = """apiVersion: v1
+kind: Secret
+metadata:
+  name: db
+type: Opaque
+data:
+  username: YWRtaW4=
+  tls.crt: LS0tLS1CRUdJTg==
+stringData:
+  config: plainvalue
+"""
+
+
+def test_k8s_secret_data_values_are_redacted():
+    from repo2graph.security import redact_content
+
+    out, n = redact_content(_K8S_SECRET)
+    for leaked in ("YWRtaW4=", "LS0tLS1CRUdJTg==", "plainvalue"):
+        assert leaked not in out
+    assert "name: db" in out and out.count("\n") == _K8S_SECRET.count("\n")
+
+
+def test_k8s_secret_multiline_and_spaced_values_are_redacted():
+    from repo2graph.security import redact_content
+
+    src = (
+        "kind: Secret\n"
+        "stringData:\n"
+        "  dsn: postgres admin hunter2\n"
+        "  app.conf: |\n"
+        "    upstream_user=admin\n"
+        "    token=Zq8vLmN2pR\n"
+        "metadata:\n"
+        "  name: db\n"
+    )
+    out, _ = redact_content(src)
+    for leaked in ("hunter2", "upstream_user=admin", "Zq8vLmN2pR"):
+        assert leaked not in out, out
+    assert "  app.conf: " in out and "name: db" in out
+    assert out.count("\n") == src.count("\n")
+
+
+def test_configmap_data_is_not_treated_as_secret():
+    from repo2graph.security import redact_content
+
+    src = "kind: ConfigMap\ndata:\n  color: blue\n"
+    assert redact_content(src) == (src, 0)
+
+
+def test_docker_config_auth_is_redacted():
+    from repo2graph.security import redact_content
+
+    src = '{"auths":{"r.example.com":{"auth":"dXNlcjpwYXNzd29yZDEyMw=="}}}'
+    out, n = redact_content(src)
+    assert n == 1 and "dXNlcjpwYXNzd29yZDEyMw" not in out
+    assert redact_content('"auth": "basic"')[1] == 0

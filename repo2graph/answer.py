@@ -5,6 +5,7 @@ asks for it, and no provider SDK is used — stdlib `urllib.request` only, so th
 core install stays pure Python. The provider is chosen from the environment.
 """
 
+import ipaddress
 import json
 import os
 import secrets
@@ -16,6 +17,7 @@ import urllib.request
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from .events import diagnostic
 from .limits import render as limitations_block
 
 HTTP_TIMEOUT = 300
@@ -55,11 +57,29 @@ PROVIDER_ENV = tuple(PROVIDER_MAP.values())
 DEFAULT_MODELS = {
     "gemini": "gemini-3.6-flash",
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5",
+    "anthropic": "claude-haiku-5-5",
     "ollama": "llama3.1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
+
+# Claude models that think by default and accept `thinking: disabled` at their
+# default effort. A short cited answer gains little from thinking, and thinking
+# tokens are spent out of MAX_TOKENS, so on these it is turned off. Other ids are
+# sent unchanged: some reject the field outright (thinking is always on), and
+# older ones do not think unless asked.
+ANTHROPIC_THINKING_OFF = frozenset({"claude-haiku-5-5"})
+
+# Context windows (tokens) of the default models, for the room-for-the-answer
+# check (#290). A model not listed here is not checked -- this is a guard
+# against an unbounded pack, not a capability database.
+CONTEXT_WINDOWS = {
+    "claude-haiku-5-5": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+    "gpt-4o-mini": 128_000,
+}
+#: Extra headroom on the prompt estimate: it is len // 4, not a tokenizer.
+TOKEN_ESTIMATE_MARGIN = 0.25
 
 SYSTEM_PROMPT = (
     "You are a code assistant answering strictly from the repository map and the "
@@ -117,7 +137,11 @@ def pick_provider(
     env: dict[str, str] | os._Environ[str] | Any | None = None,
     provider: str | None = None,
 ) -> dict[str, str] | None:
-    """The configured provider, or first in GEMINI > OPENAI > ANTHROPIC > OLLAMA order."""
+    """The requested provider, or the only configured one.
+
+    `GOOGLE_API_KEY` is accepted as a fallback for `GEMINI_API_KEY`. With two
+    or more providers configured and none requested, this refuses to choose.
+    """
     env = os.environ if env is None else env
     if provider is not None:
         if provider not in PROVIDER_MAP:
@@ -131,21 +155,26 @@ def pick_provider(
         if not value:
             raise SystemExit(f"provider {provider!r} requested but {env_var} is not set")
         return {"name": provider, "env": env_var, "value": value}
-    gemini_key = (env.get("GEMINI_API_KEY") or "").strip()
-    if gemini_key:
-        return {"name": "gemini", "env": "GEMINI_API_KEY", "value": gemini_key}
-    google_key = (env.get("GOOGLE_API_KEY") or "").strip()
-    if google_key:
-        return {"name": "gemini", "env": "GOOGLE_API_KEY", "value": google_key}
+    found: list[dict[str, str]] = []
     for name, var in (
+        ("gemini", "GEMINI_API_KEY"),
+        ("gemini", "GOOGLE_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("ollama", "OLLAMA_HOST"),
     ):
         value = (env.get(var) or "").strip()
-        if value:
-            return {"name": name, "env": var, "value": value}
-    return None
+        if value and name not in {f["name"] for f in found}:
+            found.append({"name": name, "env": var, "value": value})
+    # Which company receives the user's source must be a choice, not whichever
+    # credential happens to be exported in this shell.
+    if len(found) > 1:
+        names = ", ".join(f"{f['name']} ({f['env']})" for f in found)
+        raise SystemExit(
+            f"several LLM providers are configured: {names}. "
+            "Pick one with --provider; repo2graph will not guess where to send your code."
+        )
+    return found[0] if found else None
 
 
 def build_prompt(pack: dict[str, Any] | None, *, nonce: str | None = None) -> tuple[str, str]:
@@ -208,6 +237,7 @@ def _request(
                 "max_tokens": MAX_TOKENS,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
+                **({"thinking": {"type": "disabled"}} if model in ANTHROPIC_THINKING_OFF else {}),
             },
         )
     if name == "gemini":
@@ -254,7 +284,21 @@ def _ollama_base(value: str) -> str:
     parts = urllib.parse.urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
+    if parts.scheme == "http" and not _is_loopback(parts.hostname or ""):
+        diagnostic(
+            f"warning: OLLAMA_HOST={value!r} is plain HTTP to a non-loopback host; "
+            "your code and the answer cross the network unencrypted"
+        )
     return base
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _delta(name: str, raw: bytes) -> str:
@@ -551,6 +595,24 @@ class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_SameOriginRedirect)
 
 
+def _check_room_for_answer(model: str, system: str, user: str) -> None:
+    """Refuse a prompt that leaves no room for MAX_TOKENS of answer (#290).
+
+    The prompt size is the 4-chars-per-token estimate plus a margin, because it
+    is an estimate. Only models in CONTEXT_WINDOWS are checked.
+    """
+    window = CONTEXT_WINDOWS.get(model)
+    if window is None:
+        return
+    estimate = int((len(system) + len(user)) / 4 * (1 + TOKEN_ESTIMATE_MARGIN))
+    if estimate + MAX_TOKENS > window:
+        raise SystemExit(
+            f"the pack is about {estimate:,} tokens (estimated); with {MAX_TOKENS:,} "
+            f"reserved for the answer it does not fit {model}'s {window:,}-token "
+            "context. Lower --budget / --budget-tokens."
+        )
+
+
 def stream_answer(
     pack: dict[str, Any] | None,
     model: str | None = None,
@@ -567,6 +629,7 @@ def stream_answer(
             + f" or {PROVIDER_ENV[-1]}"
         )
     system, user = build_prompt(pack)
+    _check_room_for_answer(model or DEFAULT_MODELS[spec["name"]], system, user)
     url, headers, payload = _request(spec, model, system, user)
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST"

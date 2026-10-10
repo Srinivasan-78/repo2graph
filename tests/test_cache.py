@@ -7,6 +7,7 @@ argument the key forgot to include. The last of those is the quiet one -- it
 returns a plausible answer to the wrong question.
 """
 
+import importlib
 import json
 
 import pytest
@@ -325,7 +326,7 @@ def test_a_rebuild_clears_the_cache(tmp_path, monkeypatch):
     cache = ResultCache()
     cache.put("stale", "answer from the previous index")
 
-    monkeypatch.setattr(mcp, "_INDEXES", {})
+    monkeypatch.setattr(importlib.import_module("repo2graph.mcp.indexes"), "_INDEXES", {})
     mcp.open_index(out, repo, cache)  # no index yet -> builds one
 
     assert cache.get("stale") is None, "the cache survived a rebuild"

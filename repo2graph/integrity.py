@@ -44,6 +44,27 @@ class IntegrityReport:
         return self.status == "valid"
 
 
+_WINDOWS = os.name == "nt"
+
+
+def _is_link_like(path: Path) -> bool:
+    """A symlink, or on Windows any reparse point (junctions included).
+
+    `Path.is_symlink()` is False for an NTFS junction, which redirects a
+    directory exactly as a symlink does, so it alone lets a junction bypass
+    every guard that relies on it.
+    """
+    if path.is_symlink():
+        return True
+    if not _WINDOWS:
+        return False
+    try:
+        attrs = getattr(path.lstat(), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attrs & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
 def validate_outdir(
     outdir: str | Path,
     repo_root: str | Path | None = None,
@@ -68,7 +89,7 @@ def validate_outdir(
     # 4. Symlink check -- must run on the *unresolved* path. Path.resolve()
     # dereferences symlinks (including the final path component), so checking
     # is_symlink() after resolve() can never fire; check before resolving.
-    if raw.is_symlink() and not allow_symlink:
+    if _is_link_like(raw) and not allow_symlink:
         raise ValueError(
             f"Output path is a symlink: {raw}. Pass --allow-symlink-out to explicitly allow writing through symlinks."
         )
@@ -694,10 +715,10 @@ def is_foreign_index(outdir: str | Path) -> bool:
     """
     out = Path(outdir)
     local_path = out / "local.json"
-    if local_path.is_symlink() or not local_path.is_file():
+    if _is_link_like(local_path) or not local_path.is_file():
         return True
     manifest_path = out / "agent" / "manifest.json"
-    if manifest_path.is_symlink() or not manifest_path.is_file():
+    if _is_link_like(manifest_path) or not manifest_path.is_file():
         return True
     try:
         with open(local_path, "r", encoding="utf8") as fh:

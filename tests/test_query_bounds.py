@@ -353,3 +353,29 @@ class TestSingleCharIdentifiers:
         # since none of the fixture's free text or other names is one letter.
         assert single_char_terms == {"t"}
         assert not tokenize("T")  # confirms "t" could only have come from name indexing
+
+
+def test_pack_reports_both_budgets_and_how_tokens_were_counted(mini_index):
+    """#282/#290: a caller must be able to tell the selected source text from
+    the rendered context, see what was dropped, and know the token count is an
+    estimate rather than a tokenizer's answer."""
+    from conftest import MINI_QUERY
+    from repo2graph.query import Index
+
+    idx = Index(mini_index)
+    full = idx.pack_context(MINI_QUERY, budget_chars=0)
+    tight = idx.pack_context(MINI_QUERY, budget_chars=1200)
+    for pack in (full, tight):
+        assert pack["rendered_context_chars"] == len(pack["markdown"])
+        assert pack["rendered_context_chars"] > pack["source_text_chars"] > 0
+        assert pack["token_count_method"] == "heuristic"
+    assert not full["budget_exhausted"] and full["omitted_chunk_count"] == 0
+    assert tight["budget_exhausted"] and tight["omitted_chunk_count"] > 0
+
+    def exact(text):
+        return len(text.split())
+
+    exact.token_count_method = "exact:whitespace"
+    assert (
+        idx.pack_context(MINI_QUERY, count_tokens=exact)["token_count_method"] == "exact:whitespace"
+    )

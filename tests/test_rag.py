@@ -1253,6 +1253,21 @@ def test_rag_target_resolution_github_spec(monkeypatch, tmp_path):
     assert pack_context_calls[0][0][0] == "auth query"
 
 
+@pytest.mark.parametrize("typo", ["src/app", "./src/app", "../x/y"])
+def test_rag_mistyped_local_path_never_clones(monkeypatch, tmp_path, typo):
+    """#452 N1: `src/app` is also a valid owner/repo spelling, so a typo in a
+    local path used to become a clone from github.com with the user's token."""
+    import repo2graph.fetch as fetch
+
+    (tmp_path / "src").mkdir()
+    monkeypatch.chdir(tmp_path)
+    called = []
+    monkeypatch.setattr(fetch, "index_github", lambda *a, **k: called.append(a))
+    with pytest.raises(SystemExit, match="not a directory or an index|cannot resolve"):
+        main(["rag", typo, "q", "-o", str(tmp_path / "idx")])
+    assert called == []
+
+
 def test_rag_cli_answer_integration(monkeypatch, rag_out):
     """Item 6 (S-7): `rag --answer` forwards provider and model to stream_answer."""
     import repo2graph.answer as answer
@@ -1629,7 +1644,7 @@ def test_default_models_current_and_overridable():
     assert answer.DEFAULT_MODELS == {
         "gemini": "gemini-3.6-flash",
         "openai": "gpt-4o-mini",
-        "anthropic": "claude-haiku-4-5",
+        "anthropic": "claude-haiku-5-5",
         "ollama": "llama3.1",
     }
     assert "claude-3-5-haiku" not in answer.DEFAULT_MODELS["anthropic"]
@@ -1640,7 +1655,9 @@ def test_default_models_current_and_overridable():
         "system",
         "user",
     )
-    assert payload["model"] == "claude-haiku-4-5"
+    assert payload["model"] == "claude-haiku-5-5"
+    # Haiku 5.5 thinks by default, out of the answer's MAX_TOKENS.
+    assert payload["thinking"] == {"type": "disabled"}
 
     _, _, overridden = answer._request(
         {"name": "anthropic", "value": "sk-test"},
@@ -2033,3 +2050,172 @@ def test_verify_rag_function(tmp_path):
     assert report["index"] == str(tmp_path)
     assert report["vectors_present"] is False
     assert error is not None and "no vectors" in error
+
+
+def test_pick_provider_refuses_to_guess_between_two_providers():
+    """#452 N3: the destination of the user's source must be chosen, not inferred
+    from whichever credentials happen to be exported."""
+    from repo2graph.answer import pick_provider
+
+    env = {"OPENAI_API_KEY": "sk-x", "ANTHROPIC_API_KEY": "sk-ant-y"}
+    with pytest.raises(SystemExit, match="--provider"):
+        pick_provider(env=env)
+    assert pick_provider(env=env, provider="openai")["name"] == "openai"
+
+
+def test_pick_provider_one_credential_is_used_and_google_key_counts_once():
+    from repo2graph.answer import pick_provider
+
+    assert pick_provider(env={"OPENAI_API_KEY": "sk-x"})["name"] == "openai"
+    both = {"GEMINI_API_KEY": "a", "GOOGLE_API_KEY": "b"}
+    assert pick_provider(env=both)["env"] == "GEMINI_API_KEY"
+
+
+@pytest.mark.parametrize(
+    "host,warns",
+    [
+        ("127.0.0.1:11434", False),
+        ("http://localhost:11434", False),
+        ("http://10.0.0.5:11434", True),
+        ("https://ollama.example.com", False),
+    ],
+)
+def test_plain_http_ollama_off_loopback_warns(host, warns, capsys):
+    from repo2graph.answer import _ollama_base
+
+    _ollama_base(host)
+    assert ("unencrypted" in capsys.readouterr().err) is warns
+
+
+@pytest.mark.parametrize("asked", ["validates", "validating", "validation", "validated"])
+def test_query_inflection_finds_the_base_identifier(tmp_path, asked):
+    """#382: `validates`/`validation` did not match a symbol named `validate`.
+    Stems are added beside the original term, query side only."""
+    from repo2graph.query import Index
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "check.py").write_text(
+        "def validate(token):\n    return bool(token)\n", encoding="utf8"
+    )
+    (repo / "other.py").write_text("def unrelated():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    top = Index(out).retrieve(f"where does {asked} happen", k=1)
+    assert top and top[0]["path"] == "check.py", top
+
+
+def test_stem_variants_leave_short_and_double_s_words_alone():
+    from repo2graph.query import stem_variants
+
+    assert stem_variants("class") == []
+    assert stem_variants("uses") == []  # too short to strip safely
+    assert "parser" in stem_variants("parsers")
+    assert "validate" in stem_variants("validation")
+
+
+def test_anthropic_thinking_field_only_for_models_that_accept_it():
+    """#55: `thinking: disabled` is a 400 on models where thinking is always on,
+    so only the listed defaults get it; an override is sent unchanged."""
+    import repo2graph.answer as answer
+
+    _, _, payload = answer._request(
+        {"name": "anthropic", "value": "k"}, "claude-opus-5-5", "s", "u"
+    )
+    assert "thinking" not in payload
+
+
+def test_answer_refuses_a_pack_with_no_room_for_the_reply(monkeypatch):
+    """#290: the prompt estimate plus MAX_TOKENS must fit the model's context."""
+    import repo2graph.answer as answer
+
+    monkeypatch.setitem(answer.CONTEXT_WINDOWS, "tiny-model", 3000)
+    with pytest.raises(SystemExit, match="does not fit tiny-model"):
+        answer._check_room_for_answer("tiny-model", "s" * 100, "u" * 8000)
+    answer._check_room_for_answer("tiny-model", "s", "u" * 100)
+    answer._check_room_for_answer("unknown-model", "s", "u" * 10_000_000)
+
+
+def _cochange_index(tmp_path):
+    """Two files that never reference each other but always change together."""
+    import subprocess
+
+    repo = tmp_path / "r"
+    repo.mkdir()
+    (repo / "billing.py").write_text(
+        "RATE = 3\nCURRENCY = 'EUR'\n\n\ndef charge_invoice():\n    return RATE\n", encoding="utf8"
+    )
+    (repo / "ledger.py").write_text(
+        "BOOK = 'main'\nPERIOD = 12\n\n\ndef post_entry():\n    return BOOK\n", encoding="utf8"
+    )
+    git = ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run([*git, "init", "-q"], check=True, stdin=subprocess.DEVNULL)
+    for i in range(4):
+        for f in ("billing.py", "ledger.py"):
+            (repo / f).write_text((repo / f).read_text() + f"# {i}\n", encoding="utf8")
+        subprocess.run([*git, "add", "-A"], check=True, stdin=subprocess.DEVNULL)
+        subprocess.run([*git, "commit", "-qm", str(i)], check=True, stdin=subprocess.DEVNULL)
+    out = tmp_path / "idx"
+    main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--formats",
+            "jsonl",
+            "--git-history",
+            "10",
+            "--cochange-min",
+            "2",
+        ]
+    )
+    return out
+
+
+def test_expansion_presets_choose_which_edges_are_walked(tmp_path):
+    """#289: CO_CHANGE is never walked by default, and a preset (or --edge-type)
+    can opt into it; `why` names the edge that admitted each neighbour."""
+    import shutil
+
+    from repo2graph.query import Index
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    idx = Index(_cochange_index(tmp_path))
+    q = "charge invoice"
+    default = {c["path"] for c in idx.pack_context(q, k=1)["neighbors"]}
+    assert "ledger.py" not in default
+    impact = idx.pack_context(q, k=1, hops=2, expansion="impact-analysis")["neighbors"]
+    assert any(c["path"] == "ledger.py" and c["why"].startswith("CO_CHANGE") for c in impact)
+    only = idx.pack_context(q, k=1, hops=2, edge_types=["DEFINES", "CO_CHANGE"])["neighbors"]
+    assert "ledger.py" in {c["path"] for c in only}
+    with pytest.raises(ValueError, match="unknown expansion preset"):
+        idx.pack_context(q, expansion="everything")
+
+
+def test_rag_cli_takes_expansion_and_edge_type(tmp_path, capsys):
+    import shutil
+
+    if shutil.which("git") is None:
+        pytest.skip("git not available")
+    out = _cochange_index(tmp_path)
+    capsys.readouterr()
+    main(
+        [
+            "rag",
+            "charge invoice",
+            "-o",
+            str(out),
+            "-k",
+            "1",
+            "--hops",
+            "2",
+            "--expansion",
+            "impact-analysis",
+            "--format",
+            "json",
+        ]
+    )
+    pack = json.loads(capsys.readouterr().out)
+    assert "ledger.py" in {c["path"] for c in pack["neighbors"]}
