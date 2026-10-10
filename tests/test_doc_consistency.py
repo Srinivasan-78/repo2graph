@@ -516,6 +516,7 @@ _CLI_COMMANDS = (
     "embed",
     "map",
     "stats",
+    "diff",
     "explain-path",
     "doctor",
     "bug-report",
