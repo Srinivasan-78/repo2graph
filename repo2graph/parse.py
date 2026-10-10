@@ -1,5 +1,6 @@
 """Discovery, language configs, and tree-sitter based symbol/call extraction."""
 
+import json
 import os
 import re
 import stat as statmod
@@ -46,7 +47,7 @@ class ImportDetail:
     # 1-based line of the import statement, for the IMPORTS edge's `evidence`.
     # tree-sitter's Point.row advances on a newline only -- the same convention
     # chunks._lines() slices by -- so this indexes the same line the reader
-    # sees. See CONTRIBUTING.md on splitlines().
+    # sees. See .github/CONTRIBUTING.md on splitlines().
     line: int | None = None
 
 
@@ -80,6 +81,16 @@ EXT_LANG = {
     ".sh": "bash",
     ".bash": "bash",
     ".lua": "lua",
+    # `.m` is also MATLAB: `refine_lang` keeps it only with an Objective-C signal.
+    ".m": "objc",
+    ".mm": "objc",
+    ".tf": "hcl",
+    ".hcl": "hcl",
+    # Not grammars of their own: `refine_lang` hands the code inside them to
+    # the JavaScript/TypeScript or Python parser (#398).
+    ".vue": "vue",
+    ".svelte": "svelte",
+    ".ipynb": "ipynb",
 }
 
 # `.h` is the single ambiguous extension in EXT_LANG: it defaults to "c" there
@@ -105,15 +116,120 @@ CPP_HEADER_HINTS = (
 )
 
 
+# Directives no C, C++ or MATLAB file contains. `@interface`/`@protocol`
+# settle a `.h` as Objective-C before the C++ hints are consulted, and any of
+# these keeps a `.m` file as Objective-C rather than MATLAB (#398).
+OBJC_HINTS = (b"@interface", b"@implementation", b"@protocol", b"#import")
+
+
 def sniff_header_lang(raw: bytes) -> str:
-    """Guess "c" or "cpp" for a `.h` file from its content (#377).
+    """Guess "c", "cpp" or "objc" for a `.h` file from its content (#377).
 
     Cheap and best-effort: any single C++ signal anywhere in `raw` wins,
     since a plain C header contains none of `CPP_HEADER_HINTS` in ordinary
     (non-comment, non-string) code. Callers pass the bytes they already read
     for hashing/parsing -- this never opens the file itself.
     """
+    if b"@interface" in raw or b"@protocol" in raw:
+        return "objc"
     return "cpp" if any(h in raw for h in CPP_HEADER_HINTS) else "c"
+
+
+_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
+_TS_LANG_ATTR_RE = re.compile(r"""\blang\s*=\s*["']?(tsx|ts|typescript)\b""", re.I)
+
+
+def component_script(raw: bytes) -> tuple[str, bytes]:
+    """The `<script>` blocks of a Vue or Svelte component, at their own lines.
+
+    Everything outside them becomes empty lines, so every line number the
+    JavaScript/TypeScript parser reports is the line in the `.vue`/`.svelte`
+    file. A `lang="ts"` on any block parses them all as TypeScript.
+    """
+    text = raw.decode("utf-8", "replace")
+    parts: list[str] = []
+    lang, pos = "javascript", 0
+    for m in _SCRIPT_RE.finditer(text):
+        parts.append("\n" * text.count("\n", pos, m.start(2)))
+        parts.append(m.group(2))
+        pos = m.end(2)
+        attr = _TS_LANG_ATTR_RE.search(m.group(1))
+        if attr:
+            lang = "tsx" if attr.group(1).lower() == "tsx" else "typescript"
+    parts.append("\n" * text.count("\n", pos))
+    return lang, "".join(parts).encode("utf8")
+
+
+# nbformat writes one cell key per line, sorted, so `cell_type` comes before
+# `source` and both sit at the same indent; a key at any other indent is
+# inside an output or metadata and is not the cell's.
+_NB_CELL_TYPE_RE = re.compile(r'^(\s*)"cell_type"\s*:\s*"(\w+)"')
+_NB_SOURCE_RE = re.compile(r'^(\s*)"source"\s*:\s*\[\s*$')
+_NB_STRING_RE = re.compile(r'^\s*("(?:[^"\\]|\\.)*")\s*,?\s*$')
+_NB_MAGIC_RE = re.compile(r"^\s*[%!?]")
+
+
+def notebook_code(raw: bytes) -> bytes:
+    """A Jupyter notebook's code cells, each at the lines it occupies in the file.
+
+    Every other line becomes empty, so the Python parser's line numbers are
+    the notebook's own and a citation opens on the right line of the `.ipynb`.
+    The `"source": [` line of each code cell becomes `# cell N` (N counts
+    every cell from 1, as Jupyter shows them), so a chunk names its cell.
+    IPython magics and shell escapes (`%time`, `!pip`) become empty lines.
+    A notebook not written one source line per JSON line (minified) yields
+    nothing rather than wrong line numbers.
+    """
+    lines = raw.decode("utf-8", "replace").split("\n")
+    out = [""] * len(lines)
+    cell, cell_type, indent, in_source = 0, "", None, False
+    for i, line in enumerate(lines):
+        if in_source:
+            m = _NB_STRING_RE.match(line)
+            if m is None:
+                in_source = False
+            elif cell_type == "code":
+                try:
+                    code = json.loads(m.group(1))
+                except ValueError:
+                    code = ""
+                code = code.rstrip("\r\n").replace("\r", "").replace("\n", " ")
+                out[i] = "" if _NB_MAGIC_RE.match(code) else code
+            continue
+        if m := _NB_CELL_TYPE_RE.match(line):
+            if indent is None or len(m.group(1)) == indent:
+                indent = len(m.group(1))
+                cell += 1
+                cell_type = m.group(2)
+        elif (m := _NB_SOURCE_RE.match(line)) and len(m.group(1)) == indent:
+            in_source = True
+            if cell_type == "code":
+                out[i] = f"# cell {cell}"
+    return "\n".join(out).encode("utf8")
+
+
+def refine_lang(lang: str | None, suffix: str, raw: bytes) -> tuple[str | None, bytes]:
+    """The language to parse a file as, and the bytes to give that parser.
+
+    `EXT_LANG` maps an extension; this settles what the extension cannot:
+    a `.h` header's C, C++ or Objective-C (#377), a `.m` file's Objective-C
+    or MATLAB (None: not parsed), and the code inside a Vue or Svelte
+    component or a notebook (#398). Line numbers are always the file's own.
+    """
+    if lang == "c" and suffix == ".h":
+        return sniff_header_lang(raw), raw
+    if lang == "objc" and suffix == ".m":
+        return ("objc" if any(h in raw for h in OBJC_HINTS) else None), raw
+    if lang in ("vue", "svelte"):
+        return component_script(raw)
+    if lang == "ipynb":
+        return "python", notebook_code(raw)
+    return lang, raw
+
+
+# Languages read through `refine_lang` as a whole file: their code cannot be
+# found in an arbitrary slice, so `--chunk-large-files` does not slice them.
+EMBEDDED_LANGS = frozenset({"vue", "svelte", "ipynb"})
 
 
 DOC_EXT = {".md", ".mdx", ".rst", ".txt", ".adoc"}
@@ -287,6 +403,29 @@ LANG_CFG: dict[str, LangConfig] = {
         "import_types": set(),
         "doc": "line",
     },
+    "objc": {
+        "kind_map": {
+            # A category (`@interface Cache (Extra)`) is the same node type
+            # and the same first identifier, so its methods join the class.
+            "class_interface": "class",
+            "class_implementation": "class",
+            "protocol_declaration": "protocol",
+            "method_definition": "method",
+            "function_definition": "function",
+        },
+        "call_types": {"call_expression", "message_expression"},
+        "import_types": {"preproc_include"},
+        "doc": "line",
+    },
+    "hcl": {
+        # Resolved per node by `_hcl_symbol`: a top-level block is named by its
+        # Terraform address (`aws_s3_bucket.logs`, `var.env`, `module.vpc`),
+        # and each attribute of a top-level `locals` block is `local.<name>`.
+        "kind_map": {"block": "hcl", "attribute": "hcl"},
+        "call_types": {"function_call"},
+        "import_types": set(),
+        "doc": "line",
+    },
 }
 LANG_CFG["typescript"] = cast(LangConfig, dict(LANG_CFG["javascript"]))
 LANG_CFG["typescript"]["kind_map"] = dict(
@@ -369,6 +508,9 @@ class BuildConfig:
     extra_secret_keywords: list[str] = field(default_factory=list)
     extra_secret_dirs: list[str] = field(default_factory=list)
     parse_policy: str = "best-effort"
+    # Opt-in READS / WRITES / REFERENCES edges (#397). Off by default, so the
+    # default graph, and every artifact made from it, is unchanged.
+    reference_edges: bool = False
     # The directory this build writes its artifacts to. When it lies inside
     # the indexed root, discovery must never index it: `git ls-files -co`
     # lists untracked files and os.walk sees everything, so without this a
@@ -540,7 +682,7 @@ def _count_gitignored(root: Path) -> int:
     `_git_files` already applies `--exclude-standard` itself, so these files
     never reach `discover()`'s loop below and this never changes what is
     yielded. Same subprocess pattern as `_git_files`: quotepath=false, bytes
-    decoded with surrogateescape (never text=True -- see CONTRIBUTING.md), bounded
+    decoded with surrogateescape (never text=True -- see .github/CONTRIBUTING.md), bounded
     timeout.
     """
     try:
@@ -597,6 +739,7 @@ def discover(
                 walk_skip_dirs.discard(part)
 
     root = root.resolve()
+    secret_dir_source = 0
     files = _git_files(root)
     if files is not None:
         if stats is not None:
@@ -739,6 +882,13 @@ def discover(
             ):
                 if stats is not None:
                     stats["skipped_secret"] += 1
+                    # Source code dropped only for living under a `secrets/`-
+                    # style directory is often the secret-handling code itself,
+                    # not a secret: count it apart so the drop is visible.
+                    if Path(rp).suffix.lower() in EXT_LANG and not _is_secret_path(
+                        rel.name, extra_keywords=config.extra_secret_keywords
+                    ):
+                        secret_dir_source += 1
                 continue
         if include_globs and not matches_any(rp, include_globs):
             continue
@@ -767,6 +917,14 @@ def discover(
                 stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
             continue
         yield rp, abspath
+
+    if secret_dir_source:
+        if stats is not None:
+            stats["skipped_secret_dir_source"] = secret_dir_source
+        diagnostic(
+            f"note: {secret_dir_source} source file(s) under secret-named directories "
+            "were not indexed; pass --include-secrets to index them"
+        )
 
 
 # `Callable[..., Parser]`, not `Callable[[str], Parser]`: the two supported
@@ -848,6 +1006,8 @@ def parse_cache_identity(config: "BuildConfig | None") -> dict[str, str]:
         "max_file_bytes": str(config.max_file_bytes),
         "chunk_large_files": str(bool(config.chunk_large_files)),
         "secret_policy": str(config.secret_policy),
+        # Only when on, so a default build's cache identity is what it was.
+        **({"reference_edges": "True"} if config.reference_edges else {}),
     }
 
 
@@ -902,6 +1062,10 @@ class Symbol:
     # The enclosing symbol's `key` when that differs from `parent` (a child of
     # a duplicate definition); "" means "same as parent".
     parent_key: str = ""
+    # `--reference-edges` only (#397): the module/class-level names this
+    # symbol reads, writes or names as a type, before resolution. Empty, and
+    # left out of the parse cache, otherwise.
+    refs: list[dict] = field(default_factory=list)
 
 
 def symbol_key(sym: Symbol) -> str:
@@ -1225,6 +1389,77 @@ _ATTR_OR_COMMENT_TYPES = (
 _COMMENT_TYPES = ("comment", "line_comment", "block_comment", "doc_comment")
 
 
+# Terraform's address prefix per block type; `resource` has none.
+_HCL_PREFIX = {"variable": "var", "module": "module", "output": "output", "provider": "provider"}
+# Heads of references that name no block: `count.index`, `each.value`, ...
+_HCL_NOT_BLOCKS = frozenset({"count", "each", "path", "self", "terraform"})
+
+
+def _hcl_words(src: bytes, block) -> list[str]:
+    """A block's type and labels: `resource "aws_s3_bucket" "logs"` -> 3 words."""
+    words = []
+    for c in block.children:
+        if c.type == "identifier":
+            words.append(_text(src, c))
+        elif c.type == "string_lit":
+            words.append(_text(src, c).strip('"'))
+        elif c.type == "block_start":
+            break
+    return words
+
+
+def _hcl_symbol(src: bytes, node) -> tuple[str | None, str | None]:
+    """(kind, Terraform address) of a top-level block or local; else (None, None).
+
+    Only top-level blocks are symbols: a nested `lifecycle {}` or `ingress {}`
+    belongs to its resource. Every attribute of a top-level `locals` block is
+    its own symbol, `local.<name>`, since that is how it is referenced.
+    """
+    body = node.parent
+    if node.type == "attribute":
+        block = body.parent if body is not None else None
+        if (
+            block is None
+            or block.type != "block"
+            or _hcl_words(src, block) != ["locals"]
+            or block.parent is None
+            or block.parent.parent is None
+            or block.parent.parent.type != "config_file"
+        ):
+            return None, None
+        ident = next((c for c in node.children if c.type == "identifier"), None)
+        return ("local", f"local.{_text(src, ident)}") if ident is not None else (None, None)
+    if body is None or body.parent is None or body.parent.type != "config_file":
+        return None, None
+    words = _hcl_words(src, node)
+    if not words:
+        return None, None
+    btype, labels = words[0], words[1:]
+    if btype == "resource" and len(labels) >= 2:
+        return "resource", f"{labels[0]}.{labels[1]}"
+    if btype == "data" and len(labels) >= 2:
+        return "data", f"data.{labels[0]}.{labels[1]}"
+    if btype in _HCL_PREFIX and labels:
+        return btype, f"{_HCL_PREFIX[btype]}.{labels[0]}"
+    if labels:
+        return "block", ".".join(words)
+    return None, None
+
+
+def _hcl_reference(src: bytes, node) -> str | None:
+    """The address a `variable_expr` refers to: `aws_s3_bucket.logs.arn` -> `aws_s3_bucket.logs`."""
+    head = _text(src, node)
+    if head in _HCL_NOT_BLOCKS:
+        return None
+    attrs: list[str] = []
+    sib = node.next_named_sibling
+    while sib is not None and sib.type == "get_attr" and len(attrs) < 2:
+        attrs.append(_text(src, sib).lstrip(".").strip())
+        sib = sib.next_named_sibling
+    need = 2 if head == "data" else 1
+    return ".".join([head, *attrs[:need]]) if len(attrs) >= need else None
+
+
 def _docstring(src: bytes, node, lang: str) -> str:
     if lang == "python":
         body = node.child_by_field_name("body")
@@ -1443,6 +1678,17 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
     """Extract supertype names along with their relationship subtype and raw expression."""
     out: list[str] = []
     details: list[dict] = []
+    if lang == "objc" and node.type == "class_interface":
+        # `@interface Cache : NSObject <Store, Codable>`
+        sup = node.child_by_field_name("superclass")
+        if sup is not None:
+            out.append(_text(src, sup))
+            details.append({"name": out[-1], "subtype": "EXTENDS", "raw": out[-1]})
+        for c in node.children:
+            if c.type == "parameterized_arguments":
+                for t in c.named_children:
+                    out.append(_text(src, t).strip())
+                    details.append({"name": out[-1], "subtype": "IMPLEMENTS", "raw": out[-1]})
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
         if n is not None:
@@ -1528,7 +1774,7 @@ def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[i
 
     Never pass text=True to a subprocess reading cpp output on Windows -- it
     decodes with the cp1252 locale and raises UnicodeDecodeError on UTF-8
-    source. tree-sitter's parser.parse() wants bytes anyway (CONTRIBUTING.md).
+    source. tree-sitter's parser.parse() wants bytes anyway (.github/CONTRIBUTING.md).
     """
     import threading
 
@@ -1814,7 +2060,13 @@ def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
         )
         return details
 
-    elif lang in ("c", "cpp"):
+    elif lang == "hcl":
+        m = re.search(r'source\s*=\s*"([^"]+)"', raw_clean)
+        if m:
+            details.append(ImportDetail(raw=raw_clean, module=m.group(1)))
+            return details
+
+    elif lang in ("c", "cpp", "objc"):
         m = re.search(r"""([<"])([^>"]+)[>"]""", raw_clean)
         if m:
             module = m.group(2)
@@ -1909,7 +2161,274 @@ def normalize_source_bytes(source: bytes) -> bytes:
     return source
 
 
-def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
+# --- reference capture, `--reference-edges` only (#397) ---------------------
+
+REF_LANGS = frozenset({"python", "javascript", "typescript", "tsx"})
+# Symbol kinds a READS / WRITES edge can point at.
+VALUE_KINDS = ("variable", "constant", "field")
+_PY_SELF = frozenset({"self", "cls"})
+# Parents under which an identifier is a binding being introduced (a
+# parameter, a definition's own name, an import), never a read of a name.
+_PY_BINDING_PARENTS = frozenset(
+    {
+        "function_definition",
+        "class_definition",
+        "parameters",
+        "lambda_parameters",
+        "typed_parameter",
+        "list_splat_pattern",
+        "dictionary_splat_pattern",
+        "aliased_import",
+        "dotted_name",
+        "import_statement",
+        "import_from_statement",
+        "global_statement",
+        "nonlocal_statement",
+    }
+)
+_JS_PARAM_PARENTS = frozenset(
+    {"formal_parameters", "required_parameter", "optional_parameter", "rest_pattern"}
+)
+_JS_SKIP_PARENTS = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "class_declaration",
+        "method_definition",
+        "import_specifier",
+        "import_clause",
+        "namespace_import",
+        "export_specifier",
+        "labeled_statement",
+        "break_statement",
+        "continue_statement",
+    }
+)
+
+
+def _same(a, b) -> bool:
+    return b is not None and a.start_byte == b.start_byte and a.end_byte == b.end_byte
+
+
+def _value_kind(name: str, in_class: bool) -> str:
+    if in_class:
+        return "field"
+    return "constant" if name.isupper() else "variable"
+
+
+def _py_value_symbol(src: bytes, node, owner) -> tuple[str | None, str | None]:
+    """(kind, name) when an `assignment` binds one module- or class-level name."""
+    # Some grammar versions wrap the assignment in an expression_statement.
+    stmt = (
+        node.parent
+        if node.parent is not None and node.parent.type == "expression_statement"
+        else node
+    )
+    left = node.child_by_field_name("left")
+    if left is None or left.type != "identifier":
+        return None, None
+    name = _text(src, left)
+    home = stmt.parent
+    if owner is None and home is not None and home.type == "module":
+        return _value_kind(name, False), name
+    if (
+        owner is not None
+        and owner.kind == "class"
+        and home is not None
+        and home.type == "block"
+        and home.parent is not None
+        and home.parent.type == "class_definition"
+    ):
+        return "field", name
+    return None, None
+
+
+def _js_value_kind(node, owner, name: str) -> str | None:
+    """The value kind of a non-function JS/TS binding, if it is module- or class-level."""
+    if node.type in ("field_definition", "public_field_definition"):
+        return "field" if owner is not None and owner.kind == "class" else None
+    name_node = node.child_by_field_name("name")
+    decl = node.parent
+    if (
+        owner is None
+        and name_node is not None
+        and name_node.type == "identifier"
+        and decl is not None
+        and decl.parent is not None
+        and decl.parent.type in ("program", "export_statement")
+    ):
+        return _value_kind(name, False)
+    return None
+
+
+class _RefState:
+    """Per-file bookkeeping for reference capture: locals, globals, type ids."""
+
+    def __init__(self) -> None:
+        self.locals: dict[int, set[str]] = {}
+        self.globals: dict[int, set[str]] = {}
+        self.typed: set[int] = set()  # start bytes of identifiers inside a type
+
+    def add(self, owner, name: str, kind: str, line: int, field_ref: bool = False) -> None:
+        ref = {"name": name, "kind": kind, "line": line}
+        if field_ref:
+            ref["field"] = True
+        owner.refs.append(ref)
+
+
+def _py_ref(src: bytes, node, owner, st: _RefState) -> None:
+    ntype = node.type
+    oid = id(owner)
+    line = node.start_point[0] + 1
+    if ntype in ("global_statement", "nonlocal_statement"):
+        names = st.globals.setdefault(oid, set())
+        names.update(_text(src, c) for c in node.named_children if c.type == "identifier")
+        return
+    if ntype == "type":
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "identifier":
+                st.typed.add(n.start_byte)
+                st.add(owner, _text(src, n), "type", line)
+            stack.extend(n.named_children)
+        return
+    if owner.kind not in ("function", "method"):
+        return
+    if ntype == "attribute":
+        obj = node.child_by_field_name("object")
+        attr = node.child_by_field_name("attribute")
+        if obj is None or attr is None or obj.type != "identifier":
+            return
+        if _text(src, obj) not in _PY_SELF:
+            return
+        p = node.parent
+        write = p is not None and p.type in ("assignment", "augmented_assignment")
+        write = write and _same(node, p.child_by_field_name("left"))
+        st.add(owner, _text(src, attr), "write" if write else "read", line, field_ref=True)
+        return
+    if ntype != "identifier" or node.start_byte in st.typed:
+        return
+    p = node.parent
+    if p is None:
+        return
+    pt = p.type
+    name = _text(src, node)
+    if pt in _PY_BINDING_PARENTS:
+        if pt in ("parameters", "lambda_parameters", "typed_parameter"):
+            st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt in ("default_parameter", "typed_default_parameter", "keyword_argument"):
+        if _same(node, p.child_by_field_name("name")):
+            if pt != "keyword_argument":
+                st.locals.setdefault(oid, set()).add(name)
+            return
+    elif pt == "attribute":
+        if not _same(node, p.child_by_field_name("object")) or name in _PY_SELF:
+            return
+    elif pt == "call" and _same(node, p.child_by_field_name("function")):
+        return
+    target = p
+    while target.type in ("pattern_list", "tuple_pattern", "list_pattern"):
+        if target.parent is None:
+            break
+        target = target.parent
+    if target.type in ("assignment", "augmented_assignment", "for_statement", "for_in_clause"):
+        if _same(node, p.child_by_field_name("left")) or target is not p:
+            if name in st.globals.get(oid, ()):
+                st.add(owner, name, "write", line)
+            else:
+                st.locals.setdefault(oid, set()).add(name)
+            return
+    if pt in ("as_pattern_target", "with_item"):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    st.add(owner, name, "read", line)
+
+
+def _js_ref(src: bytes, node, owner, st: _RefState) -> None:
+    ntype = node.type
+    oid = id(owner)
+    line = node.start_point[0] + 1
+    if ntype == "type_identifier":
+        p = node.parent
+        if p is None or not _same(node, p.child_by_field_name("name")):  # not `class Box`
+            st.add(owner, _text(src, node), "type", line)
+        return
+    if owner.kind not in ("function", "method"):
+        return
+    if ntype == "member_expression":
+        obj = node.child_by_field_name("object")
+        prop = node.child_by_field_name("property")
+        if obj is None or prop is None or obj.type != "this":
+            return
+        p = node.parent
+        write = p is not None and (
+            p.type == "update_expression"
+            or (
+                p.type in ("assignment_expression", "augmented_assignment_expression")
+                and _same(node, p.child_by_field_name("left"))
+            )
+        )
+        st.add(owner, _text(src, prop), "write" if write else "read", line, field_ref=True)
+        return
+    if ntype not in ("identifier", "shorthand_property_identifier"):
+        return
+    p = node.parent
+    if p is None:
+        return
+    pt = p.type
+    name = _text(src, node)
+    if pt in _JS_SKIP_PARENTS:
+        return
+    if pt in _JS_PARAM_PARENTS or pt == "catch_clause":
+        # `max = LIMIT` in a TS parameter: the pattern binds, the value is read.
+        if not _same(node, p.child_by_field_name("value")):
+            st.locals.setdefault(oid, set()).add(name)
+            return
+    if pt == "arrow_function" and _same(node, p.child_by_field_name("parameter")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt == "variable_declarator" and _same(node, p.child_by_field_name("name")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt == "assignment_pattern" and _same(node, p.child_by_field_name("left")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt in ("call_expression", "new_expression") and _same(
+        node, p.child_by_field_name("function") or p.child_by_field_name("constructor")
+    ):
+        return
+    if (
+        pt in ("assignment_expression", "augmented_assignment_expression")
+        and _same(node, p.child_by_field_name("left"))
+    ) or pt == "update_expression":
+        st.add(owner, name, "write", line)
+        return
+    st.add(owner, name, "read", line)
+
+
+def _finish_refs(symbols: list, st: _RefState) -> None:
+    """Drop references to a symbol's own locals; merge repeats, keeping the first line."""
+    for sym in symbols:
+        if not sym.refs:
+            continue
+        own = st.locals.get(id(sym), set()) - st.globals.get(id(sym), set())
+        merged: dict[tuple, dict] = {}
+        for r in sym.refs:
+            if r["kind"] != "type" and not r.get("field") and r["name"] in own:
+                continue
+            key = (r["kind"], r["name"], bool(r.get("field")))
+            if key in merged:
+                merged[key]["count"] += 1
+            else:
+                merged[key] = {**r, "count": 1}
+        sym.refs = list(merged.values())
+
+
+def parse_source(
+    source: bytes, lang: str, filepath: Path | str | None = None, refs: bool = False
+) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
@@ -1984,6 +2503,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     go_self: dict[int, frozenset[str]] = {}
     # symbol keys already taken in this file -- see `disambiguate_key`.
     used_keys: set[str] = set()
+    rs = _RefState() if refs and lang in REF_LANGS else None
+    ref_of = _py_ref if lang == "python" else _js_ref
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -2012,6 +2533,24 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 if raw:
                     imports.append(raw[:300])
                     imports_full.append((raw, node.start_point[0] + 1))
+        elif lang == "hcl" and owner is not None:
+            if ntype == "variable_expr" and (ref := _hcl_reference(source, node)):
+                # A reference between blocks is Terraform's dependency edge;
+                # it is recorded as a call so it resolves like one.
+                owner.calls.append(ref)
+                owner.call_details.append(
+                    {"name": ref, "kind": "static", "line": node.start_point[0] + 1}
+                    | _receiver_fields("", False)
+                )
+            elif (
+                ntype == "attribute"
+                and owner.kind == "module"
+                and node.named_children
+                and _text(source, node.named_children[0]) == "source"
+            ):
+                raw = _text(source, node).strip()
+                imports.append(raw[:300])
+                imports_full.append((raw, node.start_point[0] + 1))
         if ntype in call_types:
             callee = _callee_name(source, node)
             # file-scope calls (owner is None) produce no edge in graph.build,
@@ -2034,10 +2573,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         ),
                     }
                 )
+        if rs is not None and owner is not None:
+            ref_of(source, node, owner, rs)
         kind = kind_map.get(ntype)
+        value_name = None
+        if rs is not None and kind is None and ntype == "assignment" and lang == "python":
+            kind, value_name = _py_value_symbol(source, node, owner)
         child_scope, child_owner = scope, owner
         if kind is not None:
-            name = _name_of(source, node, lang)
+            name = value_name or _name_of(source, node, lang)
             if kind == "maybe_function":
                 value = node.child_by_field_name("value")
                 if value is None or value.type not in (
@@ -2049,6 +2593,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     # bare reference is an alias for an existing definition and
                     # is the name consumers import.
                     kind = "alias" if _exported_declarator_alias(source, node) else None
+                    if kind is None and rs is not None and name:
+                        kind = _js_value_kind(node, owner, name)
                 else:
                     kind = "function"
             elif kind == "maybe_alias":
@@ -2056,6 +2602,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                 # The specifier's `name` field is the target; the symbol is the
                 # alias, so `name` has to be replaced, not just the kind.
                 name, kind = (alias_name, "alias") if alias_name else (name, None)
+            elif kind == "hcl":
+                kind, name = _hcl_symbol(source, node) if owner is None else (None, None)
             if kind and lang == "kotlin" and ntype == "class_declaration":
                 if any(c.type == "interface" for c in node.children):
                     kind = "interface"
@@ -2142,12 +2690,16 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     if go_recv:
                         go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
-                child_scope, child_owner = sym_scope + (name,), sym
+                if kind not in VALUE_KINDS:
+                    child_scope, child_owner = sym_scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
         # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
+
+    if rs is not None:
+        _finish_refs(symbols, rs)
 
     # Parse import details from the untruncated text -- see imports_full above.
     import_details: list[ImportDetail] = []

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
 from typing import Any
 
 # Formats needed by the served index.
@@ -69,10 +67,6 @@ BUDGET_DEFAULTED = (
     "{default} (max {ceiling})._\n\n"
 )
 
-IMPACT_FORMATS = ("markdown", "json", "sarif", "pr-comment")
-
-_ABS_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|(?<![\w.~>-])/)[^'\"\n]*?(?=['\"\n]|: |$)")
-
 
 def _int(value: Any, fallback: int) -> int:
     """Safely coerce argument to int, falling back to default on error/overflow."""
@@ -107,11 +101,3 @@ def _str(value: Any, max_chars: int) -> str:
     """Coerce string argument and clamp length to max_chars."""
     text = "" if value is None else str(value)
     return text[:max_chars]
-
-
-def _scrub_paths(text: str, root: Path) -> str:
-    """Remove absolute filesystem paths from messages."""
-    for known in {str(root), str(root.resolve()), root.as_posix(), root.resolve().as_posix()}:
-        if known and known not in (".", "/"):
-            text = text.replace(known, "<repo>")
-    return _ABS_PATH_RE.sub("<path>", text).strip()

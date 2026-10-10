@@ -282,11 +282,15 @@ PEM_END_RE = re.compile(
 # a `PuTTY-User-Key-File-N:` header -- so it cannot be paired and is matched as
 # a plain single-line marker in CONTENT_SECRET_PATTERNS instead.
 PUTTY_KEY_RE = re.compile(r"PuTTY-User-Key-File-\d+:")
+# The header alone is diagnostic -- it never appears outside an actual Ansible
+# Vault payload. `_ansible_vault_spans` extends a match over the hex lines below.
+_ANSIBLE_VAULT_RE = re.compile(r"\$ANSIBLE_VAULT;1\.[12];AES256")
+_HEX_LINE_RE = re.compile(r"[ \t]*[0-9a-fA-F]{1,512}[ \t]*\r?")
 
 # Types whose spans are computed by a dedicated pass rather than by running
 # their entry below over the text. The entry is still the shape test used by
 # `_classify_secret_shape`.
-PAIRED_TYPES = frozenset({"private_key"})
+PAIRED_TYPES = frozenset({"private_key", "ansible_vault_blob"})
 
 # Content scanning patterns: (type_name, regex)
 #
@@ -317,9 +321,7 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("sendgrid_key", re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b")),
     ("telegram_bot_token", re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b")),
     ("hashicorp_vault_token", re.compile(r"\bhv[sb]\.[A-Za-z0-9_-]{20,}\b")),
-    # The header alone is diagnostic -- it never appears outside an actual
-    # Ansible Vault payload, so no value-shape test is needed to confirm it.
-    ("ansible_vault_blob", re.compile(r"\$ANSIBLE_VAULT;1\.[12];AES256")),
+    ("ansible_vault_blob", _ANSIBLE_VAULT_RE),
     # A SAS query string is a bearer credential by itself: anyone holding the
     # full `sv=...&...&sig=...` string has the access it grants, with no
     # further secret needed. `sv=` (signed version) and a trailing `sig=`
@@ -348,6 +350,38 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
 )
 
+
+# A literal each pattern above cannot match without, checked with `in` before
+# the regex runs. Thirty-odd patterns each scanning every chunk were most of
+# what remained of the secret scan's cost; nearly every chunk lacks every one
+# of these strings (#456). A type missing here always runs its regex.
+_PATTERN_NEEDLES: dict[str, tuple[str, ...]] = {
+    "aws_access_key": ("AKIA", "ASIA"),
+    "github_fine_grained_pat": ("github_pat_",),
+    "github_token": ("ghp_", "gho_", "ghu_", "ghs_", "ghr_"),
+    "gitlab_token": ("glpat-",),
+    "slack_token": ("xox",),
+    "anthropic_key": ("sk-ant-",),
+    "openai_key": ("sk-",),
+    "google_key": ("AIza",),
+    "google_oauth_client_secret": ("GOCSPX-",),
+    "stripe_key": ("_live_",),
+    "stripe_webhook_secret": ("whsec_",),
+    "npm_token": ("npm_",),
+    "pypi_token": ("pypi-AgEIcHlwaS5vcmc",),
+    "huggingface_token": ("hf_",),
+    "digitalocean_token": ("dop_v1_",),
+    "shopify_token": ("shpat_", "shpss_"),
+    "sendgrid_key": ("SG.",),
+    "hashicorp_vault_token": ("hvs.", "hvb."),
+    "azure_storage_sas_token": ("sig=",),
+    "slack_webhook_url": ("https://hooks.slack.com/services/",),
+    "teams_webhook_url": (".webhook.office.com/webhookb2/",),
+    "discord_webhook_url": ("/api/webhooks/",),
+    "putty_private_key": ("PuTTY-User-Key-File-",),
+    "jwt": ("eyJ",),
+    "basic_auth_url": ("://",),
+}
 
 # `.docker/config.json` and a decoded `.dockerconfigjson` store each registry
 # login as `"auth": "<base64 user:password>"`. The key is too short and too
@@ -394,6 +428,27 @@ def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
             if start < end:
                 spans.append((pos + start, pos + end))
             pos = eol + 1
+    return spans
+
+
+def _ansible_vault_spans(text: str) -> list[tuple[int, int]]:
+    """The vault header plus the hex payload lines under it.
+
+    The ciphertext is what an offline password guess runs against, so it goes
+    with the header rather than staying in clear beneath a redacted first line.
+    """
+    spans: list[tuple[int, int]] = []
+    for m in _ANSIBLE_VAULT_RE.finditer(text):
+        end = m.end()
+        pos = text.find("\n", end) + 1
+        while 0 < pos < len(text):
+            eol = text.find("\n", pos)
+            eol = len(text) if eol < 0 else eol
+            if not _HEX_LINE_RE.fullmatch(text, pos, eol):
+                break
+            end = eol
+            pos = eol + 1
+        spans.append((m.start(), end))
     return spans
 
 
@@ -535,7 +590,58 @@ def _json_secret_value_ok(value: str) -> bool:
     return lower + upper + digit + symbol >= 3
 
 
-def _json_secret_spans(text: str) -> list[tuple[int, int]]:
+# Every keyword alternative of ASSIGNMENT_RE, JSON_SECRET_RE and
+# UNQUOTED_SECRET_RE contains one of these, case-insensitively, on the line the
+# match starts on. Those three scan from nearly every punctuation character of
+# a chunk, which made them the largest cost of a build; running them only from
+# lines that carry a keyword finds the same matches (#456).
+_KEYWORD_HINT_RE = re.compile(r"(?i)pass|pwd|secret|token|key|dockerconfigjson")
+_NONBLANK_LINE_RE = re.compile(r"\s*\S[^\n]*")
+
+
+def _keyword_windows(text: str) -> list[tuple[int, int, int]]:
+    """(line start, line end, scan end) for each line holding a keyword hint.
+
+    The scan end reaches two non-blank lines further: between a key and its
+    quoted value the rules allow whitespace, newlines included, before the
+    separator and again before the opening quote.
+    """
+    windows: list[tuple[int, int, int]] = []
+    pos = 0
+    while (m := _KEYWORD_HINT_RE.search(text, pos)) is not None:
+        start = text.rfind("\n", 0, m.start()) + 1
+        end = text.find("\n", m.end())
+        end = len(text) if end < 0 else end
+        scan_end = end
+        for _ in range(2):
+            nxt = _NONBLANK_LINE_RE.match(text, scan_end)
+            if nxt is None:
+                break
+            scan_end = nxt.end()
+        windows.append((start, end, scan_end))
+        pos = end + 1
+    return windows
+
+
+def _keyword_matches(
+    pattern: re.Pattern[str], text: str, windows: list[tuple[int, int, int]]
+) -> list[re.Match[str]]:
+    """`pattern`'s matches that start on a keyword line, in text order."""
+    out: list[re.Match[str]] = []
+    seen: set[tuple[int, int]] = set()
+    for start, end, scan_end in windows:
+        for m in pattern.finditer(text, start, scan_end):
+            if m.start() >= end:
+                break
+            if m.span() not in seen:
+                seen.add(m.span())
+                out.append(m)
+    return out
+
+
+def _json_secret_spans(
+    text: str, windows: list[tuple[int, int, int]] | None = None
+) -> list[tuple[int, int]]:
     """Spans of the *values* of JSON credential pairs in `text`.
 
     No longer exempts a value just because it contains "://": that exemption
@@ -549,7 +655,9 @@ def _json_secret_spans(text: str) -> list[tuple[int, int]]:
     """
     return [
         (m.start("value"), m.end("value"))
-        for m in JSON_SECRET_RE.finditer(text)
+        for m in _keyword_matches(
+            JSON_SECRET_RE, text, _keyword_windows(text) if windows is None else windows
+        )
         if not _NON_SECRET_SUFFIX_RE.match(m.group("suffix"))
         and _json_secret_value_ok(m.group("value"))
     ]
@@ -768,11 +876,15 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
     for stype, pattern in CONTENT_SECRET_PATTERNS:
         if stype in PAIRED_TYPES:
             continue  # spans come from the dedicated pass below
+        needles = _PATTERN_NEEDLES.get(stype)
+        if needles and not any(n in text for n in needles):
+            continue
         for m in pattern.finditer(text):
             findings.append((stype, m.start(), m.end()))
 
     # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
     findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
+    findings.extend(("ansible_vault_blob", start, end) for start, end in _ansible_vault_spans(text))
 
     # 1c. Docker registry logins and Kubernetes Secret payloads.
     for m in DOCKER_AUTH_RE.finditer(text):
@@ -784,7 +896,8 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
         findings.append(("DATABASE_PASSWORD", m.start(2), m.end(2)))
 
     # 3. Credential assignments
-    for m in ASSIGNMENT_RE.finditer(text):
+    windows = _keyword_windows(text)
+    for m in _keyword_matches(ASSIGNMENT_RE, text, windows):
         secret = m.group(2)
         if _json_secret_value_ok(secret):
             findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
@@ -795,13 +908,15 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
                 findings.append(("CREDENTIAL_ASSIGNMENT", m.start(2), m.end(2)))
 
     # 4. JSON-style credential pairs (`"password": "..."`)
-    findings.extend(("CREDENTIAL_JSON", start, end) for start, end in _json_secret_spans(text))
+    findings.extend(
+        ("CREDENTIAL_JSON", start, end) for start, end in _json_secret_spans(text, windows)
+    )
 
     # 5. Unquoted values: YAML, INI/.env/.properties, connection strings,
     #    kubeconfig. Reuses the same two false-positive filters as the quoted
     #    rules -- a `tokenUrl`/`secretName`-style property name is not a
     #    credential, and `${VAR}`/`<your-token>`/`*****` are placeholders.
-    for m in UNQUOTED_SECRET_RE.finditer(text):
+    for m in _keyword_matches(UNQUOTED_SECRET_RE, text, windows):
         if _NON_SECRET_SUFFIX_RE.match(m.group("suffix") or ""):
             continue
         value = m.group("value")

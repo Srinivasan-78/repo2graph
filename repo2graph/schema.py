@@ -62,6 +62,10 @@ EdgeType = Literal[
     "INHERITS",
     "CO_CHANGE",
     "TESTS",
+    # `build --reference-edges` only (#397)
+    "READS",
+    "WRITES",
+    "REFERENCES",
 ]
 
 
@@ -93,6 +97,9 @@ class NodeRecord(TypedDict, total=False):
     # File-node bookkeeping.
     size: int
     chunked: bool
+    # file, with --git-authors: who changed it in the commits --git-history read,
+    # most commits first, at most 5 -- [{"name": display name, "commits": n}].
+    authors: list[dict[str, Any]]
     parse_errors: int
     # True on a node standing in for a symbol outside the indexed tree, which is
     # what a CALLS_EXTERNAL edge points at.
@@ -105,7 +112,7 @@ class EdgeRecord(TypedDict, total=False):
     `src`/`dst`/`type` are on every edge, and so are `method`, `confidence` and
     `evidence` — `Graph.add_edge` runs every edge through `edgemeta.normalize`,
     which is the chokepoint that makes those three unconditional (see the
-    CONTRIBUTING.md rule on edge evidence). `evidence: None` is a real answer for
+    .github/CONTRIBUTING.md rule on edge evidence). `evidence: None` is a real answer for
     `CONTAINS` and `CO_CHANGE` rather than a missing value.
 
     Everything below that is edge-type-specific — see `export.EDGE_TYPES` for
@@ -156,7 +163,7 @@ class NeighbourEdge(_NeighbourEdgeRequired, total=False):
     see `chunks._neighbour_edge`. `confidence` is present only when the edge
     is an ambiguous `CALLS` edge scoring below 1.0; `IMPORTS`/`DEFINES`/
     `INHERITS` neighbours never carry it (they have no `confidence` key to
-    read in the first place — see the `min_confidence` note in CONTRIBUTING.md).
+    read in the first place — see the `min_confidence` note in .github/CONTRIBUTING.md).
     """
 
     confidence: float
@@ -241,6 +248,8 @@ class PackResult(TypedDict):
     #: "heuristic" (len // 4) unless the caller passed its own `count_tokens`,
     #: which may set a `token_count_method` attribute to say what it is.
     token_count_method: str
+    #: The `token_margin` the pack was filled under: it used budget / (1 + margin).
+    token_safety_margin: float
 
 
 class EntrypointRecord(TypedDict):

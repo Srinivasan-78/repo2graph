@@ -948,3 +948,44 @@ def test_a_dropped_vector_set_says_why(mini_index, use_stub_embedder, capsys):
     assert "could not be loaded" in (idx.vectors_unavailable or "")
     ok, msg = idx.fuse_ok(StubEmbedder())
     assert not ok and "could not be loaded" in msg
+
+
+# #452: an embedding model can be pinned to one Hugging Face commit.
+@pytest.mark.parametrize(
+    "spec, expected",
+    [
+        (
+            "sentence-transformers/all-MiniLM-L6-v2",
+            ("sentence-transformers/all-MiniLM-L6-v2", None),
+        ),
+        ("org/model@1a2b3c4d", ("org/model", "1a2b3c4d")),
+        ("org/model@", ("org/model@", None)),
+        ("/models/a@b/local", ("/models/a@b/local", None)),
+    ],
+)
+def test_split_model_spec(spec, expected):
+    from repo2graph.embed import split_model_spec
+
+    assert split_model_spec(spec) == expected
+
+
+def test_a_pinned_revision_reaches_sentence_transformers(monkeypatch):
+    import sys
+    import types
+
+    from repo2graph.embed import default_embedder
+
+    seen = {}
+
+    class FakeST:
+        def __init__(self, name, **kwargs):
+            seen["name"], seen["kwargs"] = name, kwargs
+
+    monkeypatch.setitem(
+        sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=FakeST)
+    )
+    emb = default_embedder("org/model@1a2b3c4d")
+    assert seen == {"name": "org/model", "kwargs": {"revision": "1a2b3c4d"}}
+    assert emb.model_id == "org/model@1a2b3c4d"
+    default_embedder("org/model")
+    assert seen == {"name": "org/model", "kwargs": {}}

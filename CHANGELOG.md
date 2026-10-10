@@ -15,6 +15,52 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
+  `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
+  sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.
+  `.tf`/`.hcl` blocks become symbols named by their Terraform address (`aws_s3_bucket.logs`,
+  `var.env`, `module.vpc`, `local.tags`), references between blocks are `CALLS`, and a local
+  module's `source` is an `IMPORTS` edge. The `<script>` blocks of `.vue`/`.svelte` components
+  parse as TypeScript or JavaScript, and a notebook's code cells as Python, at the file's own
+  line numbers; a notebook chunk carries the code, not the JSON or outputs, and names its cell.
+- **`build --reference-edges` (#397):** opt-in `READS`, `WRITES` and `REFERENCES` edges for
+  Python and JS/TS: which module-level variables and class fields a function reads and writes,
+  and which types its annotations name. Exact bindings only (same file, or imported by name);
+  nothing is guessed, and an unbound name is counted in `reference_edges_unresolved`. Off by
+  default, with every default artifact byte-identical. Also `reference-edges = true` in the
+  config file.
+- **`repo2graph diff OLD NEW` (#395):** symbols added, removed and renamed (a moved file's
+  symbols are paired by body, not reported as delete + add), edges added and removed, and each
+  symbol whose callers changed; edges whose only change is confidence are counted, not listed
+  (`--include-confidence` lists them). `--format text|json`.
+- **`build --watch` (#392):** builds once, then rebuilds with `--incremental` after each
+  settled change (`--watch-quiet`, default 1 s). Standard-library polling; an interrupted
+  rebuild leaves the previous index and no lock.
+- **`--git-authors` (#394):** with `--git-history`, each file node records who changed it in
+  those commits: at most five `{name, commits}`, display names after `.mailmap`, never emails.
+- **MCP resources and prompts (#388):** `repo2graph://map`, `://stats` and `://manifest`
+  resources, audited like tool calls; prompts `explain-symbol`, `trace-flow`, `what-breaks`
+  and `orient`. An SDK without the resource hooks keeps its tools.
+- **`build --neo4j-uri` (#401):** pushes `graph.cypher` over Neo4j's HTTP API in batches,
+  standard library only. Credentials come from `NEO4J_USER`/`NEO4J_PASSWORD`, never argv; the
+  host is named on stderr first; a partial push says how far it got, and pushing again is safe.
+- **`query`/`rag --index A --index B` (#396):** one question over several indexes, merged by
+  rank under one budget, each result naming its repository (`[cite: billing:invoice.py:1-2]`).
+  A missing index is skipped with a warning. Cross-repository edges are not attempted.
+- **`rag --tokenizer` and `--token-margin` (#290):** `heuristic` (default), `conservative` or
+  `tiktoken[:ENCODING]`, named in the pack's `token_count_method`; a margin fills to
+  `budget / (1 + margin)`, reported as `token_safety_margin`.
+- **Embedding model revisions (#452):** `--model`/`--embed-model ORG/MODEL@<commit>` pins the
+  download to a revision, and the query side refuses any other.
+- **Build performance gate (#304, #88):** `scripts/perf_bench.py` measures build, write,
+  incremental, peak RSS, output size, index load, query and MCP latency on six synthetic
+  repositories, gated against `benchmarks/perf/baseline.json` by `.github/workflows/perf.yml`.
+  `benchmarks/perf/README.md` records a 50,000-file build and where its time goes. `build`'s
+  JSON report gains a `performance` block (it stays out of `stats.json`).
+- **The npm launcher is published from the release tag (#399),** after PyPI, with provenance;
+  a failed npm publish cannot block the PyPI release.
+- **Property tests (#316)** for import parsing in every language, every MCP tool on arbitrary
+  arguments, token-bounded packs, `read_jsonl` and cursor decoding.
 - **`TESTS` edges linking tests to the symbols they exercise (#393):**
   every symbol defined in a test file gets a `TESTS` edge to each non-test symbol it reaches
   through at most two `CALLS` hops (test helpers included), with `method: call-graph`, the
@@ -50,8 +96,35 @@ makes keeping it current a release-blocking step rather than a good intention.
   Added `REPO2GRAPH_DEBUG=1` environment variable and `--debug` CLI flag to re-raise internal errors across resilience
   boundaries, and enabled ruff `BLE001` checking in CI linting.
 
+### Changed
+
+- **`graph.html` on large repositories (#305):** past `--viz-nodes` the page says it is
+  sampled, in a banner on the page, and opens on a Directories view counting every node in at
+  most 60 directory groups, with drill-down into the detail view and a language filter. The
+  embedded data is capped at 12 MB; past that the detail view is halved and the page says so.
+- **Faster builds on large repositories (#456):** the secret scan runs its key-based rules only
+  from lines carrying a credential keyword and skips vendor patterns whose literal prefix is
+  absent (11.0 s to 2.4 s on this repository, findings identical); same-file, imported and
+  same-directory call resolution is indexed instead of scanned (19.1 s to 2.6 s at 4,000 files
+  sharing names). Output is byte-identical.
+- **`rag --answer` (#285):** connecting has its own 30 s bound; answer text is capped at
+  200,000 characters; an answer cut short by any bound or Ctrl-C says so and exits 3; a
+  provider's error body is echoed with secrets redacted.
+- **`explain-path` takes `build`'s path flags (#461)** (`--exclude-dir`, `--max-file-mb`,
+  `--chunk-large-files`, `--secret-keyword`, `--secret-dir`), so it no longer reports a path
+  as included that `build` skips.
+
 ### Fixed
 
+- **A size limit with no `--limit-policy` cut silently (#318):** files, bytes and edges past
+  a limit were dropped without the documented warning. It now warns.
+- **The article "a" no longer matches one-letter identifiers (#382):** "how does URL
+  resolution reach a view" ranked five classes named `A` first on Django.
+- **Ansible Vault payloads were left in clear (#453):** only the header line was redacted. Vault
+  tokens, Azure SAS strings and webhook URLs gained positive and near-miss tests, and source
+  files skipped only for sitting under a secret-named directory are now counted
+  (`skipped_secret_dir_source`) and announced.
+- **`SECURITY.md` named one network exception (#452);** it now lists all of them.
 - **Silent wrong/empty results and edge cases (#448):**
   Addressed silent failure and edge case audit findings (W10-W24).
   - W10: Handled BOM-encoded UTF-16 and UTF-32 source files by decoding them to UTF-8 for AST parsing rather than skipping them as binary files.
@@ -139,6 +212,11 @@ makes keeping it current a release-blocking step rather than a good intention.
   inside the release. It now reads the literal out of `repo2graph/__init__.py`, and a new guard in
   `tests/test_version_surfaces.py` walks every test's AST for assertions that spell out the
   current version, so the next one fails on its own PR instead.
+
+### Removed
+
+- `repo2graph.mcp.IMPACT_FORMATS`, `fetch.GITHUB_SPEC` and `mcp.guardrails._scrub_paths`, all
+  unused (#318). `IMPACT_FORMATS` was left over from the removed impact tool.
 
 ## [3.0.0] — 2026-10-06
 

@@ -43,7 +43,7 @@ def test_generate_all_scorecards_covers_all_languages():
     cards = generate_all_scorecards()
     card_langs = {c.language for c in cards}
     assert card_langs == set(p.LANG_CFG.keys())
-    assert len(cards) == 17
+    assert len(cards) == 19
 
 
 def test_tier_prioritization_order():
@@ -82,7 +82,7 @@ def test_markdown_formatting_is_valid_table():
     cards = generate_all_scorecards()
     md = format_markdown_table(cards)
     lines = md.split("\n")
-    assert len(lines) == 19  # Header + separator + 17 languages
+    assert len(lines) == 21  # Header + separator + 19 languages
     assert lines[0].startswith("| Language |")
     assert lines[1].startswith("| --- |")
     for line in lines[2:]:
@@ -121,7 +121,7 @@ def test_cli_json_output(tmp_path):
 
     data = json.loads(out_file.read_text(encoding="utf-8"))
     assert isinstance(data, list)
-    assert len(data) == 17
+    assert len(data) == 19
     lang_names = {item["language"] for item in data}
     assert "typescript" in lang_names
     assert "python" in lang_names

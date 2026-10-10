@@ -559,6 +559,25 @@ returns the same JSON shape (`status: "unknown"` and an `error` sentence) with
    }
    ```
 
+## Resources and prompts
+
+Besides tools, the server offers the index's stable documents as **resources**,
+so a client can attach them once instead of paying for them in every tool result:
+
+| URI | Type | What it is |
+| --- | --- | --- |
+| `repo2graph://map` | `text/markdown` | The repository map, the same text `repo_map` returns |
+| `repo2graph://stats` | `application/json` | `stats.json`: graph shape and quality counters |
+| `repo2graph://manifest` | `application/json` | `manifest.json`: schema version, build id, what each artifact holds |
+
+None of them carries source text. A resource read is written to the audit log
+like a tool call (`resources/read`). Reading before an auto-built index exists
+is an error that says so; a tool call starts the build.
+
+**Prompts** name the tools for four common questions, for clients that offer
+prompts to the user: `explain-symbol` (`symbol`), `trace-flow` (`source`,
+`target`), `what-breaks` (`symbol`) and `orient`.
+
 ## Three promises the server keeps that the CLI leaves to you
 
 - **Secrets are excluded, always.** A tool an agent calls unattended never returns

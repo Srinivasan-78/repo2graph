@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections import Counter, defaultdict
+from collections.abc import Container, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,9 @@ from .parse import (
     CONFIG_EXT,
     DOC_EXT,
     SUPER_RECEIVERS,
+    EMBEDDED_LANGS,
     EXT_LANG,
+    VALUE_KINDS,
     ImportDetail,
     ParseError,
     ParsedFile,
@@ -44,7 +47,7 @@ from .parse import (
     symbol_parent_key,
     discover,
     parse_source,
-    sniff_header_lang,
+    refine_lang,
 )
 from .testpaths import is_test_path
 
@@ -177,6 +180,18 @@ IMPORT_RESOLUTION_KINDS = ("import_alias", "imported_symbol")
 PACKAGE_STEMS = frozenset({"__init__", "index", "mod", "lib"})
 
 
+class _AllExcept:
+    """A container holding every symbol id but one (or, given None, every one)."""
+
+    __slots__ = ("excluded",)
+
+    def __init__(self, excluded: str | None) -> None:
+        self.excluded = excluded
+
+    def __contains__(self, item: object) -> bool:
+        return item != self.excluded
+
+
 def _module_leaves(target: str) -> set[str]:
     """Last-segment names an import target can be referred to by.
 
@@ -200,10 +215,13 @@ def _home_names(node: dict) -> set[str]:
     return names
 
 
-# Base types common enough across languages (object/Exception/Error/...) that a
-# same-named class anywhere in the repo would false-link unrelated hierarchies
-# together. A same-file or imported definition still wins over this filter --
-# it only blocks the repo-wide fallback tier from matching one of these names.
+# Base names common enough -- language roots (object/Exception/Error/...) and
+# the framework bases that a third of a codebase can inherit from (Django's
+# Model, React's Component, SQLAlchemy's Base) -- that a same-named class
+# anywhere in the repo would false-link unrelated hierarchies together. A
+# repository's own `Model` is still linked from its own file and from every
+# file that imports it: this only blocks the repo-wide fallback tier, the one
+# that would otherwise tie every `models.Model` subclass to it.
 COMMON_STDLIB_BASES = frozenset(
     {
         "object",
@@ -415,7 +433,9 @@ class Graph:
         early would otherwise print a line for every remaining edge and bury
         the build's real output.
         """
-        if self.limit_policy != "warn":
+        # No policy given means the documented default, `warn`. Checking for
+        # "warn" alone made the default silently cut files, bytes and edges.
+        if (self.limit_policy or DEFAULT_LIMIT_POLICY) != "warn":
             return
         if which in self._limits_announced:
             return
@@ -473,6 +493,8 @@ _IMPORT_RE = {
     "ruby": RUBY_REQUIRE_RE,
     # Bash `source ./lib.sh` / `. ./lib.sh`
     "bash": re.compile(r"""(?:source|\.)\s+['"]?([^'"\s]+)['"]?"""),
+    # Terraform `source = "./modules/vpc"` inside a `module` block
+    "hcl": re.compile(r'source\s*=\s*"([^"]+)"'),
 }
 
 
@@ -529,6 +551,7 @@ def import_targets(raw: str, lang: str) -> list[str]:
         "kotlin": "java",
         "scala": "java",
         "cpp": "c",
+        "objc": "c",
     }.get(lang, lang)
     rx = _IMPORT_RE.get(key)
     if rx is None:
@@ -553,6 +576,23 @@ def path_index(file_index) -> dict:
         by_name[pp.name].append(p)
         by_dir["" if parent == "." else parent].append(p)
     return {"by_name": by_name, "by_dir": by_dir}
+
+
+def _go_dir_by_tail(ctx: dict) -> dict[str, list[str]]:
+    """Last directory name -> the first .go file under it, directories in sorted order.
+
+    Built once per `ctx` rather than once per import: without go.mod, every Go
+    import used to sort and walk all directories (#456 P2).
+    """
+    table = ctx.get("go_dir_by_tail")
+    if table is None:
+        table = {}
+        for d, paths in sorted(ctx["by_dir"].items()):
+            first = next((p for p in paths if p.endswith(".go")), None)
+            if first is not None:
+                table.setdefault(d.split("/")[-1], [first])
+        ctx["go_dir_by_tail"] = table
+    return table
 
 
 def resolve_import(
@@ -605,7 +645,7 @@ def resolve_import(
                 if base.endswith(js):  # TS sources are imported with .js specifiers
                     stems.append(base[: -len(js)])
             for stem in stems:
-                for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts"):
+                for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts", ".vue", ".svelte"):
                     cands += [stem + ext, f"{stem}/index{ext}"]
             cands.append(base)
         else:
@@ -622,16 +662,19 @@ def resolve_import(
         elif module:
             cands = []  # module path known: anything outside it is a third-party package
         else:
-            tail = target.split("/")[-1]
-            cands = [
-                p
-                for d, paths in sorted(by_dir.items())
-                if d.split("/")[-1] == tail
-                for p in paths
-                if p.endswith(".go")
-            ][:1]
-    elif lang in ("c", "cpp"):
+            cands = _go_dir_by_tail(ctx).get(target.split("/")[-1], [])[:1]
+    elif lang in ("c", "cpp", "objc"):
         cands = by_name.get(target.split("/")[-1], [])[:1]
+    elif lang == "hcl":
+        # A local module is a directory: its `main.tf`, else its first `.tf`.
+        if target.startswith("."):
+            base = Path(src_dir, target).as_posix()
+            base = re.sub(r"/\./", "/", base)
+            while "/../" in base:
+                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
+            base = base.removeprefix("./").rstrip("/")
+            cands = [f"{base}/main.tf"]
+            cands += [p for p in by_dir.get(base, []) if p.endswith(".tf")][:1]
     elif lang == "java":
         rel = target.replace(".", "/") + ".java"
         cands = [rel]
@@ -917,7 +960,8 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
     # this, a `.h` over the chunking threshold (an amalgamated single-header
     # C++ library is the ordinary case) took the C grammar regardless of
     # content, unlike every smaller `.h` in the same build.
-    sniff_header = lang == "c" and abspath.suffix.lower() == ".h"
+    # `.m` (Objective-C or MATLAB, #398) is settled the same way.
+    sniff_header = (lang, abspath.suffix.lower()) in (("c", ".h"), ("objc", ".m"))
 
     line_offset = 0
     # Streamed, not accumulated: `raw_content = bytearray()` held the entire
@@ -968,10 +1012,14 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 continue
 
             if sniff_header:
-                lang = sniff_header_lang(buf)
+                lang = refine_lang(lang, abspath.suffix.lower(), buf)[0]
                 sniff_header = False
 
-            pf = parse_source(buf, lang, filepath=None)
+            pf = (
+                parse_source(buf, lang, filepath=None, refs=config.reference_edges)
+                if lang
+                else None
+            )
             if pf is None:
                 line_offset += buf.count(b"\n")
                 continue
@@ -1135,7 +1183,7 @@ def _read_and_parse(item):
     try:
         st = abspath.lstat()
         size = st.st_size
-        if size > config.max_file_bytes and config.chunk_large_files:
+        if size > config.max_file_bytes and config.chunk_large_files and lang not in EMBEDDED_LANGS:
             return _chunk_and_parse(rel, abspath, lang, config, size)
     except OSError:
         pass
@@ -1144,12 +1192,15 @@ def _read_and_parse(item):
         raw = _safe_read_bytes(abspath)
     except OSError:
         return rel, lang, None
-    if lang == "c" and abspath.suffix.lower() == ".h":
-        lang = sniff_header_lang(raw)
+    lang, code = refine_lang(lang, abspath.suffix.lower(), raw)
     policy = getattr(config, "parse_policy", "best-effort")
     pf = None
     try:
-        pf = parse_source(raw, lang, filepath=abspath) if lang else None
+        pf = (
+            parse_source(code, lang, filepath=abspath, refs=config.reference_edges)
+            if lang
+            else None
+        )
     except Exception as exc:
         if policy == "strict":
             raise ParseError(
@@ -1254,7 +1305,10 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             # Only the chunked reader can lose a slice, and only it sets this.
             "undecodable_slices": getattr(pf, "undecodable_slices", 0),
             "imports": list(pf.imports),
-            "symbols": [asdict(s) for s in pf.symbols],
+            # `refs` only when there are some: a default build's cache is unchanged.
+            "symbols": [
+                {k: v for k, v in asdict(s).items() if k != "refs" or v} for s in pf.symbols
+            ],
             # Without this, entry_read() rebuilds import_details as [] and an
             # incremental cache hit loses every import alias -- an aliased call
             # that a full build resolves as `import_alias` falls back to
@@ -1360,8 +1414,7 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         except OSError:
             results[rel] = (rel, lang, None)
             continue
-        if lang == "c" and abspath.suffix.lower() == ".h":
-            lang = sniff_header_lang(raw)
+        lang = refine_lang(lang, abspath.suffix.lower(), raw)[0]
         digest = hashlib.sha256(raw).hexdigest()
         entry = cache.get(rel)
         read = None
@@ -1562,6 +1615,7 @@ def build(
     limit_policy: str | None = None,
     max_memory_mb: float = 0.0,
     max_build_seconds: float = 0.0,
+    git_authors: bool = False,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1570,6 +1624,8 @@ def build(
         include: Optional glob(s) restricting discovery.
         exclude: Optional glob(s) removing paths from discovery.
         git_history: When non-zero, add CO_CHANGE edges from the last N commits.
+        git_authors: With git_history, also record on each file node who
+            changed it in those commits (display names, never emails).
         max_files: When positive, index only the first N discovered files.
         jobs: Parser processes; 0 means one per core, 1 means serial.
         cache: A previous build's `{relpath: entry}` parse cache. When given,
@@ -1885,14 +1941,26 @@ def build(
         for s_ in pf.symbols:
             if (scope_id := scope_of(rel, s_.parent)) is not None:
                 members[scope_id][s_.name].append(f"sym:{rel}::{symbol_key(s_)}")
-    # node id -> its file's directory. Tier 4 below used to rebuild
-    # `Path(...).parent` once per candidate per callee inside the build's hot
-    # loop; precomputing it here turns that into a dict lookup.
-    sym_dir: dict[str, str] = {}
+    # Same-named symbols per file and per directory, and each symbol's place in
+    # `by_name` order. The same-file, imported and same-module tiers below used
+    # to filter every same-named symbol in the repository on each call, which
+    # made a name defined in every file quadratic in the file count (#456 P2).
+    by_name_path: dict[tuple[str, str], list[str]] = defaultdict(list)
+    by_name_dir: dict[tuple[str, str], list[str]] = defaultdict(list)
+    sym_order: dict[str, int] = {}
     for nid, n in g.nodes.items():
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
-            sym_dir[nid] = n.get("path", "").rpartition("/")[0]
+            path = n.get("path", "")
+            by_name_path[(n["name"], path)].append(nid)
+            by_name_dir[(n["name"], path.rpartition("/")[0])].append(nid)
+            sym_order[nid] = len(sym_order)
+
+    def named_in(name: str, paths: Iterable[str]) -> list[str]:
+        """Symbols called `name` defined in any of `paths`, in `by_name` order."""
+        found = [c for p in paths for c in by_name_path.get((name, p), ())]
+        found.sort(key=sym_order.__getitem__)
+        return found
 
     def match_bases(rel: str, base: str) -> tuple[list[str], list[str]]:
         """(matched base class ids, all same-named candidates) for one base."""
@@ -1956,17 +2024,16 @@ def build(
             return True  # a type name: Util.remove(), models.User.get()
         return bool(import_bound.get(rel, {}).get(head, set()) & home)
 
-    def tier3_imported(rel: str, callee: str, all_cands: list[str]) -> tuple[list[str], str]:
+    def tier3_imported(rel: str, callee: str, pool: Container[str]) -> tuple[list[str], str]:
         """Candidates reachable through `rel`'s own imports, and how they matched."""
         imported = imported_files.get(rel)
         if not imported:
             return [], ""
         alias = import_aliases.get(rel, {}).get(callee)
         if alias is not None:
-            target_name = alias[1] or callee
-            cands = [c for c in by_name.get(target_name, []) if g.nodes[c].get("path") in imported]
+            cands = named_in(alias[1] or callee, imported)
             return (cands, "import_alias") if cands else ([], "")
-        cands = [c for c in all_cands if g.nodes[c].get("path") in imported]
+        cands = [c for c in named_in(callee, imported) if c in pool]
         return (cands, "imported_symbol") if cands else ([], "")
 
     for rel, pf in parsed.items():
@@ -2044,7 +2111,8 @@ def build(
                     recurse_ok = callee in may_recurse
                 # The candidate pool for the name tiers: the caller is only a
                 # candidate when one of its calls can actually be a self-call.
-                pool = all_cands if recurse_ok else [c for c in all_cands if c != sid]
+                # Kept as a set test so no tier walks every same-named symbol.
+                pool = _AllExcept(None if recurse_ok else sid)
 
                 chosen_cands: list[str] = []
                 res_kind = ""
@@ -2089,16 +2157,16 @@ def build(
                     # sibling overload.
                     chosen_cands = tier1
                     res_kind, scope_dist = "same_class", 0
-                elif tier2 := [c for c in pool if g.nodes[c].get("path") == rel]:
+                elif tier2 := [c for c in by_name_path.get((callee, rel), ()) if c in pool]:
                     chosen_cands, res_kind, scope_dist = tier2, "same_file", 1
                 elif (tier3 := tier3_imported(rel, callee, pool))[0]:
                     chosen_cands, res_kind, scope_dist = tier3[0], tier3[1], 2
-                elif tier4 := [c for c in pool if sym_dir[c] == rel_dir]:
+                elif tier4 := [c for c in by_name_dir.get((callee, rel_dir), ()) if c in pool]:
                     chosen_cands, res_kind, scope_dist = tier4, "same_module", 3
-                elif len(pool) == 1:
-                    chosen_cands, res_kind, scope_dist = pool, "unique_global_name", 4
-                elif len(pool) > 1:
-                    chosen_cands, res_kind, scope_dist = pool, "ambiguous_global_name", 5
+                elif len(globals_ := [c for c in all_cands if c in pool]) == 1:
+                    chosen_cands, res_kind, scope_dist = globals_, "unique_global_name", 4
+                elif len(globals_) > 1:
+                    chosen_cands, res_kind, scope_dist = globals_, "ambiguous_global_name", 5
 
                 # `os.environ.get(k)` reduces to the name "get", and without
                 # this the tiers above bind it to any `get` method in the same
@@ -2254,8 +2322,11 @@ def build(
                 else:
                     g.stats["unresolved_bases"] += 1
 
+    if getattr(config, "reference_edges", False):
+        add_reference_edges(g, parsed, imported_files, import_aliases, named_in)
+
     if git_history:
-        add_cochange(g, root, git_history, file_index, min_pairs=cochange_min)
+        add_cochange(g, root, git_history, file_index, min_pairs=cochange_min, authors=git_authors)
 
     # Every edge endpoint must be a node. A file can be in file_index (so an
     # IMPORTS target resolves to it, and git log pairs it) yet have no file:
@@ -2281,6 +2352,67 @@ def build(
     )
     g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
+
+
+REFERENCE_EDGES = {"read": "READS", "write": "WRITES", "type": "REFERENCES"}
+TYPE_KINDS = frozenset({"class", "interface", "type", "enum", "struct", "protocol", "trait"})
+METHOD_REFERENCE_RESOLVER = "reference-resolver"
+
+
+def add_reference_edges(g, parsed, imported_files, import_aliases, named_in) -> None:
+    """READS / WRITES / REFERENCES from each symbol's captured refs (#397).
+
+    Precision over recall: a name binds only to a value/type symbol defined at
+    the top level of the same file, or one the file imports by that name; a
+    `self.x` / `this.x` binds only to a field declared in the enclosing class.
+    There is no repository-wide name fallback, which is where CALLS gets its
+    ambiguity, so an unresolved reference is counted and dropped, never guessed.
+    """
+    for key in ("reads", "writes", "references", "unresolved"):
+        g.stats[f"reference_edges_{key}"] += 0
+    for rel, pf in parsed.items():
+        for sym in pf.symbols:
+            if not sym.refs:
+                continue
+            sid = f"sym:{rel}::{symbol_key(sym)}"
+            for r in sym.refs:
+                etype = REFERENCE_EDGES[r["kind"]]
+                wanted = TYPE_KINDS if r["kind"] == "type" else VALUE_KINDS
+                name = r["name"]
+                if r.get("field"):
+                    how = "same_class"
+                    cands = [f"sym:{rel}::{sym.parent}.{name}"] if sym.parent else []
+                else:
+                    how = "same_file"
+                    cands = [f"sym:{rel}::{name}"]
+                cands = [c for c in cands if g.nodes.get(c, {}).get("kind") in wanted]
+                if not cands and not r.get("field"):
+                    alias = import_aliases.get(rel, {}).get(name)
+                    target = (alias[1] or name) if alias else name
+                    how = "import_alias" if alias else "imported_symbol"
+                    cands = [
+                        c
+                        for c in named_in(target, imported_files.get(rel, ()))
+                        if g.nodes[c].get("kind") in wanted and g.nodes[c].get("qualname") == target
+                    ]
+                if not cands:
+                    g.stats["reference_edges_unresolved"] += 1
+                    continue
+                extra = {"ambiguous": True} if len(cands) > 1 else {}
+                for c in cands:
+                    g.add_edge(
+                        sid,
+                        c,
+                        etype,
+                        count=r.get("count", 1),
+                        confidence=round(1.0 / len(cands), 3),
+                        resolution_kind=how,
+                        candidate_count=len(cands),
+                        method=METHOD_REFERENCE_RESOLVER,
+                        evidence=make_evidence(rel, r.get("line")),
+                        **extra,
+                    )
+                g.stats[f"reference_edges_{etype.lower()}"] += 1
 
 
 ENTRY_KINDS = ("function", "method")
@@ -2481,7 +2613,18 @@ def _reap_child(proc, reader=None) -> None:
 _COMMIT_HASH = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
-def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
+# Authors kept per file by --git-authors: the most frequent, then by name.
+MAX_FILE_AUTHORS = 5
+
+
+def add_cochange(
+    g: Graph,
+    root: Path,
+    commits: int,
+    file_index: set[str],
+    min_pairs: int = 3,
+    authors: bool = False,
+):
     """CO_CHANGE edges from files edited together in the last N commits.
 
     Formula and semantics:
@@ -2522,7 +2665,10 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
                 "log",
                 f"-n{commits}",
                 "--name-only",
-                "--pretty=format:%H",
+                # %aN: the author's display name after .mailmap. Never %ae:
+                # an email address is personal data, and these artifacts get
+                # committed and uploaded (#394).
+                "--pretty=format:%H%x00%aN" if authors else "--pretty=format:%H",
                 "--no-merges",
             ],
             stdout=subprocess.PIPE,
@@ -2574,6 +2720,8 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     pairs: Counter = Counter()
     current: list[str] = []
     sampled = 0
+    author = ""
+    file_authors: dict[str, Counter] = defaultdict(Counter)
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index.
@@ -2588,10 +2736,20 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             current = []
         elif line in file_index:
             current.append(line)
-        elif _COMMIT_HASH.fullmatch(line):
+            if authors and author:
+                file_authors[line][author] += 1
+        elif _COMMIT_HASH.fullmatch(line.partition("\x00")[0]):
             sampled += 1
+            author = line.partition("\x00")[2].strip()
     g.stats["cochange_sampled_commits"] = sampled
     commits = sampled
+    for path, counts in file_authors.items():
+        node = g.nodes.get(f"file:{path}")
+        if node is not None:
+            ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            node["authors"] = [{"name": n, "commits": c} for n, c in ranked[:MAX_FILE_AUTHORS]]
+    if authors:
+        g.stats["files_with_authors"] = sum(1 for p in file_authors if f"file:{p}" in g.nodes)
     for (a, b), n in pairs.items():
         if n >= min_pairs:
             g.add_edge(

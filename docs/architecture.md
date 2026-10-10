@@ -103,6 +103,38 @@ incoming `TESTS` edge) and their ratio `tested_symbol_fraction` -- an upper boun
 suite exercises, never a coverage figure. Retrieval does not follow `TESTS` by default; pass
 `edge_types` to `pack_context` to opt in. `repo_neighbours` lists a symbol's `TESTS` edges.
 
+### Reference edges (`--reference-edges`, off by default)
+
+`build --reference-edges` adds three edge types, for Python and JS/TS only (#397):
+
+| Edge | Meaning |
+| --- | --- |
+| `READS` | function/method -> a module-level variable or constant, or a class field (`self.x`, `this.x`), it reads |
+| `WRITES` | function/method -> one it assigns: a module-level name (in Python only under `global`; in JS/TS any assignment to a name not declared in the function) or a class field |
+| `REFERENCES` | function/method/class -> a class, interface, type or enum named in a type annotation |
+
+It also makes the targets symbols: module-level assignments become `variable` or `constant`
+(all-caps names) nodes, and class-level ones `field` nodes. Without the flag none of this
+exists and every artifact is byte-identical to a build that never had it.
+
+Precision is preferred to recall, and the limits are plain:
+
+- A name binds only to a symbol defined at the top level of the same file, or one the file
+  imports by that name (`from settings import TIMEOUT`, `RETRIES as R`). There is no
+  repository-wide fallback, so these edges are not ambiguous the way `CALLS` can be; a name
+  that does not bind is counted in `reference_edges_unresolved` and dropped.
+- `self.x` binds only to a field **declared in the class body**. An attribute first assigned in
+  `__init__` has no node to point at, so it is unresolved, as is a field inherited from a base.
+- `module.NAME` (attribute access on an imported module), locals, parameters and closures over
+  an enclosing function's locals make no edge. A local that shadows a module-level name is a
+  local, so it makes no `READS`.
+- Python string annotations (`"Foo"`) are not read.
+
+Volume, measured: on this repository `--reference-edges` adds 26% nodes and 8% edges; on
+Django 28% nodes, 8.5% edges and 13.5% output, for 7,688 `READS`, 219 `WRITES` and 9
+`REFERENCES` (Django annotates almost nothing). `stats.json` reports
+`reference_edges_reads`, `_writes`, `_references` and `_unresolved` when it is on.
+
 ### Edge metadata
 
 Every edge goes through `Graph.add_edge()`, which normalises three fields:
@@ -257,11 +289,12 @@ user.
 
 ## 4. Language support
 
-Seventeen languages get symbol-level treatment; every other file is still indexed as text.
+Nineteen languages get symbol-level treatment, plus the code embedded in Vue and Svelte components
+and Jupyter notebooks (below); every other file is still indexed as text.
 Coverage is not uniform across them, and the differences are large enough that "supported"
 on its own would mislead.
 
-The scorecard below is computed from this project's own test corpus. **Only two of the seventeen
+The scorecard below is computed from this project's own test corpus. **Only two of the nineteen
 are additionally measured on third-party repositories** — Python and TypeScript, in
 [`benchmarks/real/`](../benchmarks/real/README.md) — and the gap between those two kinds of
 evidence is not small. Both parse defects found in the 2026-10 retrieval round
@@ -274,10 +307,10 @@ language has been exercised against real code".
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
-| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
+| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 3 funcs |
 | **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 5 funcs |
 | **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 9 funcs |
-| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 4 funcs |
+| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 5 funcs |
 | **java** | Tier 2 | **67 (C+)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 30 (F) | 20 (F) | 1 funcs |
 | **kotlin** | Tier 2 | **64 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 30 (F) | 0 (F) | 4 funcs |
 | **php** | Tier 3 | **72 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 30 (F) | 0 (F) | 5 funcs |
@@ -286,9 +319,11 @@ language has been exercised against real code".
 | **ruby** | Tier 3 | **62 (C)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 30 (F) | 0 (F) | 3 funcs |
 | **c** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 1 funcs |
 | **cpp** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 14 funcs |
+| **objc** | Tier 4 | **61 (C)** | 85 (B+) | 85 (B+) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 2 funcs |
 | **scala** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 0 funcs |
 | **swift** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 4 funcs |
 | **bash** | Tier 4 | **51 (D)** | 85 (B+) | 35 (F) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 3 funcs |
+| **hcl** | Tier 4 | **40 (F)** | 85 (B+) | 10 (F) | 55 (D) | 50 (D) | 0 (F) | 0 (F) | 3 funcs |
 | **lua** | Tier 4 | **35 (F)** | 85 (B+) | 35 (F) | 55 (D) | 0 (F) | 0 (F) | 0 (F) | 2 funcs |
 <!-- END GENERATED: language-scorecard -->
 
@@ -321,6 +356,26 @@ Java/Kotlin because its import resolution already scores 100 while its call reso
 weakest part of an otherwise strong entry — the narrowest gap to close. C and C++ are explicitly
 not on this list: the macro problem is upstream of anything repo2graph can fix without a
 preprocessor.
+
+**Files whose language the extension does not settle.** `parse.refine_lang` decides, from the
+bytes already read, before anything is parsed. Line numbers are always the file's own, so a
+citation opens on the right line.
+
+| Extension | Parsed as |
+| --- | --- |
+| `.h` | Objective-C with `@interface`/`@protocol`, C++ with any C++ signal, else C (#377) |
+| `.m` | Objective-C with `@interface`, `@implementation`, `@protocol` or `#import`; otherwise MATLAB, which is indexed as text |
+| `.mm` | Objective-C (the Objective-C++ in it parses with errors, best-effort) |
+| `.vue`, `.svelte` | The `<script>` blocks, as TypeScript when any has `lang="ts"`, else JavaScript. The template is blank lines to the parser, so bindings like `@click="save"` make no edge |
+| `.ipynb` | The code cells, as Python, at the JSON lines they occupy. Magics and `!` shell lines are dropped; a chunk names its cell (`# notebook cell 3`) and its text is the code, not the JSON or the outputs. A minified notebook (not one source line per JSON line) yields no symbols |
+
+**HCL / Terraform** (`.tf`, `.hcl`): every top-level block with a label is a symbol named by its
+Terraform address — `aws_s3_bucket.logs` (kind `resource`), `data.aws_iam_policy_document.read`,
+`var.env`, `module.vpc`, `output.bucket_arn`, `provider.aws`, and `local.<name>` for each
+attribute of a `locals` block. A reference from one block to another (`aws_s3_bucket.logs.arn`,
+`var.env`, `module.vpc.id`) is a `CALLS` edge, which is Terraform's own dependency graph; a
+local module's `source = "./modules/vpc"` is an `IMPORTS` edge to that directory's `main.tf`.
+Built-in functions (`merge`, `cidrsubnet`) are external calls.
 
 ---
 

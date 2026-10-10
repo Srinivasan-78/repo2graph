@@ -441,3 +441,11 @@ def test_verify_rag_reports_extra_as_bool_without_vectors(git_index, capsys):
         main(["embed", "-o", str(out), "--verify-rag"])
     report = json.loads(capsys.readouterr().out)
     assert report["rag_extra_installed"] in (True, False)
+
+
+def test_an_sdk_without_resource_hooks_still_gets_the_tools(git_index, monkeypatch):
+    """#388: registering resources and prompts must not cost an older 2.x its tools."""
+    captured = _install_fake_sdk(monkeypatch)
+    _repo, out = git_index
+    mcp_mod.serve(out)
+    assert captured["list"] is not None and captured["call"] is not None

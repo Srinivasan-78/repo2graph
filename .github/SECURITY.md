@@ -38,17 +38,30 @@ redaction, and the generated `graph.html`.
 **no network calls**. They read your local files with tree-sitter, write the graph to `.r2g`, and
 answer questions from that local index. Nothing about your source is sent anywhere by default.
 
-The one exception is explicit and opt-in: `repo2graph rag --answer` sends the assembled context
-pack (real file content) to whichever LLM provider it resolves — Gemini, OpenAI, Anthropic, or a
-local Ollama host — to generate a natural-language answer. It:
+Every exception is something you ask for by name:
+
+- `repo2graph github`, and a `rag`/`query` target written as `owner/repo` or a URL, clone that
+  repository. A target that looks like a local path is never sent to GitHub: if it does not
+  exist, the command stops.
+- `repo2graph embed` and `--vectors` load the sentence-transformers model, which Hugging Face
+  serves on first use. Once it is cached, `HF_HUB_OFFLINE=1` makes later runs request nothing;
+  pin the download to one commit with `--model MODEL@<commit>` (and the same `--embed-model` on
+  the query side).
+- `build --neo4j-uri URL` sends the graph (names, paths, signatures, docstrings and edges, but
+  no function bodies) to that Neo4j server after building, naming the host on stderr first.
+  Without the flag `build` opens no socket.
+- `rag --tokenizer tiktoken` lets the `tiktoken` package fetch its BPE table on first use
+  (cached afterwards). The other tokenizers are local arithmetic.
+- `repo2graph rag --answer` sends the assembled context pack (real file content) to an LLM
+  provider, the only exception that sends your source anywhere. It:
 
 - only runs when you pass `--answer`; a plain `rag` or `query` call makes no DNS lookup and opens
   no socket;
 - prints the provider and **hostname only** to stderr before sending anything, so you see the
   destination before the request goes out;
 - never puts a credential in a URL — API keys go in request headers;
-- can be pinned to a specific provider with `--provider` instead of letting key-presence pick one
-  for you.
+- with credentials for more than one provider in the environment, refuses to pick one; name it
+  with `--provider`.
 
 If you never pass `--answer`, this code path is not reachable.
 

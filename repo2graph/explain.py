@@ -104,7 +104,7 @@ def explain_retrieval(
     that must not drift: the seed loop stops on `budget_chars` as well as on
     `k`, the seeds stay in score order (`expand` walks its frontier in order
     under a per-hop cap, so a reordered seed list is a different traversal), and
-    the expansion passes `ALL_EDGE_DIRS` — see CONTRIBUTING.md, "A new default on a
+    the expansion passes `ALL_EDGE_DIRS` — see .github/CONTRIBUTING.md, "A new default on a
     shared traversal helper narrows its existing callers".
 
     `exclude_secrets` defaults to True, as `rag`/`query` do at query time: a

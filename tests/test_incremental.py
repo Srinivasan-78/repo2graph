@@ -92,9 +92,9 @@ class RecordingParser:
         self.real = real
         self.calls = []
 
-    def __call__(self, raw, lang, filepath=None):
+    def __call__(self, raw, lang, filepath=None, **kw):
         self.calls.append(raw)
-        return self.real(raw, lang, filepath=filepath)
+        return self.real(raw, lang, filepath=filepath, **kw)
 
 
 @pytest.fixture

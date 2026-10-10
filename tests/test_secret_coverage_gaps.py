@@ -19,6 +19,8 @@ Six verified gaps, each of which shipped a real credential in clear:
 
 from pathlib import Path
 
+import pytest
+
 from repo2graph.graph import build
 from repo2graph.security import (
     _is_secret_path,
@@ -359,3 +361,76 @@ def test_docker_config_auth_is_redacted():
     out, n = redact_content(src)
     assert n == 1 and "dXNlcjpwYXNzd29yZDEyMw" not in out
     assert redact_content('"auth": "basic"')[1] == 0
+
+
+# #453: vendor formats, each with a near-miss that must stay in clear.
+_VAULT = "hvs." + "CAESIJ" + "x" * 30
+_SAS = "sv=2022-11-02&ss=b&srt=sco&sp=rl&se=2026-01-01&sig=" + "aB3%2Bz" * 6
+_SLACK_HOOK = "https://hooks.slack.com/services/" + "T0000/B0000/" + "X" * 24
+_TEAMS_HOOK = "https://acme.webhook.office.com/webhookb2/" + "a1b2c3d4-" * 4
+_DISCORD_HOOK = "https://discord.com/api/webhooks/123456789/" + "Zz_" * 10
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [_VAULT, _SAS, _SLACK_HOOK, _TEAMS_HOOK, _DISCORD_HOOK],
+    ids=["vault", "azure-sas", "slack-hook", "teams-hook", "discord-hook"],
+)
+def test_vendor_credentials_are_redacted(secret):
+    from repo2graph.security import redact_content
+
+    out, n = redact_content(f"url = '{secret}'\n")
+    assert n >= 1 and secret not in out, out
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hvs = compute_hash(values)\n",
+        "docs: https://learn.microsoft.com/azure/storage/common/storage-sas-overview\n",
+        "see https://api.slack.com/messaging/webhooks for the format\n",
+        "sv=2022-11-02 is the service version\n",
+    ],
+)
+def test_vendor_near_misses_are_left_alone(text):
+    from repo2graph.security import redact_content
+
+    assert redact_content(text) == (text, 0)
+
+
+def test_ansible_vault_payload_is_redacted_with_its_header():
+    from repo2graph.security import redact_content
+
+    src = (
+        "db_password: !vault |\n"
+        "  $ANSIBLE_VAULT;1.1;AES256\n"
+        "  62313365396662343061393464336163383764373764613633653634306231386433626436623361\n"
+        "  6134333665353966363534333632666535333761666131620a663537646436643839616531643561\n"
+        "other_key: plain\n"
+    )
+    out, n = redact_content(src)
+    assert n >= 1 and "6231336539" not in out and "6134333665" not in out, out
+    assert "other_key: plain" in out and out.count("\n") == src.count("\n")
+
+
+def test_a_credentialed_url_under_a_secret_key_is_redacted_but_token_url_is_not():
+    from repo2graph.security import redact_content
+
+    out, _ = redact_content('{"webhookSecret": "https://user:hunter2pass@hooks.example.com/x"}\n')
+    assert "hunter2pass" not in out
+    src = "tokenUrl: https://example.com/oauth/token\n"
+    assert redact_content(src) == (src, 0)
+
+
+def test_source_dropped_for_its_directory_is_counted_and_announced(tmp_path, capsys):
+    """S11: `secrets/manager.py` is skipped like any secret path, but not silently."""
+    src = tmp_path / "proj"
+    (src / "secrets").mkdir(parents=True)
+    (src / "secrets" / "manager.py").write_text("def rotate():\n    return 1\n", encoding="utf8")
+    (src / "secrets" / "prod.env").write_text("A=1\n", encoding="utf8")
+    (src / "app.py").write_text("def main():\n    return 2\n", encoding="utf8")
+
+    g = build(src)
+    assert g.stats["skipped_secret"] == 2
+    assert g.stats["skipped_secret_dir_source"] == 1
+    assert "1 source file(s) under secret-named directories" in capsys.readouterr().err

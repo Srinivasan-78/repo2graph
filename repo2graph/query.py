@@ -358,7 +358,7 @@ def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
 # shared with pack_context's identically valued default: the two mean different
-# things by budget_chars and must stay separately adjustable (CONTRIBUTING.md, "Two
+# things by budget_chars and must stay separately adjustable (.github/CONTRIBUTING.md, "Two
 # budget models coexist").
 RETRIEVE_BUDGET_CHARS = 24000
 
@@ -410,6 +410,26 @@ def read_jsonl(path: Path) -> list[Record]:
             except json.JSONDecodeError as e:
                 raise ValueError(f"{path}: line {lineno} is not valid JSON: {e}") from None
     return rows
+
+
+# A one-letter `a`/`I` followed by another word is the English article or
+# pronoun, not an identifier. Admitting it made "how does URL resolution reach
+# a view" rank every class named `A` in Django above anything about URLs (#382).
+_ARTICLE_RE = re.compile(r"(?<![A-Za-z0-9_`])[aAI](?=\s+[A-Za-z])")
+
+
+def _single_char_idents(query: str) -> list[str]:
+    """The one-character identifiers a query names, skipping `a`/`I` used as words.
+
+    `T`, `f` and `x` always count; `a` counts when it reads as code -- last in
+    the query, before `(` or `.`, or in backticks -- but not in "reach a view".
+    """
+    articles = {m.start() for m in _ARTICLE_RE.finditer(query)}
+    return [
+        m.group()
+        for m in IDENT_RE.finditer(query)
+        if len(m.group()) == 1 and m.start() not in articles
+    ]
 
 
 def count_tokens(text: str) -> int:
@@ -859,7 +879,7 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        terms = tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1]
+        terms = tokenize(query) + [t.lower() for t in _single_char_idents(query)]
         # Question words stay in (#382 tried dropping them, twice). Their idf
         # is already near zero, and in a code index they are not noise: "from"
         # matches SQL `FROM`, and even "an" alone ("rather than an argument")
@@ -1011,8 +1031,10 @@ class Index:
 
     def _boost_identifiers(self, query: str, acc: dict[int, float]) -> None:
         """Apply multiplier to BM25 scores for chunks matching query identifier names."""
-        # IDENT_RE supports single-character identifier names:
-        idents = set(IDENT_RE.findall(query))
+        # IDENT_RE supports single-character identifier names, minus the
+        # English words `a` and `I` (see `_single_char_idents`):
+        idents = {t for t in IDENT_RE.findall(query) if len(t) > 1}
+        idents |= set(_single_char_idents(query))
         if not idents:
             return
         lowered = {t.lower() for t in idents}
@@ -1402,6 +1424,7 @@ class Index:
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
         expansion: str | None = None,
         seed_offset: int | None = None,
+        token_margin: float = 0.0,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -1438,6 +1461,9 @@ class Index:
             edge_types: Edge types graph expansion may follow. None means
                 DEFAULT_EDGE_TYPES; name `TESTS` here to pull in the tests that
                 reach a seed (it is never followed by default).
+            token_margin: Safety margin on `budget_tokens` for a counter that
+                may under-count: the pack is filled to budget / (1 + margin),
+                so 0.25 leaves a quarter of the budget spare (#290).
             seed_offset: Page through seeds instead of packing the top `k`: skip
                 the first `seed_offset` eligible seeds of a fixed
                 `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
@@ -1459,6 +1485,8 @@ class Index:
         # always done when budget_tokens is None (preserves byte-identical output).
         measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
+        if use_tokens and token_margin > 0 and budget > 0:
+            budget = max(1, int(budget / (1 + token_margin)))
         bounded = budget > 0
 
         ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
@@ -1744,6 +1772,7 @@ class Index:
             "omitted_chunk_count": max(0, len(seeds) + len(graph_neighbours) - len(picked)),
             # `tokens_used` is only as exact as the counter behind it (#290).
             "token_count_method": getattr(measure_tokens, "token_count_method", "caller-supplied"),
+            "token_safety_margin": token_margin if use_tokens else 0.0,
         }
 
 
@@ -1940,6 +1969,8 @@ def format_pack(results: Iterable[Record]) -> str:
     out: list[str] = []
     for r in results:
         path = r.get("path") or ""
+        if r.get("repo"):
+            path = f"{r['repo']}:{path}"
         qual = r.get("qualname") or r.get("name") or ""
         why = r.get("why") or ""
         text = r.get("text") or ""

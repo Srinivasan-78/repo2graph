@@ -586,3 +586,60 @@ jobs:
             echo "uvx --from 'repo2graph[mcp]' repo2graph-mcp /path/to/project"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # --------------------------------------------------------------------------
+  # npm: the npx launcher, from the same tag as PyPI (#399)
+  # --------------------------------------------------------------------------
+  # After `pypi` and beside `release`, never before either: a failed npm publish
+  # must not block or half-complete the PyPI release the launcher bootstraps.
+  # The runner's own Node/npm is enough -- the launcher has no build step --
+  # so there is no setup action to pin.
+  npm:
+    needs: [prepare-release, pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/repo2graph-mcp
+    permissions:
+      contents: read
+      id-token: write        # npm --provenance signs with the job's OIDC identity
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Check the launcher's version is the release's
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          got="$(node -p "require('./npm/package.json').version")"
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::npm/package.json says $got, the release is $VERSION"
+            exit 1
+          fi
+
+      - name: Publish to npm with provenance
+        working-directory: npm
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent like the PyPI step's skip-existing: this workflow re-runs
+          # for a release it has already published.
+          if npm view "repo2graph-mcp@$VERSION" version > /dev/null 2>&1; then
+            echo "repo2graph-mcp $VERSION is already on npm"
+            exit 0
+          fi
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::warning::NPM_TOKEN is not set; repo2graph-mcp $VERSION was not published to npm"
+            exit 0
+          fi
+          # The token goes in a file outside the checkout, never on argv.
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$RUNNER_TEMP/npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish --provenance --access public
+          rm -f "$RUNNER_TEMP/npmrc"
+          echo "- **npm**: https://www.npmjs.com/package/repo2graph-mcp/v/$VERSION" >> "$GITHUB_STEP_SUMMARY"

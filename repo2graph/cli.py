@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -25,7 +26,7 @@ from .export import (
     register_written,
     rel as artifact_rel,
 )
-from .events import SAFE_ERRORS, encodable, write_safe
+from .events import encodable, write_safe
 from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
@@ -42,12 +43,6 @@ def parse_formats(spec: str) -> set[str]:
             f"unknown format(s): {', '.join(unknown)}; choose from {', '.join(FORMATS)}"
         )
     return wanted
-
-
-# Kept as a re-export: the canonical definition now lives in events, which both
-# the CLI and the server-side loggers share so the rule cannot drift in two
-# places. Existing importers of cli._SAFE_ERRORS keep working.
-_SAFE_ERRORS = SAFE_ERRORS
 
 
 def _emit(text: str) -> None:
@@ -157,7 +152,17 @@ def _with_repo_config(args, repo):
     return merged, applied
 
 
+def _require_history_for_authors(args) -> None:
+    if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
+        raise SystemExit(
+            "error: --git-authors reads the commits --git-history walks; pass --git-history N too"
+        )
+
+
 def cmd_build(args):
+    _require_history_for_authors(args)
+    if getattr(args, "neo4j_uri", None) and "cypher" not in parse_formats(args.formats):
+        raise SystemExit("error: --neo4j-uri pushes graph.cypher; add cypher to --formats")
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
@@ -202,6 +207,7 @@ def cmd_build(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -242,6 +248,8 @@ def cmd_build(args):
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
     lock_timeout = getattr(args, "lock_timeout", 60.0)
+    started = time.monotonic()
+    chunk_chars = [0]
     try:
         with BuildLock(outdir, timeout=lock_timeout):
             g = build(
@@ -249,6 +257,7 @@ def cmd_build(args):
                 include=args.include,
                 exclude=exclude_globs,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 max_files=args.max_files,
                 jobs=args.jobs,
                 cache=cache,
@@ -263,10 +272,13 @@ def cmd_build(args):
             )
             if cache_invalidated:
                 g.stats["parse_cache_invalidated"] = cache_invalidated  # type: ignore[assignment]
+            built = time.monotonic()
             chunks = (
                 None
                 if args.no_chunks
-                else iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0))
+                else _counting_text(
+                    iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0)), chunk_chars
+                )
             )
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     except LockTimeoutError as exc:
@@ -285,10 +297,107 @@ def cmd_build(args):
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
+    report["performance"] = _build_performance(
+        g, outdir, written, built - started, time.monotonic() - built, chunk_chars[0]
+    )
+    if getattr(args, "neo4j_uri", None):
+        report["neo4j"] = _push_neo4j(args, outdir)
     _emit(json.dumps(report, indent=2))
+    if getattr(args, "watch", False):
+        _watch_and_rebuild(args, repo_path, outdir, config)
+
+
+def _push_neo4j(args, outdir: Path) -> dict:
+    from .neo4j import PushError, push
+
+    try:
+        applied = push(artifact_path(outdir, "graph.cypher"), args.neo4j_uri, args.neo4j_database)
+    except (PushError, ValueError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    return {"statements": applied, "database": args.neo4j_database}
+
+
+def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
+    """After the first build, rebuild incrementally on every settled change (#392)."""
+    from .parse import DEFAULT_SKIP_DIRS
+    from .watch import poll_interval, snapshot, watch
+
+    skip = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip.discard("vendor")
+
+    def take():
+        return snapshot(repo_path, skip, outdir)
+
+    interval = poll_interval(len(take()), args.watch_interval)
+    diagnostic(
+        f"watching {repo_path} every {interval:g}s; rebuilding {args.watch_quiet:g}s after "
+        "the last change (Ctrl-C to stop)"
+    )
+    again = argparse.Namespace(**{**vars(args), "watch": False, "incremental": True})
+    try:
+        watch(take, lambda: cmd_build(again), interval=interval, quiet=args.watch_quiet)
+    except KeyboardInterrupt:
+        diagnostic("stopped watching")
+
+
+def _token_counter(spec):
+    from .tokenizers import get_token_counter
+
+    try:
+        return get_token_counter(spec)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
+def _counting_text(chunks, total: list[int]):
+    """Pass chunks through, adding up their text length into total[0]."""
+    for c in chunks:
+        total[0] += len(c.get("text") or "")
+        yield c
+
+
+def _build_performance(g, outdir, written, build_s, write_s, chunk_chars) -> dict:
+    """Timings and sizes for one build, for regression gates (#456, #304).
+
+    Reported here rather than in stats.json, which must stay byte-identical
+    between a full and an incremental build of the same tree.
+    """
+    out_bytes = 0
+    for rel in written:
+        try:
+            out_bytes += (Path(outdir) / rel).stat().st_size
+        except OSError:
+            pass
+    source = sum(n.get("size") or 0 for n in g.nodes.values() if n.get("type") == "file")
+    return {
+        "build_seconds": round(build_s, 3),
+        "write_seconds": round(write_s, 3),
+        "peak_rss_mb": _peak_rss_mb(),
+        "source_bytes": source,
+        "output_bytes": out_bytes,
+        # Chunk text over source: overlap and per-part headers repeat lines,
+        # so this is how much bigger chunks.jsonl's text is than the code (P5).
+        "chunk_text_ratio": round(chunk_chars / source, 3) if source else None,
+    }
+
+
+def _peak_rss_mb() -> float | None:
+    """Peak resident set of this process and its parse workers, or None (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = max(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+    )
+    # ru_maxrss is KiB on Linux and bytes on macOS.
+    return round(peak / (1 << 20 if sys.platform == "darwin" else 1 << 10), 1)
 
 
 def cmd_github(args):
+    _require_history_for_authors(args)
     from .fetch import index_github
     from .parse import BuildConfig
 
@@ -325,6 +434,7 @@ def cmd_github(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -347,6 +457,7 @@ def cmd_github(args):
                 ref=args.ref,
                 depth=args.depth,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 formats=args.formats,
                 include=args.include,
                 exclude=exclude_globs,
@@ -614,6 +725,21 @@ def cmd_query(args):
     _warn_retired_retrieval_flags(args)
     from .query import Index, format_pack
 
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        res = federated.retrieve(
+            indexes,
+            args.query,
+            args.budget,
+            k=args.k,
+            hops=args.hops,
+            min_confidence=getattr(args, "min_conf", None),
+            exclude_secrets=not getattr(args, "include_secrets", False),
+        )
+        _emit(json.dumps(res, indent=2) if args.format == "json" or args.json else format_pack(res))
+        return 0
+
     out = Path(args.out)
     # Index reads all three, and `build --formats overview` writes chunks.jsonl
     # without the graph files -- checking only chunks turned that combination
@@ -813,10 +939,43 @@ def cmd_verify_rag(args):
     return 0
 
 
+def _federated(args):
+    """The --index set, or None; refuses combinations that do not federate (#396)."""
+    dirs = getattr(args, "indexes", None)
+    if not dirs:
+        return None
+    if getattr(args, "vectors", None):
+        raise SystemExit("error: --vectors searches one index's embeddings; drop it with --index")
+    if getattr(args, "target", None):
+        raise SystemExit("error: give either a target or --index, not both")
+    from .federated import open_indexes
+
+    return open_indexes(dirs)
+
+
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
     _warn_retired_retrieval_flags(args)
     from .query import Index
+
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        return _rag_output(
+            args,
+            federated.pack_context(
+                indexes,
+                args.query,
+                k=args.k,
+                hops=args.hops,
+                budget_chars=args.budget,
+                budget_tokens=getattr(args, "budget_tokens", None),
+                count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+                min_confidence=args.min_conf,
+                expand_graph=not args.no_expand,
+                exclude_secrets=not getattr(args, "include_secrets", False),
+            ),
+        )
 
     out = _rag_index_dir(args)
     _require_index(out, "chunks.jsonl")
@@ -848,12 +1007,19 @@ def cmd_rag(args):
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
         expansion=getattr(args, "expansion", None),
         edge_types=getattr(args, "edge_types", None) or None,
+        count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+        token_margin=getattr(args, "token_margin", 0.0) or 0.0,
     )
+    return _rag_output(args, pack)
+
+
+def _rag_output(args, pack):
     if args.answer:
         from .answer import stream_answer
 
-        stream_answer(pack, model=args.model, provider=args.provider)
-        return 0
+        text = stream_answer(pack, model=args.model, provider=args.provider)
+        # 3: an answer was printed but a size or time bound cut it short.
+        return 0 if getattr(text, "complete", True) else 3
     if args.format == "json":
         _emit(json.dumps(pack, indent=2))
     else:
@@ -963,6 +1129,31 @@ def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
     return None
 
 
+def cmd_diff(args):
+    """What changed structurally between two index directories (#395)."""
+    from .graphdiff import diff_indexes, render_text
+
+    old, new = Path(args.from_dir), Path(args.to_dir)
+    for index_dir in (old, new):
+        _require_index(index_dir, "nodes.jsonl")
+        _require_index(index_dir, "edges.jsonl")
+    try:
+        delta = diff_indexes(old, new)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    delta["confidence_changed_edges_count"] = len(delta["confidence_changed_edges"])
+    if args.format == "json" and not args.include_confidence:
+        delta["confidence_changed_edges"] = []
+    if args.format == "json":
+        _emit(json.dumps(delta, indent=2, default=str))
+    else:
+        _emit(
+            f"graph diff: {old} -> {new}\n"
+            + render_text(delta, limit=args.limit, show_confidence=args.include_confidence)
+        )
+    return 0
+
+
 def cmd_explain_path(args):
     from .parse import BuildConfig, explain_path
 
@@ -972,15 +1163,14 @@ def cmd_explain_path(args):
 
     args, applied = _with_repo_config(args, repo_path)
     config = BuildConfig(
-        include_vendor=getattr(args, "include_vendor", False),
-        include_secrets=getattr(args, "include_secrets", False),
-        chunk_large_files=getattr(args, "chunk_large_files", False),
-        extra_exclude_dirs=getattr(args, "extra_exclude_dirs", None) or [],
-        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        include_vendor=args.include_vendor,
+        include_secrets=args.include_secrets,
+        chunk_large_files=args.chunk_large_files,
+        max_file_bytes=int(args.max_file_mb * 1_000_000),
+        extra_exclude_dirs=args.extra_exclude_dirs or [],
+        extra_secret_keywords=args.extra_secret_keywords or [],
+        extra_secret_dirs=args.extra_secret_dirs or [],
     )
-    if "max_file_mb" in applied.values:
-        config.max_file_bytes = int(applied.values["max_file_mb"] * 1_000_000)
     res = explain_path(
         repo_path,
         args.path,
@@ -1138,31 +1328,25 @@ def cmd_explain(args) -> int:
         res = explain_edge(outdir, args.src, args.dst)
         _emit(json.dumps(res, indent=2) if is_json else format_explain_edge(res))
         return 0 if res.get("found") else 1
-    elif subcmd == "node":
+    if subcmd == "node":
         res = explain_node(outdir, args.node_id)
         _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
         return 0 if res.get("found") else 1
-    elif subcmd == "retrieval":
-        k = getattr(args, "k", 8)
-        hops = getattr(args, "hops", 1)
-        conf = getattr(args, "min_confidence", None)
-        res = explain_retrieval(
-            outdir,
-            args.query,
-            k=k,
-            hops=hops,
-            min_confidence=conf,
-            # The same query-time default as rag/query: a trace must not name
-            # a `.env` that the retrieval it explains would never return.
-            exclude_secrets=not getattr(args, "include_secrets", False),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
-        )
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
-        return 0
-    else:
-        diagnostic(f"repo2graph: error: unknown explain command '{subcmd}'")
-        return 1
+    # `retrieval`: the explain subparsers are required, so nothing else reaches here.
+    res = explain_retrieval(
+        outdir,
+        args.query,
+        k=args.k,
+        hops=args.hops,
+        min_confidence=args.min_confidence,
+        # The same query-time default as rag/query: a trace must not name
+        # a `.env` that the retrieval it explains would never return.
+        exclude_secrets=not args.include_secrets,
+        extra_secret_keywords=args.extra_secret_keywords or None,
+        extra_secret_dirs=args.extra_secret_dirs or None,
+    )
+    _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
+    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -1262,7 +1446,7 @@ def _add_vector_flags(parser) -> None:
         dest="embed_model",
         default=None,
         help="sentence-transformers model used to embed the query for "
-        f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})",
+        f"--vectors; must match the index, @<commit> pin included (default: {EMBED_DEFAULT_MODEL})",
     )
 
 
@@ -1358,6 +1542,18 @@ def main(argv=None):
         "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
     )
     common.add_argument(
+        "--git-authors",
+        action="store_true",
+        help="with --git-history, record on each file node who changed it in those commits "
+        "(author display names, never emails; default: off)",
+    )
+    common.add_argument(
+        "--reference-edges",
+        action="store_true",
+        help="also record READS/WRITES of module-level variables and class fields, and "
+        "REFERENCES to types named in annotations (Python, JS/TS; default: off)",
+    )
+    common.add_argument(
         "--cochange-min",
         type=_nonneg,
         default=3,
@@ -1440,7 +1636,11 @@ def main(argv=None):
         default="redact-match",
         help="content-aware secret scanning policy for chunks (default: redact-match)",
     )
-    common.add_argument(
+
+    # Flags that decide which paths get indexed. Shared with `explain-path`, so
+    # it answers from the same rule set `build` applies, not a subset of it.
+    path_rules = argparse.ArgumentParser(add_help=False)
+    path_rules.add_argument(
         "--secret-keyword",
         action="append",
         default=[],
@@ -1448,7 +1648,7 @@ def main(argv=None):
         metavar="KEYWORD",
         help="additional keyword to exclude as secret file/path (repeatable)",
     )
-    common.add_argument(
+    path_rules.add_argument(
         "--secret-dir",
         action="append",
         default=[],
@@ -1456,23 +1656,19 @@ def main(argv=None):
         metavar="DIR",
         help="additional directory name to exclude as secret path (repeatable)",
     )
-
-    # Flags for the two commands that write an index from source. Defined once:
-    # `build` and `github` carried eight identical copies of each (#47).
-    build_out = argparse.ArgumentParser(add_help=False)
-    build_out.add_argument(
+    path_rules.add_argument(
         "--max-file-mb",
         type=_max_file_mb,
         default=1.5,
         help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--include-vendor",
         action="store_true",
         default=False,
         help="index files in vendor directories (default: off)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--exclude-dir",
         action="append",
         default=[],
@@ -1480,12 +1676,16 @@ def main(argv=None):
         metavar="NAME",
         help="additional directory name to exclude (repeatable)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--chunk-large-files",
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
     )
+
+    # Flags for the two commands that write an index from source. Defined once:
+    # `build` and `github` carried eight identical copies of each (#47).
+    build_out = argparse.ArgumentParser(add_help=False, parents=[path_rules])
     build_out.add_argument(
         "--allow-symlink-out",
         action="store_true",
@@ -1524,6 +1724,39 @@ def main(argv=None):
         type=_posint,
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
+    )
+    b.add_argument(
+        "--neo4j-uri",
+        default=None,
+        metavar="URL",
+        help="after building, push graph.cypher to this Neo4j HTTP endpoint "
+        "(e.g. http://localhost:7474); credentials from NEO4J_USER / NEO4J_PASSWORD",
+    )
+    b.add_argument(
+        "--neo4j-database",
+        default="neo4j",
+        metavar="NAME",
+        help="database to push into with --neo4j-uri (default: neo4j)",
+    )
+    b.add_argument(
+        "--watch",
+        action="store_true",
+        help="after building, keep watching the tree and rebuild incrementally on each change",
+    )
+    b.add_argument(
+        "--watch-interval",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds between polls (default: 1; raised automatically on large trees)",
+    )
+    b.add_argument(
+        "--watch-quiet",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds the tree must be still before a rebuild, so a burst of saves "
+        "costs one rebuild (default: 1)",
     )
     b.add_argument(
         "--incremental",
@@ -1568,6 +1801,15 @@ def main(argv=None):
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
     q.add_argument("query")
     q.add_argument("-o", "--out", default=".r2g")
+    q.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
+    )
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
     q.add_argument(
@@ -1660,6 +1902,21 @@ def main(argv=None):
         help="estimated token budget for the whole pack; replaces --budget when given",
     )
     r.add_argument(
+        "--tokenizer",
+        default=None,
+        metavar="NAME",
+        help="how --budget-tokens counts: heuristic (default, 4 chars/token), conservative "
+        "(3 chars/token) or tiktoken[:ENCODING] (exact for that encoding; needs tiktoken)",
+    )
+    r.add_argument(
+        "--token-margin",
+        type=_unit_float,
+        default=0.0,
+        metavar="FRACTION",
+        help="fill the pack to --budget-tokens / (1 + FRACTION), headroom for a counter "
+        "that under-counts (default: 0)",
+    )
+    r.add_argument(
         "--context-budget-tokens",
         dest="budget_tokens",
         type=_nonneg,
@@ -1678,6 +1935,15 @@ def main(argv=None):
         type=_unit_float,
         default=argparse.SUPPRESS,
         help="alias of --min-conf",
+    )
+    r.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
     )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
     r.add_argument(
@@ -1777,7 +2043,8 @@ def main(argv=None):
         "--embed-model",
         dest="model",
         default=None,
-        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})",
+        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL}); "
+        "append @<commit> to pin a Hugging Face revision, e.g. MODEL@1a2b3c",
     )
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument(
@@ -1820,7 +2087,25 @@ def main(argv=None):
     )
     s.set_defaults(func=cmd_stats)
 
-    ep = sub.add_parser("explain-path", help="explain why a file is included or excluded")
+    df = sub.add_parser(
+        "diff", help="what changed structurally between two builds (two index directories)"
+    )
+    df.add_argument("from_dir", metavar="FROM", help="the older index directory")
+    df.add_argument("to_dir", metavar="TO", help="the newer index directory")
+    df.add_argument("--format", choices=("text", "json"), default="text")
+    df.add_argument(
+        "--include-confidence",
+        action="store_true",
+        help="also list edges whose only change is confidence (counted either way)",
+    )
+    df.add_argument(
+        "--limit", type=_posint, default=50, help="lines per section in text output (default: 50)"
+    )
+    df.set_defaults(func=cmd_diff)
+
+    ep = sub.add_parser(
+        "explain-path", parents=[path_rules], help="explain why a file is included or excluded"
+    )
     ep.add_argument("path", help="file path to evaluate")
     ep.add_argument(
         "-r", "--repo", default=".", help="repository root (default: current directory)"
@@ -1841,7 +2126,6 @@ def main(argv=None):
         default=".r2g",
         help="the build's output directory, never indexed (default: .r2g, as build)",
     )
-    ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)
     ep.add_argument("--json", action="store_true", help="output explanation as JSON")
     ep.set_defaults(func=cmd_explain_path)
