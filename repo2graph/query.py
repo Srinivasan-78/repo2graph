@@ -22,6 +22,7 @@ from .security import (
     _is_secret_path,
     redact_content,
 )
+from .testpaths import is_test_path
 
 __all__ = [
     "BM25_FORMAT",
@@ -142,6 +143,32 @@ QUERY_STOPWORDS = frozenset(
     use used uses using was what when where which who why will with would you your""".split()
 )
 
+# Query-side suffix rules: (suffix, replacements). "validation" -> "validate",
+# "validating" -> "validat"/"validate", "parsers" -> "parser". Variants are
+# added *beside* the original term and only when the index's own vocabulary
+# has them, so an identifier literally named `validates` still matches exactly
+# and no term the corpus never uses can enter the score.
+_STEM_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("ation", ("ate",)),
+    ("ing", ("", "e")),
+    ("ed", ("", "e")),
+    ("es", ("", "e")),
+    ("s", ("",)),
+)
+STEM_VARIANT_WEIGHT = 0.5
+
+
+def stem_variants(term: str) -> list[str]:
+    """Light, query-only stems of `term`. Never applied to the index side."""
+    out: list[str] = []
+    for suffix, repls in _STEM_RULES:
+        if len(term) > len(suffix) + 3 and term.endswith(suffix) and not term.endswith("ss"):
+            base = term[: -len(suffix)]
+            out.extend(base + r for r in repls if base + r != term)
+            break
+    return out
+
+
 # Which directions of an edge are useful when expanding from a node:
 # callees and callers for CALLS, the defining parent for DEFINES, the base
 # class for INHERITS, the imported module for IMPORTS.
@@ -152,6 +179,13 @@ DEFAULT_EDGE_DIRS = {
     "IMPORTS": ("out",),
 }
 DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
+# Edge types whose `confidence` can fall below 1.0 for a reason a caller may
+# want to filter on: an ambiguous name split across candidates. `TESTS` is
+# derived from CALLS paths and carries their confidence, so it is gated the
+# same way. `TESTS` is deliberately absent from DEFAULT_EDGE_DIRS: following it
+# by default would change what every pack contains. Pass it in `edge_types`
+# to opt in.
+CONFIDENCE_GATED_EDGE_TYPES = frozenset({"CALLS", "TESTS"})
 
 # "Follow every direction of every type" — an empty mapping, because expand()
 # reads `dirs.get(etype)` and treats a missing entry as "no direction filter".
@@ -231,43 +265,6 @@ _TEST_PATTERNS = (
 TEST_SEED_PENALTY = 0.6
 
 
-def is_test_path(path: str) -> bool:
-    """Whether a repo-relative path is test code, matched per path component.
-
-    `endswith("test.py")` is true of `latest.py`, `fastest.py` and
-    `manifest.py`, so the check is on components and known suffixes -- the bug
-    the original version of this predicate was written to fix, which is why the
-    property test in `tests/test_properties.py` pins separator invariance.
-
-    It lived in `impact.py` until that module was removed; retrieval is the only
-    remaining caller, so it lives here now.
-    """
-    parts = str(path or "").replace("\\", "/").lower().split("/")
-    if any(p in _TEST_DIR_NAMES or p.startswith("test_") for p in parts[:-1]):
-        return True
-    base = parts[-1]
-    return (
-        base in ("test.py", "conftest.py")
-        or base.startswith("test_")
-        or base.endswith(_TEST_BASENAME_SUFFIXES)
-    )
-
-
-_TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__", "spec", "specs"})
-_TEST_BASENAME_SUFFIXES = (
-    "_test.py",
-    "_test.go",
-    ".test.ts",
-    ".test.js",
-    ".test.tsx",
-    ".test.jsx",
-    ".spec.ts",
-    ".spec.js",
-    ".spec.tsx",
-    ".spec.jsx",
-)
-
-
 def classify_query(query: str) -> str:
     """What shape of answer the question asks for.
 
@@ -314,6 +311,39 @@ def asks_about_tests(query: str) -> bool:
     return bool(q) and any(re.search(pat, q) for pat in _TEST_PATTERNS)
 
 
+# Named expansion policies for pack_context (#289). Each is (edge types, per-type
+# directions, CALLS confidence floor); None in a slot means "the default".
+# `rag-default` is today's behaviour exactly, so choosing no preset changes
+# nothing. CO_CHANGE is only ever followed when a preset or caller names it.
+EXPANSION_PRESETS: dict[
+    str, tuple[frozenset[str] | None, dict[str, tuple[str, ...]] | None, float | None]
+] = {
+    "rag-default": (None, None, None),
+    # Where does this go and what does it use: calls and imports both ways.
+    "navigation": (
+        frozenset({"CALLS", "IMPORTS"}),
+        {"CALLS": ("out", "in"), "IMPORTS": ("out", "in")},
+        1.0,
+    ),
+    # What depends on this: callers, importers, subclasses, and files that
+    # historically change with it. DEFINES-in climbs from a symbol seed to its
+    # file, which is where CO_CHANGE edges live; use hops >= 2 to reach them.
+    "impact-analysis": (
+        frozenset({"CALLS", "IMPORTS", "INHERITS", "DEFINES", "CO_CHANGE"}),
+        {
+            "CALLS": ("in",),
+            "IMPORTS": ("in",),
+            "INHERITS": ("in",),
+            "DEFINES": ("in",),
+            "CO_CHANGE": ("out", "in"),
+        },
+        None,
+    ),
+    # Only edges the resolver was certain of; never history-derived ones.
+    "strict": (frozenset(DEFAULT_EDGE_DIRS), dict(DEFAULT_EDGE_DIRS), 1.0),
+}
+
+
 def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
     """The traversal filter a question shape implies, or None to keep the default."""
     if shape == "callers":
@@ -341,6 +371,11 @@ CHARS_PER_TOKEN = 4
 MAP_BUDGET_FRAC = 0.2  # at most this share of the budget goes to the map
 MAP_ENTRYPOINTS = 10  # entry points listed in the map prepend
 PACK_SEPARATOR = "\n\n---\n\n"  # between the map prepend and the first citation
+# Ranked candidates a paged pack_context draws seeds from. Every page orders the
+# same fixed window, so page boundaries cannot shift as the offset grows -- a
+# window that grew with the offset would let a late candidate outrank a demoted
+# test seed and move it between pages.
+PAGED_SEED_WINDOW = 600
 
 
 def read_jsonl(path: Path) -> list[Record]:
@@ -381,6 +416,11 @@ def count_tokens(text: str) -> int:
     """The default token estimate: len(text) // CHARS_PER_TOKEN, never 0 for a
     non-empty string (a block that costs nothing would defeat any budget)."""
     return max(1, len(text) // CHARS_PER_TOKEN) if text else 0
+
+
+#: Reported as `token_count_method` in every pack: this is an estimate, and a
+#: caller comparing it with a model's real limit needs to know that (#290).
+count_tokens.token_count_method = "heuristic"  # type: ignore[attr-defined]
 
 
 # Bound at import so pack_context's `count_tokens=` parameter, which shadows
@@ -542,6 +582,9 @@ class Index:
             self._build_bm25()
         self.vectors: dict[int, Vector] | None = None
         self.vector_meta: dict[str, Any] | None = None
+        # Why a vectors.npy that exists was not used. None when there is no file
+        # or it loaded; a dropped vector set must be reportable, never silent.
+        self.vectors_unavailable: str | None = None
         self._load_vectors()
 
     def _build_bm25(self) -> None:
@@ -643,15 +686,18 @@ class Index:
             from .embed import load_vectors
 
             by_id, meta = load_vectors(npy)
-        except (OSError, ValueError, KeyError, ImportError):
+        except (OSError, ValueError, KeyError, ImportError) as exc:
+            self.vectors_unavailable = f"vectors.npy could not be loaded: {exc}"
             return
         pos = {c.get("id"): i for i, c in enumerate(self.chunks)}
         vectors: dict[int, Vector] = {pos[cid]: vec for cid, vec in by_id.items() if cid in pos}
         if not vectors:
+            self.vectors_unavailable = "vectors.npy matches none of this index's chunks"
             return
         m_build_id = self.manifest.get("build_id")
         v_build_id = meta.get("build_id")
         if m_build_id and v_build_id and m_build_id != v_build_id:
+            self.vectors_unavailable = "vectors.npy was embedded for a different build"
             return
         self.vectors, self.vector_meta = vectors, meta
 
@@ -665,8 +711,10 @@ class Index:
             Tuple of (is_compatible, error_message).
         """
         if not self.vectors or not self.vector_meta:
+            why = f" ({self.vectors_unavailable})" if self.vectors_unavailable else ""
             return False, (
-                f"no vectors in the index at {self.dir}: run `repo2graph embed -o {self.dir}` first"
+                f"no vectors in the index at {self.dir}{why}: "
+                f"run `repo2graph embed -o {self.dir}` first"
             )
         from .embed import dim_of, model_id_of
 
@@ -811,9 +859,23 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        q = Counter(tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1])
+        terms = tokenize(query) + [t.lower() for t in IDENT_RE.findall(query) if len(t) == 1]
+        # Question words stay in (#382 tried dropping them, twice). Their idf
+        # is already near zero, and in a code index they are not noise: "from"
+        # matches SQL `FROM`, and even "an" alone ("rather than an argument")
+        # was the margin that kept app/store.py in the demo's "route to
+        # persistence" answer (test_demo.py). Even a set limited to words that
+        # are no language's keyword lost it.
+        q: Counter[str] = Counter(terms)
+        weights: dict[str, float] = dict.fromkeys(q, 1.0)
+        for term in list(q):
+            for variant in stem_variants(term):
+                if variant not in q and variant in self.postings:
+                    q[variant] = q[term]
+                    weights[variant] = STEM_VARIANT_WEIGHT
         acc: dict[int, float] = defaultdict(float)
-        for term, qn in q.items():
+        for term, count in q.items():
+            qn = count * weights[term]
             posting = self.postings.get(term)
             if not posting:
                 continue
@@ -1127,6 +1189,7 @@ class Index:
         per_hop: int = 6,
         min_confidence: float = 1.0,
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
+        max_results: int | None = None,
     ) -> list[tuple[str, str, str, str]]:
         """Traverse graph outward from seed nodes.
 
@@ -1135,8 +1198,9 @@ class Index:
             hops: Traversal depth in hops.
             edge_types: Allowed edge type names.
             per_hop: Max neighbors admitted per hop.
-            min_confidence: Minimum confidence threshold for CALLS edges.
+            min_confidence: Minimum confidence threshold for CALLS and TESTS edges.
             edge_dirs: Direction filter mapping per edge type.
+            max_results: Stop once this many neighbours are found (None: no cap).
 
         Returns:
             List of (dst_node_id, edge_type, direction, src_node_id) tuples.
@@ -1162,7 +1226,7 @@ class Index:
                     allowed = dirs.get(etype)
                     if allowed is not None and direction not in allowed:
                         continue
-                    if etype == "CALLS":
+                    if etype in CONFIDENCE_GATED_EDGE_TYPES:
                         try:
                             conf = float(edge.get("confidence", 1.0))
                         except (ValueError, TypeError):
@@ -1172,6 +1236,8 @@ class Index:
                     seen.add(dst)
                     nxt.append(dst)
                     order.append((dst, etype, direction, nid))
+                    if max_results is not None and len(order) >= max_results:
+                        return order
                     added_for_nid += 1
                     if added_for_nid >= per_hop or len(nxt) >= cap:
                         break
@@ -1332,8 +1398,18 @@ class Index:
         conditional_expansion: bool = False,
         precision_first: bool = False,
         rerank_answerability: bool = True,
+        edge_types: Iterable[str] | None = None,
+        edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
+        expansion: str | None = None,
+        seed_offset: int | None = None,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
+
+        Graph expansion follows DEFAULT_EDGE_DIRS (CO_CHANGE excluded), steered
+        by the question's shape. `expansion` names an EXPANSION_PRESETS policy;
+        `edge_types` and `edge_dirs` override its types and directions, and an
+        explicit `min_confidence` below 1.0 overrides its floor. Each neighbour's
+        `why` names the edge type and direction that admitted it.
 
         Args:
             query: Question or symbol query string.
@@ -1359,11 +1435,23 @@ class Index:
             rerank_answerability: Re-rank seed candidates by how answer-shaped
                 they are before taking the top `k` -- see `_answerability`.
                 Pass False for the pre-2.3 ordering.
+            edge_types: Edge types graph expansion may follow. None means
+                DEFAULT_EDGE_TYPES; name `TESTS` here to pull in the tests that
+                reach a seed (it is never followed by default).
+            seed_offset: Page through seeds instead of packing the top `k`: skip
+                the first `seed_offset` eligible seeds of a fixed
+                `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
+                first seed that does not fit (the map is only packed on the
+                first page). None (the default) is the unpaged behaviour.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
-            'tokens_used', 'tokens_budget', and 'truncated'.
+            'tokens_used', 'tokens_budget', and 'truncated'; when paging, also
+            'next_seed_offset' (None on the last page) and 'skipped_seeds'.
         """
+        paged = seed_offset is not None
+        skip = max(0, seed_offset or 0)
+        more_seeds = False
         measure_tokens = count_tokens if callable(count_tokens) else _DEFAULT_MEASURE
         use_tokens = budget_tokens is not None
         # len is the character measure, and it is additive, so the cumulative
@@ -1410,7 +1498,7 @@ class Index:
         seeds: list[Record] = []
         seen_nodes: set[str] = set()
         seed_limit = k if precision_first else k * 3
-        seed_window = ranked[:seed_limit]
+        seed_window = ranked[: PAGED_SEED_WINDOW if paged else seed_limit]
         if not asks_tests:
             seed_window = self._demote_test_seeds(seed_window)
         for s, i in seed_window:
@@ -1438,11 +1526,21 @@ class Index:
             ):
                 seen_nodes.add(nid)
                 continue
+            if paged:
+                if skip:
+                    # An earlier page's seed: its node goes into `seen_nodes`,
+                    # so expansion does not hand it back as a neighbour either.
+                    seen_nodes.add(nid)
+                    skip -= 1
+                    continue
+                if len(seeds) >= k:
+                    more_seeds = True
+                    break
             seen_nodes.add(nid)
             if exclude_secrets:
                 c = self._served(c)
             seeds.append({**c, "score": round(s, 3), "why": "seed"})
-            if len(seeds) >= k:
+            if not paged and len(seeds) >= k:
                 break
 
         graph_neighbours: list[Record] = []
@@ -1450,6 +1548,26 @@ class Index:
         # ALL_EDGE_DIRS on purpose, so `repo2graph query` is never narrowed by
         # this; only the packed-context path routes.
         shape_dirs = edge_dirs_for(shape)
+        expand_types: frozenset[str] | None = None
+        if expansion is not None:
+            if expansion not in EXPANSION_PRESETS:
+                raise ValueError(
+                    f"unknown expansion preset {expansion!r}; "
+                    f"expected one of {', '.join(EXPANSION_PRESETS)}"
+                )
+            p_types, p_dirs, p_conf = EXPANSION_PRESETS[expansion]
+            expand_types = p_types
+            if p_dirs is not None:
+                shape_dirs = p_dirs
+            if p_conf is not None and min_confidence >= 1.0:
+                min_confidence = p_conf
+        if edge_types is not None:
+            expand_types = frozenset(edge_types)
+        if edge_dirs is not None:
+            shape_dirs = dict(edge_dirs)
+        elif expand_types is not None and shape_dirs is not None:
+            # A named type with no direction rule here is followed both ways.
+            shape_dirs = {t: shape_dirs.get(t, ("out", "in")) for t in expand_types}
         if expand_graph and seeds:
             if precision_first:
                 for seed_chunk in seeds:
@@ -1458,6 +1576,7 @@ class Index:
                     for nid, etype, direction, src in self.expand(
                         [seed_chunk["node_id"]],
                         hops=hops,
+                        edge_types=expand_types,
                         min_confidence=min_confidence,
                         edge_dirs=shape_dirs,
                     ):
@@ -1487,6 +1606,7 @@ class Index:
                 for nid, etype, direction, src in self.expand(
                     [c["node_id"] for c in seeds],
                     hops=hops,
+                    edge_types=expand_types,
                     min_confidence=min_confidence,
                     edge_dirs=shape_dirs,
                 ):
@@ -1511,7 +1631,8 @@ class Index:
                     if max_neighbours is not None and len(graph_neighbours) >= max_neighbours:
                         break
 
-        full_map = self.map_prepend()
+        # A later page leaves the map out: page one already paid for it.
+        full_map = "" if paged and seed_offset else self.map_prepend()
         shown_map = full_map
         if bounded:
             shown_map = _fit_lines(
@@ -1526,16 +1647,23 @@ class Index:
         def fits(block: str) -> bool:
             return measure(head + body + block) <= budget
 
+        fitted_seeds = 0
         for c in seeds:
             text = c.get("text") or ""
             block = _cite_block(c, text)
             if not bounded:
                 picked.append((c, text))
+                fitted_seeds += 1
             elif fits(block):
                 picked.append((c, text))
                 body += block
+                fitted_seeds += 1
             else:
                 truncated = True
+                if paged:
+                    # A page is a prefix of the seed order, so the seed that did
+                    # not fit opens the next page instead of being lost.
+                    break
         for c in graph_neighbours:
             if not picked:
                 # A neighbour without a seed is context without a question:
@@ -1584,7 +1712,19 @@ class Index:
         )
         markdown = head + "".join(_cite_block(c, text) for c, text in picked)
         chunks = [{**c, "text": text} for c, text in picked]
+        paging: dict[str, Any] = {}
+        if paged:
+            # A seed too large for the whole page budget can never fit, so it is
+            # stepped over (and reported) rather than handed back forever.
+            skipped = 1 if seeds and fitted_seeds == 0 else 0
+            consumed = fitted_seeds + skipped
+            remaining = more_seeds or consumed < len(seeds)
+            paging = {
+                "next_seed_offset": (seed_offset or 0) + consumed if remaining else None,
+                "skipped_seeds": skipped,
+            }
         return {
+            **paging,
             "markdown": markdown,
             "chunks": chunks,
             "seeds": [c for c in chunks if c["why"] == "seed"],
@@ -1595,6 +1735,15 @@ class Index:
             "tokens_used": measure_tokens(markdown),
             "tokens_budget": budget_tokens if use_tokens else 0,
             "query": query,
+            # The two budgets, reported apart (#282): what retrieval selected
+            # versus what was rendered. Rendered is the larger one -- citation
+            # headers and the map prepend add bytes the source never had.
+            "source_text_chars": sum(len(text) for _, text in picked),
+            "rendered_context_chars": len(markdown),
+            "budget_exhausted": truncated,
+            "omitted_chunk_count": max(0, len(seeds) + len(graph_neighbours) - len(picked)),
+            # `tokens_used` is only as exact as the counter behind it (#290).
+            "token_count_method": getattr(measure_tokens, "token_count_method", "caller-supplied"),
         }
 
 

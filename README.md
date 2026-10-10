@@ -21,7 +21,8 @@ together in git. Retrieval starts from BM25 matches and follows those links.
 
 It needs no model, no API key, no language server and no database. Building, querying and the
 MCP server make no network calls; the only exceptions are `rag --answer` (opt-in, sends the pack
-to an LLM) and `repo2graph github` (clones a repository). Parsers are part of that promise:
+to an LLM), `repo2graph github` and a `rag`/`query` target given as a GitHub spec (both clone a
+repository), and `--vectors`/`embed` (download the embedding model on first use). Parsers are part of that promise:
 `tree-sitter-language-pack` is pinned below 1.0 so every grammar arrives compiled into the
 installed wheel, rather than being downloaded on first parse — see
 [SECURITY.md](.github/SECURITY.md#why-this-is-safe-for-enterprise-use). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
@@ -89,6 +90,9 @@ code that says "timestamp" — which is why the
 [dense-vector path](benchmarks/real/README.md#the-dense-result) closes it to −2 pp at 8,000
 tokens and more BM25 tuning has not. That path needs a downloaded model, so it is opt-in
 (`pip install "repo2graph[rag]"`) and the zero-dependency default stays the default.
+That extra pulls PyTorch, which on Linux brings the NVIDIA CUDA wheels (several GB); the model is
+fetched from Hugging Face on first use and its own licence and training data are yours to review
+before you adopt it. Once it is cached, set `HF_HUB_OFFLINE=1` so later runs make no request.
 
 ### Where repo2graph wins for agents: fewer turns
 
@@ -221,7 +225,7 @@ Run `repo2graph doctor` to diagnose environment and platform support.
 - **Automated gates:** Pull requests must pass automated CI checks (ruff, mypy, multi-OS test matrix, synthetic regression benchmarks).
 - **Review policy:** Pull requests require 0 third-party review approvals to merge to `main`.
 - **Commit signing:** Commit signing is not currently enforced on `main`.
-- **Integrity:** Releases are published to PyPI with provenance attestations, and `uv.lock` is pinned in the repository for reproducible builds.
+- **Integrity:** Releases are published to PyPI with provenance attestations. `uv.lock` pins every dependency by hash for CI and contributors (`uv sync --frozen`); a plain `pip install repo2graph` resolves its own versions within the ranges in `pyproject.toml` and does not read it.
 
 ## Contributing
 

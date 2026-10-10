@@ -775,3 +775,71 @@ def test_max_chars_default_is_what_the_split_properties_assume():
     properties would stop saying anything about the shipped configuration.
     """
     assert MAX_CHARS > 120
+
+
+# ------------------------------------------- identifiers, paths, cpp input --
+# #316, covering the sanitizers added for #454 and #475.
+
+_IDENT_ALPHABET = st.characters(
+    codec="utf-8", categories=("L", "N", "P", "S", "Z", "Cc", "Cf")
+) | st.sampled_from(["‮", "⁦", "​", "﻿", "\n", "\r", " ", "\x00"])
+
+
+@given(name=st.text(_IDENT_ALPHABET, max_size=600))
+def test_clean_identifier_is_capped_single_line_and_free_of_hidden_chars(name):
+    """Whatever a hostile repository names a symbol, the cleaned name fits the
+    cap, cannot break a line or a header, and carries no invisible override."""
+    from repo2graph.security import (
+        HIDDEN_UNICODE_RE,
+        MAX_SYMBOL_NAME_CHARS,
+        clean_identifier,
+        has_unsafe_path_chars,
+    )
+
+    out = clean_identifier(name)
+    assert len(out) <= MAX_SYMBOL_NAME_CHARS
+    assert not has_unsafe_path_chars(out)
+    assert not HIDDEN_UNICODE_RE.search(out)
+    # Idempotent: cleaning a clean name changes nothing.
+    assert clean_identifier(out) == out
+
+
+@given(text=st.text(_IDENT_ALPHABET, max_size=200))
+def test_escape_hidden_unicode_round_trips_through_json(text):
+    """The JSONL escape is lossless: the reader gets back exactly what was there."""
+    import json
+
+    from repo2graph.security import HIDDEN_UNICODE_RE, escape_hidden_unicode
+
+    line = escape_hidden_unicode(json.dumps(text, ensure_ascii=False))
+    assert not HIDDEN_UNICODE_RE.search(line)
+    assert json.loads(line) == text
+
+
+_DIRECTIVE = st.sampled_from(["include", "include_next", "import", "embed"])
+_HASH = st.sampled_from(["#", "%:", "  #", "#/* x */", "#\\\n", "\t# "])
+
+
+@given(
+    lines=st.lists(
+        st.tuples(_HASH, _DIRECTIVE, st.sampled_from(['"/dev/zero"', "<x.h>"])), max_size=8
+    ),
+    filler=st.lists(st.sampled_from(["int x;", "#define A 1", "// include me", ""]), max_size=8),
+)
+def test_strip_cpp_includes_leaves_no_file_opening_directive(lines, filler):
+    """No spelling cpp accepts for a file-opening directive survives the strip,
+    and ordinary lines (including a comment that says "include") are kept."""
+    import re
+
+    from repo2graph.parse import _strip_cpp_includes
+
+    src = "\n".join([*(f"{h}{d} {t}" for h, d, t in lines), *filler]).encode()
+    out = _strip_cpp_includes(src).decode()
+    joined = out.replace("\\\n", "")
+    assert not re.search(
+        r"(?m)^[ \t]*(?:#|%:)(?:[ \t]|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)*(?:include|include_next|import|embed)\b",
+        joined,
+    )
+    for f in filler:
+        if f:
+            assert f in out

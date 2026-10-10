@@ -15,6 +15,29 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`TESTS` edges linking tests to the symbols they exercise (#393):**
+  every symbol defined in a test file gets a `TESTS` edge to each non-test symbol it reaches
+  through at most two `CALLS` hops (test helpers included), with `method: call-graph`, the
+  product of the path's `CALLS` confidences, the starting call site as `evidence`, and `hops`.
+  It means "reaches via calls", not "asserts on". `stats.json` gains `edge:TESTS`,
+  `testable_symbols`, `tested_symbols` and `tested_symbol_fraction`; `repo_neighbours` lists a
+  symbol's tests and takes `min_confidence`; `pack_context(edge_types=[...])` can opt in to
+  following `TESTS`, which default retrieval does not. `is_test_path` moved to
+  `repo2graph.testpaths` (still importable from `repo2graph.query`) and now also recognises
+  `*Test.java`, `*Tests.java`, `*Test.kt`, `*_spec.rb` and `*_test.rb`.
+- **Config file (#391):** build options can live in `[tool.repo2graph]` in the
+  repo's `pyproject.toml` or in `.repo2graph.toml`, read by `build`, the
+  `rag <source-dir>` auto-build and the MCP auto-build. A command-line flag
+  still wins, and `explain-path` names the file when one of its settings
+  decided a path. No config file, no change.
+- **Cursor pagination for `repo_neighbours` and `repo_search` (#389):**
+  An optional `cursor` argument opts into paging (`cursor: ""` for the first page). While more
+  remains, a page ends with a `next_cursor: <token>` line and carries the same token as
+  `_meta.nextCursor`. Every page keeps the per-call clamps and the 12 000-token ceiling, so
+  neighbour 51+ of a symbol is now reachable. Cursors are self-contained and HMAC-signed (no
+  server state), expire after 10 minutes, and are refused with an actionable error once the index
+  is rebuilt. Calls without `cursor` are byte-identical to before. See docs/mcp.md, "Pagination".
+
 - **Configurable resource limits and limit policies (#299):**
   Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
   alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.

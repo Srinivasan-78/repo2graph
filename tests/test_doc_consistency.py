@@ -628,3 +628,15 @@ def test_examples_table_matches_the_recorded_run():
         + "\n  ".join(mismatches)
         + "\nRe-read the numbers off results.json after regenerating."
     )
+
+
+def test_security_md_names_exactly_the_servers_tools():
+    """#456 DOC1: SECURITY.md said "ten tools" and listed a repo_impact that was
+    removed, so the unconditional-secret-exclusion claim named a ghost."""
+    import re
+
+    from repo2graph.mcp.schemas import TOOL_DESCRIPTIONS
+
+    text = (REPO_ROOT / ".github" / "SECURITY.md").read_text(encoding="utf8")
+    named = set(re.findall(r"`(repo_[a-z_]+)`", text))
+    assert named <= set(TOOL_DESCRIPTIONS), named - set(TOOL_DESCRIPTIONS)

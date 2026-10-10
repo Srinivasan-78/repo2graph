@@ -17,6 +17,7 @@ from .tools import (
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
     ToolError,
+    _staleness_note,
     dispatch,
     open_index,
     open_index_or_task,
@@ -71,8 +72,6 @@ def _require_sdk() -> Any:
         import mcp
     except ImportError:
         raise SystemExit(MISSING_SDK) from None
-    if mcp is None:
-        raise SystemExit(MISSING_SDK)
     try:
         from mcp.server import Server as _Server  # noqa: F401
     except ImportError as exc:
@@ -231,7 +230,32 @@ def _dispatch_tool(
     )
     if pending is not None:
         return pending
-    return dispatch(index, name, args, cache=cache, tasks=tasks)
+    text = dispatch(index, name, args, cache=cache, tasks=tasks)
+    # repo_map already leads with this note. Every other tool that cites line
+    # numbers or reports edges is just as wrong on a stale index -- "no callers"
+    # reads as fact -- so it carries the same warning.
+    if (
+        index is not None
+        and name in _STALENESS_NOTED_TOOLS
+        and isinstance(text, str)
+        and not isinstance(text, ToolError)
+    ):
+        note = _staleness_note(index)
+        if note:
+            text = note + text
+    return text
+
+
+_STALENESS_NOTED_TOOLS = frozenset(
+    {
+        "repo_search",
+        "repo_neighbours",
+        "repo_find_symbol",
+        "repo_read",
+        "repo_path_between",
+        "repo_blast_radius",
+    }
+)
 
 
 def _audit(
@@ -319,10 +343,19 @@ def serve(
 
     async def _call_tool_2x(ctx: Any, params: Any) -> Any:
         text = await _call_tool_handler(ctx, params)
-        return mcp.types.CallToolResult(
-            content=[TextContent(type="text", text=text)],
-            isError=isinstance(text, ToolError),
-        )
+        content = [TextContent(type="text", text=text)]
+        is_error = isinstance(text, ToolError)
+        next_cursor = getattr(text, "next_cursor", None)
+        if next_cursor:
+            # The cursor is also the text's last line, so a client that drops
+            # `_meta` loses nothing; an SDK without `_meta` just goes without it.
+            try:
+                return mcp.types.CallToolResult(
+                    content=content, isError=is_error, _meta={"nextCursor": next_cursor}
+                )
+            except TypeError:
+                pass
+        return mcp.types.CallToolResult(content=content, isError=is_error)
 
     try:
         mcp_server = server_cls(
@@ -473,6 +506,21 @@ def main(argv: list[str] | None = None) -> int:
         help=f"seconds a cached result is served before it is "
         f"recomputed (default: {DEFAULT_TTL:g})",
     )
+    p.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        help="additional keyword marking a file/path as secret, as `repo2graph build` "
+        "takes it; applied to auto-builds and to every pack (repeatable)",
+    )
+    p.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        help="additional directory name to treat as secret (repeatable)",
+    )
     log = p.add_argument_group("audit logging")
     log.add_argument(
         "--audit-log",
@@ -483,8 +531,11 @@ def main(argv: list[str] | None = None) -> int:
     log.add_argument(
         "--audit-log-level",
         choices=("none", "errors", "all"),
-        default="all",
-        help="which tool calls produce an audit record (default: all)",
+        # `all` records every query's text and up to 512 chars of arguments,
+        # on stderr that MCP clients often keep in their own logs. Recording
+        # successful calls is an opt-in for operators who want that trail.
+        default="errors",
+        help="which tool calls produce an audit record (default: errors)",
     )
     log.add_argument(
         "--audit-log-fsync",
@@ -493,6 +544,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
+    from .indexes import SECRET_RULES
+
+    SECRET_RULES["keywords"] = list(args.extra_secret_keywords)
+    SECRET_RULES["dirs"] = list(args.extra_secret_dirs)
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
     build_from = None if args.no_auto_build else repo
 

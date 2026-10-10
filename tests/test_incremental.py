@@ -563,3 +563,49 @@ def test_incremental_rename_and_delete_sequence(tmp_path):
     build(full_repo, full_out)
 
     assert snapshot(inc_out) == snapshot(full_out)
+
+
+def test_a_changed_parse_option_invalidates_the_cache_and_says_why(tmp_path, recorder, capsys):
+    """#302: cached entries depend on --max-file-mb and --chunk-large-files
+    (whether a file was chunked) as much as on its bytes. Changing either must
+    force a re-parse, and the build must say which key component changed."""
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    build(repo, out)
+    capsys.readouterr()
+    recorder.calls.clear()
+    main(
+        [
+            "build",
+            str(repo),
+            "-o",
+            str(out),
+            "--formats",
+            FORMATS,
+            "--incremental",
+            "--chunk-large-files",
+        ]
+    )
+    assert len(recorder.calls) == len(FILES)
+    assert "chunk_large_files False -> True" in capsys.readouterr().err
+    stats = json.loads(make_paths(out, "stats.json")[0].read_text(encoding="utf8"))
+    assert "chunk_large_files" in stats["parse_cache_invalidated"]
+
+
+def test_a_language_table_edit_invalidates_the_cache(tmp_path, monkeypatch):
+    """#302: editing LANG_CFG changes every extraction without touching the
+    grammars or PARSE_CACHE_FORMAT."""
+    from repo2graph import parse as parse_mod
+    from repo2graph.export import load_parse_cache_report
+
+    repo = write_repo(tmp_path)
+    out = tmp_path / "idx"
+    build(repo, out)
+    assert load_parse_cache(out)
+    parse_mod.lang_config_fingerprint.cache_clear()
+    monkeypatch.setitem(parse_mod.LANG_CFG["python"], "call_types", ("call", "edited"))
+    try:
+        files, reason = load_parse_cache_report(out)
+        assert files == {} and reason.startswith("lang_config ")
+    finally:
+        parse_mod.lang_config_fingerprint.cache_clear()

@@ -122,3 +122,40 @@ def test_mcp_repo_search_neighbours_and_clamping(tmp_path: Path):
         idx, "caller", neighbours="cite", max_neighbours=MCP_MAX_SEARCH_NEIGHBOURS + 100
     )
     assert "[sym:pkg::callee]" in res_clamped
+
+
+def test_a_split_symbol_says_which_part_each_chunk_is_and_cites_its_own_lines(tmp_path):
+    """#287: parts of a symbol too large for one chunk carry `split`
+    metadata, keep the symbol's qualname in their header, prefer to end at a
+    blank line, and cite exactly the source lines they hold."""
+    from repo2graph.chunks import MAX_CHARS, iter_chunks
+    from repo2graph.graph import build
+
+    blocks = []
+    for b in range(60):
+        blocks.append(
+            "\n".join(f"        total_{b}_{k} = value * {k}  # step {k}" for k in range(4))
+        )
+    body = "\n\n".join(blocks)
+    src = f"class Ledger:\n    def reconcile(self, value):\n{body}\n        return value\n"
+    (tmp_path / "ledger.py").write_text(src, encoding="utf8")
+    lines = src.split("\n")
+    g = build(tmp_path, jobs=1)
+    parts = [c for c in iter_chunks(g) if c["qualname"] == "Ledger.reconcile"]
+    assert len(parts) > 1 and len(src) > MAX_CHARS
+    for n, c in enumerate(parts, 1):
+        assert c["split"] == {"part": n, "of": len(parts), "by": "size"}
+        assert "Ledger.reconcile" in c["text"].split("\n")[1]
+        assert lines[c["start_line"] - 1] in c["text"]
+    # Every part but the last ends on a block boundary.
+    for c in parts[:-1]:
+        assert lines[c["end_line"] - 1].strip() == "" or lines[c["end_line"]].strip() == ""
+
+
+def test_a_whole_symbol_has_no_split_field(tmp_path):
+    from repo2graph.chunks import iter_chunks
+    from repo2graph.graph import build
+
+    (tmp_path / "a.py").write_text("def f():\n    return 1\n", encoding="utf8")
+    g = build(tmp_path, jobs=1)
+    assert all("split" not in c for c in iter_chunks(g))

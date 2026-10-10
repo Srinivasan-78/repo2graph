@@ -101,7 +101,8 @@ def test_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
 
 
 def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
-    """Verify JSON form gains exactly tokens_used and tokens_budget without changing other fields."""
+    """Verify JSON form only gains known additive keys without changing other fields:
+    the two token keys, then the #282/#290 budget-reporting fields."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
     if REGEN:
@@ -109,7 +110,15 @@ def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
         pytest.skip("regenerating goldens")
     baseline = golden_json("rag_json.json")
     added = set(payload) - set(baseline)
-    assert added == {"tokens_used", "tokens_budget"}, added
+    assert added == {
+        "tokens_used",
+        "tokens_budget",
+        "source_text_chars",
+        "rendered_context_chars",
+        "budget_exhausted",
+        "omitted_chunk_count",
+        "token_count_method",
+    }, added
     assert not set(baseline) - set(payload), set(baseline) - set(payload)
     for key in baseline:
         assert payload[key] == baseline[key], key
@@ -1182,7 +1191,8 @@ def _subprocess_spawn_calls(path: Path):
         kwnames = {kw.arg for kw in node.keywords}
         # `subprocess.run(**kwargs)` would carry stdin invisibly; None means a
         # `**` unpacking, so treat it as unverifiable-but-not-a-violation.
-        ok = "stdin" in kwnames or None in kwnames
+        # `input=` replaces stdin with a pipe we write and close, so it counts.
+        ok = "stdin" in kwnames or "input" in kwnames or None in kwnames
         found.append((node.lineno, f"subprocess.{func.attr}", ok))
     return found
 
@@ -1200,6 +1210,55 @@ def test_every_subprocess_spawn_in_the_package_closes_stdin():
     # A sweep that found nothing would pass vacuously; the package has had at
     # least a dozen spawn sites since fetch.py landed.
     assert total >= 10, total
+    assert offenders == [], offenders
+
+
+def _git_spawn_calls(path: Path):
+    """(lineno, hardened, env-cleaned) for every subprocess spawn of a literal git argv."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("run", "Popen", "call"):
+            continue
+        if not isinstance(func.value, ast.Name) or func.value.id != "subprocess":
+            continue
+        argv = node.args[0]
+        if not isinstance(argv, ast.List) or not argv.elts:
+            continue
+        head = argv.elts[0]
+        if not (isinstance(head, ast.Constant) and head.value == "git"):
+            continue
+        rest = [e.value for e in argv.elts[1:] if isinstance(e, ast.Constant)]
+        if rest == ["--version"] and len(argv.elts) == 2:
+            continue  # reads no repository, so no repository config either
+        hardened = any(
+            isinstance(e, ast.Starred)
+            and isinstance(e.value, ast.Name)
+            and e.value.id == "GIT_HARDENING_ARGS"
+            for e in argv.elts
+        )
+        found.append((node.lineno, hardened, "env" in {kw.arg for kw in node.keywords}))
+    return found
+
+
+def test_every_git_spawn_in_the_package_is_hardened():
+    """#455: git honours the target repository's own .git/config, so a
+    `core.fsmonitor` there runs on `ls-files`/`check-ignore`. Every git argv
+    must carry GIT_HARDENING_ARGS and an explicit (cleaned) env."""
+    package = REPO_ROOT / "repo2graph"
+    offenders = []
+    total = 0
+    for path in sorted(package.rglob("*.py")):
+        for lineno, hardened, has_env in _git_spawn_calls(path):
+            total += 1
+            if not (hardened and has_env):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert total >= 5, total
     assert offenders == [], offenders
 
 
@@ -1226,3 +1285,18 @@ def test_no_agent_loop_residue_in_tests():
                 if pat.search(line):
                     offenders.append(f"{path.name}:{lineno} [{desc}]: {line.strip()}")
     assert offenders == [], "Found agent-loop residue in tests:\n" + "\n".join(offenders)
+
+
+def test_human_messages_go_through_one_helper():
+    """#461 #43: warnings were written four ways (print, stderr.write, logging,
+    emit). Sentences for a person now go through `events.diagnostic`; structured
+    records through `events.emit`. Only events.py touches stderr directly."""
+    pattern = re.compile(r"sys\.stderr\.write\(|file=sys\.stderr|\blogging\.(warning|info|error)\(")
+    offenders = []
+    for path in sorted((REPO_ROOT / "repo2graph").rglob("*.py")):
+        if path.name == "events.py":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf8").splitlines(), 1):
+            if pattern.search(line) and not line.lstrip().startswith("#"):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert offenders == [], offenders

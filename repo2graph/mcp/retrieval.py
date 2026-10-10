@@ -28,6 +28,7 @@ from .guardrails import (
     MCP_MAX_K,
     MCP_MAX_NEIGHBOURS,
     MCP_MAX_NODE_ID_CHARS,
+    MCP_MAX_PAGED_NEIGHBOURS,
     MCP_MAX_QUERY_CHARS,
     MCP_MAX_READ_CHARS,
     MCP_MAX_READ_CONTEXT,
@@ -39,7 +40,17 @@ from .guardrails import (
     _int,
     _str,
 )
+from .indexes import SECRET_RULES
 from .nodes import _edge_note, _label, _staleness_note
+from .pagination import (
+    CURSOR_RESERVE_TOKENS,
+    CursorError,
+    args_digest,
+    decode_cursor,
+    encode_cursor,
+    index_identity,
+    with_next_cursor,
+)
 from .schemas import ToolError
 
 
@@ -56,14 +67,31 @@ def tool_repo_search(
     budget_tokens: Any = None,
     neighbours: Any = "full",
     max_neighbours: Any = None,
+    cursor: Any = None,
 ) -> str:
-    """Cited markdown for `query`, bounded by budget_tokens."""
+    """Cited markdown for `query`, bounded by budget_tokens.
+
+    A `cursor` (even "") opts into paging: each page holds the next `k` seeds
+    and, while more remain, ends with a `next_cursor:` line. None is unpaged.
+    """
     query = _str(query, MCP_MAX_QUERY_CHARS)
     if not query.strip():
         return ToolError(
             "repo_search needs a non-empty `query`: a question, search terms or a "
             "symbol name (e.g. 'pack_context' or 'how does export work')."
         )
+    paged = cursor is not None
+    offset = 0
+    digest = identity = ""
+    if paged:
+        digest = args_digest(
+            "repo_search", {"query": query, "hops": _clamp(hops, 1, 0, MCP_MAX_HOPS)}
+        )
+        identity = index_identity(index)
+        try:
+            offset = decode_cursor(cursor, "repo_search", digest, identity)
+        except CursorError as exc:
+            return ToolError(str(exc))
     note = _defaulted_notes(
         k=(k, 8), hops=(hops, 1), budget_tokens=(budget_tokens, MCP_BUDGET_TOKENS)
     )
@@ -75,6 +103,10 @@ def tool_repo_search(
         budget = MCP_BUDGET_TOKENS
     budget = max(1, min(budget, MCP_MAX_BUDGET_TOKENS))
     room = max(1, budget - (len(note) + 3) // 4)
+    if paged:
+        # The continuation line is part of the page, so it is paid for out of
+        # the same budget rather than appended on top of it.
+        room = max(1, room - CURSOR_RESERVE_TOKENS)
     nbr_mode = _str(neighbours, 10).lower()
     if nbr_mode not in ("full", "cite"):
         nbr_mode = "full"
@@ -83,27 +115,62 @@ def tool_repo_search(
         if max_neighbours is not None
         else None
     )
+    # Passed only when paging, so the unpaged call stays exactly as it was.
+    paging: dict[str, Any] = {"seed_offset": offset} if paged else {}
     pack = index.pack_context(
         query,
         k=_clamp(k, 8, 1, MCP_MAX_K),
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         budget_tokens=room,
         exclude_secrets=True,
+        extra_secret_keywords=SECRET_RULES["keywords"] or None,
+        extra_secret_dirs=SECRET_RULES["dirs"] or None,
         neighbours=nbr_mode,
         max_neighbours=max_nbrs,
+        **paging,
     )
     text: str = str(pack.get("markdown") or "")
     if count_tokens(text) > room:
         text = _fit_lines(text, room, count_tokens)
     if not text.strip():
-        return note + EMPTY_RESULT.format(budget=budget, ceiling=MCP_MAX_BUDGET_TOKENS)
-    return note + text
+        text = EMPTY_RESULT.format(budget=budget, ceiling=MCP_MAX_BUDGET_TOKENS)
+    if not paged:
+        return note + text
+    if pack.get("skipped_seeds"):
+        note += (
+            "_note: a result larger than this page's budget was skipped; "
+            "raise budget_tokens to see it._\n\n"
+        )
+    next_offset = pack.get("next_seed_offset")
+    next_cursor = (
+        encode_cursor("repo_search", digest, next_offset, identity)
+        if next_offset is not None
+        else None
+    )
+    return with_next_cursor(note + text, next_cursor)
+
+
+def _min_confidence(value: Any) -> float:
+    """A 0..1 confidence floor from a client argument; anything else means 0.0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    conf = float(value)
+    return min(max(conf, 0.0), 1.0) if conf == conf else 0.0
 
 
 def tool_repo_neighbours(
-    index: Index, node_id: str, hops: Any = 1, limit: Any = MCP_NEIGHBOUR_LIMIT
+    index: Index,
+    node_id: str,
+    hops: Any = 1,
+    limit: Any = MCP_NEIGHBOUR_LIMIT,
+    min_confidence: Any = 0.0,
+    cursor: Any = None,
 ) -> str:
-    """Graph traversal from `node_id`."""
+    """Graph traversal from `node_id`, then the TESTS edges on `node_id` itself.
+
+    A `cursor` (even "") opts into paging: `limit` rows per page, with a
+    `next_cursor:` line while more remain. None is the unpaged answer.
+    """
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     if not node_id.strip():
         return ToolError(
@@ -118,6 +185,11 @@ def tool_repo_neighbours(
         )
     note = _defaulted_notes(hops=(hops, 1), limit=(limit, MCP_NEIGHBOUR_LIMIT))
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
+    floor = _min_confidence(min_confidence)
+    if cursor is not None:
+        return _paged_neighbours(
+            index, node_id, _clamp(hops, 1, 0, MCP_MAX_HOPS), limit, cursor, note
+        )
     lines = [f"neighbours of {_label(index, node_id)}:"]
     truncated = False
     for dst, etype, direction, src in index.expand(
@@ -125,7 +197,7 @@ def tool_repo_neighbours(
         hops=_clamp(hops, 1, 0, MCP_MAX_HOPS),
         edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
         edge_dirs=ALL_EDGE_DIRS,
-        min_confidence=0.0,
+        min_confidence=floor,
     ):
         target = index.nodes.get(dst, {})
         if index._is_secret_path(target.get("path") or ""):
@@ -136,11 +208,102 @@ def tool_repo_neighbours(
         lines.append(
             f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
         )
+    # TESTS is listed from the node's own adjacency rather than followed by
+    # `expand`: expansion visits each neighbour once, so a test that also
+    # calls the symbol directly would surface only as `CALLS in`, and the
+    # per-hop cap would hide the rest behind the structural edges listed first.
+    if not truncated:
+        for dst, direction, conf in _tests_of(index, node_id, floor):
+            if index._is_secret_path(index.nodes.get(dst, {}).get("path") or ""):
+                continue
+            if len(lines) - 1 >= limit:
+                truncated = True
+                break
+            lines.append(
+                f"- TESTS {direction}: {_label(index, dst)}"
+                f"{_edge_note(index, node_id, dst, 'TESTS')}"
+            )
     if truncated:
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
         lines.append("- (none)")
     return note + "\n".join(lines)
+
+
+def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, float]]:
+    """`node_id`'s TESTS edges at or above `floor`, most confident first."""
+    rows = []
+    for dst, etype, direction, edge in index.adj.get(node_id, ()):
+        if etype != "TESTS":
+            continue
+        try:
+            conf = float(edge.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            conf = 0.0
+        if conf >= floor:
+            rows.append((dst, direction, conf))
+    rows.sort(key=lambda r: (-r[2], r[0]))
+    return rows
+
+
+def _paged_neighbours(
+    index: Index, node_id: str, hops: int, limit: int, cursor: Any, note: str
+) -> str:
+    """One page of `repo_neighbours`: rows [offset, offset + limit) of the full walk.
+
+    The unpaged answer samples at most six edges per node per hop, which is
+    why a symbol with sixty callers showed six. A page has to be a window on
+    one complete, deterministic order or later pages could not reach the rest,
+    so this walks every edge of each hop, bounded in total instead.
+    """
+    digest = args_digest("repo_neighbours", {"node_id": node_id, "hops": hops})
+    identity = index_identity(index)
+    try:
+        offset = decode_cursor(cursor, "repo_neighbours", digest, identity)
+    except CursorError as exc:
+        return ToolError(str(exc))
+    walk = index.expand(
+        [node_id],
+        hops=hops,
+        edge_types=frozenset(DEFAULT_EDGE_TYPES | {"CONTAINS", "CO_CHANGE"}),
+        edge_dirs=ALL_EDGE_DIRS,
+        min_confidence=0.0,
+        per_hop=MCP_MAX_PAGED_NEIGHBOURS,
+        max_results=MCP_MAX_PAGED_NEIGHBOURS + 1,
+    )
+    capped = len(walk) > MCP_MAX_PAGED_NEIGHBOURS
+    rows = [
+        row
+        for row in walk[:MCP_MAX_PAGED_NEIGHBOURS]
+        if not index._is_secret_path(index.nodes.get(row[0], {}).get("path") or "")
+    ]
+    # Rows stop at `limit` or at the token ceiling, whichever comes first, so
+    # paging never yields a response larger than an unpaged one may be. The
+    # header, the cap note and the cursor line are paid for up front.
+    label = _label(index, node_id)
+    room = MCP_MAX_BUDGET_TOKENS - CURSOR_RESERVE_TOKENS - count_tokens(note) - 2
+    room -= count_tokens(f"neighbours of {label} (rows {offset + 1}-{offset + limit}):")
+    room -= count_tokens(f"... (paging stops at {MCP_MAX_PAGED_NEIGHBOURS} neighbours)")
+    body: list[str] = []
+    end = offset
+    for dst, etype, direction, src in rows[offset:]:
+        if len(body) >= limit:
+            break
+        line = f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
+        if body and count_tokens("\n".join([*body, line])) > room:
+            break
+        body.append(line)
+        end += 1
+    header = (
+        f"neighbours of {label} (rows {offset + 1}-{end}):" if body else f"neighbours of {label}:"
+    )
+    lines = [header, *body] if body else [header, "- (none)"]
+    if capped and end >= len(rows):
+        lines.append(f"... (paging stops at {MCP_MAX_PAGED_NEIGHBOURS} neighbours)")
+    next_cursor = (
+        encode_cursor("repo_neighbours", digest, end, identity) if end < len(rows) else None
+    )
+    return with_next_cursor(note + "\n".join(lines), next_cursor)
 
 
 _AUX_CACHE: weakref.WeakKeyDictionary[Index, dict[str, Any]] = weakref.WeakKeyDictionary()

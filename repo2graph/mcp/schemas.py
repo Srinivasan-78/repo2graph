@@ -82,15 +82,18 @@ TOOL_DESCRIPTIONS = {
         "or finding error strings. When NOT to use: do not use when you already have a "
         "symbol node_id and want callers/callees (use repo_neighbours); do not use for broad "
         "repo layout (use repo_map). Output: markdown citation blocks `[cite: path:start-end]` "
-        "bounded by budget_tokens."
+        'bounded by budget_tokens. To page, pass cursor="" then each `next_cursor:` token '
+        "from the reply's last line."
     ),
     "repo_neighbours": (
         "Traverse code graph relationships from a known symbol or file node_id (callers, "
         "callees, base classes, definitions). Read-only, deterministic traversal, no side effects. "
         "When to use: use with a specific node_id (e.g. from repo_search citations) to inspect "
-        "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
+        "callers (CALLS in), callees (CALLS out), inheritance, definitions, or the tests that "
+        "reach a symbol through calls (TESTS in). When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
-        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`. "
+        'To page past limit, pass cursor="" then each `next_cursor:` token from the reply\'s last line.'
     ),
     "repo_find_symbol": (
         "Look up a symbol or file's node_id by name, for feeding into repo_neighbours, "
@@ -105,8 +108,8 @@ TOOL_DESCRIPTIONS = {
     ),
     "repo_read": (
         "Read a widened window of source text around a citation, from the indexed chunks "
-        "rather than the filesystem -- works over HTTP, from a different machine, with no "
-        "shared filesystem, because chunks have already passed secret-path exclusion and "
+        "rather than the filesystem -- works with no shared filesystem between client and "
+        "server, because chunks have already passed secret-path exclusion and "
         "redaction. Read-only, deterministic, zero side effects. When to use: use after "
         "repo_search or repo_neighbours to see more lines around a `[cite: path:start-end]` "
         "citation, with optional `context` lines each side. When NOT to use: do not use for a "
@@ -153,6 +156,13 @@ TOOL_DESCRIPTIONS = {
 
 BUILD_CAPABLE_TOOLS = frozenset(TOOL_DESCRIPTIONS) - {"repo_build_status"}
 
+# Paging is opt-in (#389): omitting `cursor` returns exactly the unpaged answer.
+_CURSOR_DESCRIPTION = (
+    'Opt-in paging. Omit for one unpaged answer. Pass "" for the first page of {page}; '
+    "while more remain the reply ends with a `next_cursor: <token>` line (also "
+    "_meta.nextCursor). Pass that token back, other arguments unchanged, for the next page."
+)
+
 TOOL_SCHEMAS = {
     "repo_map": {"type": "object", "properties": {}},
     "repo_search": {
@@ -186,6 +196,10 @@ TOOL_SCHEMAS = {
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
             },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="k seed results"),
+            },
             # `neighbours` and `max_neighbours` were advertised here and are
             # gone deliberately. Citation mode measured worse than the default
             # on 40 held-out lexical and 40 held-out structural questions
@@ -218,6 +232,17 @@ TOOL_SCHEMAS = {
                     f"Maximum neighbor rows to return (default {MCP_NEIGHBOUR_LIMIT}, "
                     f"min 1, max {MCP_MAX_NEIGHBOURS})."
                 ),
+            },
+            "min_confidence": {
+                "type": "number",
+                "description": (
+                    "Drop CALLS and TESTS edges below this confidence, 0..1 (default 0.0: "
+                    "keep everything, marking ambiguous edges). 1.0 keeps only unambiguous ones."
+                ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="limit rows"),
             },
         },
         "required": ["node_id"],

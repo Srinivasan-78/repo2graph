@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from .events import diagnostic
 from . import __version__
 from .chunks import iter_chunks
 
@@ -18,7 +19,7 @@ from .chunks import iter_chunks
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
 from .export import (
     dump_all,
-    load_parse_cache,
+    load_parse_cache_report,
     make_path,
     path as artifact_path,
     register_written,
@@ -109,12 +110,60 @@ def _effective_exclude(args) -> list[str] | None:
     return explicit + globs_for(groups)
 
 
+def _explicit_dests(root, sub, argv) -> set[str]:
+    """The dests the user actually typed on `sub`'s command line.
+
+    A config file fills in flags that were not given, and a parsed namespace
+    cannot tell `--git-history 0` typed on purpose from the default 0. Parse
+    once more with every default suppressed: only typed flags land in it.
+    """
+    saved = [(a, a.default) for a in sub._actions]
+    try:
+        for a, _ in saved:
+            a.default = argparse.SUPPRESS
+        ns, _ = root.parse_known_args(argv)
+    finally:
+        for a, d in saved:
+            a.default = d
+    return set(vars(ns))
+
+
+def _with_repo_config(args, repo):
+    """`args` with the repo's config file filling every flag not typed (#391).
+
+    Returns `(merged, applied)`: a copy of `args`, and a `RepoConfig` holding
+    only the settings that took effect, for attribution. With no config file
+    the original `args` comes back untouched.
+    """
+    from .config import ConfigError, RepoConfig, load
+
+    try:
+        cfg = load(repo)
+    except ConfigError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    applied = RepoConfig()
+    if not cfg:
+        return args, applied
+    # Set by main(). A namespace built by hand has no record of what was typed,
+    # so every attribute it carries counts as given.
+    explicit = getattr(args, "explicit_flags", None)
+    merged = argparse.Namespace(**vars(args))
+    for dest, value in cfg.values.items():
+        given = dest in explicit if explicit is not None else hasattr(args, dest)
+        if not given:
+            setattr(merged, dest, value)
+            applied.values[dest] = value
+            applied.sources[dest] = cfg.sources[dest]
+    return merged, applied
+
+
 def cmd_build(args):
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
+    args, _ = _with_repo_config(args, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # Resolved before validate_outdir and the build lock: `--exclude-group
@@ -144,8 +193,8 @@ def cmd_build(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -167,7 +216,15 @@ def cmd_build(args):
         parse_policy=getattr(args, "parse_policy", "best-effort"),
         output_dir=str(outdir),
     )
-    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+    cache = None
+    cache_invalidated = None
+    if getattr(args, "incremental", False):
+        cache, cache_invalidated = load_parse_cache_report(outdir, config)
+        if cache_invalidated:
+            diagnostic(
+                f"note: --incremental is doing a full build; the parse cache was "
+                f"discarded: {cache_invalidated}"
+            )
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
     # them below -- CHANGELOG.md (written after dump_all, when "overview" is
@@ -204,6 +261,8 @@ def cmd_build(args):
                 max_memory_mb=getattr(args, "max_memory_mb", 0.0),
                 max_build_seconds=getattr(args, "max_build_seconds", 0.0),
             )
+            if cache_invalidated:
+                g.stats["parse_cache_invalidated"] = cache_invalidated  # type: ignore[assignment]
             chunks = (
                 None
                 if args.no_chunks
@@ -257,8 +316,8 @@ def cmd_github(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -504,9 +563,9 @@ def _validate_auto_build_out(out, repo_root) -> None:
 def _warn_exclude_secrets_deprecated(args) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
-        sys.stderr.write(
+        diagnostic(
             "warning: --exclude-secrets is deprecated and has no effect; secret-looking "
-            "files are excluded by default (pass --include-secrets to include them)\n"
+            "files are excluded by default (pass --include-secrets to include them)"
         )
 
 
@@ -604,16 +663,21 @@ def _rag_index_dir(args) -> Path:
     if artifact_path(tpath, "manifest.json").exists():
         return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
+        from .config import build_options
         from .parse import BuildConfig
 
-        cfg = BuildConfig(
-            include_secrets=getattr(args, "include_secrets", False),
-            secret_policy=getattr(args, "secret_policy", "redact-match"),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
-            output_dir=str(out),
+        # rag's own secret flags win over the repo's config file, which fills
+        # in the rest of what `repo2graph build` there would have used.
+        bargs, applied = _with_repo_config(args, tpath)
+        config_kw, build_kw = build_options(applied.values)
+        config_kw.update(
+            include_secrets=getattr(bargs, "include_secrets", False),
+            secret_policy=getattr(bargs, "secret_policy", "redact-match"),
+            extra_secret_keywords=getattr(bargs, "extra_secret_keywords", None) or [],
+            extra_secret_dirs=getattr(bargs, "extra_secret_dirs", None) or [],
         )
-        g = build(tpath, config=cfg)
+        cfg = BuildConfig(output_dir=str(out), **config_kw)
+        g = build(tpath, config=cfg, **build_kw)
         # `build` validates its own `-o` (cli.py:130); this auto-build path did
         # not, so an implicit build could stage an index over any directory the caller
         # named -- and `dump_all`'s directory swap renames the target aside and
@@ -628,6 +692,17 @@ def _rag_index_dir(args) -> Path:
         parse_spec(target)
     except ValueError:
         raise SystemExit(f"cannot resolve target {target!r}: {RAG_TARGET_HELP}") from None
+    # `src/app` is a valid owner/repo spelling too. A target written as a path,
+    # or whose first component exists here, is a mistyped local path: stop
+    # rather than send a clone to github.com with the user's token.
+    if "://" not in target and not target.startswith("git@"):
+        head = target.split("/", 1)[0]
+        if target.startswith((".", "/", "~", "\\")) or "\\" in target or Path(head).exists():
+            raise SystemExit(
+                f"{target!r} is not a directory or an index here; refusing to treat it "
+                "as a GitHub repository. For a remote, use https://github.com/owner/repo."
+            )
+    diagnostic(f"note: {target!r} is not a local path; fetching it from GitHub")
     index_github(target, out, formats="jsonl,overview")
     return out
 
@@ -665,9 +740,11 @@ def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
         # can branch on it even when the index has no vectors yet.
         "rag_extra_installed": _rag_extra_installed(),
     }
+    report["vectors_unavailable"] = getattr(idx, "vectors_unavailable", None)
     if not idx.vectors:
+        why = f" ({report['vectors_unavailable']})" if report["vectors_unavailable"] else ""
         return report, (
-            f"no vectors in the index at {out}: dense retrieval is not "
+            f"no vectors in the index at {out}{why}: dense retrieval is not "
             f"available. Run `repo2graph embed -o {out}` to build them."
         )
     meta = idx.vector_meta or {}
@@ -769,6 +846,8 @@ def cmd_rag(args):
         budget_tokens=getattr(args, "budget_tokens", None),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        expansion=getattr(args, "expansion", None),
+        edge_types=getattr(args, "edge_types", None) or None,
     )
     if args.answer:
         from .answer import stream_answer
@@ -891,6 +970,7 @@ def cmd_explain_path(args):
     if not repo_path.is_dir():
         raise SystemExit(f"error: repository directory does not exist: {repo_path}")
 
+    args, applied = _with_repo_config(args, repo_path)
     config = BuildConfig(
         include_vendor=getattr(args, "include_vendor", False),
         include_secrets=getattr(args, "include_secrets", False),
@@ -899,12 +979,15 @@ def cmd_explain_path(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
     )
+    if "max_file_mb" in applied.values:
+        config.max_file_bytes = int(applied.values["max_file_mb"] * 1_000_000)
     res = explain_path(
         repo_path,
         args.path,
         config=config,
         include_globs=args.include or None,
         exclude_globs=_effective_exclude(args),
+        repo_config=applied,
     )
     if res["rule"] not in ("outside_root", "not_found"):
         index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
@@ -1078,24 +1161,8 @@ def cmd_explain(args) -> int:
         _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
         return 0
     else:
-        print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
+        diagnostic(f"repo2graph: error: unknown explain command '{subcmd}'")
         return 1
-
-
-def _git_ref_exists(repo: Path, ref: str) -> bool:
-    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see CONTRIBUTING.md)."""
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return True  # cannot tell: do not claim it is missing
-    return proc.returncode == 0
 
 
 def _nonneg(value: str) -> int:
@@ -1151,6 +1218,18 @@ def _unit_float(value: str) -> float:
         raise argparse.ArgumentTypeError(f"expected a finite number in [0.0, 1.0], got {value!r}")
     if not 0.0 <= f <= 1.0:
         raise argparse.ArgumentTypeError(f"must be between 0.0 and 1.0, got {f}")
+    return f
+
+
+def _nonneg_float(value: str) -> float:
+    """argparse type: a finite float >= 0. Same reasoning as `_unit_float`:
+    `elapsed > nan` is always False, so a nan budget silently disables it."""
+    try:
+        f = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
+    if not math.isfinite(f) or f < 0:
+        raise argparse.ArgumentTypeError(f"expected a finite number >= 0, got {value!r}")
     return f
 
 
@@ -1318,13 +1397,13 @@ def main(argv=None):
     )
     common.add_argument(
         "--max-memory-mb",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum estimated RAM usage in MB before triggering limit policy (0 = no limit)",
     )
     common.add_argument(
         "--max-build-seconds",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum wall-clock build time in seconds before triggering limit policy (0 = no limit)",
     )
@@ -1378,28 +1457,22 @@ def main(argv=None):
         help="additional directory name to exclude as secret path (repeatable)",
     )
 
-    b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
-    b.add_argument("repo")
-    b.add_argument("--no-chunks", action="store_true")
-    b.add_argument(
-        "--max-call-candidates",
-        type=_posint,
-        default=5,
-        help="maximum number of candidates to keep for ambiguous calls",
-    )
-    b.add_argument(
+    # Flags for the two commands that write an index from source. Defined once:
+    # `build` and `github` carried eight identical copies of each (#47).
+    build_out = argparse.ArgumentParser(add_help=False)
+    build_out.add_argument(
         "--max-file-mb",
         type=_max_file_mb,
         default=1.5,
         help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--include-vendor",
         action="store_true",
         default=False,
         help="index files in vendor directories (default: off)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--exclude-dir",
         action="append",
         default=[],
@@ -1407,11 +1480,50 @@ def main(argv=None):
         metavar="NAME",
         help="additional directory name to exclude (repeatable)",
     )
-    b.add_argument(
+    build_out.add_argument(
         "--chunk-large-files",
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
+    build_out.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    build_out.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    build_out.add_argument(
+        "--lock-timeout",
+        type=_nonneg_float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    build_out.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
+
+    b = sub.add_parser(
+        "build", parents=[common, build_out], help="parse a repo into a graph + RAG chunks"
+    )
+    b.add_argument("repo")
+    b.add_argument("--no-chunks", action="store_true")
+    b.add_argument(
+        "--max-call-candidates",
+        type=_posint,
+        default=5,
+        help="maximum number of candidates to keep for ambiguous calls",
     )
     b.add_argument(
         "--incremental",
@@ -1422,39 +1534,12 @@ def main(argv=None):
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
     )
-    b.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    b.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    b.add_argument(
-        "--lock-timeout",
-        type=float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    b.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
-    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
         "github",
         aliases=["gh"],
-        parents=[common],
+        parents=[common, build_out],
         help="clone a GitHub repo (owner/repo or URL) and index it",
     )
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
@@ -1478,59 +1563,6 @@ def main(argv=None):
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
     )
-    gh.add_argument(
-        "--max-file-mb",
-        type=_max_file_mb,
-        default=1.5,
-        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
-    )
-    gh.add_argument(
-        "--include-vendor",
-        action="store_true",
-        default=False,
-        help="index files in vendor directories (default: off)",
-    )
-    gh.add_argument(
-        "--exclude-dir",
-        action="append",
-        default=[],
-        dest="extra_exclude_dirs",
-        metavar="NAME",
-        help="additional directory name to exclude (repeatable)",
-    )
-    gh.add_argument(
-        "--chunk-large-files",
-        action="store_true",
-        default=False,
-        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
-    )
-    gh.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    gh.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    gh.add_argument(
-        "--lock-timeout",
-        type=float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    gh.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
-    )
     gh.set_defaults(func=cmd_github)
 
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
@@ -1538,7 +1570,20 @@ def main(argv=None):
     q.add_argument("-o", "--out", default=".r2g")
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
-    q.add_argument("--budget", type=_nonneg, default=24000)
+    q.add_argument(
+        "--budget",
+        type=_nonneg,
+        default=24000,
+        help="characters of chunk text to retrieve (0 = unlimited). Caps source "
+        "text only, not rendered output",
+    )
+    q.add_argument(
+        "--retrieve-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
+    )
     q.add_argument(
         "--min-conf",
         type=_unit_float,
@@ -1599,13 +1644,27 @@ def main(argv=None):
         "--budget",
         type=_nonneg,
         default=24000,
-        help="character budget for the whole pack, map and headers included",
+        help="character budget for the whole pack, map and headers included (0 = unlimited)",
+    )
+    r.add_argument(
+        "--context-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
     )
     r.add_argument(
         "--budget-tokens",
         type=_nonneg,
         default=None,
-        help="token budget for the whole pack; replaces --budget when given",
+        help="estimated token budget for the whole pack; replaces --budget when given",
+    )
+    r.add_argument(
+        "--context-budget-tokens",
+        dest="budget_tokens",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget-tokens that names its stage and unit",
     )
     r.add_argument(
         "--min-conf",
@@ -1621,6 +1680,21 @@ def main(argv=None):
         help="alias of --min-conf",
     )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
+    r.add_argument(
+        "--expansion",
+        choices=("rag-default", "navigation", "impact-analysis", "strict"),
+        default=None,
+        help="which edges graph expansion follows (default: rag-default)",
+    )
+    r.add_argument(
+        "--edge-type",
+        action="append",
+        default=[],
+        dest="edge_types",
+        metavar="TYPE",
+        help="follow only this edge type (CALLS, IMPORTS, INHERITS, DEFINES, CO_CHANGE, TESTS); "
+        "repeatable, overrides the preset's types",
+    )
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
     r.add_argument(
         "--answer",
@@ -1949,6 +2023,11 @@ def main(argv=None):
 
     try:
         args = p.parse_args(argv)
+        # The commands that read the repo's config file need to know which
+        # flags were typed, so a file value never overrides one (#391).
+        config_aware = {"build": b, "rag": r, "explain-path": ep}
+        if getattr(args, "cmd", None) in config_aware:
+            args.explicit_flags = _explicit_dests(p, config_aware[args.cmd], argv)
         if getattr(args, "debug", False):
             os.environ["REPO2GRAPH_DEBUG"] = "1"
         if not hasattr(args, "func"):
@@ -1964,7 +2043,7 @@ def main(argv=None):
             pass
         return 0
     except _GraphLimitExceeded as exc:
-        print(f"repo2graph: error: {exc}", file=sys.stderr)
+        diagnostic(f"repo2graph: error: {exc}")
         return 1
 
 

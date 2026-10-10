@@ -916,3 +916,35 @@ def test_a_normal_vectors_pair_still_round_trips_under_the_real_limits(tmp_path)
 
     assert sorted(vectors) == ["a", "b"]
     assert meta["dim"] == 2
+
+
+def test_zero_width_rows_are_rejected_before_the_row_loop(tmp_path):
+    """#474: with cols == 0 the payload-size check needs zero bytes, so a
+    128-byte header claiming a trillion rows would pass it and spin the loop."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(10**12, 0))
+    with pytest.raises(ValueError, match="zero-width"):
+        embed._npy_read(target)
+
+
+def test_empty_matrix_still_reads(tmp_path):
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(0, 0))
+    assert embed._npy_read(target) == ([], 0)
+
+
+def test_a_dropped_vector_set_says_why(mini_index, use_stub_embedder, capsys):
+    """#456 P1: an oversized or corrupt vectors.npy used to vanish silently and
+    ranking fell back to BM25 with nothing reporting it."""
+    run_embed(mini_index, capsys)
+    npy, _ = vec_paths(mini_index)
+    npy.write_bytes(b"\x93NUMPY garbage")
+    idx = Index(mini_index)
+    assert idx.vectors is None
+    assert "could not be loaded" in (idx.vectors_unavailable or "")
+    ok, msg = idx.fuse_ok(StubEmbedder())
+    assert not ok and "could not be loaded" in msg

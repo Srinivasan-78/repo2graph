@@ -36,12 +36,17 @@ METHOD_TREE_SITTER = "tree-sitter"
 METHOD_NAME_RESOLVER = "name-resolver"
 METHOD_FILESYSTEM = "filesystem"
 METHOD_GIT_LOG = "git-log"
+# Derived from edges already in the graph rather than read from source or
+# history. `TESTS` is the one user: a path over CALLS edges, so its confidence
+# is the product of theirs and its evidence is the call site the path starts at.
+METHOD_CALL_GRAPH = "call-graph"
 
 METHODS: dict[str, str] = {
     METHOD_TREE_SITTER: "read directly from a tree-sitter parse tree",
     METHOD_NAME_RESOLVER: "a parsed name matched against the repository's definitions",
     METHOD_FILESYSTEM: "directory structure; no parsing involved",
     METHOD_GIT_LOG: "commit history; correlational, never causal",
+    METHOD_CALL_GRAPH: "derived from a path of CALLS edges; inherits their confidence",
 }
 
 STANDARD_FIELDS: tuple[str, ...] = ("src", "dst", "type", "method", "confidence", "evidence")

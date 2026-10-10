@@ -223,8 +223,8 @@ SECRET_KEY_RE = re.compile(
 )
 
 # Field names that match SECRET_KEY_RE by substring but describe a *shape*
-# rather than hold a credential -- `auth_modes` is ("none",)/("token",)/
-# ("oidc",) and `budget_tokens` is a count. Redacting them cost the audit log
+# rather than hold a credential -- `auth_modes` is a tuple of mode names and
+# `budget_tokens` is a count. Redacting them cost the audit log
 # the two fields an operator most wants when reading it back: which auth was
 # in force, and how large the request was.
 #
@@ -235,18 +235,6 @@ SECRET_KEY_RE = re.compile(
 # field's value is never sensitive. Note the values are not blindly trusted
 # either -- they still go through the shape, URL and path checks below.
 NON_SECRET_KEYS = frozenset({"auth_modes", "budget_tokens", "result_tokens", "max_tokens"})
-
-# Sensitive HTTP headers to redact in logs.
-SENSITIVE_HEADERS = frozenset(
-    {
-        "authorization",
-        "proxy-authorization",
-        "cookie",
-        "set-cookie",
-        "x-api-key",
-        "x-goog-api-key",
-    }
-)
 
 # Sensitive query parameters to redact in logged URLs.
 SENSITIVE_QUERY_PARAMS_RE = re.compile(
@@ -265,10 +253,8 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
 # literal that follows it, so an unbounded `*` has to backtrack the entire tail
 # at every one of the n/11 offsets where `-----BEGIN ` matches. A body of
 # repeated *incomplete* headers is therefore quadratic -- measured 1.1 s at
-# 107 KB and ~90 s at 1 MB, which `MAX_BODY_BYTES` admits in a single request.
-# That is reachable pre-authentication: `http_server._reject` calls `emit()`
-# unconditionally, so sanitising a rejected request's own field burns the CPU
-# before the 401 is written, and `AuditConfig(level="none")` does not avoid it.
+# 107 KB and ~90 s at 1 MB. Every indexed file and every sanitised event field
+# goes through this pattern, so the cost is paid on attacker-supplied text.
 # With `{0,40}` the engine tries at most 41 lengths per offset, which is linear
 # (966 KB in 0.0084 s) and still admits every real label -- `RSA`, `DSA`, `EC`,
 # `OPENSSH`, `ENCRYPTED`, `ENCRYPTED RSA`, and the bare `PRIVATE KEY`.
@@ -361,6 +347,50 @@ CONTENT_SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     ("basic_auth_url", re.compile(r"\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")),
 )
+
+
+# `.docker/config.json` and a decoded `.dockerconfigjson` store each registry
+# login as `"auth": "<base64 user:password>"`. The key is too short and too
+# common to add to the secret-word rules, but the exact `"auth"` key with a
+# base64 value is the Docker format, so it gets a value-only span of its own.
+DOCKER_AUTH_RE = re.compile(r"\"auth\"\s*:\s*\"(?P<value>[A-Za-z0-9+/]{12,1024}={0,2})\"")
+
+# A Kubernetes `Secret` manifest holds its credentials base64-wrapped under
+# `data:`, keyed by arbitrary names (`username`, `tls.crt`, `config`) that no
+# secret-word rule can recognise. Inside such a manifest every value of the
+# `data:` mapping is a credential by declaration, so the manifest kind is the
+# signal rather than the key.
+_K8S_SECRET_KIND_RE = re.compile(r"(?m)^kind:[ \t]*[\"']?Secret[\"']?[ \t]*$")
+_K8S_DATA_RE = re.compile(r"(?m)^(?P<indent>[ \t]*)(?:data|stringData):[ \t]*$")
+_K8S_ENTRY_RE = re.compile(
+    r"[ \t]+[\"']?[-\w.]{1,253}[\"']?:[ \t]*(?P<value>\S{1,65536})[ \t]*\r?$"
+)
+
+
+def _k8s_secret_spans(text: str) -> list[tuple[int, int]]:
+    """Value spans of every `data:`/`stringData:` entry in a k8s Secret manifest.
+
+    A multi-document file holding any Secret is treated whole, so a ConfigMap
+    beside it is redacted too; over-redaction is the safe side of that line.
+    """
+    if not _K8S_SECRET_KIND_RE.search(text):
+        return []
+    spans: list[tuple[int, int]] = []
+    for block in _K8S_DATA_RE.finditer(text):
+        indent = len(block.group("indent"))
+        pos = block.end() + 1
+        while pos < len(text):
+            eol = text.find("\n", pos)
+            eol = len(text) if eol < 0 else eol
+            line = text[pos:eol]
+            lead = len(line) - len(line.lstrip(" \t"))
+            if line.strip() and lead <= indent:
+                break
+            m = _K8S_ENTRY_RE.match(line)
+            if m:
+                spans.append((pos + m.start("value"), pos + m.end("value")))
+            pos = eol + 1
+    return spans
 
 
 def _pem_spans(text: str) -> list[tuple[int, int]]:
@@ -519,6 +549,53 @@ def _json_secret_spans(text: str) -> list[tuple[int, int]]:
         if not _NON_SECRET_SUFFIX_RE.match(m.group("suffix"))
         and _json_secret_value_ok(m.group("value"))
     ]
+
+
+# Bidirectional overrides/isolates and zero-width characters: invisible in a
+# rendered view, so text carrying them can read differently to a person than to
+# a model or a compiler (CVE-2021-42574, "Trojan Source"). U+FEFF is included
+# because past offset 0 it is a zero-width no-break space, not a BOM.
+HIDDEN_UNICODE_RE = re.compile("[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
+# Everything that can break a line or a header for some reader: C0 controls
+# (tab included), DEL, C1 controls, and the Unicode line/paragraph separators.
+_CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+
+#: Cap on a symbol's name and qualname. Real identifiers are far shorter; the
+#: cap exists so a hostile repository cannot bloat every artifact that repeats
+#: the name (nodes, edges, repo map) or make an index too big to load.
+MAX_SYMBOL_NAME_CHARS = 256
+MAX_QUALNAME_CHARS = 1024
+
+
+def _escape_char(m: re.Match[str]) -> str:
+    return f"\\u{ord(m.group(0)):04x}"
+
+
+def has_unsafe_path_chars(path: str) -> bool:
+    """True if `path` holds a control, line-separator or hidden character.
+
+    Such a path can forge structure wherever it is printed -- a newline in a
+    filename starts a new `[cite: ...]` header in a pack -- so discovery drops it.
+    """
+    return bool(_CONTROL_RE.search(path) or HIDDEN_UNICODE_RE.search(path))
+
+
+def clean_identifier(name: str, cap: int = MAX_SYMBOL_NAME_CHARS) -> str:
+    """`name` with control and hidden characters spelled out as `\\uXXXX`, capped."""
+    name = _CONTROL_RE.sub(_escape_char, name)
+    name = HIDDEN_UNICODE_RE.sub(_escape_char, name)
+    return name[:cap]
+
+
+def count_hidden_unicode(text: str) -> int:
+    return len(HIDDEN_UNICODE_RE.findall(text))
+
+
+def escape_hidden_unicode(text: str) -> str:
+    """For text already inside a JSON string literal: `\\uXXXX` escapes that
+    decode back to the same character, so the data is unchanged but the raw
+    file no longer carries an invisible override."""
+    return HIDDEN_UNICODE_RE.sub(_escape_char, text)
 
 
 # Sanitization bounds
@@ -692,6 +769,11 @@ def scan_content_secrets(text: str) -> list[tuple[str, int, int]]:
 
     # 1b. PEM blocks, paired linearly rather than by a lazy scan per BEGIN.
     findings.extend(("private_key", start, end) for start, end in _pem_spans(text))
+
+    # 1c. Docker registry logins and Kubernetes Secret payloads.
+    for m in DOCKER_AUTH_RE.finditer(text):
+        findings.append(("docker_registry_auth", m.start("value"), m.end("value")))
+    findings.extend(("k8s_secret_data", start, end) for start, end in _k8s_secret_spans(text))
 
     # 2. Database URLs with credentials
     for m in DB_URL_RE.finditer(text):
@@ -874,19 +956,6 @@ def sanitize_url(url: str) -> str:
     )
     # Redact sensitive query parameters
     return SENSITIVE_QUERY_PARAMS_RE.sub(r"\g<1>[redacted:query_param]", s)
-
-
-def sanitize_headers(headers: dict[str, Any]) -> dict[str, Any]:
-    """Redact sensitive headers such as Authorization and Cookie."""
-    sanitized = {}
-    for k, v in headers.items():
-        k_lower = str(k).lower()
-        if k_lower in SENSITIVE_HEADERS or SECRET_KEY_RE.search(str(k)):
-            val_str = str(v)
-            sanitized[k] = redact(val_str, f"header:{k_lower}")
-        else:
-            sanitized[k] = sanitize_value(str(k), v)
-    return sanitized
 
 
 def sanitize_value(
