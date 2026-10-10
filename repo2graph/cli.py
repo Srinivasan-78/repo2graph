@@ -901,8 +901,9 @@ def cmd_rag(args):
     if args.answer:
         from .answer import stream_answer
 
-        stream_answer(pack, model=args.model, provider=args.provider)
-        return 0
+        text = stream_answer(pack, model=args.model, provider=args.provider)
+        # 3: an answer was printed but a size or time bound cut it short.
+        return 0 if getattr(text, "complete", True) else 3
     if args.format == "json":
         _emit(json.dumps(pack, indent=2))
     else:

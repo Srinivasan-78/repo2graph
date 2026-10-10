@@ -508,11 +508,17 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   `.env`, `.pem`, `.key`, keystores and friends are excluded. This is a guard, not
   a guarantee: a secret pasted into an ordinary `.py` file is still ordinary
   source and still goes.
-- **Pick the provider deliberately.** With no `--provider`, the first of
-  `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST` that is
-  set wins. If several are set you may not be sending where you think.
-  `--provider ollama` with `OLLAMA_HOST` pointed at your own machine keeps
-  everything local.
+- **Pick the provider deliberately.** With no `--provider`, the one of
+  `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `OLLAMA_HOST` that is set is used. If several are set it stops and asks for
+  `--provider` rather than guess where your code goes. `--provider ollama` with
+  `OLLAMA_HOST` pointed at your own machine keeps everything local; a plain-HTTP
+  `OLLAMA_HOST` on another host gets a warning.
+- **Every request is bounded.** 30 s to connect, 300 s between bytes, 600 s and
+  8 MiB for the whole stream, 200,000 characters of answer text. A bound that cuts
+  an answer short says so on stderr and makes `rag` exit with status 3, so a
+  script cannot mistake a partial answer for a whole one. Provider error bodies
+  are echoed with the key and anything secret-shaped redacted.
 - **Zero SDKs.** All four providers are spoken to with the standard library's
   `urllib`. Nothing extra to install, and nothing extra with an opinion about your
   credentials.
