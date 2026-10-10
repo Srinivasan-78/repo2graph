@@ -653,6 +653,11 @@ def test_build_writes_all_artifacts(tmp_path, sample_repo, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["chunks"] > 0
     assert json.loads((artifact_path(out, "stats.json")).read_text())["files"] > 0
+    perf = report["performance"]
+    assert perf["build_seconds"] >= 0 and perf["write_seconds"] >= 0
+    assert perf["output_bytes"] > 0 and perf["source_bytes"] > 0
+    assert perf["chunk_text_ratio"] > 0
+    assert perf["peak_rss_mb"] is None or perf["peak_rss_mb"] > 0
 
 
 def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, capsys):

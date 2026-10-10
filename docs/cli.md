@@ -151,6 +151,19 @@ The build report gains an `incremental` block when the flag is on:
 { "incremental": { "cached": 812, "reparsed": 3 } }
 ```
 
+Every build report also carries a `performance` block, for tracking build cost
+over time. It lives in the report rather than `stats.json`, which stays
+byte-identical between a full and an incremental build:
+
+```json
+{ "performance": { "build_seconds": 1.09, "write_seconds": 4.55, "peak_rss_mb": 170.0,
+                   "source_bytes": 7316338, "output_bytes": 40010607, "chunk_text_ratio": 1.43 } }
+```
+
+`peak_rss_mb` covers the parse workers too and is `null` on Windows.
+`chunk_text_ratio` is chunk text over source size: chunk overlap and part
+headers repeat some lines, and on this repository that costs 43%.
+
 **When a full rebuild is still required.** The cache is keyed on file content, so
 it cannot see a change in how content is *interpreted*. Rerun without the flag
 after upgrading repo2graph, after a `tree-sitter-language-pack` upgrade that

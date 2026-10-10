@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -236,6 +237,8 @@ def cmd_build(args):
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
     lock_timeout = getattr(args, "lock_timeout", 60.0)
+    started = time.monotonic()
+    chunk_chars = [0]
     try:
         with BuildLock(outdir, timeout=lock_timeout):
             g = build(
@@ -257,10 +260,13 @@ def cmd_build(args):
             )
             if cache_invalidated:
                 g.stats["parse_cache_invalidated"] = cache_invalidated  # type: ignore[assignment]
+            built = time.monotonic()
             chunks = (
                 None
                 if args.no_chunks
-                else iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0))
+                else _counting_text(
+                    iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0)), chunk_chars
+                )
             )
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     except LockTimeoutError as exc:
@@ -279,7 +285,56 @@ def cmd_build(args):
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
+    report["performance"] = _build_performance(
+        g, outdir, written, built - started, time.monotonic() - built, chunk_chars[0]
+    )
     _emit(json.dumps(report, indent=2))
+
+
+def _counting_text(chunks, total: list[int]):
+    """Pass chunks through, adding up their text length into total[0]."""
+    for c in chunks:
+        total[0] += len(c.get("text") or "")
+        yield c
+
+
+def _build_performance(g, outdir, written, build_s, write_s, chunk_chars) -> dict:
+    """Timings and sizes for one build, for regression gates (#456, #304).
+
+    Reported here rather than in stats.json, which must stay byte-identical
+    between a full and an incremental build of the same tree.
+    """
+    out_bytes = 0
+    for rel in written:
+        try:
+            out_bytes += (Path(outdir) / rel).stat().st_size
+        except OSError:
+            pass
+    source = sum(n.get("size") or 0 for n in g.nodes.values() if n.get("type") == "file")
+    return {
+        "build_seconds": round(build_s, 3),
+        "write_seconds": round(write_s, 3),
+        "peak_rss_mb": _peak_rss_mb(),
+        "source_bytes": source,
+        "output_bytes": out_bytes,
+        # Chunk text over source: overlap and per-part headers repeat lines,
+        # so this is how much bigger chunks.jsonl's text is than the code (P5).
+        "chunk_text_ratio": round(chunk_chars / source, 3) if source else None,
+    }
+
+
+def _peak_rss_mb() -> float | None:
+    """Peak resident set of this process and its parse workers, or None (Windows)."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = max(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+    )
+    # ru_maxrss is KiB on Linux and bytes on macOS.
+    return round(peak / (1 << 20 if sys.platform == "darwin" else 1 << 10), 1)
 
 
 def cmd_github(args):
