@@ -125,3 +125,14 @@ def test_merge_interleaves_by_rank_not_by_raw_score():
     a = [{"id": "a1", "score": 900.0}, {"id": "a2", "score": 800.0}]
     b = [{"id": "b1", "score": 2.0}, {"id": "b2", "score": 1.0}]
     assert [r["id"] for r in merge_by_rank([("a", a), ("b", b)])] == ["a1", "b1", "a2", "b2"]
+
+
+def test_a_corrupt_index_is_skipped_with_a_warning(two, capsys):
+    billing, orders = two
+    from repo2graph.export import path as artifact_path
+
+    artifact_path(orders, "chunks.jsonl").write_bytes(b'{"id": "x", "text": \n\x00garbage')
+    main(["query", "charge invoice", "--index", str(billing), "--index", str(orders), "--json"])
+    captured = capsys.readouterr()
+    assert "skipping index" in captured.err
+    assert {r["repo"] for r in json.loads(captured.out)} == {"billing"}
