@@ -508,6 +508,9 @@ class BuildConfig:
     extra_secret_keywords: list[str] = field(default_factory=list)
     extra_secret_dirs: list[str] = field(default_factory=list)
     parse_policy: str = "best-effort"
+    # Opt-in READS / WRITES / REFERENCES edges (#397). Off by default, so the
+    # default graph, and every artifact made from it, is unchanged.
+    reference_edges: bool = False
     # The directory this build writes its artifacts to. When it lies inside
     # the indexed root, discovery must never index it: `git ls-files -co`
     # lists untracked files and os.walk sees everything, so without this a
@@ -1003,6 +1006,8 @@ def parse_cache_identity(config: "BuildConfig | None") -> dict[str, str]:
         "max_file_bytes": str(config.max_file_bytes),
         "chunk_large_files": str(bool(config.chunk_large_files)),
         "secret_policy": str(config.secret_policy),
+        # Only when on, so a default build's cache identity is what it was.
+        **({"reference_edges": "True"} if config.reference_edges else {}),
     }
 
 
@@ -1057,6 +1062,10 @@ class Symbol:
     # The enclosing symbol's `key` when that differs from `parent` (a child of
     # a duplicate definition); "" means "same as parent".
     parent_key: str = ""
+    # `--reference-edges` only (#397): the module/class-level names this
+    # symbol reads, writes or names as a type, before resolution. Empty, and
+    # left out of the parse cache, otherwise.
+    refs: list[dict] = field(default_factory=list)
 
 
 def symbol_key(sym: Symbol) -> str:
@@ -2152,7 +2161,274 @@ def normalize_source_bytes(source: bytes) -> bytes:
     return source
 
 
-def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -> ParsedFile:
+# --- reference capture, `--reference-edges` only (#397) ---------------------
+
+REF_LANGS = frozenset({"python", "javascript", "typescript", "tsx"})
+# Symbol kinds a READS / WRITES edge can point at.
+VALUE_KINDS = ("variable", "constant", "field")
+_PY_SELF = frozenset({"self", "cls"})
+# Parents under which an identifier is a binding being introduced (a
+# parameter, a definition's own name, an import), never a read of a name.
+_PY_BINDING_PARENTS = frozenset(
+    {
+        "function_definition",
+        "class_definition",
+        "parameters",
+        "lambda_parameters",
+        "typed_parameter",
+        "list_splat_pattern",
+        "dictionary_splat_pattern",
+        "aliased_import",
+        "dotted_name",
+        "import_statement",
+        "import_from_statement",
+        "global_statement",
+        "nonlocal_statement",
+    }
+)
+_JS_PARAM_PARENTS = frozenset(
+    {"formal_parameters", "required_parameter", "optional_parameter", "rest_pattern"}
+)
+_JS_SKIP_PARENTS = frozenset(
+    {
+        "function_declaration",
+        "generator_function_declaration",
+        "class_declaration",
+        "method_definition",
+        "import_specifier",
+        "import_clause",
+        "namespace_import",
+        "export_specifier",
+        "labeled_statement",
+        "break_statement",
+        "continue_statement",
+    }
+)
+
+
+def _same(a, b) -> bool:
+    return b is not None and a.start_byte == b.start_byte and a.end_byte == b.end_byte
+
+
+def _value_kind(name: str, in_class: bool) -> str:
+    if in_class:
+        return "field"
+    return "constant" if name.isupper() else "variable"
+
+
+def _py_value_symbol(src: bytes, node, owner) -> tuple[str | None, str | None]:
+    """(kind, name) when an `assignment` binds one module- or class-level name."""
+    # Some grammar versions wrap the assignment in an expression_statement.
+    stmt = (
+        node.parent
+        if node.parent is not None and node.parent.type == "expression_statement"
+        else node
+    )
+    left = node.child_by_field_name("left")
+    if left is None or left.type != "identifier":
+        return None, None
+    name = _text(src, left)
+    home = stmt.parent
+    if owner is None and home is not None and home.type == "module":
+        return _value_kind(name, False), name
+    if (
+        owner is not None
+        and owner.kind == "class"
+        and home is not None
+        and home.type == "block"
+        and home.parent is not None
+        and home.parent.type == "class_definition"
+    ):
+        return "field", name
+    return None, None
+
+
+def _js_value_kind(node, owner, name: str) -> str | None:
+    """The value kind of a non-function JS/TS binding, if it is module- or class-level."""
+    if node.type in ("field_definition", "public_field_definition"):
+        return "field" if owner is not None and owner.kind == "class" else None
+    name_node = node.child_by_field_name("name")
+    decl = node.parent
+    if (
+        owner is None
+        and name_node is not None
+        and name_node.type == "identifier"
+        and decl is not None
+        and decl.parent is not None
+        and decl.parent.type in ("program", "export_statement")
+    ):
+        return _value_kind(name, False)
+    return None
+
+
+class _RefState:
+    """Per-file bookkeeping for reference capture: locals, globals, type ids."""
+
+    def __init__(self) -> None:
+        self.locals: dict[int, set[str]] = {}
+        self.globals: dict[int, set[str]] = {}
+        self.typed: set[int] = set()  # start bytes of identifiers inside a type
+
+    def add(self, owner, name: str, kind: str, line: int, field_ref: bool = False) -> None:
+        ref = {"name": name, "kind": kind, "line": line}
+        if field_ref:
+            ref["field"] = True
+        owner.refs.append(ref)
+
+
+def _py_ref(src: bytes, node, owner, st: _RefState) -> None:
+    ntype = node.type
+    oid = id(owner)
+    line = node.start_point[0] + 1
+    if ntype in ("global_statement", "nonlocal_statement"):
+        names = st.globals.setdefault(oid, set())
+        names.update(_text(src, c) for c in node.named_children if c.type == "identifier")
+        return
+    if ntype == "type":
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "identifier":
+                st.typed.add(n.start_byte)
+                st.add(owner, _text(src, n), "type", line)
+            stack.extend(n.named_children)
+        return
+    if owner.kind not in ("function", "method"):
+        return
+    if ntype == "attribute":
+        obj = node.child_by_field_name("object")
+        attr = node.child_by_field_name("attribute")
+        if obj is None or attr is None or obj.type != "identifier":
+            return
+        if _text(src, obj) not in _PY_SELF:
+            return
+        p = node.parent
+        write = p is not None and p.type in ("assignment", "augmented_assignment")
+        write = write and _same(node, p.child_by_field_name("left"))
+        st.add(owner, _text(src, attr), "write" if write else "read", line, field_ref=True)
+        return
+    if ntype != "identifier" or node.start_byte in st.typed:
+        return
+    p = node.parent
+    if p is None:
+        return
+    pt = p.type
+    name = _text(src, node)
+    if pt in _PY_BINDING_PARENTS:
+        if pt in ("parameters", "lambda_parameters", "typed_parameter"):
+            st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt in ("default_parameter", "typed_default_parameter", "keyword_argument"):
+        if _same(node, p.child_by_field_name("name")):
+            if pt != "keyword_argument":
+                st.locals.setdefault(oid, set()).add(name)
+            return
+    elif pt == "attribute":
+        if not _same(node, p.child_by_field_name("object")) or name in _PY_SELF:
+            return
+    elif pt == "call" and _same(node, p.child_by_field_name("function")):
+        return
+    target = p
+    while target.type in ("pattern_list", "tuple_pattern", "list_pattern"):
+        if target.parent is None:
+            break
+        target = target.parent
+    if target.type in ("assignment", "augmented_assignment", "for_statement", "for_in_clause"):
+        if _same(node, p.child_by_field_name("left")) or target is not p:
+            if name in st.globals.get(oid, ()):
+                st.add(owner, name, "write", line)
+            else:
+                st.locals.setdefault(oid, set()).add(name)
+            return
+    if pt in ("as_pattern_target", "with_item"):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    st.add(owner, name, "read", line)
+
+
+def _js_ref(src: bytes, node, owner, st: _RefState) -> None:
+    ntype = node.type
+    oid = id(owner)
+    line = node.start_point[0] + 1
+    if ntype == "type_identifier":
+        p = node.parent
+        if p is None or not _same(node, p.child_by_field_name("name")):  # not `class Box`
+            st.add(owner, _text(src, node), "type", line)
+        return
+    if owner.kind not in ("function", "method"):
+        return
+    if ntype == "member_expression":
+        obj = node.child_by_field_name("object")
+        prop = node.child_by_field_name("property")
+        if obj is None or prop is None or obj.type != "this":
+            return
+        p = node.parent
+        write = p is not None and (
+            p.type == "update_expression"
+            or (
+                p.type in ("assignment_expression", "augmented_assignment_expression")
+                and _same(node, p.child_by_field_name("left"))
+            )
+        )
+        st.add(owner, _text(src, prop), "write" if write else "read", line, field_ref=True)
+        return
+    if ntype not in ("identifier", "shorthand_property_identifier"):
+        return
+    p = node.parent
+    if p is None:
+        return
+    pt = p.type
+    name = _text(src, node)
+    if pt in _JS_SKIP_PARENTS:
+        return
+    if pt in _JS_PARAM_PARENTS or pt == "catch_clause":
+        # `max = LIMIT` in a TS parameter: the pattern binds, the value is read.
+        if not _same(node, p.child_by_field_name("value")):
+            st.locals.setdefault(oid, set()).add(name)
+            return
+    if pt == "arrow_function" and _same(node, p.child_by_field_name("parameter")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt == "variable_declarator" and _same(node, p.child_by_field_name("name")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt == "assignment_pattern" and _same(node, p.child_by_field_name("left")):
+        st.locals.setdefault(oid, set()).add(name)
+        return
+    if pt in ("call_expression", "new_expression") and _same(
+        node, p.child_by_field_name("function") or p.child_by_field_name("constructor")
+    ):
+        return
+    if (
+        pt in ("assignment_expression", "augmented_assignment_expression")
+        and _same(node, p.child_by_field_name("left"))
+    ) or pt == "update_expression":
+        st.add(owner, name, "write", line)
+        return
+    st.add(owner, name, "read", line)
+
+
+def _finish_refs(symbols: list, st: _RefState) -> None:
+    """Drop references to a symbol's own locals; merge repeats, keeping the first line."""
+    for sym in symbols:
+        if not sym.refs:
+            continue
+        own = st.locals.get(id(sym), set()) - st.globals.get(id(sym), set())
+        merged: dict[tuple, dict] = {}
+        for r in sym.refs:
+            if r["kind"] != "type" and not r.get("field") and r["name"] in own:
+                continue
+            key = (r["kind"], r["name"], bool(r.get("field")))
+            if key in merged:
+                merged[key]["count"] += 1
+            else:
+                merged[key] = {**r, "count": 1}
+        sym.refs = list(merged.values())
+
+
+def parse_source(
+    source: bytes, lang: str, filepath: Path | str | None = None, refs: bool = False
+) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
     if cfg is None or parser is None:
@@ -2227,6 +2503,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
     go_self: dict[int, frozenset[str]] = {}
     # symbol keys already taken in this file -- see `disambiguate_key`.
     used_keys: set[str] = set()
+    rs = _RefState() if refs and lang in REF_LANGS else None
+    ref_of = _py_ref if lang == "python" else _js_ref
     while stack:
         node, scope, owner = stack.pop()
         ntype = node.type
@@ -2295,10 +2573,15 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                         ),
                     }
                 )
+        if rs is not None and owner is not None:
+            ref_of(source, node, owner, rs)
         kind = kind_map.get(ntype)
+        value_name = None
+        if rs is not None and kind is None and ntype == "assignment" and lang == "python":
+            kind, value_name = _py_value_symbol(source, node, owner)
         child_scope, child_owner = scope, owner
         if kind is not None:
-            name = _name_of(source, node, lang)
+            name = value_name or _name_of(source, node, lang)
             if kind == "maybe_function":
                 value = node.child_by_field_name("value")
                 if value is None or value.type not in (
@@ -2310,6 +2593,8 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     # bare reference is an alias for an existing definition and
                     # is the name consumers import.
                     kind = "alias" if _exported_declarator_alias(source, node) else None
+                    if kind is None and rs is not None and name:
+                        kind = _js_value_kind(node, owner, name)
                 else:
                     kind = "function"
             elif kind == "maybe_alias":
@@ -2405,12 +2690,16 @@ def parse_source(source: bytes, lang: str, filepath: Path | str | None = None) -
                     if go_recv:
                         go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
-                child_scope, child_owner = sym_scope + (name,), sym
+                if kind not in VALUE_KINDS:
+                    child_scope, child_owner = sym_scope + (name,), sym
         # named_children skips punctuation and keyword tokens: no configured
         # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order
         for c in reversed(node.named_children):
             stack.append((c, child_scope, child_owner))
+
+    if rs is not None:
+        _finish_refs(symbols, rs)
 
     # Parse import details from the untruncated text -- see imports_full above.
     import_details: list[ImportDetail] = []

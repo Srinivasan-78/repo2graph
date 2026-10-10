@@ -76,6 +76,14 @@ EDGE_TYPES = {
     ),
 }
 
+# Only with `build --reference-edges` (#397), and only listed in manifest.json
+# when the graph has them, so a default build's manifest is unchanged.
+REFERENCE_EDGE_TYPES = {
+    "READS": "symbol -> module-level variable/constant or class field it reads",
+    "WRITES": "symbol -> module-level variable (Python: under `global`) or class field it assigns",
+    "REFERENCES": "symbol -> class/interface/type it names in a type annotation",
+}
+
 
 def _trim(text: str, limit: int) -> str:
     text = " ".join(str(text).split())

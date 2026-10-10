@@ -37,6 +37,7 @@ from .parse import (
     SUPER_RECEIVERS,
     EMBEDDED_LANGS,
     EXT_LANG,
+    VALUE_KINDS,
     ImportDetail,
     ParseError,
     ParsedFile,
@@ -1014,7 +1015,11 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 lang = refine_lang(lang, abspath.suffix.lower(), buf)[0]
                 sniff_header = False
 
-            pf = parse_source(buf, lang, filepath=None) if lang else None
+            pf = (
+                parse_source(buf, lang, filepath=None, refs=config.reference_edges)
+                if lang
+                else None
+            )
             if pf is None:
                 line_offset += buf.count(b"\n")
                 continue
@@ -1191,7 +1196,11 @@ def _read_and_parse(item):
     policy = getattr(config, "parse_policy", "best-effort")
     pf = None
     try:
-        pf = parse_source(code, lang, filepath=abspath) if lang else None
+        pf = (
+            parse_source(code, lang, filepath=abspath, refs=config.reference_edges)
+            if lang
+            else None
+        )
     except Exception as exc:
         if policy == "strict":
             raise ParseError(
@@ -1296,7 +1305,10 @@ def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dic
             # Only the chunked reader can lose a slice, and only it sets this.
             "undecodable_slices": getattr(pf, "undecodable_slices", 0),
             "imports": list(pf.imports),
-            "symbols": [asdict(s) for s in pf.symbols],
+            # `refs` only when there are some: a default build's cache is unchanged.
+            "symbols": [
+                {k: v for k, v in asdict(s).items() if k != "refs" or v} for s in pf.symbols
+            ],
             # Without this, entry_read() rebuilds import_details as [] and an
             # incremental cache hit loses every import alias -- an aliased call
             # that a full build resolves as `import_alias` falls back to
@@ -2310,6 +2322,9 @@ def build(
                 else:
                     g.stats["unresolved_bases"] += 1
 
+    if getattr(config, "reference_edges", False):
+        add_reference_edges(g, parsed, imported_files, import_aliases, named_in)
+
     if git_history:
         add_cochange(g, root, git_history, file_index, min_pairs=cochange_min, authors=git_authors)
 
@@ -2337,6 +2352,67 @@ def build(
     )
     g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
+
+
+REFERENCE_EDGES = {"read": "READS", "write": "WRITES", "type": "REFERENCES"}
+TYPE_KINDS = frozenset({"class", "interface", "type", "enum", "struct", "protocol", "trait"})
+METHOD_REFERENCE_RESOLVER = "reference-resolver"
+
+
+def add_reference_edges(g, parsed, imported_files, import_aliases, named_in) -> None:
+    """READS / WRITES / REFERENCES from each symbol's captured refs (#397).
+
+    Precision over recall: a name binds only to a value/type symbol defined at
+    the top level of the same file, or one the file imports by that name; a
+    `self.x` / `this.x` binds only to a field declared in the enclosing class.
+    There is no repository-wide name fallback, which is where CALLS gets its
+    ambiguity, so an unresolved reference is counted and dropped, never guessed.
+    """
+    for key in ("reads", "writes", "references", "unresolved"):
+        g.stats[f"reference_edges_{key}"] += 0
+    for rel, pf in parsed.items():
+        for sym in pf.symbols:
+            if not sym.refs:
+                continue
+            sid = f"sym:{rel}::{symbol_key(sym)}"
+            for r in sym.refs:
+                etype = REFERENCE_EDGES[r["kind"]]
+                wanted = TYPE_KINDS if r["kind"] == "type" else VALUE_KINDS
+                name = r["name"]
+                if r.get("field"):
+                    how = "same_class"
+                    cands = [f"sym:{rel}::{sym.parent}.{name}"] if sym.parent else []
+                else:
+                    how = "same_file"
+                    cands = [f"sym:{rel}::{name}"]
+                cands = [c for c in cands if g.nodes.get(c, {}).get("kind") in wanted]
+                if not cands and not r.get("field"):
+                    alias = import_aliases.get(rel, {}).get(name)
+                    target = (alias[1] or name) if alias else name
+                    how = "import_alias" if alias else "imported_symbol"
+                    cands = [
+                        c
+                        for c in named_in(target, imported_files.get(rel, ()))
+                        if g.nodes[c].get("kind") in wanted and g.nodes[c].get("qualname") == target
+                    ]
+                if not cands:
+                    g.stats["reference_edges_unresolved"] += 1
+                    continue
+                extra = {"ambiguous": True} if len(cands) > 1 else {}
+                for c in cands:
+                    g.add_edge(
+                        sid,
+                        c,
+                        etype,
+                        count=r.get("count", 1),
+                        confidence=round(1.0 / len(cands), 3),
+                        resolution_kind=how,
+                        candidate_count=len(cands),
+                        method=METHOD_REFERENCE_RESOLVER,
+                        evidence=make_evidence(rel, r.get("line")),
+                        **extra,
+                    )
+                g.stats[f"reference_edges_{etype.lower()}"] += 1
 
 
 ENTRY_KINDS = ("function", "method")

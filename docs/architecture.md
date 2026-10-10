@@ -103,6 +103,38 @@ incoming `TESTS` edge) and their ratio `tested_symbol_fraction` -- an upper boun
 suite exercises, never a coverage figure. Retrieval does not follow `TESTS` by default; pass
 `edge_types` to `pack_context` to opt in. `repo_neighbours` lists a symbol's `TESTS` edges.
 
+### Reference edges (`--reference-edges`, off by default)
+
+`build --reference-edges` adds three edge types, for Python and JS/TS only (#397):
+
+| Edge | Meaning |
+| --- | --- |
+| `READS` | function/method -> a module-level variable or constant, or a class field (`self.x`, `this.x`), it reads |
+| `WRITES` | function/method -> one it assigns: a module-level name (in Python only under `global`; in JS/TS any assignment to a name not declared in the function) or a class field |
+| `REFERENCES` | function/method/class -> a class, interface, type or enum named in a type annotation |
+
+It also makes the targets symbols: module-level assignments become `variable` or `constant`
+(all-caps names) nodes, and class-level ones `field` nodes. Without the flag none of this
+exists and every artifact is byte-identical to a build that never had it.
+
+Precision is preferred to recall, and the limits are plain:
+
+- A name binds only to a symbol defined at the top level of the same file, or one the file
+  imports by that name (`from settings import TIMEOUT`, `RETRIES as R`). There is no
+  repository-wide fallback, so these edges are not ambiguous the way `CALLS` can be; a name
+  that does not bind is counted in `reference_edges_unresolved` and dropped.
+- `self.x` binds only to a field **declared in the class body**. An attribute first assigned in
+  `__init__` has no node to point at, so it is unresolved, as is a field inherited from a base.
+- `module.NAME` (attribute access on an imported module), locals, parameters and closures over
+  an enclosing function's locals make no edge. A local that shadows a module-level name is a
+  local, so it makes no `READS`.
+- Python string annotations (`"Foo"`) are not read.
+
+Volume, measured: on this repository `--reference-edges` adds 26% nodes and 8% edges; on
+Django 28% nodes, 8.5% edges and 13.5% output, for 7,688 `READS`, 219 `WRITES` and 9
+`REFERENCES` (Django annotates almost nothing). `stats.json` reports
+`reference_edges_reads`, `_writes`, `_references` and `_unresolved` when it is on.
+
 ### Edge metadata
 
 Every edge goes through `Graph.add_edge()`, which normalises three fields:
@@ -275,7 +307,7 @@ language has been exercised against real code".
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
-| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 2 funcs |
+| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 3 funcs |
 | **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 5 funcs |
 | **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 9 funcs |
 | **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 5 funcs |

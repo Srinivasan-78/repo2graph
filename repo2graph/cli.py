@@ -207,6 +207,7 @@ def cmd_build(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -433,6 +434,7 @@ def cmd_github(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -1544,6 +1546,12 @@ def main(argv=None):
         action="store_true",
         help="with --git-history, record on each file node who changed it in those commits "
         "(author display names, never emails; default: off)",
+    )
+    common.add_argument(
+        "--reference-edges",
+        action="store_true",
+        help="also record READS/WRITES of module-level variables and class fields, and "
+        "REFERENCES to types named in annotations (Python, JS/TS; default: off)",
     )
     common.add_argument(
         "--cochange-min",

@@ -88,6 +88,7 @@ KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "max-file-mb": ("max_file_mb", _max_file_mb),
     "chunk-large-files": ("chunk_large_files", _bool),
     "include-vendor": ("include_vendor", _bool),
+    "reference-edges": ("reference_edges", _bool),
 }
 
 
@@ -204,6 +205,7 @@ _BUILD_CONFIG_DESTS = (
     "extra_exclude_dirs",
     "include_vendor",
     "chunk_large_files",
+    "reference_edges",
     "secret_policy",
     "extra_secret_keywords",
     "extra_secret_dirs",

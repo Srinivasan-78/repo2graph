@@ -71,6 +71,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
+| `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
@@ -218,7 +219,7 @@ Keys are spelled like the flags they stand in for: `include`, `exclude`,
 `exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
 `git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
 `"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
-choices; `chunk-large-files`, `include-vendor` and `git-authors` `true`/`false`. A list given
+choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`. A list given
 on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file

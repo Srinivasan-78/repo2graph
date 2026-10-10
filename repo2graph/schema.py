@@ -62,6 +62,10 @@ EdgeType = Literal[
     "INHERITS",
     "CO_CHANGE",
     "TESTS",
+    # `build --reference-edges` only (#397)
+    "READS",
+    "WRITES",
+    "REFERENCES",
 ]
 
 
