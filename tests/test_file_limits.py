@@ -297,3 +297,16 @@ def test_cli_build_fail_policy_exits_one(tmp_path):
         ]
     )
     assert rc == 1
+
+
+def test_a_limit_with_no_policy_warns_as_documented(tmp_path, capsys):
+    """#318: no --limit-policy is `warn`, not a silent cut."""
+    from repo2graph.graph import build
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for i in range(3):
+        (repo / f"m{i}.py").write_text(f"def f{i}(): pass\n")
+    g = build(repo, max_files=1)
+    assert g.limits_hit.get("files_dropped", 0) or g.limits_hit
+    assert "file ceiling reached" in capsys.readouterr().err

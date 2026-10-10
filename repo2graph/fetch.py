@@ -72,9 +72,6 @@ def _github_spec_regex() -> re.Pattern[str]:
     )
 
 
-GITHUB_SPEC = _github_spec_regex()
-
-
 # A refname is one or more "/"-separated components. Each component must open
 # with an alphanumeric or "_", which is what makes the pattern a security check
 # and not just a spelling check: it forbids a leading "-" on the whole value (so

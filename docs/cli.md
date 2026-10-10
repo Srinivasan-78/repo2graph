@@ -79,7 +79,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-chunks` | `0` (no limit) | Keep at most N retrieval chunks; further chunks are dropped. |
 | `--max-memory-mb` | `0` (no limit) | Stop or truncate when estimated memory consumption exceeds N MB. |
 | `--max-build-seconds` | `0` (no limit) | Stop or truncate when wall-clock build duration exceeds N seconds. |
-| `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
+| `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. With no policy given, `--max-nodes` alone fails rather than warns. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
 | `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |

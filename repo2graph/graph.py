@@ -431,7 +431,9 @@ class Graph:
         early would otherwise print a line for every remaining edge and bury
         the build's real output.
         """
-        if self.limit_policy != "warn":
+        # No policy given means the documented default, `warn`. Checking for
+        # "warn" alone made the default silently cut files, bytes and edges.
+        if (self.limit_policy or DEFAULT_LIMIT_POLICY) != "warn":
             return
         if which in self._limits_announced:
             return

@@ -630,12 +630,12 @@ class _HTTPSConnection(_ConnectTimeout, http.client.HTTPSConnection):
 
 
 class _HTTPHandler(urllib.request.HTTPHandler):
-    def do_open(self, http_class: Any, req: Any, **kw: Any) -> Any:
+    def do_open(self, _http_class: Any, req: Any, **kw: Any) -> Any:
         return super().do_open(_HTTPConnection, req, **kw)
 
 
 class _HTTPSHandler(urllib.request.HTTPSHandler):
-    def do_open(self, http_class: Any, req: Any, **kw: Any) -> Any:
+    def do_open(self, _http_class: Any, req: Any, **kw: Any) -> Any:
         return super().do_open(_HTTPSConnection, req, **kw)
 
 
