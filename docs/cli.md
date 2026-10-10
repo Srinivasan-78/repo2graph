@@ -531,6 +531,40 @@ Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`
 of the 2,048-token answer. `--answer` also refuses a pack that leaves no room for
 that answer in a default model's context window.
 
+## `diff` — what changed between two builds
+
+```bash
+repo2graph diff OLD_INDEX NEW_INDEX [--format text|json] [--include-confidence] [--limit N]
+```
+
+Compares two index directories, for example `.r2g` built on `main` and on a
+branch. It reports symbols added and removed, symbols renamed or moved, edges
+added and removed, and every symbol whose callers changed:
+
+```
+symbols: +1 -1, 1 renamed, 1 possible renames; 1 files moved
+edges: +3 -2 (0 confidence-only changes not counted)
+
+callers changed:
+  sym:pkg/auth.py::validate_token: +sym:pkg/auth.py::audit
+```
+
+- **A move is a rename, not a delete and an add.** A symbol id contains its
+  path, so moving a file renames every symbol in it. A removed and an added
+  symbol of the same kind with an identical body are reported as renamed, and
+  their edges are compared as one symbol's. The same name with a changed body
+  is a *possible* rename, listed separately and never used to hide an edge
+  change. A file whose renamed symbols all went to one new file is a moved file.
+- **Confidence-only edge changes are not changes.** One new `get` anywhere
+  shifts the `1/n` confidence of every ambiguous `get` call. Those moves are
+  counted, and listed with `--include-confidence`.
+- **It reads indexes, not git refs.** Build the older revision into its own
+  directory first; `build --incremental` on a copy of the newer index makes
+  that cheap.
+
+The per-build `human/CHANGELOG.md` and the GitHub Action's job summary come
+from the same comparison, without the rename pairing.
+
 ## `index-status` — is this index current, and what is in it?
 
 ```bash

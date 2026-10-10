@@ -23,6 +23,7 @@ from typing import Any
 from .edgemeta import counts_as_call
 from .export import atomic_write, make_path, path as artifact_path
 from .graph import Graph
+from .graphdiff import diff_graphs
 from .query import read_jsonl
 
 MAX_ITEMS = 50
@@ -154,28 +155,14 @@ def build_changelog_markdown(
     `prev_nodes`/`prev_edges` is the snapshot `previous_state` took before this
     build's `dump_all` overwrote them.
     """
-    prev_node_ids = {n["id"] for n in prev_nodes if "id" in n}
-    curr_node_ids = set(g.nodes)
-
-    new_nodes = sorted(
-        (n for nid, n in g.nodes.items() if nid not in prev_node_ids),
-        key=lambda n: n["id"],
-    )
-    removed_nodes = sorted(
-        (n for n in prev_nodes if n.get("id") not in curr_node_ids),
-        key=lambda n: n.get("id") or "",
-    )
-
-    prev_edge_keys = {_edge_key(e) for e in prev_edges}
-    curr_edge_keys = {_edge_key(e) for e in g.edges}
-    new_edges = sorted(
-        (e for e in g.edges if _edge_key(e) not in prev_edge_keys),
-        key=lambda e: (e.get("type") or "", e.get("src") or "", e.get("dst") or ""),
-    )
-    removed_edges = sorted(
-        (e for e in prev_edges if _edge_key(e) not in curr_edge_keys),
-        key=lambda e: (e.get("type") or "", e.get("src") or "", e.get("dst") or ""),
-    )
+    # The same computation as `repo2graph diff`, without rename pairing: this
+    # file has always listed what moved as removed + added, and the Action's
+    # job summary parses its section counts.
+    delta = diff_graphs(prev_nodes, prev_edges, g.nodes.values(), g.edges, detect_renames=False)
+    new_nodes = delta["added_nodes"]
+    removed_nodes = delta["removed_nodes"]
+    new_edges = delta["added_edges"]
+    removed_edges = delta["removed_edges"]
 
     prev_indeg = _indegree(prev_edges)
     curr_indeg = _indegree(g.edges)

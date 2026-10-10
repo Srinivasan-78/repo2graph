@@ -1024,6 +1024,31 @@ def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
     return None
 
 
+def cmd_diff(args):
+    """What changed structurally between two index directories (#395)."""
+    from .graphdiff import diff_indexes, render_text
+
+    old, new = Path(args.from_dir), Path(args.to_dir)
+    for index_dir in (old, new):
+        _require_index(index_dir, "nodes.jsonl")
+        _require_index(index_dir, "edges.jsonl")
+    try:
+        delta = diff_indexes(old, new)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    delta["confidence_changed_edges_count"] = len(delta["confidence_changed_edges"])
+    if args.format == "json" and not args.include_confidence:
+        delta["confidence_changed_edges"] = []
+    if args.format == "json":
+        _emit(json.dumps(delta, indent=2, default=str))
+    else:
+        _emit(
+            f"graph diff: {old} -> {new}\n"
+            + render_text(delta, limit=args.limit, show_confidence=args.include_confidence)
+        )
+    return 0
+
+
 def cmd_explain_path(args):
     from .parse import BuildConfig, explain_path
 
@@ -1893,6 +1918,22 @@ def main(argv=None):
         help="output format: json (default) or text (human-readable quality summary)",
     )
     s.set_defaults(func=cmd_stats)
+
+    df = sub.add_parser(
+        "diff", help="what changed structurally between two builds (two index directories)"
+    )
+    df.add_argument("from_dir", metavar="FROM", help="the older index directory")
+    df.add_argument("to_dir", metavar="TO", help="the newer index directory")
+    df.add_argument("--format", choices=("text", "json"), default="text")
+    df.add_argument(
+        "--include-confidence",
+        action="store_true",
+        help="also list edges whose only change is confidence (counted either way)",
+    )
+    df.add_argument(
+        "--limit", type=_posint, default=50, help="lines per section in text output (default: 50)"
+    )
+    df.set_defaults(func=cmd_diff)
 
     ep = sub.add_parser(
         "explain-path", parents=[path_rules], help="explain why a file is included or excluded"

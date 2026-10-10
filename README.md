@@ -168,6 +168,7 @@ calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 | `repo2graph github <owner/repo> -o <dir>` | Fetch, build and clean up without a local clone |
 | `repo2graph demo` | Index a bundled example and answer the five questions above |
 | `repo2graph map`, `repo2graph stats`, `repo2graph index-status`, `repo2graph embed` | Re-render `graph.html`, report counts and freshness, add optional dense vectors |
+| `repo2graph diff` | What changed structurally between two builds: symbols added, removed and renamed, edges, and whose callers changed |
 | `repo2graph doctor`, `repo2graph bug-report`, `repo2graph explain-path`, `repo2graph completion` | Diagnose setup, build a privacy-safe bug bundle, say why a path is (not) indexed, shell completion |
 | `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_blast_radius`, and five more |
 
