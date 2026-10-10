@@ -173,6 +173,7 @@ calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 | `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_blast_radius`, and five more |
 
 Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/python-api.md).
+Build cost up to 50,000 files: [docs/performance.md](docs/performance.md).
 
 ## What it can't do
 
