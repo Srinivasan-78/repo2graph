@@ -70,6 +70,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
+| `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
@@ -200,7 +201,7 @@ Keys are spelled like the flags they stand in for: `include`, `exclude`,
 `exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
 `git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
 `"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
-choices; `chunk-large-files` and `include-vendor` `true`/`false`. A list given
+choices; `chunk-large-files`, `include-vendor` and `git-authors` `true`/`false`. A list given
 on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file

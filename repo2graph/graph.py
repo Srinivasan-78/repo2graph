@@ -1590,6 +1590,7 @@ def build(
     limit_policy: str | None = None,
     max_memory_mb: float = 0.0,
     max_build_seconds: float = 0.0,
+    git_authors: bool = False,
 ) -> Graph:
     """Parse `root` into a Graph.
 
@@ -1598,6 +1599,8 @@ def build(
         include: Optional glob(s) restricting discovery.
         exclude: Optional glob(s) removing paths from discovery.
         git_history: When non-zero, add CO_CHANGE edges from the last N commits.
+        git_authors: With git_history, also record on each file node who
+            changed it in those commits (display names, never emails).
         max_files: When positive, index only the first N discovered files.
         jobs: Parser processes; 0 means one per core, 1 means serial.
         cache: A previous build's `{relpath: entry}` parse cache. When given,
@@ -2295,7 +2298,7 @@ def build(
                     g.stats["unresolved_bases"] += 1
 
     if git_history:
-        add_cochange(g, root, git_history, file_index, min_pairs=cochange_min)
+        add_cochange(g, root, git_history, file_index, min_pairs=cochange_min, authors=git_authors)
 
     # Every edge endpoint must be a node. A file can be in file_index (so an
     # IMPORTS target resolves to it, and git log pairs it) yet have no file:
@@ -2521,7 +2524,18 @@ def _reap_child(proc, reader=None) -> None:
 _COMMIT_HASH = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
-def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_pairs: int = 3):
+# Authors kept per file by --git-authors: the most frequent, then by name.
+MAX_FILE_AUTHORS = 5
+
+
+def add_cochange(
+    g: Graph,
+    root: Path,
+    commits: int,
+    file_index: set[str],
+    min_pairs: int = 3,
+    authors: bool = False,
+):
     """CO_CHANGE edges from files edited together in the last N commits.
 
     Formula and semantics:
@@ -2562,7 +2576,10 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
                 "log",
                 f"-n{commits}",
                 "--name-only",
-                "--pretty=format:%H",
+                # %aN: the author's display name after .mailmap. Never %ae:
+                # an email address is personal data, and these artifacts get
+                # committed and uploaded (#394).
+                "--pretty=format:%H%x00%aN" if authors else "--pretty=format:%H",
                 "--no-merges",
             ],
             stdout=subprocess.PIPE,
@@ -2614,6 +2631,8 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
     pairs: Counter = Counter()
     current: list[str] = []
     sampled = 0
+    author = ""
+    file_authors: dict[str, Counter] = defaultdict(Counter)
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index.
@@ -2628,10 +2647,20 @@ def add_cochange(g: Graph, root: Path, commits: int, file_index: set[str], min_p
             current = []
         elif line in file_index:
             current.append(line)
-        elif _COMMIT_HASH.fullmatch(line):
+            if authors and author:
+                file_authors[line][author] += 1
+        elif _COMMIT_HASH.fullmatch(line.partition("\x00")[0]):
             sampled += 1
+            author = line.partition("\x00")[2].strip()
     g.stats["cochange_sampled_commits"] = sampled
     commits = sampled
+    for path, counts in file_authors.items():
+        node = g.nodes.get(f"file:{path}")
+        if node is not None:
+            ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            node["authors"] = [{"name": n, "commits": c} for n, c in ranked[:MAX_FILE_AUTHORS]]
+    if authors:
+        g.stats["files_with_authors"] = sum(1 for p in file_authors if f"file:{p}" in g.nodes)
     for (a, b), n in pairs.items():
         if n >= min_pairs:
             g.add_edge(

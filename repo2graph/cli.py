@@ -152,7 +152,15 @@ def _with_repo_config(args, repo):
     return merged, applied
 
 
+def _require_history_for_authors(args) -> None:
+    if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
+        raise SystemExit(
+            "error: --git-authors reads the commits --git-history walks; pass --git-history N too"
+        )
+
+
 def cmd_build(args):
+    _require_history_for_authors(args)
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
@@ -246,6 +254,7 @@ def cmd_build(args):
                 include=args.include,
                 exclude=exclude_globs,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 max_files=args.max_files,
                 jobs=args.jobs,
                 cache=cache,
@@ -347,6 +356,7 @@ def _peak_rss_mb() -> float | None:
 
 
 def cmd_github(args):
+    _require_history_for_authors(args)
     from .fetch import index_github
     from .parse import BuildConfig
 
@@ -405,6 +415,7 @@ def cmd_github(args):
                 ref=args.ref,
                 depth=args.depth,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 formats=args.formats,
                 include=args.include,
                 exclude=exclude_globs,
@@ -1435,6 +1446,12 @@ def main(argv=None):
     )
     common.add_argument(
         "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
+    )
+    common.add_argument(
+        "--git-authors",
+        action="store_true",
+        help="with --git-history, record on each file node who changed it in those commits "
+        "(author display names, never emails; default: off)",
     )
     common.add_argument(
         "--cochange-min",

@@ -93,6 +93,9 @@ class NodeRecord(TypedDict, total=False):
     # File-node bookkeeping.
     size: int
     chunked: bool
+    # file, with --git-authors: who changed it in the commits --git-history read,
+    # most commits first, at most 5 -- [{"name": display name, "commits": n}].
+    authors: list[dict[str, Any]]
     parse_errors: int
     # True on a node standing in for a symbol outside the indexed tree, which is
     # what a CALLS_EXTERNAL edge points at.
