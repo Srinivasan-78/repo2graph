@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections import Counter, defaultdict
+from collections.abc import Container, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -175,6 +176,18 @@ BUILTIN_FREE_FUNCTIONS = frozenset(
 IMPORT_RESOLUTION_KINDS = ("import_alias", "imported_symbol")
 # File stems that stand for their directory (`pkg/__init__.py` is `pkg`).
 PACKAGE_STEMS = frozenset({"__init__", "index", "mod", "lib"})
+
+
+class _AllExcept:
+    """A container holding every symbol id but one (or, given None, every one)."""
+
+    __slots__ = ("excluded",)
+
+    def __init__(self, excluded: str | None) -> None:
+        self.excluded = excluded
+
+    def __contains__(self, item: object) -> bool:
+        return item != self.excluded
 
 
 def _module_leaves(target: str) -> set[str]:
@@ -1888,14 +1901,26 @@ def build(
         for s_ in pf.symbols:
             if (scope_id := scope_of(rel, s_.parent)) is not None:
                 members[scope_id][s_.name].append(f"sym:{rel}::{symbol_key(s_)}")
-    # node id -> its file's directory. Tier 4 below used to rebuild
-    # `Path(...).parent` once per candidate per callee inside the build's hot
-    # loop; precomputing it here turns that into a dict lookup.
-    sym_dir: dict[str, str] = {}
+    # Same-named symbols per file and per directory, and each symbol's place in
+    # `by_name` order. The same-file, imported and same-module tiers below used
+    # to filter every same-named symbol in the repository on each call, which
+    # made a name defined in every file quadratic in the file count (#456 P2).
+    by_name_path: dict[tuple[str, str], list[str]] = defaultdict(list)
+    by_name_dir: dict[tuple[str, str], list[str]] = defaultdict(list)
+    sym_order: dict[str, int] = {}
     for nid, n in g.nodes.items():
         if n["type"] == "symbol":
             by_name[n["name"]].append(nid)
-            sym_dir[nid] = n.get("path", "").rpartition("/")[0]
+            path = n.get("path", "")
+            by_name_path[(n["name"], path)].append(nid)
+            by_name_dir[(n["name"], path.rpartition("/")[0])].append(nid)
+            sym_order[nid] = len(sym_order)
+
+    def named_in(name: str, paths: Iterable[str]) -> list[str]:
+        """Symbols called `name` defined in any of `paths`, in `by_name` order."""
+        found = [c for p in paths for c in by_name_path.get((name, p), ())]
+        found.sort(key=sym_order.__getitem__)
+        return found
 
     def match_bases(rel: str, base: str) -> tuple[list[str], list[str]]:
         """(matched base class ids, all same-named candidates) for one base."""
@@ -1959,17 +1984,16 @@ def build(
             return True  # a type name: Util.remove(), models.User.get()
         return bool(import_bound.get(rel, {}).get(head, set()) & home)
 
-    def tier3_imported(rel: str, callee: str, all_cands: list[str]) -> tuple[list[str], str]:
+    def tier3_imported(rel: str, callee: str, pool: Container[str]) -> tuple[list[str], str]:
         """Candidates reachable through `rel`'s own imports, and how they matched."""
         imported = imported_files.get(rel)
         if not imported:
             return [], ""
         alias = import_aliases.get(rel, {}).get(callee)
         if alias is not None:
-            target_name = alias[1] or callee
-            cands = [c for c in by_name.get(target_name, []) if g.nodes[c].get("path") in imported]
+            cands = named_in(alias[1] or callee, imported)
             return (cands, "import_alias") if cands else ([], "")
-        cands = [c for c in all_cands if g.nodes[c].get("path") in imported]
+        cands = [c for c in named_in(callee, imported) if c in pool]
         return (cands, "imported_symbol") if cands else ([], "")
 
     for rel, pf in parsed.items():
@@ -2047,7 +2071,8 @@ def build(
                     recurse_ok = callee in may_recurse
                 # The candidate pool for the name tiers: the caller is only a
                 # candidate when one of its calls can actually be a self-call.
-                pool = all_cands if recurse_ok else [c for c in all_cands if c != sid]
+                # Kept as a set test so no tier walks every same-named symbol.
+                pool = _AllExcept(None if recurse_ok else sid)
 
                 chosen_cands: list[str] = []
                 res_kind = ""
@@ -2092,16 +2117,16 @@ def build(
                     # sibling overload.
                     chosen_cands = tier1
                     res_kind, scope_dist = "same_class", 0
-                elif tier2 := [c for c in pool if g.nodes[c].get("path") == rel]:
+                elif tier2 := [c for c in by_name_path.get((callee, rel), ()) if c in pool]:
                     chosen_cands, res_kind, scope_dist = tier2, "same_file", 1
                 elif (tier3 := tier3_imported(rel, callee, pool))[0]:
                     chosen_cands, res_kind, scope_dist = tier3[0], tier3[1], 2
-                elif tier4 := [c for c in pool if sym_dir[c] == rel_dir]:
+                elif tier4 := [c for c in by_name_dir.get((callee, rel_dir), ()) if c in pool]:
                     chosen_cands, res_kind, scope_dist = tier4, "same_module", 3
-                elif len(pool) == 1:
-                    chosen_cands, res_kind, scope_dist = pool, "unique_global_name", 4
-                elif len(pool) > 1:
-                    chosen_cands, res_kind, scope_dist = pool, "ambiguous_global_name", 5
+                elif len(globals_ := [c for c in all_cands if c in pool]) == 1:
+                    chosen_cands, res_kind, scope_dist = globals_, "unique_global_name", 4
+                elif len(globals_) > 1:
+                    chosen_cands, res_kind, scope_dist = globals_, "ambiguous_global_name", 5
 
                 # `os.environ.get(k)` reduces to the name "get", and without
                 # this the tiers above bind it to any `get` method in the same
