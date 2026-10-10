@@ -291,6 +291,15 @@ def cmd_build(args):
     _emit(json.dumps(report, indent=2))
 
 
+def _token_counter(spec):
+    from .tokenizers import get_token_counter
+
+    try:
+        return get_token_counter(spec)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
 def _counting_text(chunks, total: list[int]):
     """Pass chunks through, adding up their text length into total[0]."""
     for c in chunks:
@@ -897,6 +906,8 @@ def cmd_rag(args):
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
         expansion=getattr(args, "expansion", None),
         edge_types=getattr(args, "edge_types", None) or None,
+        count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+        token_margin=getattr(args, "token_margin", 0.0) or 0.0,
     )
     if args.answer:
         from .answer import stream_answer
@@ -1705,6 +1716,21 @@ def main(argv=None):
         type=_nonneg,
         default=None,
         help="estimated token budget for the whole pack; replaces --budget when given",
+    )
+    r.add_argument(
+        "--tokenizer",
+        default=None,
+        metavar="NAME",
+        help="how --budget-tokens counts: heuristic (default, 4 chars/token), conservative "
+        "(3 chars/token) or tiktoken[:ENCODING] (exact for that encoding; needs tiktoken)",
+    )
+    r.add_argument(
+        "--token-margin",
+        type=_unit_float,
+        default=0.0,
+        metavar="FRACTION",
+        help="fill the pack to --budget-tokens / (1 + FRACTION), headroom for a counter "
+        "that under-counts (default: 0)",
     )
     r.add_argument(
         "--context-budget-tokens",

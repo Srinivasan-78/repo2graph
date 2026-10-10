@@ -241,6 +241,8 @@ class PackResult(TypedDict):
     #: "heuristic" (len // 4) unless the caller passed its own `count_tokens`,
     #: which may set a `token_count_method` attribute to say what it is.
     token_count_method: str
+    #: The `token_margin` the pack was filled under: it used budget / (1 + margin).
+    token_safety_margin: float
 
 
 class EntrypointRecord(TypedDict):

@@ -306,6 +306,8 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
+| `--tokenizer` | `heuristic` | How `--budget-tokens` counts: `heuristic` (4 characters per token), `conservative` (3 per token, over-counts most text) or `tiktoken[:ENCODING]` (exact for that BPE encoding, default `o200k_base`; needs `pip install tiktoken`, which downloads the encoding on first use). The pack's `token_count_method` names the one used. |
+| `--token-margin` | `0` | Fill the pack to `--budget-tokens / (1 + FRACTION)`, headroom for a counter that under-counts a model's real tokenizer. Reported as `token_safety_margin`. |
 | `--context-budget-chars` | — | Alias of `--budget`: rendered context, in characters. |
 | `--context-budget-tokens` | — | Alias of `--budget-tokens`: rendered context, in estimated tokens. |
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |

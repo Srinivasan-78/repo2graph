@@ -1402,6 +1402,7 @@ class Index:
         edge_dirs: Mapping[str, tuple[str, ...]] | None = None,
         expansion: str | None = None,
         seed_offset: int | None = None,
+        token_margin: float = 0.0,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -1438,6 +1439,9 @@ class Index:
             edge_types: Edge types graph expansion may follow. None means
                 DEFAULT_EDGE_TYPES; name `TESTS` here to pull in the tests that
                 reach a seed (it is never followed by default).
+            token_margin: Safety margin on `budget_tokens` for a counter that
+                may under-count: the pack is filled to budget / (1 + margin),
+                so 0.25 leaves a quarter of the budget spare (#290).
             seed_offset: Page through seeds instead of packing the top `k`: skip
                 the first `seed_offset` eligible seeds of a fixed
                 `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
@@ -1459,6 +1463,8 @@ class Index:
         # always done when budget_tokens is None (preserves byte-identical output).
         measure: Callable[[str], int] = measure_tokens if use_tokens else len
         budget = budget_tokens if budget_tokens is not None else budget_chars
+        if use_tokens and token_margin > 0 and budget > 0:
+            budget = max(1, int(budget / (1 + token_margin)))
         bounded = budget > 0
 
         ranked = self.score_rrf(query, vectors=vectors, embedder=embedder)
@@ -1744,6 +1750,7 @@ class Index:
             "omitted_chunk_count": max(0, len(seeds) + len(graph_neighbours) - len(picked)),
             # `tokens_used` is only as exact as the counter behind it (#290).
             "token_count_method": getattr(measure_tokens, "token_count_method", "caller-supplied"),
+            "token_safety_margin": token_margin if use_tokens else 0.0,
         }
 
 

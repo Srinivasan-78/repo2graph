@@ -47,6 +47,8 @@ Every exception is something you ask for by name:
   serves on first use. Once it is cached, `HF_HUB_OFFLINE=1` makes later runs request nothing;
   pin the download to one commit with `--model MODEL@<commit>` (and the same `--embed-model` on
   the query side).
+- `rag --tokenizer tiktoken` lets the `tiktoken` package fetch its BPE table on first use
+  (cached afterwards). The other tokenizers are local arithmetic.
 - `repo2graph rag --answer` sends the assembled context pack (real file content) to an LLM
   provider, the only exception that sends your source anywhere. It:
 
