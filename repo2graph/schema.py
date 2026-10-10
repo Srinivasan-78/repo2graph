@@ -105,7 +105,7 @@ class EdgeRecord(TypedDict, total=False):
     `src`/`dst`/`type` are on every edge, and so are `method`, `confidence` and
     `evidence` — `Graph.add_edge` runs every edge through `edgemeta.normalize`,
     which is the chokepoint that makes those three unconditional (see the
-    CONTRIBUTING.md rule on edge evidence). `evidence: None` is a real answer for
+    .github/CONTRIBUTING.md rule on edge evidence). `evidence: None` is a real answer for
     `CONTAINS` and `CO_CHANGE` rather than a missing value.
 
     Everything below that is edge-type-specific — see `export.EDGE_TYPES` for
@@ -156,7 +156,7 @@ class NeighbourEdge(_NeighbourEdgeRequired, total=False):
     see `chunks._neighbour_edge`. `confidence` is present only when the edge
     is an ambiguous `CALLS` edge scoring below 1.0; `IMPORTS`/`DEFINES`/
     `INHERITS` neighbours never carry it (they have no `confidence` key to
-    read in the first place — see the `min_confidence` note in CONTRIBUTING.md).
+    read in the first place — see the `min_confidence` note in .github/CONTRIBUTING.md).
     """
 
     confidence: float

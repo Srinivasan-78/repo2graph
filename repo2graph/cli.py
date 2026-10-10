@@ -25,7 +25,7 @@ from .export import (
     register_written,
     rel as artifact_rel,
 )
-from .events import SAFE_ERRORS, encodable, write_safe
+from .events import encodable, write_safe
 from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
@@ -42,12 +42,6 @@ def parse_formats(spec: str) -> set[str]:
             f"unknown format(s): {', '.join(unknown)}; choose from {', '.join(FORMATS)}"
         )
     return wanted
-
-
-# Kept as a re-export: the canonical definition now lives in events, which both
-# the CLI and the server-side loggers share so the rule cannot drift in two
-# places. Existing importers of cli._SAFE_ERRORS keep working.
-_SAFE_ERRORS = SAFE_ERRORS
 
 
 def _emit(text: str) -> None:
@@ -972,15 +966,14 @@ def cmd_explain_path(args):
 
     args, applied = _with_repo_config(args, repo_path)
     config = BuildConfig(
-        include_vendor=getattr(args, "include_vendor", False),
-        include_secrets=getattr(args, "include_secrets", False),
-        chunk_large_files=getattr(args, "chunk_large_files", False),
-        extra_exclude_dirs=getattr(args, "extra_exclude_dirs", None) or [],
-        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
+        include_vendor=args.include_vendor,
+        include_secrets=args.include_secrets,
+        chunk_large_files=args.chunk_large_files,
+        max_file_bytes=int(args.max_file_mb * 1_000_000),
+        extra_exclude_dirs=args.extra_exclude_dirs or [],
+        extra_secret_keywords=args.extra_secret_keywords or [],
+        extra_secret_dirs=args.extra_secret_dirs or [],
     )
-    if "max_file_mb" in applied.values:
-        config.max_file_bytes = int(applied.values["max_file_mb"] * 1_000_000)
     res = explain_path(
         repo_path,
         args.path,
@@ -1138,31 +1131,25 @@ def cmd_explain(args) -> int:
         res = explain_edge(outdir, args.src, args.dst)
         _emit(json.dumps(res, indent=2) if is_json else format_explain_edge(res))
         return 0 if res.get("found") else 1
-    elif subcmd == "node":
+    if subcmd == "node":
         res = explain_node(outdir, args.node_id)
         _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
         return 0 if res.get("found") else 1
-    elif subcmd == "retrieval":
-        k = getattr(args, "k", 8)
-        hops = getattr(args, "hops", 1)
-        conf = getattr(args, "min_confidence", None)
-        res = explain_retrieval(
-            outdir,
-            args.query,
-            k=k,
-            hops=hops,
-            min_confidence=conf,
-            # The same query-time default as rag/query: a trace must not name
-            # a `.env` that the retrieval it explains would never return.
-            exclude_secrets=not getattr(args, "include_secrets", False),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
-        )
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
-        return 0
-    else:
-        diagnostic(f"repo2graph: error: unknown explain command '{subcmd}'")
-        return 1
+    # `retrieval`: the explain subparsers are required, so nothing else reaches here.
+    res = explain_retrieval(
+        outdir,
+        args.query,
+        k=args.k,
+        hops=args.hops,
+        min_confidence=args.min_confidence,
+        # The same query-time default as rag/query: a trace must not name
+        # a `.env` that the retrieval it explains would never return.
+        exclude_secrets=not args.include_secrets,
+        extra_secret_keywords=args.extra_secret_keywords or None,
+        extra_secret_dirs=args.extra_secret_dirs or None,
+    )
+    _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
+    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -1440,7 +1427,11 @@ def main(argv=None):
         default="redact-match",
         help="content-aware secret scanning policy for chunks (default: redact-match)",
     )
-    common.add_argument(
+
+    # Flags that decide which paths get indexed. Shared with `explain-path`, so
+    # it answers from the same rule set `build` applies, not a subset of it.
+    path_rules = argparse.ArgumentParser(add_help=False)
+    path_rules.add_argument(
         "--secret-keyword",
         action="append",
         default=[],
@@ -1448,7 +1439,7 @@ def main(argv=None):
         metavar="KEYWORD",
         help="additional keyword to exclude as secret file/path (repeatable)",
     )
-    common.add_argument(
+    path_rules.add_argument(
         "--secret-dir",
         action="append",
         default=[],
@@ -1456,23 +1447,19 @@ def main(argv=None):
         metavar="DIR",
         help="additional directory name to exclude as secret path (repeatable)",
     )
-
-    # Flags for the two commands that write an index from source. Defined once:
-    # `build` and `github` carried eight identical copies of each (#47).
-    build_out = argparse.ArgumentParser(add_help=False)
-    build_out.add_argument(
+    path_rules.add_argument(
         "--max-file-mb",
         type=_max_file_mb,
         default=1.5,
         help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--include-vendor",
         action="store_true",
         default=False,
         help="index files in vendor directories (default: off)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--exclude-dir",
         action="append",
         default=[],
@@ -1480,12 +1467,16 @@ def main(argv=None):
         metavar="NAME",
         help="additional directory name to exclude (repeatable)",
     )
-    build_out.add_argument(
+    path_rules.add_argument(
         "--chunk-large-files",
         action="store_true",
         default=False,
         help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
     )
+
+    # Flags for the two commands that write an index from source. Defined once:
+    # `build` and `github` carried eight identical copies of each (#47).
+    build_out = argparse.ArgumentParser(add_help=False, parents=[path_rules])
     build_out.add_argument(
         "--allow-symlink-out",
         action="store_true",
@@ -1820,7 +1811,9 @@ def main(argv=None):
     )
     s.set_defaults(func=cmd_stats)
 
-    ep = sub.add_parser("explain-path", help="explain why a file is included or excluded")
+    ep = sub.add_parser(
+        "explain-path", parents=[path_rules], help="explain why a file is included or excluded"
+    )
     ep.add_argument("path", help="file path to evaluate")
     ep.add_argument(
         "-r", "--repo", default=".", help="repository root (default: current directory)"
@@ -1841,7 +1834,6 @@ def main(argv=None):
         default=".r2g",
         help="the build's output directory, never indexed (default: .r2g, as build)",
     )
-    ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)
     ep.add_argument("--json", action="store_true", help="output explanation as JSON")
     ep.set_defaults(func=cmd_explain_path)

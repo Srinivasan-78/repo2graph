@@ -358,7 +358,7 @@ def edge_dirs_for(shape: str) -> dict[str, tuple[str, ...]] | None:
 # retrieve()'s default budget, named so a caller that has to reproduce its seed
 # loop (explain.explain_retrieval) cannot drift from it. Deliberately *not*
 # shared with pack_context's identically valued default: the two mean different
-# things by budget_chars and must stay separately adjustable (CONTRIBUTING.md, "Two
+# things by budget_chars and must stay separately adjustable (.github/CONTRIBUTING.md, "Two
 # budget models coexist").
 RETRIEVE_BUDGET_CHARS = 24000
 

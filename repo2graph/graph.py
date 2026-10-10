@@ -200,10 +200,13 @@ def _home_names(node: dict) -> set[str]:
     return names
 
 
-# Base types common enough across languages (object/Exception/Error/...) that a
-# same-named class anywhere in the repo would false-link unrelated hierarchies
-# together. A same-file or imported definition still wins over this filter --
-# it only blocks the repo-wide fallback tier from matching one of these names.
+# Base names common enough -- language roots (object/Exception/Error/...) and
+# the framework bases that a third of a codebase can inherit from (Django's
+# Model, React's Component, SQLAlchemy's Base) -- that a same-named class
+# anywhere in the repo would false-link unrelated hierarchies together. A
+# repository's own `Model` is still linked from its own file and from every
+# file that imports it: this only blocks the repo-wide fallback tier, the one
+# that would otherwise tie every `models.Model` subclass to it.
 COMMON_STDLIB_BASES = frozenset(
     {
         "object",
