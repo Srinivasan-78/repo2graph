@@ -291,6 +291,11 @@ Subprocess calls that invoke `git` must never pass `text=True` or rely on the de
 - Capture raw subprocess bytes and decode explicitly with `.decode("utf8", "surrogateescape")` or `errors="replace"`.
 - Always specify an explicit `timeout=` parameter on subprocess invocations.
 
+### 2a. Platform-Guarded Standard Library Calls Need a `sys.platform` Test
+typeshed guards much of the standard library on `sys.platform`, and a `try: import x / except ImportError` is not a guard mypy can narrow. `cli._peak_rss_mb` reached for the win32-guarded `resource.getrusage` behind exactly that, which typechecked on Linux and failed with four errors on every Windows checkout — including in the `mypy-strict` pre-commit hook, so a Windows contributor could not commit a clean tree (#484).
+- Test `sys.platform == "win32"` (or `!=`) before the call, and keep the import guard for the runtime.
+- CI runs `mypy --platform linux`, `--platform darwin` and `--platform win32` on one runner, so a regression fails there even though `make typecheck` locally only checks your own platform.
+
 ### 3. Deterministic Discovery Order
 The order in which files are discovered dictates the emitted order of nodes, edges, and chunks across `nodes.jsonl`, `edges.jsonl`, and `chunks.jsonl`.
 - `parse.discover()` must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
