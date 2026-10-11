@@ -42,11 +42,16 @@ def _symbols_in(g, rel: str) -> list[str]:
 
 
 @pytest.mark.parametrize("extra", [0, PARALLEL_MIN_FILES])
-def test_a_runaway_parse_is_stopped_and_counted(tmp_path, capsys, extra):
+def test_a_runaway_parse_is_stopped_and_counted(tmp_path, capsys, monkeypatch, extra):
     root = _repo(tmp_path, extra)
-    started = time.monotonic()
+    # The parent kills the worker; record that it did, rather than timing the
+    # build -- a CI runner's speed says nothing about whether the parse was
+    # interrupted or merely discarded after running to the end.
+    killed = []
+    real_kill = parsepool._kill
+    monkeypatch.setattr(parsepool, "_kill", lambda pid: (killed.append(pid), real_kill(pid)))
     g = build(root, jobs=2, config=BuildConfig(parse_timeout=1.0))
-    assert time.monotonic() - started < 30
+    assert len(killed) == 1, "the runaway parse was not interrupted"
     assert g.stats["skipped_parse_timeout"] == 1
     assert "file:bad.cpp" in g.nodes and not _symbols_in(g, "bad.cpp")
     assert g.nodes["file:bad.cpp"]["size"] == len(RUNAWAY)
