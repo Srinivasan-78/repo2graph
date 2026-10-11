@@ -112,6 +112,17 @@ makes keeping it current a release-blocking step rather than a good intention.
   with explicit classified exceptions (`OSError`, `ValueError`, `TypeError`, `subprocess.SubprocessError`, `ImportError`).
   Added `REPO2GRAPH_DEBUG=1` environment variable and `--debug` CLI flag to re-raise internal errors across resilience
   boundaries, and enabled ruff `BLE001` checking in CI linting.
+- **Gallery grows from five repositories to eleven (#462):** React, FastAPI, Gin, ripgrep, Guava
+  and Jekyll join `examples/`, each at a pinned commit with its reproduction command — the
+  gallery's first JavaScript, Rust, Java and Ruby entries. React's page records what Flow type
+  annotations cost the JavaScript parser (241 of 386 parsed files report parse errors). Generated
+  example pages now also list files with parse errors, symbols of every kind and methods, so a
+  Java library no longer reads as having "0 functions".
+- **`docs/comparison.md` covers Sourcetrail and the dependency-graph tools (#462):** what
+  Sourcetrail did, what repo2graph does instead and what Sourcetrail did better (its interactive
+  desktop UI; `graph.html` is a static map), and how Madge, dependency-cruiser and CodeSee differ —
+  they graph module imports, repo2graph graphs calls, imports, inheritance and co-change for an
+  agent under a token ceiling. Linked from `README.md`.
 
 ### Changed
 

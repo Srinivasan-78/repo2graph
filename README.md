@@ -42,7 +42,9 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 ```
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
-output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
+output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run). What it produces on
+eleven well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
+pinned commit with the command to reproduce it: [examples/](examples/README.md).
 
 ## Is it better than grep?
 
@@ -129,8 +131,11 @@ What it does do that grep doesn't:
   bounded by hop count and visit cap, with a citation per edge.
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
-Cursor's index and Claude Code's own search, including when to use those instead:
-**[docs/comparison.md](docs/comparison.md)**.
+Cursor's index and Claude Code's own search, and with the dependency-graph tools Madge,
+dependency-cruiser and CodeSee, including when to use those instead:
+**[docs/comparison.md](docs/comparison.md)**. Looking for a **Sourcetrail alternative**? It is not
+a drop-in replacement — there is no interactive desktop UI — and
+[the comparison says what it does instead](docs/comparison.md#repo2graph-as-a-sourcetrail-alternative).
 
 ## Five questions to start with
 

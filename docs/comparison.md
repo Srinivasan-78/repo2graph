@@ -2,7 +2,10 @@
 
 Building a graph out of a codebase is not a new idea, and repo2graph is not the only tool doing it
 for AI agents. This page covers what each tool is for, where repo2graph is the wrong choice, and
-the one axis that separates them.
+the one axis that separates them. The agent-context tools come first; further down are the tools
+that draw a codebase for a person to look at — [Sourcetrail](#repo2graph-as-a-sourcetrail-alternative)
+and the [dependency-graph tools](#repo2graph-vs-the-dependency-graph-tools-madge-dependency-cruiser-codesee)
+Madge, dependency-cruiser and CodeSee.
 
 Everything said here about another project is taken from its own documentation, linked inline.
 Where a claim about repo2graph is checkable in this repository, the file is named.
@@ -21,7 +24,7 @@ checked on 2026-09-28; they move fast, so follow the links before relying on a d
 | **[CodeGraphContext](https://github.com/CodeGraphContext/CodeGraphContext)** | tree-sitter into a graph database (FalkorDB Lite, Kuzu, Neo4j, …), 23 languages | Graph query results: callers, callees, call chains, dead code, complexity | A graph DB backend | Richer graph queries (dead code, complexity, arbitrary call chains) and more languages. |
 | **[code-graph-rag](https://github.com/vitali87/code-graph-rag)** | tree-sitter into Memgraph | Answers from an LLM that turns your question into Cypher; can also edit | Memgraph + an LLM | Natural-language questions over the full graph, plus editing. Needs a model on every query. |
 | **[Sourcegraph](https://sourcegraph.com) (Code Search, Cody Enterprise)** | Precise code intelligence (SCIP indexers) across many repositories | Cross-repo search results; Cody Enterprise answers | Server deployment; Cody Free/Pro ended July 2025 | Organisation-scale, cross-repository, compiler-accurate navigation. A different weight class. |
-| **repo2graph** | tree-sitter, name-based call resolution, 17 languages, plus `CO_CHANGE` from git history | Source blocks, each headed `[cite: path:start-end]`, packed under a hard token ceiling | `uvx repo2graph build .`; no model, no DB, no language server, no network | See below. |
+| **repo2graph** | tree-sitter, name-based call resolution, 19 languages, plus `CO_CHANGE` from git history | Source blocks, each headed `[cite: path:start-end]`, packed under a hard token ceiling | `uvx repo2graph build .`; no model, no DB, no language server, no network | See below. |
 
 **Where repo2graph is actually different**, and only where:
 
@@ -88,7 +91,7 @@ how this system hangs together, including the design docs", it is the better too
 | Returns | packed source, cited per block, inside a token budget | subgraph / path / concept explanation over `graph.json` |
 | Ranking | BM25 seeds + graph expansion (1 hop by default), optional dense fusion | graph traversal; explicitly not a vector index |
 | Non-code corpus | indexed as text, never sent anywhere | docs, PDFs, images, video via a model-backed semantic pass |
-| Languages parsed for symbols | 17 | ~40 |
+| Languages parsed for symbols | 19 | ~40 |
 | Edges from version control | `CO_CHANGE`, files that keep changing together | — |
 | Ambiguity marking | `confidence` on `CALLS`; ambiguous names fan out at `1/n` | `EXTRACTED` / `INFERRED` tags |
 | Runs headless in CI | yes — published GitHub Action | built around a `/graphify` skill in an assistant |
@@ -117,6 +120,113 @@ This is a different category. It is a reading tool for a human inside a note-tak
 repo2graph is a retrieval tool for an agent, with `graph.html` as a side artifact rather than the
 point. If your knowledge lives in an Obsidian vault and you want the code visible next to it,
 install the plugin — the two do not compete for the same slot.
+
+## repo2graph as a Sourcetrail alternative
+
+[Sourcetrail](https://github.com/CoatiSoftware/Sourcetrail) was a free, open-source (GPL-3.0)
+desktop source explorer for C, C++, Java and Python, made by Coati Software. You indexed a project
+once — C and C++ through Clang, usually from a `compile_commands.json` compilation database; Java
+through Eclipse JDT; Python through its own indexer — and then explored it in three linked views: a
+fuzzy search field, a graph centred on the selected symbol showing all of its incoming and outgoing
+dependencies, and a code view listing every source location of that symbol as snippets. Clicking a
+node moved all three; clicking an edge jumped to the line that created it. "Custom trails" drew a
+whole call graph, inheritance chain or include tree to any depth. Editor plugins — VS Code, Vim,
+Emacs, Visual Studio, IntelliJ IDEA, Eclipse, Sublime Text, Atom, Qt Creator — moved the cursor
+between Sourcetrail and the editor in both directions.
+
+Its original authors archived it at the end of 2021; the GitHub repository has been read-only since
+2021-12-14. A community fork, [petermost/Sourcetrail](https://github.com/petermost/Sourcetrail), is
+maintained with the stated aim of keeping it buildable; as of October 2026 its README lists C/C++
+and Java, Python support having been removed. (Everything above about Sourcetrail is from its own
+`README.md` and `DOCUMENTATION.md` at the archived commit, and the fork's README.)
+
+**repo2graph is not a drop-in replacement.** It is a different answer to the same question — "how
+does this unfamiliar code fit together?" — for a different reader. Sourcetrail put a person in front
+of an interactive graph. repo2graph hands a coding agent the source that answers a question.
+
+| | Sourcetrail | repo2graph |
+|---|---|---|
+| Who it is for | a developer, in a desktop application | a coding agent over MCP; also a terminal CLI and a GitHub Action |
+| How you ask | search a symbol, then click through the graph and the code | ask a question in words: `repo_search`, `repo_neighbours`, `repo_blast_radius` over MCP, `repo2graph rag` in a terminal |
+| What comes back | a symbol-centred graph, plus the source locations to read | the source blocks that answer, each headed `[cite: path:start-end]`, packed under a hard token ceiling |
+| How it understands code | compiler front ends: Clang (C, C++), Eclipse JDT (Java), plus a Python indexer | tree-sitter for 19 languages; calls matched by name, scoped by class, file and imports |
+| Setup | a project per codebase; a compilation database or Visual Studio project for C/C++, Gradle or Maven for Java | `uvx repo2graph build .` — no build configuration, compiler or language server |
+| Precision | compiler-backed for C, C++ and Java; an optional post-processing pass resolves leftover references by name and marks them "ambiguous" | name-based throughout; a name that could mean several definitions is marked `ambiguous` and priced `1/n`, never guessed |
+| Version-control signal | none | `CO_CHANGE`: files that keep changing together in git |
+| Headless / CI | no | yes, as a GitHub Action |
+| Status | archived 2021; community fork kept buildable | maintained |
+
+**What Sourcetrail did better, plainly:**
+
+- **The interactive UI.** Click a symbol, see its callers and callees, click an edge, land on the
+  line, expand a class into its members, follow a trail to any depth. That loop was the product,
+  and repo2graph does not have it. `graph.html` is a static, self-contained page written at build
+  time: you can pan, zoom, search, and click a node to list its connections, path, line range and
+  signature, but it draws the 300 best-connected nodes by default (`--viz-nodes`, see
+  [`map`](cli.md#map-and-stats)), shows no source code, and does not follow your editor. It is a map
+  to orient by, not a navigator. Against Sourcetrail's desktop UI that is a real deficit.
+- **Precision on C, C++ and Java.** A compiler front end resolves overloads, templates and virtual
+  dispatch that name matching cannot. If you need the exact call graph of a large C++ or Java
+  system, a compiler-backed tool is the right answer — see
+  [when repo2graph is the wrong choice](#when-repo2graph-is-the-wrong-choice).
+- **Editor round-tripping.** Sourcetrail's plugins moved the cursor both ways. repo2graph's editor
+  integration is the MCP client — Claude Code, Cursor, Claude Desktop ([docs/mcp.md](mcp.md)) — which
+  asks it questions; there is no cursor sync.
+
+**What repo2graph does differently:**
+
+- **It is agent-native.** Sourcetrail's "select a symbol, see its neighbours" is a tool call here:
+  `repo_neighbours` returns a symbol's callers, callees, base classes and defining file with line
+  numbers, `repo_blast_radius` walks what depends on it, and `repo_search` returns the cited source
+  for a question, inside a budget the server enforces (`MCP_MAX_BUDGET_TOKENS = 12000` in
+  `repo2graph/mcp/guardrails.py`).
+- **It lives in the terminal and the editor you already use**, not in a separate application: a
+  one-line `claude mcp add`, a CLI, or a step in CI.
+- **It needs no build setup**, for 19 languages, at the price of name-based rather than type-based
+  resolution.
+- **It sees history.** `CO_CHANGE` edges come from git, which no parser — Sourcetrail's included —
+  can see.
+
+What that buys is measured, and the measurement is mixed: on cross-file structural questions
+repo2graph's cited packs find 79% of the evidence at 8,000 tokens against 38% for grep, and on
+single-file lexical questions grep finds more — 59% against 45%
+([method and tables](../benchmarks/real/README.md)). If you want to *browse* a C, C++ or Java
+codebase by hand, the Sourcetrail fork or your IDE's call hierarchy is the better tool. If you want
+your coding agent to answer cross-file questions with citations and a hard token ceiling, that is
+what repo2graph is for.
+
+## repo2graph vs the dependency-graph tools: Madge, dependency-cruiser, CodeSee
+
+These are what people find first when they search for a way to visualize a codebase, and the first
+two answer a narrower, well-defined question very well: *which module imports which*.
+
+| | [Madge](https://github.com/pahen/madge) | [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | repo2graph |
+|---|---|---|---|
+| What an edge means | file A imports file B | file A imports file B | a call, an import, inheritance, a definition, or co-change in git — down to functions and methods |
+| Languages | JavaScript modules (CommonJS, AMD, ES6); TypeScript via a `tsConfig` option; Sass, Stylus, Less | JavaScript, TypeScript, CoffeeScript, LiveScript (ES6, CommonJS, AMD), including `.jsx`, `.tsx`, `.vue`, `.svelte` | 19 with symbols; every other file as text |
+| Main output | circular dependencies, orphans, leaves, dependents of a module; images through Graphviz | violations of rules you write (circular imports, orphans, undeclared or dev-only dependencies in production code, your own boundaries), as text, an eslint-like format for builds, or graphs (DOT, Mermaid, HTML, JSON, CSV) | cited source packs for an agent, a JSON-lines graph, `graph.html` |
+| Strongest at | finding circular imports in a JS/TS project, quickly | enforcing architecture rules on every pull request | answering cross-file questions inside an agent's token budget |
+| License | MIT | MIT | MIT |
+
+Facts about Madge and dependency-cruiser are from their own READMEs, checked on 2026-10-11.
+
+[CodeSee](https://www.codesee.io) was a hosted service that drew maps of a codebase for teams to
+look at and annotate. GitKraken acquired the company in May 2024. We could not confirm from a
+primary source what is still offered under that name, so check before evaluating it; the comparison
+that holds regardless is the category — a hosted map for people — against a local retrieval tool for
+agents that needs no account and makes no network call on its default path.
+
+**The real axis.** Madge and dependency-cruiser graph *module imports*. That is a clean,
+well-defined graph, and they draw it and police it better than repo2graph does: repo2graph has no
+rule language and no circular-import report. repo2graph graphs *calls*, *imports*, *inheritance*
+and *co-change*, at the level of individual functions and methods, and its main output is not a
+picture — it is the source an agent needs, packed under a hard token ceiling with a citation on
+every block. An import graph answers "what does this file depend on?"; repo2graph is built for "what
+calls this, what does it call, and show me the code."
+
+They are complementary. If you want circular imports caught or a layering rule enforced in CI on a
+JS/TS repository, use dependency-cruiser (or Madge, for the quick check) — alongside repo2graph if
+you also want an agent to answer questions about the same code.
 
 ## repo2graph vs plain grep or an embeddings index
 
@@ -154,14 +264,14 @@ recall over BM25 alone; on the structural benchmark it adds 20 to 30 points over
   [Serena](https://github.com/oraios/serena).
 - **You want the graph itself as the deliverable** — communities, layout, path queries between
   arbitrary concepts. That is Graphify's shape, not this one.
-- **Your language is outside the 17 with symbol support.** The files still appear on the map and
+- **Your language is outside the 19 with symbol support.** The files still appear on the map and
   are still retrievable as text, but there are no function-level nodes or `CALLS` edges for them.
 
 ## Reproducing any of this
 
 Retrieval-quality numbers come from `benchmarks/real/results.json`
 ([method and diagnosis](../benchmarks/real/README.md), `scripts/bench_real_repos.py`).
-Build-scale numbers come from `benchmarks/results.json`, generated against five pinned public
+Build-scale numbers come from `benchmarks/results.json`, generated against eleven pinned public
 repositories; [`benchmarks/methodology.md`](../benchmarks/methodology.md) has the methodology and
 [`examples/README.md`](../examples/README.md) the exact reproduction command per repository.
 Nothing on this page is estimated: where a figure is not measured, it is not given.
