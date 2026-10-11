@@ -2,13 +2,13 @@
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 
 import argparse
+from typing import Any
 import json
 import math
 import os
 import sys
 import time
 from pathlib import Path
-from typing import cast
 
 from .events import diagnostic
 from . import __version__
@@ -18,10 +18,10 @@ from .chunks import iter_chunks
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
+from .rerank import DEFAULT_RERANK_MODEL as RERANK_DEFAULT_MODEL
 from .export import (
     dump_all,
     load_parse_cache_report,
-    make_path,
     path as artifact_path,
     register_written,
     rel as artifact_rel,
@@ -30,6 +30,7 @@ from .events import encodable, write_safe
 from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
+from .parsepool import PARSE_TIMEOUT_S
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -123,7 +124,7 @@ def _explicit_dests(root, sub, argv) -> set[str]:
     return set(vars(ns))
 
 
-def _with_repo_config(args, repo):
+def _with_repo_config(args: argparse.Namespace, repo: Path) -> tuple[argparse.Namespace, Any]:
     """`args` with the repo's config file filling every flag not typed (#391).
 
     Returns `(merged, applied)`: a copy of `args`, and a `RepoConfig` holding
@@ -152,6 +153,16 @@ def _with_repo_config(args, repo):
     return merged, applied
 
 
+def _scip_index(args, from_config: bool, repo_path: Path) -> str | None:
+    """`--scip` as typed, or the config key's path inside the repo (#380)."""
+    from .scip import ScipError, index_path
+
+    try:
+        return index_path(getattr(args, "scip", None), repo_path, from_config)
+    except ScipError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
 def _require_history_for_authors(args) -> None:
     if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
         raise SystemExit(
@@ -168,7 +179,8 @@ def cmd_build(args):
         raise SystemExit(
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
-    args, _ = _with_repo_config(args, repo_path)
+    args, applied = _with_repo_config(args, repo_path)
+    scip_index = _scip_index(args, "scip" in applied.values, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # Resolved before validate_outdir and the build lock: `--exclude-group
@@ -220,7 +232,9 @@ def cmd_build(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
         output_dir=str(outdir),
+        scip_index=scip_index,
     )
     cache = None
     cache_invalidated = None
@@ -447,6 +461,7 @@ def cmd_github(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
     )
     lock_timeout = getattr(args, "lock_timeout", 60.0)
     try:
@@ -544,105 +559,25 @@ def _resolve_vectors(idx, args, out=None):
     return idx.vectors, embedder
 
 
-def cmd_embed(args):
-    """Embed an index's chunks, reusing every vector whose text is unchanged."""
-    if getattr(args, "verify_rag", False):
-        return cmd_verify_rag(args)
-    from .embed import (
-        build_vectors,
-        default_embedder,
-        model_id_of,
-        text_hash,
-        write_vectors,
-    )
-    from .export import register_written
-    from .query import read_jsonl
+def _resolve_reranker(args):
+    """The cross-encoder for `--rerank`, or None (#381).
 
-    out = Path(args.out)
-    chunks = read_jsonl(_require_index(out, "chunks.jsonl"))
-    try:
-        embedder = default_embedder(args.model)
-    except RuntimeError as exc:
-        raise SystemExit(str(exc)) from None
-    model_id = model_id_of(embedder)
-
-    npy = make_path(out, "vectors.npy")
-    chunk_ids = [c["id"] for c in chunks if c.get("id")]
-    hashes = {c["id"]: text_hash(c) for c in chunks if c.get("id")}
-    reuse = {}
-    if not args.force:
-        reuse = _reusable_vectors(npy, model_id, hashes)
-    vectors = build_vectors(chunks, embedder, batch=args.batch, reuse=reuse)
-    widths = {len(v) for v in vectors.values()}
-    if len(widths) > 1:
-        # Same model id, different width: the stored vectors cannot be trusted
-        # alongside the new ones, so drop every one of them and re-embed.
-        reuse = {}
-        vectors = build_vectors(chunks, embedder, batch=args.batch)
-        widths = {len(v) for v in vectors.values()}
-    dim = widths.pop() if widths else 0
-
-    # Read build_id from manifest so vectors.meta.json records which build they
-    # correspond to; verify_artifacts and doctor use this to detect staleness.
-    build_id: str | None = None
-    try:
-        _mpath = artifact_path(out, "manifest.json")
-        if _mpath.exists():
-            _mdata = json.loads(_mpath.read_text(encoding="utf8", errors="replace"))
-            if isinstance(_mdata, dict):
-                build_id = _mdata.get("build_id") or None
-    except (OSError, ValueError):
-        pass
-
-    n = write_vectors(
-        npy,
-        vectors,
-        model_id,
-        dim,
-        chunk_ids,
-        [hashes[cid] for cid in chunk_ids],
-        build_id=build_id,
-    )
-    register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
-    reused = len(set(reuse) & set(vectors))
-    _emit(
-        json.dumps(
-            {
-                "out": str(out),
-                "vectors": n,
-                "reused": reused,
-                "embedded": n - reused,
-                "model": model_id,
-                "dim": dim,
-            },
-            indent=2,
-        )
-    )
-
-
-def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
-    """Stored vectors whose chunk id *and* chunk text are both unchanged.
-
-    A chunk's vector depends on its own text and nothing else, so this is
-    correct by construction — unlike reusing anything that depends on the
-    graph, whose call confidences are global.
+    Unlike `--vectors`, a reranker that cannot load is not an error: the
+    first-stage order is still a correct answer, so the query proceeds on it
+    and the reason goes to stderr as one `rag_rerank_disabled` line.
     """
-    from .embed import load_vectors
+    if not getattr(args, "rerank", False):
+        return None
+    from .rerank import DEFAULT_RERANK_MODEL, default_reranker
 
-    if not npy.exists():
-        return {}
+    model = getattr(args, "rerank_model", None) or DEFAULT_RERANK_MODEL
     try:
-        previous, meta = load_vectors(npy)
-    except (OSError, ValueError, KeyError, ImportError):
-        return {}
-    if not previous or meta.get("model_id") != model_id:
-        return {}
-    stored = dict(zip(meta.get("chunk_ids") or [], meta.get("text_hashes") or []))
-    return {
-        cid: vec
-        for cid, vec in previous.items()
-        if cid in hashes and stored.get(cid) == hashes[cid]
-    }
+        return default_reranker(model)
+    except RuntimeError as exc:
+        from .events import emit
+
+        emit("rag_rerank_disabled", level="warning", reason=str(exc))
+        return None
 
 
 def _validate_auto_build_out(out, repo_root) -> None:
@@ -736,6 +671,7 @@ def cmd_query(args):
             hops=args.hops,
             min_confidence=getattr(args, "min_conf", None),
             exclude_secrets=not getattr(args, "include_secrets", False),
+            rerank=_resolve_reranker(args),
         )
         _emit(json.dumps(res, indent=2) if args.format == "json" or args.json else format_pack(res))
         return 0
@@ -765,6 +701,7 @@ def cmd_query(args):
         # caller opts in *now*: an index built with --include-secrets must not
         # hand them to every later plain query.
         exclude_secrets=not getattr(args, "include_secrets", False),
+        rerank=_resolve_reranker(args),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -833,112 +770,6 @@ def _rag_index_dir(args) -> Path:
     return out
 
 
-def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
-    """Self-test the dense-retrieval path against one index.
-
-    Answers the four questions that distinguish "dense retrieval is working"
-    from "dense retrieval silently is not": are there vectors at all, which
-    model and width were they built with, does the active embedder agree, and
-    does every chunk actually have one.
-
-    Args:
-        idx: An open `Index`.
-        out: The index directory, for error messages.
-        embed_model: Model id to check against, or None for the built-in
-            default. Never defaulted to the index's own `model_id` -- comparing
-            a value with itself is what makes a mismatch guard unfalsifiable.
-
-    Returns:
-        `(report, error)`. `error` is None when the path is sound, otherwise a
-        sentence naming what is broken and how to fix it.
-    """
-    report = {
-        "index": str(out),
-        "vectors_present": bool(idx.vectors),
-        "chunks": len(idx.chunks),
-        "model_id": None,
-        "dim": None,
-        "vectorised_chunks": len(idx.vectors or {}),
-        "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
-        "embedder_model_id": None,
-        "embedder_dim": None,
-        # Known without loading a model: false/true, never null, so a script
-        # can branch on it even when the index has no vectors yet.
-        "rag_extra_installed": _rag_extra_installed(),
-    }
-    report["vectors_unavailable"] = getattr(idx, "vectors_unavailable", None)
-    if not idx.vectors:
-        why = f" ({report['vectors_unavailable']})" if report["vectors_unavailable"] else ""
-        return report, (
-            f"no vectors in the index at {out}{why}: dense retrieval is not "
-            f"available. Run `repo2graph embed -o {out}` to build them."
-        )
-    meta = idx.vector_meta or {}
-    report["model_id"] = meta.get("model_id")
-    report["dim"] = meta.get("dim")
-
-    # Chunk coverage: fuse_ok cannot see this, and it is the failure that makes
-    # fusion abandon itself at query time with everything else looking healthy.
-    missing = cast(int, report["unvectorised_chunks"])
-
-    from .embed import default_embedder
-
-    try:
-        embedder = default_embedder(embed_model)
-        report["rag_extra_installed"] = True
-    except RuntimeError as exc:
-        report["rag_extra_installed"] = False
-        return report, str(exc)
-    from .embed import dim_of, model_id_of
-
-    report["embedder_model_id"] = model_id_of(embedder)
-    try:
-        report["embedder_dim"] = dim_of(embedder)
-    except Exception:  # noqa: BLE001 - resilience boundary: external embedder inspection failure
-        report["embedder_dim"] = None
-    ok, reason = idx.fuse_ok(embedder)
-    if not ok:
-        return report, reason
-    if missing > 0:
-        return report, (
-            f"{missing} of {report['chunks']} chunks have no vector: a query "
-            f"whose BM25 shortlist touches one of them falls back to lexical "
-            f"ranking. Re-run `repo2graph embed -o {out}`."
-        )
-    return report, None
-
-
-def _rag_extra_installed() -> bool:
-    import importlib.util
-
-    try:
-        return importlib.util.find_spec("sentence_transformers") is not None
-    except (ImportError, ValueError):
-        return False
-
-
-def cmd_verify_rag(args):
-    """`--verify-rag`: report on the index's dense path, non-zero if broken."""
-    from .query import Index
-
-    out = Path(args.out)
-    _require_index(out, "chunks.jsonl")
-    try:
-        idx = Index(out)
-    except ValueError as exc:
-        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
-    # `embed` spells it --model/--embed-model; the rag surface spells it
-    # --embed-model. Either way it is the *embedding* model, never the LLM.
-    model = getattr(args, "embed_model", None) or getattr(args, "model", None)
-    report, error = verify_rag(idx, out, model)
-    report["ok"] = error is None
-    report["error"] = error
-    _emit(json.dumps(report, indent=2))
-    if error:
-        raise SystemExit(1)
-    return 0
-
-
 def _federated(args):
     """The --index set, or None; refuses combinations that do not federate (#396)."""
     dirs = getattr(args, "indexes", None)
@@ -974,6 +805,7 @@ def cmd_rag(args):
                 min_confidence=args.min_conf,
                 expand_graph=not args.no_expand,
                 exclude_secrets=not getattr(args, "include_secrets", False),
+                rerank=_resolve_reranker(args),
             ),
         )
 
@@ -1009,6 +841,7 @@ def cmd_rag(args):
         edge_types=getattr(args, "edge_types", None) or None,
         count_tokens=_token_counter(getattr(args, "tokenizer", None)),
         token_margin=getattr(args, "token_margin", 0.0) or 0.0,
+        rerank=_resolve_reranker(args),
     )
     return _rag_output(args, pack)
 
@@ -1024,329 +857,6 @@ def _rag_output(args, pack):
         _emit(json.dumps(pack, indent=2))
     else:
         _emit(pack["markdown"])
-
-
-def cmd_map(args):
-    """Redraw graph.html from an index that is already on disk."""
-    from .viz import LoadedGraph, write_html
-
-    out = Path(args.out)
-    _require_index(out, "nodes.jsonl")
-    _require_index(out, "edges.jsonl")
-    html = make_path(out, "graph.html")
-    data = write_html(LoadedGraph(out), html, args.viz_nodes)
-    register_written(out, [artifact_rel("graph.html")])
-    _emit(
-        json.dumps(
-            {
-                "html": str(html),
-                "nodes": len(data["nodes"]),
-                "edges": len(data["edges"]),
-                "of": data["totals"],
-            },
-            indent=2,
-        )
-    )
-
-
-def format_stats_summary(data: dict) -> str:
-    lines = [
-        "repo2graph Index Quality & Coverage Summary",
-        "===========================================",
-        f"Files Discovered:        {data.get('files', 0)}",
-        f"Files Parsed:            {data.get('parsed', 0)}",
-        f"Parse Errors:            {data.get('parse_errors', 0)} (in {data.get('files_with_parse_errors', 0)} files)",
-        "",
-        "Graph Structure:",
-        f"  Nodes:                 {data.get('nodes', 0)}",
-        f"  Edges:                 {data.get('edges', 0)}",
-        "",
-        "Call Resolution Quality:",
-        f"  Scoped / Tiered:       {data.get('calls_scoped', 0)}",
-        f"  Unique Global:         {data.get('calls_unique_global', 0)}",
-        f"  Ambiguous:             {data.get('calls_ambiguous', data.get('ambiguous_calls', 0))}",
-        f"  External / Unresolved: {data.get('calls_external', 0)}",
-        f"  Untyped Receiver:      {data.get('calls_untyped_receiver', 0)}",
-        "",
-        "Imports & Bases:",
-        f"  Imports Resolved:      {data.get('imports_resolved', 0)}",
-        f"  Imports External:      {data.get('imports_unresolved', 0)}",
-        f"  Unresolved Bases:      {data.get('unresolved_bases', 0)}",
-        "",
-        "Exclusions:",
-        f"  Dotfiles/Dirs:         {data.get('skipped_dotfile', 0)}",
-        f"  Vendor Dirs:           {data.get('skipped_vendor', 0)}",
-        f"  Secrets:               {data.get('skipped_secret', 0)}",
-        f"  Binary Files:          {data.get('skipped_binary', 0)}",
-        f"  Too Large:             {data.get('skipped_too_large', 0)}",
-        f"  Gitignored:            {data.get('skipped_gitignore', 0)}",
-    ]
-    return "\n".join(lines)
-
-
-def cmd_stats(args):
-    raw = _require_index(Path(args.out), "stats.json").read_text(encoding="utf8")
-    if getattr(args, "json", False) or getattr(args, "format", "json") == "json":
-        _emit(raw)
-    else:
-        try:
-            data = json.loads(raw)
-            _emit(format_stats_summary(data))
-        except (ValueError, TypeError, KeyError):
-            _emit(raw)
-
-
-def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
-    """The rule discover() applies *first*: never index a repo2graph output dir.
-
-    `explain_path` does not model it, so `explain-path .r2g/agent/nodes.jsonl`
-    answered INCLUDED for a file no build ever indexes. Two shapes, checked in
-    discover()'s order: the `-o` directory this build would write to, and any
-    directory holding a repo2graph `agent/manifest.json` (an earlier build).
-    """
-    from .parse import BuildConfig, _is_index_dir, _output_rel_prefix
-
-    root = repo.resolve()
-    parts = tuple(Path(rel).parts)
-    out_parts = _output_rel_prefix(root, BuildConfig(output_dir=out)) if out else None
-    if out_parts is not None and parts[: len(out_parts)] == out_parts:
-        return {
-            "included": False,
-            "rule": "output_dir",
-            "reason": f"Path is inside the output directory -o {out}; a build never "
-            "indexes its own artifacts",
-            "precedence_step": 2,
-        }
-    for i in range(1, len(parts)):
-        if _is_index_dir(root.joinpath(*parts[:i])):
-            return {
-                "included": False,
-                "rule": "index_dir",
-                "reason": f"Path is inside '{'/'.join(parts[:i])}', a repo2graph index "
-                "(it holds agent/manifest.json); builds never index an index",
-                "precedence_step": 2,
-            }
-    return None
-
-
-def cmd_diff(args):
-    """What changed structurally between two index directories (#395)."""
-    from .graphdiff import diff_indexes, render_text
-
-    old, new = Path(args.from_dir), Path(args.to_dir)
-    for index_dir in (old, new):
-        _require_index(index_dir, "nodes.jsonl")
-        _require_index(index_dir, "edges.jsonl")
-    try:
-        delta = diff_indexes(old, new)
-    except ValueError as exc:
-        raise SystemExit(f"error: {exc}") from None
-    delta["confidence_changed_edges_count"] = len(delta["confidence_changed_edges"])
-    if args.format == "json" and not args.include_confidence:
-        delta["confidence_changed_edges"] = []
-    if args.format == "json":
-        _emit(json.dumps(delta, indent=2, default=str))
-    else:
-        _emit(
-            f"graph diff: {old} -> {new}\n"
-            + render_text(delta, limit=args.limit, show_confidence=args.include_confidence)
-        )
-    return 0
-
-
-def cmd_explain_path(args):
-    from .parse import BuildConfig, explain_path
-
-    repo_path = Path(args.repo)
-    if not repo_path.is_dir():
-        raise SystemExit(f"error: repository directory does not exist: {repo_path}")
-
-    args, applied = _with_repo_config(args, repo_path)
-    config = BuildConfig(
-        include_vendor=args.include_vendor,
-        include_secrets=args.include_secrets,
-        chunk_large_files=args.chunk_large_files,
-        max_file_bytes=int(args.max_file_mb * 1_000_000),
-        extra_exclude_dirs=args.extra_exclude_dirs or [],
-        extra_secret_keywords=args.extra_secret_keywords or [],
-        extra_secret_dirs=args.extra_secret_dirs or [],
-    )
-    res = explain_path(
-        repo_path,
-        args.path,
-        config=config,
-        include_globs=args.include or None,
-        exclude_globs=_effective_exclude(args),
-        repo_config=applied,
-    )
-    if res["rule"] not in ("outside_root", "not_found"):
-        index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
-        if index_hit is not None:
-            res.update(index_hit)
-    if getattr(args, "json", False):
-        _emit(json.dumps(res, indent=2))
-    else:
-        status_str = "INCLUDED" if res["included"] else "EXCLUDED"
-        lines = [
-            f"Path:            {res['path']}",
-            f"Relative Path:   {res['relative_path']}",
-            f"Decision:        {status_str}",
-            f"Precedence Step: {res['precedence_step']}",
-            f"Rule:            {res['rule']}",
-            f"Reason:          {res['reason']}",
-        ]
-        _emit("\n".join(lines))
-    return 0
-
-
-def cmd_bug_report(args) -> int:
-    """Assemble a diagnostic bundle that is safe to paste into a public issue."""
-    from .bugreport import build_report, format_report
-
-    report = build_report(
-        Path(args.out),
-        repo=getattr(args, "repo", None),
-        category=getattr(args, "category", None),
-        include_paths=getattr(args, "include_paths", False),
-    )
-    text = json.dumps(report, indent=2) if getattr(args, "json", False) else format_report(report)
-
-    dest = getattr(args, "write", None)
-    if dest:
-        try:
-            Path(dest).write_text(text + "\n", encoding="utf8", newline="\n")
-        except OSError as exc:
-            raise SystemExit(f"error: could not write {dest}: {exc}") from None
-        _emit(f"wrote {dest}")
-        _emit("Review it before posting -- it is yours to check, not ours to promise.")
-    else:
-        _emit(text)
-    return 0
-
-
-def cmd_index_status(args) -> int:
-    """Report what an index contains and whether it still matches the tree."""
-    from .status import format_status, index_status
-
-    try:
-        report = index_status(Path(args.out), repo=getattr(args, "repo", None))
-    except FileNotFoundError as exc:
-        raise SystemExit(f"error: {exc}") from None
-    except (OSError, ValueError) as exc:
-        raise SystemExit(
-            f"error: could not read the index at {args.out}: {exc}\n"
-            f"       check it with `repo2graph doctor {args.out}`"
-        ) from None
-
-    if getattr(args, "json", False):
-        _emit(json.dumps(report, indent=2))
-    else:
-        _emit(format_status(report))
-
-    # --check makes this a CI gate: "the committed index matches this commit"
-    # is a reviewable property, and a non-zero exit is how a workflow asserts
-    # it. Without the flag a stale index is a fact to report, not a failure.
-    if getattr(args, "check", False) and report["freshness"]["status"] != "current":
-        return 1
-    return 0
-
-
-def cmd_demo(args) -> int:
-    """Index the bundled demo repository and answer the five starter questions."""
-    from .demo import run_demo
-
-    try:
-        run_demo(
-            outdir=getattr(args, "out", None),
-            keep=getattr(args, "keep", False),
-            brief=not getattr(args, "full", False),
-            emit=_emit,
-        )
-    except OSError as exc:
-        # The only failure a first-run user actually hits here: no writable
-        # temp directory, or a --out they cannot create. Say which path and
-        # what to do, rather than a traceback on their first command.
-        raise SystemExit(
-            f"error: the demo could not write its scratch repository: {exc}\n"
-            "       pass a writable directory explicitly: repo2graph demo --out ./r2g-demo"
-        ) from None
-    return 0
-
-
-def cmd_doctor(args):
-    from .doctor import run_doctor
-
-    report = run_doctor(args.path)
-    if getattr(args, "json", False):
-        _emit(json.dumps(report.to_dict(), indent=2))
-    else:
-        _emit(report.format_text())
-    return 0 if report.ok else 1
-
-
-def cmd_completion(args) -> int:
-    """Print shell completion script or setup instructions."""
-    shell = getattr(args, "shell", "bash")
-    if shell == "bash":
-        _emit(
-            "# Bash completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            'eval "$(register-python-argcomplete repo2graph)"\n'
-        )
-    elif shell == "zsh":
-        _emit(
-            "# Zsh completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            "autoload -U bashcompinit && bashcompinit\n"
-            'eval "$(register-python-argcomplete repo2graph)"\n'
-        )
-    elif shell == "fish":
-        _emit(
-            "# Fish completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            "register-python-argcomplete --shell fish repo2graph | source\n"
-        )
-    return 0
-
-
-def cmd_explain(args) -> int:
-    """Explain edges, nodes, or retrieval results."""
-    from .explain import (
-        explain_edge,
-        explain_node,
-        explain_retrieval,
-        format_explain_edge,
-        format_explain_node,
-        format_explain_retrieval,
-    )
-
-    outdir = Path(getattr(args, "out", ".r2g"))
-    subcmd = getattr(args, "explain_cmd", None)
-    is_json = getattr(args, "json", False)
-
-    if subcmd == "edge":
-        res = explain_edge(outdir, args.src, args.dst)
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_edge(res))
-        return 0 if res.get("found") else 1
-    if subcmd == "node":
-        res = explain_node(outdir, args.node_id)
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
-        return 0 if res.get("found") else 1
-    # `retrieval`: the explain subparsers are required, so nothing else reaches here.
-    res = explain_retrieval(
-        outdir,
-        args.query,
-        k=args.k,
-        hops=args.hops,
-        min_confidence=args.min_confidence,
-        # The same query-time default as rag/query: a trace must not name
-        # a `.env` that the retrieval it explains would never return.
-        exclude_secrets=not args.include_secrets,
-        extra_secret_keywords=args.extra_secret_keywords or None,
-        extra_secret_dirs=args.extra_secret_dirs or None,
-    )
-    _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
-    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -1450,6 +960,23 @@ def _add_vector_flags(parser) -> None:
     )
 
 
+def _add_rerank_flags(parser) -> None:
+    """--rerank / --rerank-model, for `query` and `rag` (#381)."""
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="re-order the top candidates with a local cross-encoder before the budget is "
+        "spent (needs the `rag` extra; if it cannot load, the query runs unchanged and says so)",
+    )
+    parser.add_argument(
+        "--rerank-model",
+        dest="rerank_model",
+        default=None,
+        help=f"sentence-transformers CrossEncoder for --rerank, @<commit> to pin "
+        f"(default: {RERANK_DEFAULT_MODEL})",
+    )
+
+
 def _max_file_mb(value: str) -> float:
     try:
         f = float(value)
@@ -1484,6 +1011,22 @@ def _utf8_stdio() -> None:
 
 
 def main(argv=None):
+    # Handlers that live in their own modules (#315); imported here, not at
+    # module scope, because they build on this module's helpers.
+    from .cli_embed import cmd_embed
+    from .cli_inspect import (
+        cmd_bug_report,
+        cmd_completion,
+        cmd_demo,
+        cmd_diff,
+        cmd_doctor,
+        cmd_explain,
+        cmd_explain_path,
+        cmd_index_status,
+        cmd_map,
+        cmd_stats,
+    )
+
     if argv is None:
         # Only as the real entry point: in-process callers (tests, embedders)
         # own their streams.
@@ -1713,6 +1256,17 @@ def main(argv=None):
         default="best-effort",
         help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
     )
+    build_out.add_argument(
+        "--parse-timeout",
+        type=_nonneg_float,
+        default=PARSE_TIMEOUT_S,
+        metavar="SECONDS",
+        help=(
+            f"wall-clock budget per file's parse (default: {PARSE_TIMEOUT_S:g}); a file over it "
+            "keeps its file node, gets no symbols and is counted as skipped_parse_timeout "
+            "(0 = no budget)"
+        ),
+    )
 
     b = sub.add_parser(
         "build", parents=[common, build_out], help="parse a repo into a graph + RAG chunks"
@@ -1757,6 +1311,13 @@ def main(argv=None):
         metavar="SECONDS",
         help="seconds the tree must be still before a rebuild, so a burst of saves "
         "costs one rebuild (default: 1)",
+    )
+    b.add_argument(
+        "--scip",
+        default=None,
+        metavar="INDEX",
+        help="read this SCIP index (e.g. from scip-python) for exact CALLS and INHERITS "
+        "targets in the files it covers; other files stay name-resolved (default: off)",
     )
     b.add_argument(
         "--incremental",
@@ -1869,6 +1430,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(q)
+    _add_rerank_flags(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
@@ -2031,6 +1593,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(r)
+    _add_rerank_flags(r)
     r.set_defaults(func=cmd_rag)
 
     e = sub.add_parser("embed", help="embed an index's chunks for dense retrieval")
@@ -2329,6 +1892,34 @@ def main(argv=None):
     except _GraphLimitExceeded as exc:
         diagnostic(f"repo2graph: error: {exc}")
         return 1
+
+
+# Moved out by responsibility (#315); still importable from here.
+_MOVED = {
+    "cli_embed": ("cmd_embed", "cmd_verify_rag", "verify_rag"),
+    "cli_inspect": (
+        "cmd_map",
+        "format_stats_summary",
+        "cmd_stats",
+        "cmd_diff",
+        "cmd_explain_path",
+        "cmd_bug_report",
+        "cmd_index_status",
+        "cmd_demo",
+        "cmd_doctor",
+        "cmd_completion",
+        "cmd_explain",
+    ),
+}
+
+
+def __getattr__(name: str) -> object:
+    for module, names in _MOVED.items():
+        if name in names:
+            import importlib
+
+            return getattr(importlib.import_module(f"{__package__}.{module}"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":

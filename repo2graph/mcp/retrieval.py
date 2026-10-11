@@ -40,11 +40,21 @@ from .guardrails import (
     _int,
     _str,
 )
+from ..edgemeta import cite as edge_cite
 from .indexes import SECRET_RULES
-from .nodes import _edge_note, _label, _staleness_note
+from .nodes import (
+    _cochange_pairs,
+    _containing_file,
+    _edge_note,
+    _edge_record,
+    _label,
+    _node_fields,
+    _staleness_note,
+)
 from .pagination import (
     CURSOR_RESERVE_TOKENS,
     CursorError,
+    PagedText,
     args_digest,
     decode_cursor,
     encode_cursor,
@@ -158,6 +168,87 @@ def _min_confidence(value: Any) -> float:
     return min(max(conf, 0.0), 1.0) if conf == conf else 0.0
 
 
+#: `repo_neighbours` output formats. Markdown is the agent-facing default; JSON
+#: is the same rows with their fields, for a program such as an editor (#400).
+NEIGHBOUR_FORMATS = ("markdown", "json")
+
+
+def _neighbour_format(value: Any) -> tuple[bool, str]:
+    """(as_json, note) for a client's `format`; anything unknown means markdown, said so."""
+    if value is None:
+        return False, ""
+    fmt = _str(value, 40).strip().lower()
+    if fmt in NEIGHBOUR_FORMATS:
+        return fmt == "json", ""
+    return False, (
+        f"_note: format={repr(value)[:40]} is not one of {', '.join(NEIGHBOUR_FORMATS)}; "
+        f"used markdown._\n\n"
+    )
+
+
+def _neighbour_line(index: Index, row: tuple[str, str, str, str]) -> str:
+    dst, etype, direction, src = row
+    return f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
+
+
+def _neighbour_record(index: Index, row: tuple[str, str, str, str]) -> dict[str, Any]:
+    """One `repo_neighbours` row as JSON: the edge, then the node it reaches."""
+    dst, etype, direction, src = row
+    edge = _edge_record(index, src, dst, etype) or {}
+    conf = edge.get("confidence")
+    candidates = edge.get("candidate_count")
+    count = edge.get("count")
+    return {
+        "edge": etype,
+        "direction": direction,
+        **_node_fields(index, dst),
+        "via": src,
+        "at": edge_cite(edge),
+        "confidence": float(conf)
+        if isinstance(conf, (int, float)) and not isinstance(conf, bool)
+        else None,
+        "candidate_count": candidates if isinstance(candidates, int) else None,
+        "count": count if isinstance(count, int) and not isinstance(count, bool) else None,
+    }
+
+
+def _cochange_records(index: Index, node_id: str, limit: int) -> list[dict[str, Any]]:
+    """Files co-edited with `node_id`'s file. A symbol has no CO_CHANGE edge of its
+    own -- history is recorded per file -- so this is the one place JSON callers
+    get it for a symbol without a second call."""
+    file_id = _containing_file(index, node_id)
+    if file_id is None:
+        return []
+    return [
+        {
+            "node_id": dst,
+            "path": (index.store.node(dst) or {}).get("path") or dst,
+            "count": edge.get("count") or 0,
+        }
+        for dst, edge in _cochange_pairs(index, file_id)[:limit]
+    ]
+
+
+def _neighbours_json(
+    index: Index,
+    node_id: str,
+    rows: list[tuple[str, str, str, str]],
+    limit: int,
+    truncated: bool,
+    **extra: Any,
+) -> str:
+    return json.dumps(
+        {
+            "node": _node_fields(index, node_id),
+            "neighbours": [_neighbour_record(index, row) for row in rows],
+            "cochange": _cochange_records(index, node_id, limit),
+            "truncated": truncated,
+            **extra,
+        },
+        indent=2,
+    )
+
+
 def tool_repo_neighbours(
     index: Index,
     node_id: str,
@@ -165,11 +256,13 @@ def tool_repo_neighbours(
     limit: Any = MCP_NEIGHBOUR_LIMIT,
     min_confidence: Any = 0.0,
     cursor: Any = None,
+    format: Any = None,
 ) -> str:
     """Graph traversal from `node_id`, then the TESTS edges on `node_id` itself.
 
     A `cursor` (even "") opts into paging: `limit` rows per page, with a
     `next_cursor:` line while more remain. None is the unpaged answer.
+    `format="json"` returns the same rows as a JSON object instead of markdown.
     """
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     if not node_id.strip():
@@ -177,20 +270,22 @@ def tool_repo_neighbours(
             "repo_neighbours needs a `node_id`. Ids look like file:<path>, "
             "sym:<path>::<qualname> or dir:<path>; repo_search results cite them."
         )
-    node = index.nodes.get(node_id)
+    node = index.store.node(node_id)
     if node is None:
         return ToolError(
             f"node not found: {node_id!r}. Ids look like "
             f"file:<path>, sym:<path>::<qualname> or dir:<path>."
         )
     note = _defaulted_notes(hops=(hops, 1), limit=(limit, MCP_NEIGHBOUR_LIMIT))
+    as_json, format_note = _neighbour_format(format)
+    note += format_note
     limit = _clamp(limit, MCP_NEIGHBOUR_LIMIT, 1, MCP_MAX_NEIGHBOURS)
     floor = _min_confidence(min_confidence)
     if cursor is not None:
         return _paged_neighbours(
-            index, node_id, _clamp(hops, 1, 0, MCP_MAX_HOPS), limit, floor, cursor, note
+            index, node_id, _clamp(hops, 1, 0, MCP_MAX_HOPS), limit, floor, cursor, note, as_json
         )
-    lines = [f"neighbours of {_label(index, node_id)}:"]
+    rows: list[tuple[str, str, str, str]] = []
     truncated = False
     for dst, etype, direction, src in index.expand(
         [node_id],
@@ -199,30 +294,29 @@ def tool_repo_neighbours(
         edge_dirs=ALL_EDGE_DIRS,
         min_confidence=floor,
     ):
-        target = index.nodes.get(dst, {})
+        target = index.store.node(dst) or {}
         if index._is_secret_path(target.get("path") or ""):
             continue
-        if len(lines) - 1 >= limit:
+        if len(rows) >= limit:
             truncated = True
             break
-        lines.append(
-            f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
-        )
+        rows.append((dst, etype, direction, src))
     # TESTS is listed from the node's own adjacency rather than followed by
     # `expand`: expansion visits each neighbour once, so a test that also
     # calls the symbol directly would surface only as `CALLS in`, and the
     # per-hop cap would hide the rest behind the structural edges listed first.
     if not truncated:
         for dst, direction, conf in _tests_of(index, node_id, floor):
-            if index._is_secret_path(index.nodes.get(dst, {}).get("path") or ""):
+            if index._is_secret_path((index.store.node(dst) or {}).get("path") or ""):
                 continue
-            if len(lines) - 1 >= limit:
+            if len(rows) >= limit:
                 truncated = True
                 break
-            lines.append(
-                f"- TESTS {direction}: {_label(index, dst)}"
-                f"{_edge_note(index, node_id, dst, 'TESTS')}"
-            )
+            rows.append((dst, "TESTS", direction, node_id))
+    if as_json:
+        return note + _neighbours_json(index, node_id, rows, limit, truncated)
+    lines = [f"neighbours of {_label(index, node_id)}:"]
+    lines += [_neighbour_line(index, row) for row in rows]
     if truncated:
         lines.append(f"... (truncated at {limit} neighbours)")
     if len(lines) == 1:
@@ -233,7 +327,7 @@ def tool_repo_neighbours(
 def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, float]]:
     """`node_id`'s TESTS edges at or above `floor`, most confident first."""
     rows = []
-    for dst, etype, direction, edge in index.adj.get(node_id, ()):
+    for dst, etype, direction, edge in index.store.neighbours(node_id):
         if etype != "TESTS":
             continue
         try:
@@ -247,7 +341,14 @@ def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, 
 
 
 def _paged_neighbours(
-    index: Index, node_id: str, hops: int, limit: int, floor: float, cursor: Any, note: str
+    index: Index,
+    node_id: str,
+    hops: int,
+    limit: int,
+    floor: float,
+    cursor: Any,
+    note: str,
+    as_json: bool = False,
 ) -> str:
     """One page of `repo_neighbours`: rows [offset, offset + limit) of the full walk.
 
@@ -281,7 +382,7 @@ def _paged_neighbours(
     rows = [
         row
         for row in walk[:MCP_MAX_PAGED_NEIGHBOURS]
-        if not index._is_secret_path(index.nodes.get(row[0], {}).get("path") or "")
+        if not index._is_secret_path((index.store.node(row[0]) or {}).get("path") or "")
     ]
     # Rows stop at `limit` or at the token ceiling, whichever comes first, so
     # paging never yields a response larger than an unpaged one may be. The
@@ -290,25 +391,48 @@ def _paged_neighbours(
     room = MCP_MAX_BUDGET_TOKENS - CURSOR_RESERVE_TOKENS - count_tokens(note) - 2
     room -= count_tokens(f"neighbours of {label} (rows {offset + 1}-{offset + limit}):")
     room -= count_tokens(f"... (paging stops at {MCP_MAX_PAGED_NEIGHBOURS} neighbours)")
+    if as_json:
+        # The object's own envelope (node, cochange) is paid for up front too.
+        room -= count_tokens(_neighbours_json(index, node_id, [], limit, False))
     body: list[str] = []
     end = offset
-    for dst, etype, direction, src in rows[offset:]:
+    for row in rows[offset:]:
         if len(body) >= limit:
             break
-        line = f"- {etype} {direction}: {_label(index, dst)}{_edge_note(index, src, dst, etype)}"
+        line = (
+            json.dumps(_neighbour_record(index, row), indent=2)
+            if as_json
+            else _neighbour_line(index, row)
+        )
         if body and count_tokens("\n".join([*body, line])) > room:
             break
         body.append(line)
         end += 1
+    next_cursor = (
+        encode_cursor("repo_neighbours", digest, end, identity) if end < len(rows) else None
+    )
+    if as_json:
+        page = PagedText(
+            note
+            + _neighbours_json(
+                index,
+                node_id,
+                rows[offset:end],
+                limit,
+                capped and end >= len(rows),
+                next_cursor=next_cursor,
+            )
+        )
+        # The token is a field of the object, not a trailing line that would
+        # stop the reply parsing as JSON; `_meta.nextCursor` carries it too.
+        page.next_cursor = next_cursor
+        return page
     header = (
         f"neighbours of {label} (rows {offset + 1}-{end}):" if body else f"neighbours of {label}:"
     )
     lines = [header, *body] if body else [header, "- (none)"]
     if capped and end >= len(rows):
         lines.append(f"... (paging stops at {MCP_MAX_PAGED_NEIGHBOURS} neighbours)")
-    next_cursor = (
-        encode_cursor("repo_neighbours", digest, end, identity) if end < len(rows) else None
-    )
     return with_next_cursor(note + "\n".join(lines), next_cursor)
 
 
@@ -350,7 +474,10 @@ def _aux(index: Index) -> dict[str, Any]:
     exact: dict[str, list[str]] = defaultdict(list)
     ci: dict[str, list[str]] = defaultdict(list)
     last_seg: dict[str, list[str]] = defaultdict(list)
-    for node_id, node in index.nodes.items():
+    # Symbol and file nodes by their file, for `repo_find_symbol(path, line)`.
+    in_file: dict[str, list[str]] = defaultdict(list)
+    for node in index.store.iter_nodes():
+        node_id = node["id"]
         name = node.get("name") or ""
         qual = node.get("qualname") or ""
         if name:
@@ -360,6 +487,8 @@ def _aux(index: Index) -> dict[str, Any]:
             seg = QUALNAME_SEP_RE.split(qual)[-1]
             if seg and seg != name:
                 last_seg[seg].append(node_id)
+        if node.get("type") in ("symbol", "file") and node.get("path"):
+            in_file[node["path"]].append(node_id)
     by_path: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for c in index.chunks:
         p = c.get("path")
@@ -378,9 +507,26 @@ def _aux(index: Index) -> dict[str, Any]:
         "ci": dict(ci),
         "last_seg": dict(last_seg),
         "by_path": dict(by_path),
+        "in_file": dict(in_file),
     }
     _AUX_CACHE[index] = built
     return built
+
+
+def _encloses(node: dict[str, Any], line: int) -> bool:
+    """Whether `node` covers `line`: a file covers all of itself, a symbol its span."""
+    if node.get("type") == "file":
+        return True
+    start, end = node.get("start_line"), node.get("end_line")
+    return isinstance(start, int) and isinstance(end, int) and start <= line <= end
+
+
+def _innermost_first(node: dict[str, Any]) -> tuple[int, int, int]:
+    """Sort key: the smallest enclosing span first, the file itself last."""
+    if node.get("type") == "file":
+        return (1, 0, 0)
+    start, end = node.get("start_line") or 0, node.get("end_line") or 0
+    return (0, end - start, -start)
 
 
 def tool_repo_find_symbol(
@@ -389,13 +535,37 @@ def tool_repo_find_symbol(
     kind: str = "",
     path_prefix: str = "",
     limit: Any = MCP_FIND_LIMIT,
+    path: Any = None,
+    line: Any = None,
 ) -> str:
-    """Look up a symbol's node_id candidates by name."""
+    """Look up a symbol's node_id candidates by name, or by the position they enclose.
+
+    `path` keeps only nodes in that exact file. With `line` as well, only the
+    symbols whose span contains that line are kept -- innermost first, then the
+    file node -- and `name` may be omitted: that is the editor's question, "what
+    is the symbol under the cursor" (#400).
+    """
     name = _str(name, MCP_MAX_QUERY_CHARS)
-    if not name.strip():
+    exact_path = _str(path, MCP_MAX_NODE_ID_CHARS).strip().replace("\\", "/")
+    while exact_path.startswith("./"):
+        exact_path = exact_path[2:]
+    at_line: int | None = None
+    if line is not None:
+        at_line = _int(line, 0) if not isinstance(line, bool) else 0
+        if at_line < 1:
+            return ToolError(
+                f"repo_find_symbol's `line` must be a 1-based line number; got {repr(line)[:40]}."
+            )
+        if not exact_path:
+            return ToolError(
+                "repo_find_symbol's `line` needs `path`: the repo-relative file the line "
+                "is in (e.g. path='pkg/mod.py', line=12)."
+            )
+    if not name.strip() and at_line is None:
         return ToolError(
             "repo_find_symbol needs a non-empty `name`: a function, class or "
-            "method name to look up (e.g. 'validate_token')."
+            "method name to look up (e.g. 'validate_token') -- or a `path` and "
+            "`line` to find the symbols enclosing that position."
         )
     kind_filter = _str(kind, 100).strip()
     prefix_filter = _str(path_prefix, MCP_MAX_NODE_ID_CHARS).strip().replace("\\", "/")
@@ -403,38 +573,50 @@ def tool_repo_find_symbol(
     lim = _clamp(limit, MCP_FIND_LIMIT, 1, MCP_MAX_FIND_LIMIT)
 
     lookup = _aux(index)
-    candidates = (
-        lookup["exact"].get(name)
-        or lookup["ci"].get(name.lower())
-        or lookup["last_seg"].get(name)
-        or []
-    )
+    if name.strip():
+        candidates = (
+            lookup["exact"].get(name)
+            or lookup["ci"].get(name.lower())
+            or lookup["last_seg"].get(name)
+            or []
+        )
+    else:
+        candidates = lookup["in_file"].get(exact_path) or []
 
-    results = []
+    matched: list[tuple[str, dict[str, Any]]] = []
     for node_id in candidates:
-        node = index.nodes.get(node_id) or {}
-        path = node.get("path") or ""
-        if index._is_secret_path(path):
+        node = index.store.node(node_id) or {}
+        node_path = node.get("path") or ""
+        if index._is_secret_path(node_path):
             continue
         if kind_filter and (node.get("kind") or "") != kind_filter:
             continue
-        if prefix_filter and not path.replace("\\", "/").startswith(prefix_filter):
+        if prefix_filter and not node_path.replace("\\", "/").startswith(prefix_filter):
             continue
-        results.append(
-            {
-                "node_id": node_id,
-                "name": node.get("name") or "",
-                "qualname": node.get("qualname") or "",
-                "kind": node.get("kind") or "",
-                "path": path,
-                "start_line": node.get("start_line"),
-                "end_line": node.get("end_line"),
-                "lang": node.get("lang") or "",
-            }
-        )
-        if len(results) >= lim:
+        if exact_path and node_path.replace("\\", "/") != exact_path:
+            continue
+        if at_line is not None and not _encloses(node, at_line):
+            continue
+        matched.append((node_id, node))
+        # A position lookup is sorted before it is cut, so it cannot stop early.
+        if at_line is None and len(matched) >= lim:
             break
+    if at_line is not None:
+        matched.sort(key=lambda m: _innermost_first(m[1]))
 
+    results = [
+        {
+            "node_id": node_id,
+            "name": node.get("name") or "",
+            "qualname": node.get("qualname") or "",
+            "kind": node.get("kind") or "",
+            "path": node.get("path") or "",
+            "start_line": node.get("start_line"),
+            "end_line": node.get("end_line"),
+            "lang": node.get("lang") or "",
+        }
+        for node_id, node in matched[:lim]
+    ]
     return note + json.dumps(results, indent=2)
 
 

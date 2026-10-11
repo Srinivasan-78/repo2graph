@@ -1366,7 +1366,7 @@ def test_add_cochange_splits_git_log_on_newline_only(monkeypatch):
     sep = "\u2028"  # U+2028 LINE SEPARATOR, as a source escape not a raw code point
     a, b = f"pkg/a{sep}x.py", "pkg/b.py"
     log = "".join(f"{h}\n{a}\n{b}\n\n" for h in ("H1", "H2", "H3"))
-    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
+    monkeypatch.setattr("repo2graph.cochange.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 10, {a, b}, min_pairs=3)
@@ -1517,11 +1517,11 @@ def test_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def __enter__(self):
+        def submit(self, *a, **k):
             raise BrokenProcessPool("boom")
 
-        def __exit__(self, *a):
-            return False
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BoomPool)
     got = parse_all(files, jobs=4)
@@ -2268,7 +2268,7 @@ def test_cochange_commits_skipped_counter(monkeypatch):
     # 26 files in one commit
     files = [f"f{i}.py" for i in range(26)]
     log = "H1\n" + "\n".join(files) + "\n\n"
-    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
+    monkeypatch.setattr("repo2graph.cochange.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 1, set(files))
@@ -2741,11 +2741,11 @@ def test_add_cochange_caps_the_history_window(monkeypatch):
     path in it; it must be clamped before the command is built."""
     from collections import Counter
 
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import MAX_COCHANGE_COMMITS, Graph, add_cochange
 
     seen: list = []
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"", 1, seen))
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(b"", 1, seen))
     g = Graph(Path("."), "x")
     g.stats = Counter()
     add_cochange(g, Path("."), 10**9, set())
@@ -2758,13 +2758,13 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
     bytes a single pathological commit's file list can still emit. A run that
     returns a giant stdout must be truncated before it is decoded/processed,
     and the truncation recorded."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import MAX_COCHANGE_BYTES, Graph, add_cochange
 
     huge = b"H1\n" + b"\n".join(f"f{i}.py".encode() for i in range(3)) + b"\n\n"
     huge += b"pad " * (MAX_COCHANGE_BYTES // 4 + 1024)  # push stdout past the cap
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(huge))
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(huge))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
     # The stat is the number of bytes read, which is the cap: the
@@ -2773,10 +2773,12 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
 
 
 def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"H1\nf0.py\nf1.py\n\n" * 3))
+    monkeypatch.setattr(
+        cochange_mod.subprocess, "Popen", fake_git_popen(b"H1\nf0.py\nf1.py\n\n" * 3)
+    )
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py"})
     assert "cochange_output_capped" not in g.stats
@@ -2787,15 +2789,15 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
     commit block. If that commit originally touched > 25 files (a noise commit),
     truncating it must not leave a surviving slice (<= 25 files) that emits
     spurious CO_CHANGE pairs."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
     c1 = b"H1\nf0.py\nf1.py\n\n"
     noise_files = [f"noise{i}.py" for i in range(30)]
     c2 = b"H2\n" + b"\n".join(f.encode() for f in noise_files) + b"\n\n"
     cap = len(c1) + 40
-    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
+    monkeypatch.setattr(cochange_mod, "MAX_COCHANGE_BYTES", cap)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 
@@ -2807,15 +2809,15 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
 
 def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
     """Ensure the cochange byte cap correctly handles Windows CRLF output (\r\n\r\n)."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
     c1 = b"H1\r\nf0.py\r\nf1.py\r\n\r\n"
     noise_files = [f"noise{i}.py" for i in range(30)]
     c2 = b"H2\r\n" + b"\r\n".join(f.encode() for f in noise_files) + b"\r\n\r\n"
     cap = len(c1) + 40
-    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
+    monkeypatch.setattr(cochange_mod, "MAX_COCHANGE_BYTES", cap)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 

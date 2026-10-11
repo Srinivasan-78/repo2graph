@@ -30,7 +30,7 @@ from .guardrails import (
     _defaulted_notes,
     _str,
 )
-from .nodes import _containing_file, _path_secret
+from .nodes import _cochange_pairs, _containing_file, _path_secret
 from .schemas import ToolError
 
 
@@ -98,7 +98,7 @@ def _bidirectional_bfs(
             this_hop = hop_b
         nxt: list[str] = []
         for nid in frontier:
-            for dst, etype, direction, edge in index.adj.get(nid, ()):
+            for dst, etype, direction, edge in index.store.neighbours(nid):
                 if etype not in wanted or _path_secret(index, dst):
                     continue
                 d = dist.get(dst)
@@ -138,7 +138,7 @@ def tool_repo_path_between(
     to_id = _str(to_id, MCP_MAX_NODE_ID_CHARS)
     if not from_id.strip() or not to_id.strip():
         return ToolError("repo_path_between needs a non-empty `from_id` and `to_id`.")
-    missing = [nid for nid in (from_id, to_id) if nid not in index.nodes]
+    missing = [nid for nid in (from_id, to_id) if not index.store.has(nid)]
     if missing:
         return ToolError(
             f"node(s) not found: {', '.join(repr(m) for m in missing)}. Ids look like "
@@ -207,7 +207,7 @@ def tool_repo_path_between(
     for nodes, edges in combined:
         steps = []
         for idx, nid in enumerate(nodes):
-            node = index.nodes.get(nid) or {}
+            node = index.store.node(nid) or {}
             step: dict[str, Any] = {
                 "node_id": nid,
                 "path": node.get("path") or "",
@@ -250,7 +250,7 @@ def _reverse_closure(
         hop += 1
         nxt: list[str] = []
         for nid in frontier:
-            for dst, et, direction, _edge in index.adj.get(nid, ()):
+            for dst, et, direction, _edge in index.store.neighbours(nid):
                 if et != etype or direction != "in" or dst in seen:
                     continue
                 if _path_secret(index, dst):
@@ -279,7 +279,7 @@ def tool_repo_blast_radius(
     node_id = _str(node_id, MCP_MAX_NODE_ID_CHARS)
     if not node_id.strip():
         return ToolError("repo_blast_radius needs a non-empty `node_id`.")
-    if node_id not in index.nodes:
+    if not index.store.has(node_id):
         return ToolError(
             f"node not found: {node_id!r}. Ids look like file:<path>, "
             f"sym:<path>::<qualname> or dir:<path>."
@@ -295,7 +295,7 @@ def tool_repo_blast_radius(
     def _rows(dist: dict[str, int]) -> list[dict[str, Any]]:
         rows = []
         for nid, hop in sorted(dist.items(), key=lambda kv: (kv[1], kv[0]))[:lim]:
-            node = index.nodes.get(nid) or {}
+            node = index.store.node(nid) or {}
             rows.append(
                 {
                     "node_id": nid,
@@ -324,17 +324,12 @@ def tool_repo_blast_radius(
     cochange_rows: list[dict[str, Any]] = []
     cochange_trunc = False
     if want_cochange and file_id is not None:
-        pairs = [
-            (dst, edge)
-            for dst, etype, _direction, edge in index.adj.get(file_id, ())
-            if etype == "CO_CHANGE" and not _path_secret(index, dst)
-        ]
-        pairs.sort(key=lambda p: -(p[1].get("count") or 0))
+        pairs = _cochange_pairs(index, file_id)
         cochange_trunc = len(pairs) > lim
         for dst, edge in pairs[:lim]:
             cochange_rows.append(
                 {
-                    "path": (index.nodes.get(dst) or {}).get("path") or dst,
+                    "path": (index.store.node(dst) or {}).get("path") or dst,
                     "count": edge.get("count") or 0,
                 }
             )
@@ -344,7 +339,7 @@ def tool_repo_blast_radius(
     importers_rows = _rows(importers_dist)
 
     affected_nodes = set(callers_dist) | set(subclasses_dist) | set(importers_dist)
-    affected_files = {(index.nodes.get(nid) or {}).get("path") for nid in affected_nodes}
+    affected_files = {(index.store.node(nid) or {}).get("path") for nid in affected_nodes}
     affected_files |= {row["path"] for row in cochange_rows}
     affected_files.discard(None)
     affected_files.discard("")

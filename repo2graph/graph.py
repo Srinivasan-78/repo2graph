@@ -1,75 +1,71 @@
 """Build the repository graph: nodes + edges."""
 
 import hashlib
-import itertools
 import os
-import re
-import subprocess
 import sys
-import threading
 import time
 from collections import Counter, defaultdict
 from collections.abc import Container, Iterable
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from .events import diagnostic
 from .edgemeta import (
-    METHOD_CALL_GRAPH,
     METHOD_FILESYSTEM,
-    METHOD_GIT_LOG,
     METHOD_NAME_RESOLVER,
     SCOPED_CALL_KINDS,
-    counts_as_call,
     evidence as make_evidence,
     normalize as normalize_edge,
     tree_sitter_method,
 )
-from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+from .parsepool import (
+    CRASH,
+    INPROCESS_MAX_BYTES,
+    PARSE_TIMEOUT_S,
+    TIMEOUT,
+    claim_slot,
+    supervised_map,
+)
+from .discovery import discover
+from .scip import ScipResolver
 from .parse import (
-    JAVA_IMPORT_RE,
-    PY_FROM_IMPORT_RE,
-    PY_IMPORT_RE,
-    RUBY_REQUIRE_RE,
     CONFIG_EXT,
     DOC_EXT,
     SUPER_RECEIVERS,
     EMBEDDED_LANGS,
     EXT_LANG,
-    VALUE_KINDS,
-    ImportDetail,
     ParseError,
     ParsedFile,
     Symbol,
     disambiguate_key,
     symbol_key,
     symbol_parent_key,
-    discover,
     parse_source,
     refine_lang,
 )
-from .testpaths import is_test_path
+
+# Split out of this module by responsibility (#315). Re-exported so every
+# `from repo2graph.graph import X` keeps working.
+from .cochange import (  # noqa: F401
+    COCHANGE_TIMEOUT,
+    MAX_COCHANGE_BYTES,
+    MAX_COCHANGE_COMMITS,
+    MAX_FILE_AUTHORS,
+    add_cochange,
+)
+from .derived import (  # noqa: F401
+    ENTRY_KINDS,
+    REFERENCE_EDGES,
+    TESTS_MAX_HOPS,
+    add_reference_edges,
+    add_tests_edges,
+    mark_entrypoints,
+)
+from .imports import import_targets, path_index, repo_context, resolve_import  # noqa: F401
+from .parsecache import PARSE_CACHE_FORMAT, ChunkedParsedFile, cache_entry, entry_read  # noqa: F401
 
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
-# A request for millions of commits makes git walk the whole history and emit
-# every path in it. Co-change signal saturates long before this, so cap the
-# window and record when we did.
-MAX_COCHANGE_COMMITS = 5000
-# Independent of MAX_COCHANGE_COMMITS: that bounds how many commits
-# are requested, but a single commit -- e.g. a vendor import touching
-# hundreds of thousands of files -- can still emit an unbounded blob of paths
-# within that commit count. Enforced during the read: `add_cochange` streams the
-# pipe and stops at this many bytes, then terminates git.
-MAX_COCHANGE_BYTES = 10 * 1024 * 1024  # 10 MB
-# Wall clock for the whole `git log` read.
-COCHANGE_TIMEOUT = 120
-# One read() per block. Big enough that a 10 MB cap is ~160 reads, small enough
-# that the buffer never jumps far past the cap.
-_COCHANGE_READ_BLOCK = 64 * 1024
-# How long to wait for a killed child (and the thread reading it) to go away.
-_COCHANGE_REAP_TIMEOUT = 10
 # Soft warning threshold -- past this many nodes or edges a build alerts on stderr.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
@@ -467,448 +463,7 @@ class Graph:
             diagnostic(msg)
 
 
-# ---------- import parsing ----------
-_IMPORT_RE = {
-    # `from` branch splits module (group 1) from the imported-names list (group
-    # 2): a dots-only module ("from . import X") has no name of its own, so
-    # import_targets() below appends each imported name to the dots instead of
-    # discarding it (#160). The bare `import a, b` form is group 3, unchanged.
-    "python": re.compile(
-        rf"^(?:{PY_FROM_IMPORT_RE.pattern.lstrip('^')}|{PY_IMPORT_RE.pattern.lstrip('^')})"
-    ),
-    "js": re.compile(r"""['"]([^'"]+)['"]"""),
-    "go": re.compile(r"""['"]([^'"]+)['"]"""),
-    "rust": re.compile(r"use\s+([\w:]+)"),
-    "java": JAVA_IMPORT_RE,
-    "c": re.compile(r"""[<"]([^>"]+)[>"]"""),
-    # C# `using System.Text;` / `using static System.Math;` / `using J = A.B.C;`
-    "csharp": re.compile(r"using\s+(?:static\s+)?(?:[\w.]+\s*=\s*)?([\w.]+)"),
-    # PHP `use App\Models\User;` / `use function App\f;` / `use App\U as U;`
-    "php": re.compile(r"use\s+(?:function\s+|const\s+)?([\w\\]+)"),
-    # Swift `import Foundation` / `import class UIKit.UIView`
-    "swift": re.compile(
-        r"import\s+(?:typealias|struct|class|enum|protocol|let|var|func\s+)?([\w.]+)"
-    ),
-    # Ruby `require "foo"` / `require_relative "bar"` / `load "baz.rb"`
-    "ruby": RUBY_REQUIRE_RE,
-    # Bash `source ./lib.sh` / `. ./lib.sh`
-    "bash": re.compile(r"""(?:source|\.)\s+['"]?([^'"\s]+)['"]?"""),
-    # Terraform `source = "./modules/vpc"` inside a `module` block
-    "hcl": re.compile(r'source\s*=\s*"([^"]+)"'),
-}
-
-
-def import_targets(raw: str, lang: str) -> list[str]:
-    if lang == "python":
-        m = _IMPORT_RE["python"].match(raw.strip())
-        if not m:
-            return []
-        module = m.group(1)
-        if module is not None:
-            names = [
-                p.strip().split(" as ")[0].strip()
-                for p in m.group(2).replace("(", " ").replace(")", " ").split(",")
-            ]
-            names = [n for n in names if n and n != "*" and re.fullmatch(r"\w+", n)]
-            if module and set(module) <= {"."}:
-                # "from . import X" / "from .. import X, Y": no module name after
-                # the dots, so the imported names ARE the submodule targets (#160).
-                return [module + n for n in names] or [module]
-            if module.startswith("."):
-                # "from .mod import x": the dotted module already names a file;
-                # neither #160 nor #161 changes this form.
-                return [module]
-            # "from pkg import a, b as c" -- capture the imported names so
-            # resolve_import() can prefer pkg/a.py over pkg/__init__.py (#161).
-            if names:
-                return [f"{module}.{n}" for n in names]
-            return [module]
-        return [p.strip().split(" as ")[0].strip() for p in m.group(3).split(",") if p.strip()]
-    if lang == "ruby":
-        raw_stripped = raw.strip()
-        m = _IMPORT_RE["ruby"].search(raw_stripped)
-        if not m:
-            m_quote = re.search(r"""['"]([^'"]+)['"]""", raw_stripped)
-            if not m_quote:
-                return []
-            mod = m_quote.group(1)
-        else:
-            mod = m.group(1)
-        if raw_stripped.startswith("require_relative") and not mod.startswith((".", "/")):
-            return [f"./{mod}"]
-        return [mod]
-    if lang in ("bash", "sh"):
-        m = _IMPORT_RE["bash"].search(raw.strip())
-        if not m:
-            return []
-        return [m.group(1)]
-    # Kotlin/Scala import with `import a.b.C`, like Java; C# uses
-    # `using`, PHP uses `use A\B` — both need their own pattern, not Java's.
-    key = {
-        "javascript": "js",
-        "typescript": "js",
-        "tsx": "js",
-        "kotlin": "java",
-        "scala": "java",
-        "cpp": "c",
-        "objc": "c",
-    }.get(lang, lang)
-    rx = _IMPORT_RE.get(key)
-    if rx is None:
-        return []
-    targets = [m.group(1) for m in rx.finditer(raw)][:4]
-    if lang == "rust":
-        targets = [t.rstrip(":") for t in targets]
-    return targets
-
-
-def path_index(file_index) -> dict:
-    """Lookup tables so import resolution never rescans the whole file list.
-
-    by_name: basename -> sorted paths.  by_dir: directory -> sorted paths.
-    Sorted so a repo with several same-named files resolves deterministically.
-    """
-    by_name: dict[str, list[str]] = defaultdict(list)
-    by_dir: dict[str, list[str]] = defaultdict(list)
-    for p in sorted(file_index):
-        pp = Path(p)
-        parent = pp.parent.as_posix()
-        by_name[pp.name].append(p)
-        by_dir["" if parent == "." else parent].append(p)
-    return {"by_name": by_name, "by_dir": by_dir}
-
-
-def _go_dir_by_tail(ctx: dict) -> dict[str, list[str]]:
-    """Last directory name -> the first .go file under it, directories in sorted order.
-
-    Built once per `ctx` rather than once per import: without go.mod, every Go
-    import used to sort and walk all directories (#456 P2).
-    """
-    table = ctx.get("go_dir_by_tail")
-    if table is None:
-        table = {}
-        for d, paths in sorted(ctx["by_dir"].items()):
-            first = next((p for p in paths if p.endswith(".go")), None)
-            if first is not None:
-                table.setdefault(d.split("/")[-1], [first])
-        ctx["go_dir_by_tail"] = table
-    return table
-
-
-def resolve_import(
-    target: str, from_path: str, lang: str, file_index: set[str], ctx: dict | None = None
-) -> str | None:
-    """Map an import target to an in-repo file path when possible."""
-    if ctx is None:
-        ctx = path_index(file_index)
-    by_name, by_dir = ctx["by_name"], ctx["by_dir"]
-    src_dir = Path(from_path).parent
-    cands: list[str] = []
-    if lang == "python":
-        dots = len(target) - len(target.lstrip("."))
-        if dots:  # relative import: walk up (dots - 1) packages from the source dir
-            base_dir = src_dir
-            for _ in range(dots - 1):
-                base_dir = base_dir.parent
-            rest = target[dots:].replace(".", "/")
-            base = (base_dir / rest).as_posix() if rest else base_dir.as_posix()
-            cands = [f"{base}.py", f"{base}/__init__.py"]
-        else:
-            base = target.replace(".", "/")
-            cands = [f"{base}.py", f"{base}/__init__.py"]
-            cands += [(src_dir / c).as_posix() for c in list(cands)]
-            # also try src/ and package-rooted layouts
-            cands += [f"src/{c}" for c in [f"{base}.py", f"{base}/__init__.py"]]
-            tail = base.split("/")[-1]
-            cands += [p for p in by_name.get(f"{tail}.py", []) if "/" in p][:1]
-            # `from pkg import name` (#161): if `name` isn't a submodule file
-            # (or package), it's a symbol defined directly in `pkg` -- either
-            # `pkg.py` (pkg is itself a module, e.g. `from pkg.alpha import
-            # handle`) or `pkg/__init__.py` (pkg is a package). Try both last,
-            # only after every submodule-file candidate above.
-            if "/" in base:
-                parent = base.rsplit("/", 1)[0]
-                parent_cands = [f"{parent}.py", f"{parent}/__init__.py"]
-                cands += parent_cands
-                cands += [(src_dir / c).as_posix() for c in parent_cands]
-                cands += [f"src/{c}" for c in parent_cands]
-                parent_tail = parent.split("/")[-1]
-                cands += [p for p in by_name.get(f"{parent_tail}.py", []) if "/" in p][:1]
-    elif lang in ("javascript", "typescript", "tsx"):
-        if target.startswith("."):
-            base = Path(src_dir, target).as_posix()
-            base = re.sub(r"/\./", "/", base)
-            while "/../" in base:
-                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
-            stems = [base]
-            for js in (".js", ".jsx", ".mjs", ".cjs"):
-                if base.endswith(js):  # TS sources are imported with .js specifiers
-                    stems.append(base[: -len(js)])
-            for stem in stems:
-                for ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".d.ts", ".vue", ".svelte"):
-                    cands += [stem + ext, f"{stem}/index{ext}"]
-            cands.append(base)
-        else:
-            cands = [f"src/{target}.ts", f"src/{target}.js"]
-    elif lang == "go":
-        module = ctx.get("go_module")
-        if module and (target == module or target.startswith(module + "/")):
-            pkg_dir = target[len(module) :].strip("/")
-            cands = [
-                p
-                for p in by_dir.get(pkg_dir, [])
-                if p.endswith(".go") and not p.endswith("_test.go")
-            ][:1]
-        elif module:
-            cands = []  # module path known: anything outside it is a third-party package
-        else:
-            cands = _go_dir_by_tail(ctx).get(target.split("/")[-1], [])[:1]
-    elif lang in ("c", "cpp", "objc"):
-        cands = by_name.get(target.split("/")[-1], [])[:1]
-    elif lang == "hcl":
-        # A local module is a directory: its `main.tf`, else its first `.tf`.
-        if target.startswith("."):
-            base = Path(src_dir, target).as_posix()
-            base = re.sub(r"/\./", "/", base)
-            while "/../" in base:
-                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
-            base = base.removeprefix("./").rstrip("/")
-            cands = [f"{base}/main.tf"]
-            cands += [p for p in by_dir.get(base, []) if p.endswith(".tf")][:1]
-    elif lang == "java":
-        rel = target.replace(".", "/") + ".java"
-        cands = [rel]
-        cands += [p for p in by_name.get(rel.split("/")[-1], []) if p.endswith(rel)][:1]
-    elif lang == "rust":
-        clean = target.rstrip(":")
-        parts = clean.split("::")
-        crate_name = ctx.get("rust_crate")
-        if parts[0] == "crate" or (crate_name and parts[0] == crate_name):
-            sub = parts[1:]
-            if sub:
-                rel = "/".join(sub)
-                cands = [
-                    f"src/{rel}.rs",
-                    f"src/{rel}/mod.rs",
-                    f"{rel}.rs",
-                    f"{rel}/mod.rs",
-                ]
-                if len(sub) > 1:
-                    parent = "/".join(sub[:-1])
-                    cands += [
-                        f"src/{parent}.rs",
-                        f"src/{parent}/mod.rs",
-                        f"{parent}.rs",
-                        f"{parent}/mod.rs",
-                    ]
-        elif parts[0] == "super":
-            base_dir = src_dir
-            idx = 0
-            while idx < len(parts) and parts[idx] == "super":
-                base_dir = base_dir.parent
-                idx += 1
-            rest = "/".join(parts[idx:])
-            if rest:
-                base = (base_dir / rest).as_posix()
-                cands = [f"{base}.rs", f"{base}/mod.rs"]
-                if len(parts[idx:]) > 1:
-                    p_base = (base_dir / "/".join(parts[idx:-1])).as_posix()
-                    cands += [f"{p_base}.rs", f"{p_base}/mod.rs"]
-            else:
-                cands = [f"{base_dir.as_posix()}.rs", f"{base_dir.as_posix()}/mod.rs"]
-        elif parts[0] == "self":
-            rest = "/".join(parts[1:])
-            if rest:
-                base = (src_dir / rest).as_posix()
-                cands = [f"{base}.rs", f"{base}/mod.rs"]
-                if len(parts[1:]) > 1:
-                    p_base = (src_dir / "/".join(parts[1:-1])).as_posix()
-                    cands += [f"{p_base}.rs", f"{p_base}/mod.rs"]
-        else:
-            rel = "/".join(parts)
-            cands = [
-                f"src/{rel}.rs",
-                f"src/{rel}/mod.rs",
-                f"{rel}.rs",
-                f"{rel}/mod.rs",
-                str(src_dir / f"{rel}.rs"),
-                str(src_dir / f"{rel}/mod.rs"),
-            ]
-            if len(parts) > 1:
-                parent = "/".join(parts[:-1])
-                cands += [
-                    f"src/{parent}.rs",
-                    f"src/{parent}/mod.rs",
-                    f"{parent}.rs",
-                    f"{parent}/mod.rs",
-                ]
-            tail = parts[-1]
-            cands += [p for p in by_name.get(f"{tail}.rs", []) if "/" in p][:1]
-            if len(parts) > 1:
-                p_tail = parts[-2]
-                cands += [p for p in by_name.get(f"{p_tail}.rs", []) if "/" in p][:1]
-    elif lang == "csharp":
-        parts = target.split(".")
-        rel = target.replace(".", "/")
-        cands = [f"{rel}.cs", f"src/{rel}.cs"]
-        if len(parts) > 1:
-            parent = rel.rsplit("/", 1)[0]
-            cands += [f"{parent}.cs", f"src/{parent}.cs"]
-        tail = parts[-1]
-        cands += [p for p in by_name.get(f"{tail}.cs", []) if "/" in p][:1]
-        if len(parts) > 1:
-            p_tail = parts[-2]
-            cands += [p for p in by_name.get(f"{p_tail}.cs", []) if "/" in p][:1]
-    elif lang == "php":
-        clean = target.replace("\\", "/").strip("/")
-        parts = clean.split("/")
-        cands = [f"{clean}.php", f"src/{clean}.php"]
-        if clean.startswith("App/"):
-            rest = clean[4:]
-            cands += [f"app/{rest}.php", f"src/{rest}.php"]
-        if len(parts) > 1:
-            parent = clean.rsplit("/", 1)[0]
-            cands += [f"{parent}.php", f"src/{parent}.php"]
-            if parent.startswith("App/"):
-                rest = parent[4:]
-                cands += [f"app/{rest}.php", f"src/{rest}.php"]
-        tail = parts[-1]
-        cands += [p for p in by_name.get(f"{tail}.php", []) if "/" in p][:1]
-    elif lang == "kotlin":
-        parts = target.split(".")
-        rel = target.replace(".", "/")
-        cands = [
-            f"{rel}.kt",
-            f"src/main/kotlin/{rel}.kt",
-            f"src/{rel}.kt",
-        ]
-        if len(parts) > 1:
-            parent = rel.rsplit("/", 1)[0]
-            cands += [
-                f"{parent}.kt",
-                f"src/main/kotlin/{parent}.kt",
-                f"src/{parent}.kt",
-            ]
-        tail = parts[-1]
-        cands += [p for p in by_name.get(f"{tail}.kt", []) if p.endswith(f"{tail}.kt")][:1]
-        if len(parts) > 1:
-            p_tail = parts[-2]
-            cands += [p for p in by_name.get(f"{p_tail}.kt", []) if p.endswith(f"{p_tail}.kt")][:1]
-    elif lang == "scala":
-        parts = target.split(".")
-        rel = target.replace(".", "/")
-        cands = [
-            f"{rel}.scala",
-            f"src/main/scala/{rel}.scala",
-            f"src/{rel}.scala",
-        ]
-        if len(parts) > 1:
-            parent = rel.rsplit("/", 1)[0]
-            cands += [
-                f"{parent}.scala",
-                f"src/main/scala/{parent}.scala",
-                f"src/{parent}.scala",
-            ]
-        tail = parts[-1]
-        cands += [p for p in by_name.get(f"{tail}.scala", []) if p.endswith(f"{tail}.scala")][:1]
-        if len(parts) > 1:
-            p_tail = parts[-2]
-            cands += [
-                p for p in by_name.get(f"{p_tail}.scala", []) if p.endswith(f"{p_tail}.scala")
-            ][:1]
-    elif lang == "swift":
-        clean = target.split(".")[0]
-        cands = [
-            f"{target}.swift",
-            f"{clean}.swift",
-            f"Sources/{clean}/{clean}.swift",
-            f"Sources/{clean}.swift",
-            f"Sources/{clean}/main.swift",
-        ]
-        mod_files = [p for p in by_dir.get(f"Sources/{clean}", []) if p.endswith(".swift")]
-        if mod_files:
-            cands.append(mod_files[0])
-        tail = target.split(".")[-1]
-        cands += [p for p in by_name.get(f"{tail}.swift", []) if "/" in p][:1]
-    elif lang == "ruby":
-        if target.startswith("."):
-            base = Path(src_dir, target).as_posix()
-            base = re.sub(r"/\./", "/", base)
-            while "/../" in base:
-                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
-            cands = [f"{base}.rb", base]
-        else:
-            stem = target[: -len(".rb")] if target.endswith(".rb") else target
-            cands = [
-                str(src_dir / f"{stem}.rb"),
-                f"lib/{stem}.rb",
-                f"{stem}.rb",
-                f"src/{stem}.rb",
-            ]
-            tail = stem.split("/")[-1]
-            cands += [p for p in by_name.get(f"{tail}.rb", []) if "/" in p][:1]
-    elif lang in ("bash", "sh"):
-        if target.startswith((".", "/")):
-            base = Path(src_dir, target).as_posix()
-            base = re.sub(r"/\./", "/", base)
-            while "/../" in base:
-                base = re.sub(r"[^/]+/\.\./", "", base, count=1)
-            cands = [base]
-        else:
-            cands = [
-                str(src_dir / target),
-                target,
-                f"bin/{target}",
-                f"scripts/{target}",
-            ]
-            tail = target.split("/")[-1]
-            cands += [p for p in by_name.get(tail, []) if "/" in p][:1]
-    for c in cands:
-        c = Path(c).as_posix().removeprefix("./")
-        if c in file_index:
-            return c
-    return None
-
-
-def repo_context(root: Path) -> dict:
-    """Repo-level facts used to resolve imports (Go module path, Rust crate name)."""
-    ctx: dict = {}
-    gomod = root / "go.mod"
-    if gomod.exists():
-        for line in gomod.read_text("utf8", "replace").split("\n"):
-            if line.startswith("module "):
-                ctx["go_module"] = line.split(None, 1)[1].strip()
-                break
-    cargo = root / "Cargo.toml"
-    if cargo.exists():
-        in_pkg = False
-        for line in cargo.read_text("utf8", "replace").split("\n"):
-            stripped = line.strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
-                in_pkg = stripped == "[package]"
-            elif in_pkg and stripped.startswith("name"):
-                parts = stripped.split("=", 1)
-                if len(parts) == 2:
-                    crate_name = parts[1].strip().strip('"').strip("'")
-                    ctx["rust_crate"] = crate_name.replace("-", "_")
-                    break
-    return ctx
-
-
 # ---------- parsing ----------
-@dataclass
-class ChunkedParsedFile(ParsedFile):
-    """What `_chunk_and_parse` produces: a `ParsedFile` plus what it could not read.
-
-    `undecodable_slices` does not belong on `ParsedFile` itself -- it is
-    meaningless for the whole-file reader, which either decodes a file or does
-    not. Every reader of the field uses `getattr(pf, ..., 0)`, the same way
-    `build()` already reads `is_chunked` and `used_cpp`.
-    """
-
-    undecodable_slices: int = 0
-
-
 # The longest UTF-8 sequence is four bytes, so at most three bytes of one can be
 # left dangling at the end of a slice cut at an arbitrary byte offset.
 _UTF8_MAX_SEQ = 4
@@ -1221,50 +776,6 @@ def _read_and_parse(item):
     return rel, lang, (len(raw), raw.count(b"\n") + 1, pf, hashlib.sha256(raw).hexdigest())
 
 
-# ---------- parse cache (incremental builds) ----------
-# Bumped whenever a cache entry's shape changes. A cache written by an older
-# repo2graph is ignored wholesale rather than half-read: a `Symbol` that gained
-# a field would otherwise reconstruct with a silently wrong default, and a wrong
-# symbol is exactly the "wrong in a way nothing detects" failure this feature
-# was cut for in the first place.
-# 2: chunked entries gained "undecodable_slices". A cache written by
-# format 1 has no way to report it, and an incremental build restoring one would
-# report a 0 where a full build reports the real count -- the one thing an
-# incremental build is not allowed to do.
-# 3: `Symbol` gained "call_details"/"base_details" and `ParsedFile` gained
-# "import_details". A format-2 entry has none of the three: every cached call
-# would silently reconstruct as call_kind='static' even where the original was
-# a decorator/dynamic call, every cached base would reconstruct with
-# subtype='INHERITS' regardless of what it actually was, and every cached
-# file's import aliases would come back as [] -- an aliased call that should
-# resolve `import_alias` would instead fall through to unresolved_external.
-# 5: each "call_details" entry gained "receiver". A format-4 entry would restore
-# every call as receiver-less, so an incremental build would keep binding
-# `d.get()` to an in-repo `get` at 1.0 where a full build prices it as a guess.
-# 6: call_details gained "receiver_head"/"receiver_static", decorator entries
-# gained "receiver", and Kotlin/Swift/Go receivers are classified. A format-5
-# entry has no head, so `store.get()` on an imported module would stay demoted
-# on an incremental build while a full build binds it at 1.0.
-# 7: `Symbol` gained "key"/"parent_key" (a later same-qualname definition in
-# one file gets id `<qualname>@L<line>` instead of colliding with the first),
-# Go methods are qualified `<ReceiverType>.<name>`, Kotlin `fun`s are indexed
-# at all, and chunked files key duplicates as `@L<line>` rather than renaming
-# the qualname `<qualname>_<n>`. A format-6 entry restores Go methods with bare
-# qualnames and no Kotlin functions, so an incremental build would emit
-# different node ids than a full one.
-# 8: `base`/`parent` receivers classify as "self" only in C# / PHP (static
-# `parent::`), and PHP `scoped_call_expression` calls are recorded. A format-7
-# entry keeps a Python `parent.add()` as a super call (-> external) and drops
-# PHP `Foo::bar()` calls, so an incremental build would disagree with a full one.
-# Chunked files also re-key children per slice (a duplicate's children used to
-# attach to the first same-name definition), which changes cached parent_key.
-# 9: JS/TS export aliases are symbols of kind "alias" (`export const public =
-# _private as T`, `export { Hono as HonoBase }`). A format-8 entry has none of
-# them, so an incremental build would restore a file with fewer nodes than a
-# full build gives it -- and every call to the aliased name would stay
-# unresolved on the incremental side only.
-PARSE_CACHE_FORMAT = 9
-
 # Languages where a bare call inside a method is a call on the implicit
 # `this` (`g()` inside `A.g` is `this.g()`). Elsewhere (Python, JS, Go, Rust,
 # PHP) a bare call inside a method names a free function, never the method.
@@ -1274,108 +785,6 @@ IMPLICIT_THIS_LANGS = frozenset({"java", "csharp", "kotlin", "swift", "scala", "
 def _last_segment(name: str) -> str:
     """`pkg.mod.Base` / `ns::Base` / `Base<T>` -> `Base`."""
     return name.rsplit(".", 1)[-1].rsplit("::", 1)[-1].split("<", 1)[0].split("[", 1)[0].strip()
-
-
-def cache_entry(lang: str | None, size: int, lines: int, pf, digest: str) -> dict:
-    """Serialise one file's parse result for `parse.cache.json`.
-
-    Args:
-        lang: Language id the file was parsed as, or None for a non-code file.
-        size: Length in bytes of the file as indexed.
-        lines: Newline count + 1, as recorded on the file node.
-        pf: The `ParsedFile` for this file, or None if it was not parsed.
-        digest: sha256 hex digest of the bytes this entry describes.
-
-    Returns:
-        A JSON-serialisable dict holding everything `build()` needs to rebuild
-        this file's nodes and edges without re-reading or re-parsing it.
-    """
-    return {
-        "sha256": digest,
-        "lang": lang or "",
-        "size": size,
-        "lines": lines,
-        "parsed": None
-        if pf is None
-        else {
-            "lang": pf.lang,
-            "parse_errors": pf.parse_errors,
-            "used_cpp": pf.used_cpp,
-            "is_chunked": getattr(pf, "is_chunked", False),
-            # Only the chunked reader can lose a slice, and only it sets this.
-            "undecodable_slices": getattr(pf, "undecodable_slices", 0),
-            "imports": list(pf.imports),
-            # `refs` only when there are some: a default build's cache is unchanged.
-            "symbols": [
-                {k: v for k, v in asdict(s).items() if k != "refs" or v} for s in pf.symbols
-            ],
-            # Without this, entry_read() rebuilds import_details as [] and an
-            # incremental cache hit loses every import alias -- an aliased call
-            # that a full build resolves as `import_alias` falls back to
-            # unresolved_external on the next incremental build instead.
-            "import_details": [asdict(d) for d in getattr(pf, "import_details", [])],
-            # Index-aligned with "imports", and the IMPORTS edge's `evidence`
-            # comes from it. Without it here, an incremental build emits edges
-            # with no evidence where a full build emits a line -- which the
-            # byte-equality tests catch, and which would otherwise make a
-            # cached index quietly less citable than a fresh one.
-            "import_lines": list(getattr(pf, "import_lines", []) or []),
-        },
-    }
-
-
-def entry_read(entry: dict) -> tuple | None:
-    """Rebuild `_read_and_parse`'s result tuple from a cache entry.
-
-    Args:
-        entry: One record out of `parse.cache.json`.
-
-    Returns:
-        The `(size, lines, ParsedFile | None, digest)` tuple the build loop
-        consumes, or None if the entry is malformed. A malformed entry is a
-        cache miss, never an exception: a corrupt cache must cost a re-parse,
-        not the build.
-    """
-    try:
-        size, lines = int(entry["size"]), int(entry["lines"])
-        digest = str(entry["sha256"])
-        raw = entry.get("parsed")
-        if raw is None:
-            return size, lines, None, digest
-        symbols = [Symbol(**s) for s in raw["symbols"]]
-        import_details = [ImportDetail(**d) for d in raw.get("import_details", [])]
-        import_lines = [int(n) for n in raw.get("import_lines", [])]
-        pf: ParsedFile
-        # A chunked entry restores as the same class a fresh chunked read
-        # produces, so a cached file and a re-parsed one are indistinguishable
-        # -- including to `==`, which a dataclass only answers true for within
-        # one class.
-        if raw.get("is_chunked"):
-            pf = ChunkedParsedFile(
-                lang=str(raw["lang"]),
-                symbols=symbols,
-                imports=[str(i) for i in raw["imports"]],
-                parse_errors=int(raw.get("parse_errors") or 0),
-                used_cpp=bool(raw.get("used_cpp") or False),
-                is_chunked=True,
-                undecodable_slices=int(raw.get("undecodable_slices") or 0),
-                import_details=import_details,
-                import_lines=import_lines,
-            )
-        else:
-            pf = ParsedFile(
-                lang=str(raw["lang"]),
-                symbols=symbols,
-                imports=[str(i) for i in raw["imports"]],
-                parse_errors=int(raw.get("parse_errors") or 0),
-                used_cpp=bool(raw.get("used_cpp") or False),
-                is_chunked=False,
-                import_details=import_details,
-                import_lines=import_lines,
-            )
-        return size, lines, pf, digest
-    except (KeyError, TypeError, ValueError):
-        return None
 
 
 def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
@@ -1455,7 +864,7 @@ _STD_INPUT_HANDLE = 0xFFFFFFF6  # (DWORD)-10
 _STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
 
 
-def silence_worker_io() -> None:
+def silence_worker_io(watch: Any = None) -> None:
     """Detach a parse worker from the stdin/stdout it inherited (#90).
 
     Runs as the `ProcessPoolExecutor` initializer, i.e. *inside* the worker and
@@ -1477,7 +886,13 @@ def silence_worker_io() -> None:
     Every step is best effort: a worker that cannot open devnull must still
     parse files. Nothing here raises, because an initializer that raises breaks
     the pool for every task.
+
+    `watch` is the supervisor's shared array (parsepool.py, #81): the worker
+    claims a slot in it, so the parent can see which file it is on and kill it
+    when that file runs over the parse budget.
     """
+    if watch is not None:
+        claim_slot(watch)
     try:
         devnull = os.open(os.devnull, os.O_RDWR)
     except OSError:
@@ -1523,35 +938,125 @@ def parse_all(files, jobs: int, config=None):
     Every worker runs `silence_worker_io` first, so the pool is safe to start
     from a process whose stdin/stdout are a protocol stream rather than a
     terminal -- which is what `repo2graph-mcp`'s auto-build is (#90).
+
+    Workers are supervised (parsepool.py, #81): a file whose parse runs over
+    `config.parse_timeout`, or takes its worker down, is skipped and counted
+    rather than allowed to stall or exhaust the build. A serial build parses
+    small files in-process and still sends anything over INPROCESS_MAX_BYTES to
+    a worker, because that is where a parse can no longer be cheap -- unless
+    the budget is off (`parse_timeout=0`), when there is nothing to enforce.
     """
     jobs = resolve_jobs(jobs)
+    timeout = PARSE_TIMEOUT_S if config is None else config.parse_timeout
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
-    if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
-        return [_read_and_parse(i) for i in items]
-    import concurrent.futures
-
-    try:
-        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests:
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=jobs, initializer=silence_worker_io
-        ) as pool:
-            return list(
-                pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
+    if jobs > 1 and len(items) >= PARALLEL_MIN_FILES:
+        pooled = list(range(len(items)))
+    elif timeout > 0:
+        pooled = [
+            i for i, (_, abspath, _, _) in enumerate(items) if _size(abspath) > INPROCESS_MAX_BYTES
+        ]
+    else:
+        pooled = []  # no budget to enforce: a serial build stays in-process
+    results: list[Any] = [None] * len(items)
+    if pooled:
+        try:
+            outcomes = supervised_map(
+                _read_and_parse,
+                [items[i] for i in pooled],
+                min(jobs, len(pooled)),
+                timeout,
+                silence_worker_io,
             )
-    except ParseError:
-        # A strict-policy failure is the worker doing its job, not a broken
-        # pool -- falling through to the serial fallback below would just
-        # re-parse every file a second time and raise this same error again.
-        raise
-    except Exception as exc:  # noqa: BLE001 - resilience boundary: process pool execution failure falls back to serial
-        from .events import reraise_if_debug
+            for i, outcome in zip(pooled, outcomes):
+                results[i] = _settle(items[i], outcome, timeout)
+        except ParseError:
+            # A strict-policy failure is the worker doing its job, not a broken
+            # pool -- falling through to the serial fallback below would just
+            # re-parse every file a second time and raise this same error again.
+            raise
+        except Exception as exc:  # noqa: BLE001 - resilience boundary: process pool execution failure falls back to serial
+            from .events import reraise_if_debug
 
-        reraise_if_debug(exc)
-        # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
-        # worker ImportError, or a pickling failure on the call or its result:
-        # the comment above promises a serial fallback, so honour it for all of
-        # them rather than aborting the whole build.
-        return [_read_and_parse(i) for i in items]
+            reraise_if_debug(exc)
+            # No fork / no POSIX semaphores to build on, a pool that broke before
+            # parsing anything, a worker ImportError, or a pickling failure on
+            # the call or its result: parse in-process rather than abort the
+            # build -- but say so, because in-process the budget cannot stop a
+            # parse, only discard it afterwards.
+            diagnostic(
+                f"repo2graph: warning: parse workers unavailable ({type(exc).__name__}); "
+                "parsing in-process, where the per-file parse budget cannot interrupt a parse"
+            )
+            results = [None] * len(items)
+    for i, item in enumerate(results):
+        if item is None:
+            started = time.monotonic()
+            res = _read_and_parse(items[i])
+            results[i] = _settle(items[i], (res, time.monotonic() - started), timeout)
+    if getattr(config, "parse_policy", "best-effort") == "strict":
+        for rel, lang, read in results:
+            if read is not None and read[2] is not None and read[2].parse_skipped:
+                raise ParseError(
+                    f"Strict parse policy: {_skip_reason(read[2], timeout)} on '{rel}'"
+                )
+    return results
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.lstat().st_size
+    except OSError:
+        return 0
+
+
+def _settle(item, outcome, timeout: float):
+    """`parse_all`'s result for one file, from what its parse came back with.
+
+    `outcome` is `(result, seconds)` or parsepool's TIMEOUT / CRASH marker. A
+    parse that finished but over budget is discarded the same as one that had
+    to be killed, so where the deadline is noticed never changes the output.
+    """
+    if outcome in (TIMEOUT, CRASH):
+        return _abandoned(item, outcome)
+    res, elapsed = outcome
+    rel, lang, read = res
+    if timeout > 0 and elapsed > timeout and read is not None and read[2] is not None:
+        skipped = ParsedFile(lang=read[2].lang, symbols=[], imports=[], parse_skipped=TIMEOUT)
+        return rel, lang, (read[0], read[1], skipped, read[3])
+    return res
+
+
+def _abandoned(item, reason: str):
+    """The result for a file whose worker was killed or died under it (#81).
+
+    Read again here because the bytes died with the worker. Size, line count
+    and digest come out exactly as a finished parse reports them, so the file
+    node is the one a parse would have made; the language is settled from the
+    first slice, as `_chunk_and_parse` settles it for a file too big to hold.
+    """
+    rel, abspath, lang, config = item
+    block = getattr(config, "max_file_bytes", 0) or 1_500_000
+    hasher = hashlib.sha256()
+    size = newlines = 0
+    head = b""
+    try:
+        with _safe_open(abspath) as fh:
+            while chunk := fh.read(block):
+                head = head or chunk
+                hasher.update(chunk)
+                size += len(chunk)
+                newlines += chunk.count(b"\n")
+    except OSError:
+        return rel, lang, None
+    lang = refine_lang(lang, abspath.suffix.lower(), head)[0]
+    pf = ParsedFile(lang=lang or "", symbols=[], imports=[], parse_skipped=reason)
+    return rel, lang, (size, newlines + 1, pf, hasher.hexdigest())
+
+
+def _skip_reason(pf, timeout: float) -> str:
+    if pf.parse_skipped == TIMEOUT:
+        return f"parse exceeded the {timeout:g}s budget (--parse-timeout)"
+    return "parse crashed or exhausted its worker's memory"
 
 
 def _within_byte_budget(files, budget: int, g: "Graph"):
@@ -1723,7 +1228,10 @@ def build(
             continue
         size, lines, pf, digest = read
         g.file_hashes[rel] = digest
-        g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
+        skipped = pf is not None and pf.parse_skipped
+        if not skipped:
+            # Never cached: a later build, maybe with a bigger budget, retries it.
+            g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
         if ext == ".h":
             # Auditable record of the #377 content sniff: how many `.h` files
@@ -1762,6 +1270,14 @@ def build(
         g.add_edge(parent, fid, "CONTAINS", method=METHOD_FILESYSTEM)
 
         if pf is None:
+            continue
+        if skipped:
+            # Like an oversized file: a file node, no symbols, and a count (#81).
+            g.stats[f"skipped_parse_{pf.parse_skipped}"] += 1
+            diagnostic(
+                f"repo2graph: warning: '{rel}' indexed without symbols: "
+                + _skip_reason(pf, getattr(config, "parse_timeout", PARSE_TIMEOUT_S))
+            )
             continue
         if getattr(pf, "grammar_unavailable", False):
             # Counted, not parsed: a supported language whose grammar would not
@@ -2036,6 +1552,10 @@ def build(
         cands = [c for c in named_in(callee, imported) if c in pool]
         return (cands, "imported_symbol") if cands else ([], "")
 
+    # `build --scip` (#380): exact targets for the call sites and bases a SCIP
+    # index covers; None (the default) leaves every edge below name-resolved.
+    scip = ScipResolver.for_build(getattr(config, "scip_index", None), g, parsed)
+
     for rel, pf in parsed.items():
         rel_dir = rel.rpartition("/")[0]
         by_key = {symbol_key(s): s for s in pf.symbols}
@@ -2102,6 +1622,14 @@ def build(
             for callee, count in Counter(sym.calls).items():
                 call_kind = call_kinds.get(callee, "static")
                 call_evidence = make_evidence(rel, call_lines.get(callee))
+                if scip is not None:
+                    # Emits the sites SCIP resolves; the tiers get the rest.
+                    count, rest = scip.calls(
+                        rel, sid, callee, count, call_kind, details.get(callee, [])
+                    )
+                    if not count:
+                        continue
+                    call_evidence = make_evidence(rel, rest) if rest else call_evidence
                 all_cands = by_name.get(callee, [])
                 if callee not in details:
                     # no receiver information (a call recorded without details):
@@ -2286,6 +1814,8 @@ def build(
                         )
                     g.stats["calls_ambiguous"] += 1
                     g.stats["ambiguous_calls"] += 1
+                    if scip is not None:
+                        scip.note_ambiguous(rel)
                     if untyped_builtin:
                         g.stats["calls_untyped_receiver"] += 1
                     if shadowed_builtin:
@@ -2297,6 +1827,8 @@ def build(
                 bd = base_details_map.get(base, {})
                 raw_base = bd.get("raw", base)
                 subtype = bd.get("subtype", "INHERITS")
+                if scip is not None and scip.base(rel, sid, sym, base, subtype, raw_base):
+                    continue
                 matched_base, base_cands = match_bases(rel, base)
 
                 if matched_base:
@@ -2352,419 +1884,3 @@ def build(
     )
     g.stats["parse_errors_summary"] = parse_errors_summary  # type: ignore[assignment]
     return g
-
-
-REFERENCE_EDGES = {"read": "READS", "write": "WRITES", "type": "REFERENCES"}
-TYPE_KINDS = frozenset({"class", "interface", "type", "enum", "struct", "protocol", "trait"})
-METHOD_REFERENCE_RESOLVER = "reference-resolver"
-
-
-def add_reference_edges(g, parsed, imported_files, import_aliases, named_in) -> None:
-    """READS / WRITES / REFERENCES from each symbol's captured refs (#397).
-
-    Precision over recall: a name binds only to a value/type symbol defined at
-    the top level of the same file, or one the file imports by that name; a
-    `self.x` / `this.x` binds only to a field declared in the enclosing class.
-    There is no repository-wide name fallback, which is where CALLS gets its
-    ambiguity, so an unresolved reference is counted and dropped, never guessed.
-    """
-    for key in ("reads", "writes", "references", "unresolved"):
-        g.stats[f"reference_edges_{key}"] += 0
-    for rel, pf in parsed.items():
-        for sym in pf.symbols:
-            if not sym.refs:
-                continue
-            sid = f"sym:{rel}::{symbol_key(sym)}"
-            for r in sym.refs:
-                etype = REFERENCE_EDGES[r["kind"]]
-                wanted = TYPE_KINDS if r["kind"] == "type" else VALUE_KINDS
-                name = r["name"]
-                if r.get("field"):
-                    how = "same_class"
-                    cands = [f"sym:{rel}::{sym.parent}.{name}"] if sym.parent else []
-                else:
-                    how = "same_file"
-                    cands = [f"sym:{rel}::{name}"]
-                cands = [c for c in cands if g.nodes.get(c, {}).get("kind") in wanted]
-                if not cands and not r.get("field"):
-                    alias = import_aliases.get(rel, {}).get(name)
-                    target = (alias[1] or name) if alias else name
-                    how = "import_alias" if alias else "imported_symbol"
-                    cands = [
-                        c
-                        for c in named_in(target, imported_files.get(rel, ()))
-                        if g.nodes[c].get("kind") in wanted and g.nodes[c].get("qualname") == target
-                    ]
-                if not cands:
-                    g.stats["reference_edges_unresolved"] += 1
-                    continue
-                extra = {"ambiguous": True} if len(cands) > 1 else {}
-                for c in cands:
-                    g.add_edge(
-                        sid,
-                        c,
-                        etype,
-                        count=r.get("count", 1),
-                        confidence=round(1.0 / len(cands), 3),
-                        resolution_kind=how,
-                        candidate_count=len(cands),
-                        method=METHOD_REFERENCE_RESOLVER,
-                        evidence=make_evidence(rel, r.get("line")),
-                        **extra,
-                    )
-                g.stats[f"reference_edges_{etype.lower()}"] += 1
-
-
-ENTRY_KINDS = ("function", "method")
-SCORED_ENTRYPOINTS = 200  # exact reach is a BFS each, so only rank the busiest
-
-
-def mark_entrypoints(g: Graph):
-    """Flag the call-graph roots: symbols nothing else in the repo calls.
-
-    Those are the doors into a codebase — CLI commands, request handlers, test
-    bodies, public API — and they are where a reader tracing a flow has to
-    start. A symbol nested inside a function is skipped: an uncalled closure is
-    dead weight, not a door. `reach` (how many symbols the root can reach
-    through CALLS) is filled in for the busiest roots only, so ranking them
-    stays cheap on a big repo.
-    """
-    called, out = set(), defaultdict(list)
-    for e in g.edges:
-        if e["type"] == "CALLS":
-            # #342: a self-recursive function's own CALLS edge (src == dst)
-            # must not disqualify it from being an entrypoint root -- nothing
-            # *else* calls it. `out` still records the self-edge so `_reach`
-            # sees it; it is just harmless there since `start` is already
-            # in `seen` before the BFS looks at its own outgoing edges.
-            #
-            # A guess (edgemeta.counts_as_call -- an untyped-receiver builtin
-            # or a repo-wide name split) does not make its target "called":
-            # `d.get()` must not hide the `views.get` handler. An overload
-            # fan-out (3 overloads -> 0.333 each) does.
-            if e["src"] != e["dst"] and counts_as_call(e):
-                called.add(e["dst"])
-            out[e["src"]].append(e["dst"])
-    nested = {
-        e["dst"]
-        for e in g.edges
-        if e["type"] == "DEFINES" and g.nodes.get(e["src"], {}).get("kind") in ENTRY_KINDS
-    }
-    roots = [
-        nid
-        for nid, n in g.nodes.items()
-        if n["type"] == "symbol"
-        and n.get("kind") in ENTRY_KINDS
-        and nid not in called
-        and nid not in nested
-    ]
-    for nid in roots:
-        g.nodes[nid]["entrypoint"] = True
-    roots.sort(key=lambda nid: (-len(out.get(nid, ())), nid))
-    for nid in roots[:SCORED_ENTRYPOINTS]:
-        g.nodes[nid]["reach"] = _reach(nid, out)
-    g.stats["entrypoints"] = len(roots)
-
-
-# How many CALLS hops a TESTS edge may span. Two reaches both `test -> helper
-# -> target` and `test -> target -> its callee`; every further hop multiplies
-# the fan-out of ambiguous names while saying less about what the test is for.
-TESTS_MAX_HOPS = 2
-
-
-def add_tests_edges(g: Graph) -> None:
-    """TESTS edges: from each test symbol to every non-test symbol it reaches.
-
-    A test symbol is any `symbol` node defined in a file `is_test_path` claims,
-    helpers and fixtures included. From each one, CALLS edges are walked up to
-    TESTS_MAX_HOPS deep -- through test helpers and production code alike --
-    and a TESTS edge is added to every non-test symbol reached. So TESTS means
-    "this test reaches that symbol through calls", never "this test asserts on
-    it": nothing here reads an assertion.
-
-    Confidence is the product of the CALLS confidences along the path, the
-    best path winning when several reach the same symbol. Each CALLS
-    confidence is P(dst is the right target), so the product is the chance
-    every hop on the path resolved correctly -- taking the minimum instead
-    would let a chain of two 0.5 guesses read as certain as one. Evidence is
-    the call site in the test where that path starts, which is a line in the
-    test that leads to the symbol; `hops` says how far away it is.
-
-    CALLS edges that are not evidence of a call at all (a builtin method name on
-    an untyped receiver, a bare call to a shadowed builtin -- see
-    `edgemeta.counts_as_call`) are not walked: `d.get()` in a test does not
-    exercise every `get` in the repository.
-    """
-    out: dict[str, list[dict]] = defaultdict(list)
-    for e in g.edges:
-        if e["type"] != "CALLS" or e["src"] == e["dst"]:
-            continue
-        if e.get("untyped_receiver") or e.get("shadowed_builtin"):
-            continue
-        out[e["src"]].append(e)
-
-    test_syms: set[str] = set()
-    testable: list[str] = []
-    for nid, n in g.nodes.items():
-        if n["type"] != "symbol":
-            continue
-        if is_test_path(n.get("path") or ""):
-            test_syms.add(nid)
-        elif n.get("kind") in ENTRY_KINDS:
-            testable.append(nid)
-
-    # Sorted, and frontiers walked in sorted order, so ties between equally
-    # good paths break the same way on every run and under every hash seed.
-    for test in sorted(test_syms):
-        best: dict[str, tuple[float, int, Any]] = {}
-        frontier: dict[str, tuple[float, Any]] = {test: (1.0, None)}
-        for hop in range(1, TESTS_MAX_HOPS + 1):
-            nxt: dict[str, tuple[float, Any]] = {}
-            for u in sorted(frontier):
-                conf_u, ev_u = frontier[u]
-                for e in out.get(u, ()):
-                    v = e["dst"]
-                    if v == test:
-                        continue
-                    try:
-                        conf = conf_u * float(e.get("confidence", 1.0))
-                    except (TypeError, ValueError):
-                        continue
-                    ev = e.get("evidence") if hop == 1 else ev_u
-                    if v not in nxt or conf > nxt[v][0]:
-                        nxt[v] = (conf, ev)
-                    if v in test_syms:
-                        continue
-                    prev = best.get(v)
-                    if prev is None or conf > prev[0]:
-                        best[v] = (conf, hop, ev)
-            frontier = nxt
-        for v in sorted(best):
-            conf, hops, ev = best[v]
-            g.add_edge(
-                test,
-                v,
-                "TESTS",
-                method=METHOD_CALL_GRAPH,
-                confidence=round(conf, 3),
-                evidence=ev,
-                hops=hops,
-            )
-
-    tested = {e["dst"] for e in g.edges if e["type"] == "TESTS"}
-    g.stats["testable_symbols"] = len(testable)
-    g.stats["tested_symbols"] = sum(1 for nid in testable if nid in tested)
-
-
-def _reach(start: str, out: dict) -> int:
-    """How many distinct symbols `start` reaches through CALLS edges."""
-    seen, stack = {start}, [start]
-    while stack:
-        for dst in out.get(stack.pop(), ()):
-            if dst not in seen:
-                seen.add(dst)
-                stack.append(dst)
-    return len(seen) - 1
-
-
-def _read_capped(stream, limit: int) -> tuple[bytes, bool]:
-    """Read at most `limit` bytes from `stream`, and report whether there were more.
-
-    Reads one byte past the cap deliberately: that byte is the only way to tell
-    "the output was exactly `limit` bytes" from "the output was larger and we
-    stopped early" without reading the rest of it.
-    """
-    buf = bytearray()
-    while len(buf) <= limit:
-        block = stream.read(min(_COCHANGE_READ_BLOCK, limit + 1 - len(buf)))
-        if not block:
-            return bytes(buf), False
-        buf.extend(block)
-    return bytes(buf[:limit]), True
-
-
-def _reap_child(proc, reader=None) -> None:
-    """Kill a child, let go of its pipe and collect its exit status.
-
-    Order matters. The child is killed *first*: a reader parked in read() only
-    comes back when the write end disappears, and closing the read end out from
-    under it is unsafe on both platforms. Every step is best-effort -- a build
-    must not fail because a doomed `git log` was slow to die.
-    """
-    try:
-        if proc.poll() is None:
-            proc.kill()
-    except OSError:
-        pass
-    if reader is not None:
-        reader.join(_COCHANGE_REAP_TIMEOUT)
-    if proc.stdout is not None:
-        try:
-            proc.stdout.close()
-        except OSError:
-            pass
-    try:
-        proc.wait(timeout=_COCHANGE_REAP_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        pass
-
-
-# One `--pretty=format:%H` header line: a SHA-1 or SHA-256 object name.
-_COMMIT_HASH = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-
-
-# Authors kept per file by --git-authors: the most frequent, then by name.
-MAX_FILE_AUTHORS = 5
-
-
-def add_cochange(
-    g: Graph,
-    root: Path,
-    commits: int,
-    file_index: set[str],
-    min_pairs: int = 3,
-    authors: bool = False,
-):
-    """CO_CHANGE edges from files edited together in the last N commits.
-
-    Formula and semantics:
-    - History depth: Scans up to `commits` commits (capped at MAX_COCHANGE_COMMITS = 5000).
-    - Merge handling: `--no-merges` skips merge commits to avoid false co-change correlations.
-    - Noise filter: Commits touching > 25 files are skipped as bulk refactors/noise.
-    - Path filtering: Only paths matching `file_index` (current indexed tree) are paired.
-    - Pair counting: Each commit touching 2..25 files increments pair count by +1 for all pairs.
-    - Threshold: Emits an edge if pair count >= `min_pairs` (default: 3, configurable).
-    """
-    # "requested" is what --git-history asked for; "sampled" is overwritten
-    # below with the number of commits git actually returned -- a shallow clone
-    # with one commit must not report 50.
-    g.stats["cochange_requested_commits"] = commits
-    g.stats["cochange_sampled_commits"] = 0
-    g.stats["cochange_min_pairs"] = min_pairs
-    if commits > MAX_COCHANGE_COMMITS:
-        g.stats["cochange_history_capped"] = commits
-        commits = MAX_COCHANGE_COMMITS
-    try:
-        # Popen, not run(capture_output=True): run() reads the child's stdout to
-        # EOF before it returns, so a byte cap applied to its result bounds only
-        # the decode and the pair counting -- the blob is already resident by
-        # then. Streaming the pipe is what makes MAX_COCHANGE_BYTES a
-        # memory bound rather than a post-hoc trim.
-        #
-        # -c core.quotepath=false: without it git backslash-escapes any
-        # non-ASCII path ("caf\303\251.py"), which never matches file_index and
-        # the CO_CHANGE edge silently vanishes. No text=True: decode the bytes
-        # as UTF-8 ourselves, so a non-ASCII path cannot raise UnicodeDecodeError.
-        # stdin=DEVNULL: prevents git from inheriting server stdin.
-        proc = subprocess.Popen(
-            [
-                "git",
-                *GIT_HARDENING_ARGS,
-                "-C",
-                str(root),
-                "log",
-                f"-n{commits}",
-                "--name-only",
-                # %aN: the author's display name after .mailmap. Never %ae:
-                # an email address is personal data, and these artifacts get
-                # committed and uploaded (#394).
-                "--pretty=format:%H%x00%aN" if authors else "--pretty=format:%H",
-                "--no-merges",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            env=_clean_git_env(),
-        )
-    except (OSError, subprocess.SubprocessError):
-        return
-
-    # The read runs in a thread so the timeout can be enforced on a blocking
-    # read(): select() does not work on pipes on Windows, and this is how
-    # Popen.communicate(timeout=...) does it there too.
-    read: list[tuple[bytes, bool]] = []
-
-    def _drain() -> None:
-        try:
-            read.append(_read_capped(proc.stdout, MAX_COCHANGE_BYTES))
-        except (OSError, ValueError):
-            pass  # pipe torn down mid-read: same outcome as no output at all
-
-    reader = threading.Thread(target=_drain, daemon=True)
-    reader.start()
-    reader.join(COCHANGE_TIMEOUT)
-    timed_out = reader.is_alive()
-    try:
-        _reap_child(proc, reader)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    # A timeout is silent, exactly as the TimeoutExpired from the old
-    # run(timeout=120) was: no co-change edges, no error, the build goes on.
-    if timed_out or not read:
-        return
-    stdout, capped = read[0]
-    # Capping kills git mid-write, so its exit status then says "killed" and
-    # means nothing. Only a read that reached EOF can report a real git failure.
-    if not capped and proc.returncode not in (0, None):
-        return
-    # MAX_COCHANGE_COMMITS bounds how many commits are requested, not
-    # how many bytes a single commit's file list can emit.
-    if capped:
-        g.stats["cochange_output_capped"] = len(stdout)
-        # Drop the trailing partial commit: git log delimits commits with a blank
-        # line ("\n\n" or "\r\n\r\n").
-        m = None
-        for m in re.finditer(rb"(\r?\n){2}", stdout):
-            pass
-        stdout = stdout[: m.end()] if m else b""
-    pairs: Counter = Counter()
-    current: list[str] = []
-    sampled = 0
-    author = ""
-    file_authors: dict[str, Counter] = defaultdict(Counter)
-    # split("\n"), not splitlines(): with core.quotepath=false git emits paths
-    # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
-    # in two so it never matches file_index.
-    for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
-        line = line.rstrip("\r")
-        if not line:
-            if 1 < len(current) <= 25:
-                for a, b in itertools.combinations(sorted(set(current)), 2):
-                    pairs[(a, b)] += 1
-            elif len(current) > 25:
-                g.stats["cochange_commits_skipped"] += 1
-            current = []
-        elif line in file_index:
-            current.append(line)
-            if authors and author:
-                file_authors[line][author] += 1
-        elif _COMMIT_HASH.fullmatch(line.partition("\x00")[0]):
-            sampled += 1
-            author = line.partition("\x00")[2].strip()
-    g.stats["cochange_sampled_commits"] = sampled
-    commits = sampled
-    for path, counts in file_authors.items():
-        node = g.nodes.get(f"file:{path}")
-        if node is not None:
-            ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-            node["authors"] = [{"name": n, "commits": c} for n, c in ranked[:MAX_FILE_AUTHORS]]
-    if authors:
-        g.stats["files_with_authors"] = sum(1 for p in file_authors if f"file:{p}" in g.nodes)
-    for (a, b), n in pairs.items():
-        if n >= min_pairs:
-            g.add_edge(
-                f"file:{a}",
-                f"file:{b}",
-                "CO_CHANGE",
-                count=n,
-                cochange_count=n,
-                sampled_commits=commits,
-                min_pairs=min_pairs,
-                method=METHOD_GIT_LOG,
-                # Correlational, never causal: these two files changed in the
-                # same commits. Confidence is the share of the sampled commits
-                # that touched both, so a pair co-edited 3 times in 500
-                # commits does not read the same as one co-edited 200 times.
-                confidence=round(n / commits, 3) if commits else 0.0,
-                evidence=None,
-            )

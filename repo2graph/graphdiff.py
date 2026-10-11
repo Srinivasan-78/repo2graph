@@ -65,12 +65,12 @@ def _pair_renames(
     by_body: dict[tuple[Any, ...], list[str]] = defaultdict(list)
     for nid, n in added.items():
         if n.get("type") == "symbol" and nid in new_hash:
-            by_body[(*kind(n), new_hash[nid])].append(nid)
+            by_body[kind(n) + (new_hash[nid],)].append(nid)
     for nid in sorted(removed):
         n = removed[nid]
         if n.get("type") != "symbol" or nid not in old_hash:
             continue
-        cands = by_body.get((*kind(n), old_hash[nid]), [])
+        cands = by_body.get(kind(n) + (old_hash[nid],), [])
         if len(cands) == 1:
             renames.append({"from": nid, "to": cands.pop(), "match": "same body"})
     paired_old = {r["from"] for r in renames}
@@ -80,12 +80,12 @@ def _pair_renames(
     by_qual: dict[tuple[Any, ...], list[str]] = defaultdict(list)
     for nid, n in added.items():
         if n.get("type") == "symbol" and nid not in paired_new:
-            by_qual[(*kind(n), n.get("qualname"))].append(nid)
+            by_qual[kind(n) + (n.get("qualname"),)].append(nid)
     for nid in sorted(removed):
         n = removed[nid]
         if n.get("type") != "symbol" or nid in paired_old:
             continue
-        cands = by_qual.get((*kind(n), n.get("qualname")), [])
+        cands = by_qual.get(kind(n) + (n.get("qualname"),), [])
         if len(cands) == 1:
             possible.append({"from": nid, "to": cands.pop(), "match": "same name, body changed"})
     return renames, possible

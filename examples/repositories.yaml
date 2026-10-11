@@ -183,3 +183,190 @@ repositories:
       - "Where is the scheduler subsystem initialized?"
       - "What calls into the e1000 driver's probe function?"
       - "What are the major relationships around ext4's core structures?"
+
+  - id: react
+    name: React
+    url: https://github.com/facebook/react
+    ref: main
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /packages/react/
+      - /packages/react-reconciler/
+      - /packages/react-dom/
+      - /packages/react-dom-bindings/
+      - /packages/scheduler/
+      - /packages/shared/
+    include:
+      - packages/react/**
+      - packages/react-reconciler/**
+      - packages/react-dom/**
+      - packages/react-dom-bindings/**
+      - packages/scheduler/**
+      - packages/shared/**
+    exclude:
+      - "**/__tests__/**"
+    max_files: 4000
+    language_focus: [javascript]
+    category: [ui-library, monorepo, single-language]
+    why: >
+      One of the most widely used UI libraries, and a JavaScript monorepo
+      wired together partly at build time: the reconciler imports a
+      host-config module (`ReactFiberConfig.js`) that only throws, and the
+      bundler swaps it for each renderer's real one — an edge no parser of the
+      source can see. The repository's other half — the React
+      Compiler (`compiler/`), DevTools and test fixtures — is excluded, as
+      are `__tests__/` directories; this scope is the runtime a "how does
+      setState become a DOM update" question is actually answered from.
+      React's `.js` files carry Flow type annotations, which repo2graph
+      parses with the plain JavaScript grammar, which has no Flow support.
+      That costs real structure: read "Files with parse errors" below, and
+      treat the symbol and CALLS counts as a lower bound on what the code
+      actually contains. It is in the gallery because it is the honest
+      picture of a Flow codebase today, not a showcase.
+    queries:
+      - "How does setState schedule a re-render?"
+      - "How does the reconciler begin work on a fiber?"
+      - "Where does a committed fiber tree reach the DOM?"
+      - "What calls the scheduler to run a callback?"
+
+  - id: fastapi
+    name: FastAPI
+    url: https://github.com/fastapi/fastapi
+    ref: master
+    clone_depth: 300
+    git_history: 200
+    scope: full
+    sparse_paths: null
+    include: null
+    exclude: []
+    max_files: 0
+    language_focus: [python]
+    category: [web-framework, async, single-language]
+    why: >
+      A modern async Python web framework built on Starlette and Pydantic,
+      where most of the interesting behaviour — dependency injection, request
+      validation, OpenAPI generation — is reached through decorators and
+      function signatures rather than explicit calls. Indexed whole, with git
+      history, so `CO_CHANGE` edges are present. The repository is also one of
+      the four in the retrieval benchmark (benchmarks/real/), so its graph can
+      be read next to measured questions about it. Over half of the indexed
+      files are Markdown documentation under `docs/`, most of it
+      translations; those are indexed as text, with no symbols.
+    queries:
+      - "How are a path operation's dependencies resolved?"
+      - "Where is a request body validated into a Pydantic model?"
+      - "How is the OpenAPI schema generated?"
+      - "What calls solve_dependencies?"
+
+  - id: gin
+    name: Gin
+    url: https://github.com/gin-gonic/gin
+    ref: master
+    clone_depth: 300
+    git_history: 200
+    scope: full
+    sparse_paths: null
+    include: null
+    exclude: []
+    max_files: 0
+    language_focus: [go]
+    category: [web-framework, small, single-language]
+    why: >
+      One of the most widely used Go web frameworks, and small enough to index whole
+      with git history — the counterpoint to Kubernetes, which is Go at a
+      scale that has to be scoped. A radix-tree router, a middleware chain
+      driven by `Context.Next`, and pluggable binding and rendering packages
+      make it a compact test of method resolution on Go receivers.
+    queries:
+      - "How does a request reach a handler through the router?"
+      - "How are middleware handlers chained with Next?"
+      - "Where is a request bound to a struct?"
+      - "What renders a JSON response?"
+
+  - id: ripgrep
+    name: ripgrep
+    url: https://github.com/BurntSushi/ripgrep
+    ref: master
+    clone_depth: 300
+    git_history: 200
+    scope: full
+    sparse_paths: null
+    include: null
+    exclude: []
+    max_files: 0
+    language_focus: [rust]
+    category: [cli-tool, workspace, single-language]
+    why: >
+      The gallery's Rust entry, and the tool the retrieval benchmark's grep
+      baseline actually runs. A Cargo workspace split into reusable crates
+      (`ignore`, `globset`, `grep-searcher`, `grep-printer`, `grep-regex`)
+      behind one binary, which makes the cross-crate edges — the binary
+      calling into the searcher, the searcher into the matcher — the
+      structure worth looking at. Small enough to index whole with git
+      history.
+    queries:
+      - "How does a search get dispatched across files?"
+      - "Where are command-line flags parsed?"
+      - "How does the searcher detect binary files?"
+      - "What decides which files are ignored?"
+
+  - id: guava
+    name: Guava
+    url: https://github.com/google/guava
+    ref: master
+    clone_depth: 1
+    git_history: 0
+    scope: scoped
+    sparse_paths:
+      - /guava/src/
+    include:
+      - guava/src/**
+    exclude: []
+    max_files: 4000
+    language_focus: [java]
+    category: [library, interface-heavy, single-language]
+    why: >
+      The gallery's Java entry: Google's core libraries for Java, a codebase
+      built from interfaces, abstract base classes and many small
+      implementations of each. A call made through an interface has many
+      same-named candidates, which name-based resolution prices at `1/n`
+      rather than picks — the ambiguous-call count below is that cost, shown
+      rather than avoided. The repository carries the same library twice
+      (`guava/` for the JRE and `android/guava/` for Android) plus test
+      suites, a test library and a GWT variant; this scope is the JRE
+      library's production source, `guava/src/`, once.
+    queries:
+      - "How does an immutable list get built?"
+      - "Where does a LoadingCache load a missing value?"
+      - "How are listeners notified when a ListenableFuture completes?"
+      - "What implements the Multimap interface?"
+
+  - id: jekyll
+    name: Jekyll
+    url: https://github.com/jekyll/jekyll
+    ref: master
+    clone_depth: 300
+    git_history: 200
+    scope: full
+    sparse_paths: null
+    include: null
+    exclude: []
+    max_files: 0
+    language_focus: [ruby]
+    category: [static-site-generator, plugin-architecture, single-language]
+    why: >
+      The gallery's Ruby entry: a widely used static site generator, and
+      small enough to index whole with git history. Its build is a pipeline
+      — read, generate, render, write — driven from one `Site` object.
+      Converters and generators are found at runtime as subclasses of
+      `Jekyll::Plugin` (`Site#instantiate_subclasses`) and Liquid tags are
+      registered by name, so it tests how much of a Ruby codebase's structure
+      a parser recovers when part of the wiring is subclass registration
+      rather than explicit calls.
+    queries:
+      - "How does a site build go from reading files to writing output?"
+      - "How is a Markdown page converted to HTML?"
+      - "Where are plugins loaded?"
+      - "What calls the Liquid renderer?"

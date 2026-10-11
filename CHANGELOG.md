@@ -15,6 +15,40 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`--rerank` on `rag` and `query`, and `rerank=` on `Index.pack_context`/`retrieve`
+  (#381):** a local cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default,
+  `--rerank-model` to change or `@<commit>` to pin) re-orders the top 50 candidates before any
+  budget is spent, breaking the near-ties BM25 leaves. Only the order changes — score values and
+  budget accounting do not. Opt-in; if the `rag` extra is missing or the model fails, the output
+  is byte-identical to a run without it and one `rag_rerank_disabled` line on stderr says why.
+  `scripts/bench_real_repos.py --rerank` adds the `repo2graph-rerank` row to measure it.
+- **`build --scip <index.scip>` (#380):** opt-in exact `CALLS` and `INHERITS` from a SCIP index
+  (e.g. `scip-python index`). In files the index covers, each call site and base it names gets a
+  confidence-1.0 edge with `method`/`resolution_kind` `scip` (or `CALLS_EXTERNAL` for a symbol no
+  indexed file defines); other sites and uncovered files keep their name-resolved edges.
+  `stats.json` reports coverage (`scip_files_covered`, `scip_call_sites_resolved`,
+  `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). The index is read by a bounded,
+  dependency-free protobuf reader; a malformed or oversized one is a warning and heuristic edges,
+  never a failed build. Never auto-detected; also `scip = "<path inside the repo>"` in the config
+  file. Without it every artifact is byte-identical, and full and `--incremental` builds with it
+  are byte-identical too.
+- **VS Code extension (#400):** `editors/vscode/` shows the neighbourhood of the symbol at the
+  cursor -- callers, callees, base classes, defining file, tests and co-changed files -- and
+  follows the cursor; each row opens its file and line. Commands: Reveal in Graph, Show Impact,
+  Index Status (with rebuild), Go to Co-changed Files, Build Index. It drives one warm
+  `repo2graph-mcp` over stdio rather than reimplementing anything; with no index it offers to
+  build one. Its language, node and edge tables are generated from the Python ones
+  (`scripts/generate_vscode_tables.py`) and checked by the test suite. A preview, built from
+  source. Fixes #400.
+- **`repo_find_symbol` by position (#400):** `path` + `line` returns the symbols enclosing that
+  line, innermost first, then the file; `name` is no longer required when they are given.
+- **`repo_neighbours` `format: "json"` (#400):** the same rows as an object with each
+  neighbour's path and lines, edge evidence and confidence, plus the co-changed files of the
+  node's file; a paged reply carries `next_cursor` as a field.
+- **`repo2graph-mcp --staleness-ttl SECONDS` (#400):** reuses the working-tree check behind the
+  stale-index note for that long instead of re-scanning on every call (default `0`, unchanged).
+- **`graph.html#node=<id>` (#400):** the map opens in its detail view selected on that node, and
+  says so when the node is not among those drawn.
 - **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
   `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
   sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.
@@ -95,8 +129,31 @@ makes keeping it current a release-blocking step rather than a good intention.
   with explicit classified exceptions (`OSError`, `ValueError`, `TypeError`, `subprocess.SubprocessError`, `ImportError`).
   Added `REPO2GRAPH_DEBUG=1` environment variable and `--debug` CLI flag to re-raise internal errors across resilience
   boundaries, and enabled ruff `BLE001` checking in CI linting.
+- **Gallery grows from five repositories to eleven (#462):** React, FastAPI, Gin, ripgrep, Guava
+  and Jekyll join `examples/`, each at a pinned commit with its reproduction command — the
+  gallery's first JavaScript, Rust, Java and Ruby entries. React's page records what Flow type
+  annotations cost the JavaScript parser (241 of 386 parsed files report parse errors). Generated
+  example pages now also list files with parse errors, symbols of every kind and methods, so a
+  Java library no longer reads as having "0 functions".
+- **`docs/comparison.md` covers Sourcetrail and the dependency-graph tools (#462):** what
+  Sourcetrail did, what repo2graph does instead and what Sourcetrail did better (its interactive
+  desktop UI; `graph.html` is a static map), and how Madge, dependency-cruiser and CodeSee differ —
+  they graph module imports, repo2graph graphs calls, imports, inheritance and co-change for an
+  agent under a token ceiling. Linked from `README.md`.
 
 ### Changed
+
+- **Graph storage behind an interface (#306).** Traversal, retrieval, `explain` and every MCP
+  tool read the graph through `Index.store` (`repo2graph.store.GraphStore`) instead of its
+  dicts and lists. The in-memory store is the default and output is unchanged.
+  `SqliteGraphStore` is a standard-library prototype that answers from disk; a test runs the
+  same traversals over both and requires byte-identical results, ordering included.
+- **`graph.py`, `parse.py` and `cli.py` split by responsibility (#315).** Moves only, no
+  behaviour change: import resolution (`imports.py`), the parse cache (`parsecache.py`), derived
+  edges and entrypoints (`derived.py`), co-change (`cochange.py`), file discovery and
+  `explain_path` (`discovery.py`), reference capture (`refcapture.py`), and the inspect and embed
+  commands (`cli_inspect.py`, `cli_embed.py`). Every new module is strict-typed. Existing
+  `from repo2graph.graph/parse/cli import X` imports keep working.
 
 - **`graph.html` on large repositories (#305):** past `--viz-nodes` the page says it is
   sampled, in a banner on the page, and opens on a Directories view counting every node in at
@@ -116,6 +173,17 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **Reading a small index file no longer allocates its whole size ceiling.** `read_bounded` asked
+  for `limit + 1` bytes in one `read()`, and CPython allocates that buffer before reading: every
+  2 KB `vectors.meta.json` cost 256 MB and every `vectors.npy` 512 MB (the SCIP reader did the same
+  with 256 MB). Linux overcommit hid it; on Windows it is real commit charge, and parallel test
+  workers ran CI runners out of memory. Reads now go in 1 MB blocks.
+- **A question's opening words no longer pick its answer (#382).** "how does", "where is",
+  "what are" and the like are dropped from the ranking query; the rest of the question is scored
+  as before. On Django, "does" matched `test_html_does_not_mask_exceptions` and put an unrelated
+  `url` at rank 1 of "how does URL resolution reach a view"; that question now returns the same
+  top five as "URL resolution view". Only the frame goes — a general stopword list was measured
+  and lost answers, because words inside a question can be the evidence.
 - **A size limit with no `--limit-policy` cut silently (#318):** files, bytes and edges past
   a limit were dropped without the documented warning. It now warns.
 - **The article "a" no longer matches one-letter identifiers (#382):** "how does URL
@@ -212,6 +280,21 @@ makes keeping it current a release-blocking step rather than a good intention.
   inside the release. It now reads the literal out of `repo2graph/__init__.py`, and a new guard in
   `tests/test_version_surfaces.py` walks every test's AST for assertions that spell out the
   current version, so the next one fails on its own PR instead.
+
+### Security
+
+- **A per-file parse budget that can stop a parse (#81, closes the #79 audit backlog).** A
+  300 KB C++ file of `x = a<b<a<b<...;` — well under the 1.5 MB size cap — made tree-sitter
+  grow quadratically in time and memory (32 KB: 1 s and 640 MB; 300 KB: OOM-killed at 13.8 GB),
+  so one hostile file could take down the machine building the index. tree-sitter cannot be
+  interrupted from Python (no timeout in py-tree-sitter 0.25+, `progress_callback` ignored for
+  bytes and crashing with a reader, the GIL held throughout), so parses that can be expensive now
+  run in supervised workers: the parent kills a worker whose file runs over `--parse-timeout`
+  (default 10 s; the slowest of 18,608 files across the five benchmark corpora took 0.74 s), and on
+  Linux each worker's address space is capped, so a runaway allocation kills only that worker.
+  Such a file keeps its file node, gets no symbols, is counted as `skipped_parse_timeout` or
+  `skipped_parse_crash` and named on stderr, and is never cached, so the next build retries it.
+  Serial builds parse small files in-process as before and send files over 16 KB to a worker.
 
 ### Removed
 

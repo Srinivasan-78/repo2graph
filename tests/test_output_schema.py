@@ -715,7 +715,7 @@ def test_bundle_scrubs_paths_out_of_free_text_notes(indexed, monkeypatch):
     Scrubbed at the boundary rather than in each producer: the guarantee has
     to hold for prose written by code that has never heard of the bundle.
     """
-    import repo2graph.parse as parse_mod
+    import repo2graph.discovery as discovery_mod
 
     src, out, _edges = indexed
     leak = src / "pkg" / "secret_roadmap.py"
@@ -723,7 +723,7 @@ def test_bundle_scrubs_paths_out_of_free_text_notes(indexed, monkeypatch):
     def _boom(*a, **k):
         raise OSError(f"cannot read {leak}")
 
-    monkeypatch.setattr(parse_mod, "discover", _boom)
+    monkeypatch.setattr(discovery_mod, "discover", _boom)
     report = build_report(out, repo=src)
     blob = json.dumps(report) + format_report(report)
 

@@ -241,6 +241,13 @@ def _write_readme(entry: dict, meta: dict, repo_dir: Path) -> None:
     if entry.get("include"):
         paths = "\n".join(f"- `{p}`" for p in entry["include"])
         include_block = f"\n**Indexed paths:**\n{paths}\n"
+    # Every symbol kind, not just functions and classes: Java and Ruby put
+    # nearly all their code in `method` symbols, and Rust/Go in structs, impls
+    # and types, so a table of functions and classes alone reads as "0 functions"
+    # for a Java library that has thirteen thousand methods.
+    symbols_total = sum(
+        v for k, v in meta["stats"].items() if k.startswith("symbol:") and isinstance(v, int)
+    )
     max_files = entry.get("max_files", 0)
     files_indexed = meta["stats"].get("files")
     if max_files and files_indexed == max_files:
@@ -285,6 +292,7 @@ same version.
 | Files indexed | {_n(meta["stats"].get("files", "n/a"))} |
 | Files parsed (code) | {_n(meta["stats"].get("parsed", "n/a"))} |
 | Parse errors | {_n(meta["stats"].get("parse_errors", 0))} |
+| Files with parse errors | {_n(meta["stats"].get("files_with_parse_errors", 0))} |
 
 ## Graph statistics
 
@@ -292,7 +300,9 @@ same version.
 |---|---:|
 | Nodes | {_n(meta["nodes"])} |
 | Edges | {_n(meta["edges"])} |
+| Symbols (all kinds) | {_n(symbols_total)} |
 | Symbols (functions) | {_n(meta["stats"].get("symbol:function", 0))} |
+| Symbols (methods) | {_n(meta["stats"].get("symbol:method", 0))} |
 | Symbols (classes) | {_n(meta["stats"].get("symbol:class", 0))} |
 | CALLS edges | {_n(meta["stats"].get("edge:CALLS", 0))} |
 | CALLS_EXTERNAL edges | {_n(meta["stats"].get("edge:CALLS_EXTERNAL", 0))} |

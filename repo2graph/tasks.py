@@ -232,7 +232,7 @@ def _default_estimator(repo: str | Path) -> float:
         Estimated seconds, never less than one.
     """
     try:
-        from .parse import discover
+        from .discovery import discover
 
         count = sum(1 for _ in discover(Path(repo)))
     except OSError:

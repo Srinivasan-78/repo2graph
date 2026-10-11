@@ -176,7 +176,10 @@ def _write_oversized_repo(tmp_path):
 
 
 def _chunking_config(**kw):
-    return BuildConfig(max_file_bytes=_CHUNK_LIMIT, chunk_large_files=True, **kw)
+    # parse_timeout=0 keeps this serial build in-process, so the monkeypatched
+    # `parser_for` applies; a spawn-started worker (macOS, Windows) would not
+    # inherit it.
+    return BuildConfig(max_file_bytes=_CHUNK_LIMIT, chunk_large_files=True, parse_timeout=0, **kw)
 
 
 def test_a_chunked_file_parses_normally_when_the_grammar_loads(tmp_path):

@@ -23,6 +23,8 @@ from .security import (
     redact_content,
 )
 from .testpaths import is_test_path
+from .store import GraphStore, MemoryGraphStore
+from .rerank import CROSS_ENCODER_CANDIDATES, Reranker, rerank as _rerank
 
 __all__ = [
     "BM25_FORMAT",
@@ -142,6 +144,25 @@ QUERY_STOPWORDS = frozenset(
     make not of on or out set should that the their them then there these this to up
     use used uses using was what when where which who why will with would you your""".split()
 )
+
+# The frame a question opens with ("how does", "where is", "what are"), which
+# names no code. Only the frame goes (#382): a general stopword list was tried
+# twice and lost answers, because inside a question's body even "from" and
+# "an" can be the evidence (SQL `FROM`, a docstring's wording). The frame is
+# never evidence, and it was not harmless either -- on Django, "does" matched
+# `test_html_does_not_mask_exceptions` and put an unrelated `url` at rank 1.
+_QUESTION_FRAME_RE = re.compile(
+    r"^\s*(?:how|what|where|which|why|when|who|whose)"
+    r"(?:\s+(?:do|does|did|is|are|was|were|can|could|should|would|will|has|have|had))?\b",
+    re.I,
+)
+
+
+def strip_question_frame(query: str) -> str:
+    """`query` without its leading question frame, or unchanged if that is all it is."""
+    rest = _QUESTION_FRAME_RE.sub("", query, count=1).rstrip(" ?")
+    return rest if TOKEN_RE.search(rest) else query
+
 
 # Query-side suffix rules: (suffix, replacements). "validation" -> "validate",
 # "validating" -> "validat"/"validate", "parsers" -> "parser". Variants are
@@ -577,21 +598,18 @@ class Index:
     # server sets it from its --repo). None means "not known here".
     repo_root: Path | None = None
 
-    def __init__(self, outdir: Path):
+    def __init__(self, outdir: Path, store: GraphStore | None = None):
         self.dir = Path(outdir).resolve()
         self._overview: str | None = None
         self._manifest: dict[str, Any] | None = None
         self._check_manifest_format()
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
-        self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
-        self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
-        # node id -> (other node id, edge type, "in"|"out", the edge record)
-        self.adj: dict[str, list[tuple[str, str, str, Record]]] = defaultdict(list)
-        for e in self.edges:
-            # The edge record itself (not a copy) rides along: traversal needs
-            # `confidence` on CALLS, and `count` on CO_CHANGE, without a lookup.
-            self.adj[e["src"]].append((e["dst"], e["type"], "out", e))
-            self.adj[e["dst"]].append((e["src"], e["type"], "in", e))
+        # Every graph read goes through `self.store` (store.py, #306). The
+        # default holds the graph in memory, exactly as this class always did.
+        self.store: GraphStore = store or MemoryGraphStore(
+            read_jsonl(artifact_path(self.dir, "nodes.jsonl")),
+            read_jsonl(artifact_path(self.dir, "edges.jsonl")),
+        )
         # The repo map, for pack_context()'s prepend. Both are optional: a
         # `--formats jsonl` build writes no overview.md, and a build interrupted
         # before write_manifest leaves no manifest.json. Neither may raise here.
@@ -606,6 +624,26 @@ class Index:
         # or it loaded; a dropped vector set must be reportable, never silent.
         self.vectors_unavailable: str | None = None
         self._load_vectors()
+
+    # `nodes`, `edges` and `adj` predate the store interface. They are the
+    # in-memory store's own containers (mutable, as tests and callers rely on);
+    # for another backend they are materialised once, at full memory cost.
+    @property
+    def nodes(self) -> dict[str, Record]:
+        return self._memory().nodes
+
+    @property
+    def edges(self) -> list[Record]:
+        return self._memory().edges
+
+    @property
+    def adj(self) -> dict[str, list[tuple[str, str, str, Record]]]:
+        return self._memory().adj
+
+    def _memory(self) -> MemoryGraphStore:
+        if not isinstance(self.store, MemoryGraphStore):
+            self.store = MemoryGraphStore(self.store.iter_nodes(), self.store.iter_edges())
+        return self.store
 
     def _build_bm25(self) -> None:
         """Compute the BM25 inverted index dynamically across all chunks."""
@@ -879,13 +917,13 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        terms = tokenize(query) + [t.lower() for t in _single_char_idents(query)]
-        # Question words stay in (#382 tried dropping them, twice). Their idf
-        # is already near zero, and in a code index they are not noise: "from"
-        # matches SQL `FROM`, and even "an" alone ("rather than an argument")
-        # was the margin that kept app/store.py in the demo's "route to
-        # persistence" answer (test_demo.py). Even a set limited to words that
-        # are no language's keyword lost it.
+        body = strip_question_frame(query)
+        terms = tokenize(body) + [t.lower() for t in _single_char_idents(body)]
+        # Only the question's frame is dropped (strip_question_frame); words in
+        # its body stay (#382 tried dropping them, twice). In a code index they
+        # are not noise: "from" matches SQL `FROM`, and even "an" alone ("rather
+        # than an argument") was the margin that kept app/store.py in the demo's
+        # "route to persistence" answer (test_demo.py).
         q: Counter[str] = Counter(terms)
         weights: dict[str, float] = dict.fromkeys(q, 1.0)
         for term in list(q):
@@ -1131,6 +1169,31 @@ class Index:
         fused.sort(reverse=True)
         return fused
 
+    def rerank(
+        self, query: str, ranked: list[tuple[float, int]], reranker: "Reranker"
+    ) -> list[tuple[float, int]]:
+        """`ranked` with its top candidates re-ordered by `reranker` (#381).
+
+        A reranker that fails leaves the order as it was and says so, once, as
+        a `rag_rerank_disabled` event -- never silently.
+        """
+        return self._apply_rerank(query, ranked, reranker)[0]
+
+    def _apply_rerank(
+        self, query: str, ranked: list[tuple[float, int]], reranker: "Reranker"
+    ) -> tuple[list[tuple[float, int]], bool]:
+        out, why = _rerank(query, ranked, lambda i: self.chunks[i].get("text") or "", reranker)
+        if why:
+            from .events import emit
+
+            emit(
+                "rag_rerank_disabled",
+                level="warning",
+                reason=why,
+                candidates=min(len(ranked), CROSS_ENCODER_CANDIDATES),
+            )
+        return out, not why
+
     def _vectors_for(
         self,
         query: str,
@@ -1242,7 +1305,7 @@ class Index:
                 if len(nxt) >= cap:
                     break
                 added_for_nid = 0
-                for dst, etype, direction, edge in self.adj.get(nid, []):
+                for dst, etype, direction, edge in self.store.neighbours(nid):
                     if etype not in wanted or dst in seen:
                         continue
                     allowed = dirs.get(etype)
@@ -1281,6 +1344,7 @@ class Index:
         extra_secret_dirs: list[str] | None = None,
         neighbours: str = "full",
         conditional_expansion: bool = False,
+        rerank: "Reranker | None" = None,
     ) -> list[Record]:
         """Retrieve ranked seed chunks and graph neighbors within character budget.
 
@@ -1299,6 +1363,8 @@ class Index:
                 'cite' emits one-line signature citations without chunk body.
             conditional_expansion: If True, only expands graph neighbours when lexical
                 evidence is weak or ambiguous.
+            rerank: Optional cross-encoder that re-orders the top candidates
+                before any are picked (rerank.py); None keeps today's order.
 
         Returns:
             List of matching chunk dictionaries.
@@ -1308,7 +1374,7 @@ class Index:
         def _secret(c: Record, nid: str) -> bool:
             if not exclude_secrets:
                 return False
-            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
             return _is_secret_path(
                 c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
             )
@@ -1318,6 +1384,9 @@ class Index:
             if vectors is None and embedder is None
             else self.score_rrf(query, vectors=vectors, embedder=embedder)
         )
+        lexical = ranked
+        if rerank is not None:
+            ranked = self.rerank(query, ranked, rerank)
         scored = ranked[: k * 3]
         picked: list[Record] = []
         seen_nodes_list: list[str] = []
@@ -1347,7 +1416,7 @@ class Index:
                 break
         # Bound the expansion pass by both count and budget:
         if conditional_expansion and not is_lexical_weak(
-            self._lexical_for_weakness(query, ranked, vectors, embedder),
+            self._lexical_for_weakness(query, lexical, vectors, embedder),
             k=k,
             num_chunks=len(self.chunks),
         ):
@@ -1371,7 +1440,7 @@ class Index:
                 chunk_len = len(chunk_text)
                 if used + chunk_len > budget_chars:
                     break
-                src_name = self.nodes.get(src, {}).get("name") or src
+                src_name = (self.store.node(src) or {}).get("name") or src
                 picked.append({**rec, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
@@ -1425,6 +1494,7 @@ class Index:
         expansion: str | None = None,
         seed_offset: int | None = None,
         token_margin: float = 0.0,
+        rerank: "Reranker | None" = None,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -1469,6 +1539,11 @@ class Index:
                 `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
                 first seed that does not fit (the map is only packed on the
                 first page). None (the default) is the unpaged behaviour.
+            rerank: Optional cross-encoder that re-orders the top first-stage
+                candidates before seeds are taken (rerank.py, #381), in place of
+                the answerability re-rank. It changes which chunks are spent
+                first, never how the budget is counted. If it fails, the pack is
+                exactly the one without it.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
@@ -1496,6 +1571,9 @@ class Index:
             num_chunks=len(self.chunks),
         ):
             expand_graph = False
+        reranked = False
+        if rerank is not None:
+            ranked, reranked = self._apply_rerank(query, ranked, rerank)
         # One classification drives all three adjustments below: which chunks are
         # answer-shaped, which seeds win slots, and which direction expansion
         # follows.
@@ -1506,7 +1584,9 @@ class Index:
         asks_tests = asks_about_tests(query)
         # Answerability re-rank, before seeds are taken. `is_lexical_weak` above
         # reads the *lexical* distribution and so must see the unadjusted list.
-        if rerank_answerability:
+        # A cross-encoder that ran has already judged answer-shape, from the
+        # question and the chunk together; the heuristic would only overrule it.
+        if rerank_answerability and not reranked:
             terms = self.query_content_terms(query)
             boost_tests = asks_tests
             ranked = (
@@ -1548,7 +1628,7 @@ class Index:
             # "CALLS out of query", not as a seed.
             if c.get("kind") == "alias":
                 continue
-            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
             if exclude_secrets and _is_secret_path(
                 c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
             ):
@@ -1614,7 +1694,7 @@ class Index:
                         if not node_chunks:
                             continue
                         c = node_chunks[0]
-                        c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                        c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
                         seen_nodes.add(nid)
                         if exclude_secrets and _is_secret_path(
                             c_path,
@@ -1624,7 +1704,7 @@ class Index:
                             continue
                         if exclude_secrets:
                             c = self._served(c)
-                        src_name = self.nodes.get(src, {}).get("name") or src
+                        src_name = (self.store.node(src) or {}).get("name") or src
                         graph_neighbours.append(
                             {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
                         )
@@ -1644,7 +1724,7 @@ class Index:
                     if not node_chunks:
                         continue
                     c = node_chunks[0]
-                    c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                    c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
                     seen_nodes.add(nid)
                     if exclude_secrets and _is_secret_path(
                         c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
@@ -1652,7 +1732,7 @@ class Index:
                         continue
                     if exclude_secrets:
                         c = self._served(c)
-                    src_name = self.nodes.get(src, {}).get("name") or src
+                    src_name = (self.store.node(src) or {}).get("name") or src
                     graph_neighbours.append(
                         {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
                     )

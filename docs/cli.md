@@ -69,9 +69,11 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
+| `--parse-timeout` | `10` | Wall-clock budget, in seconds, for one file's parse. A file over it keeps its file node but gets no symbols, is counted as `skipped_parse_timeout` in `stats.json`, and is named in a stderr warning (`--parse-policy strict` fails the build instead). Enforced by killing the parse worker, so it holds even though tree-sitter cannot be interrupted; Linux workers also have their address space capped, and a file that exhausts it or crashes the parser is counted as `skipped_parse_crash`. `0` turns the budget off, and with it a serial build's worker: every file then parses in-process. Deliberately not a `.repo2graph.toml` key: the repository being indexed must not be able to lift it. |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
 | `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
+| `--scip` | unset | Path to a [SCIP](https://github.com/sourcegraph/scip) index (e.g. from `scip-python index` run at the repository root). For the files it covers, each call site and base class it names gets an exact `CALLS`/`INHERITS` edge (`method`/`resolution_kind` `scip`, confidence 1.0) or a `CALLS_EXTERNAL` edge; call sites it does not name, and files it does not cover, keep their name-resolved edges. `stats.json` then reports coverage (`scip_documents`, `scip_files_covered`, `scip_call_sites_resolved`, `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). A missing, oversized (over 256 MiB) or malformed index is a warning plus a `scip_index_rejected` event on stderr and `scip_error` in `stats.json`, never a failed build. Never auto-detected: an `index.scip` shipped in a repository is ignored unless asked for. Also `scip = "index.scip"` in the config file (relative to, and confined to, the repository; `build` only — `rag <source-dir>` and the MCP auto-build never read an index). Regenerate the index when the code changes: a stale one only falls back to name resolution where a name no longer sits on the line it recorded. Details: docs/architecture.md, *Exact resolution from SCIP*. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
@@ -219,7 +221,8 @@ Keys are spelled like the flags they stand in for: `include`, `exclude`,
 `exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
 `git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
 `"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
-choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`. A list given
+choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`;
+`scip` a path relative to the repository root that must stay inside it (read by `build` only). A list given
 on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file
@@ -276,6 +279,7 @@ functions around each answer come along too.
 | `--conditional-expansion` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
 | `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
 | `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
+| `--rerank` / `--rerank-model` | off / `cross-encoder/ms-marco-MiniLM-L-6-v2` | Re-order the top 50 candidates with a local cross-encoder before they are picked. Same meaning as on `rag`. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -334,6 +338,8 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
+| `--rerank` | off | Re-order the top 50 candidates with a cross-encoder that reads your question and each chunk together, before the budget is spent; it breaks the near-ties word matching leaves. Runs locally and needs the `rag` extra (the model, ~90 MB, downloads on first use). If it cannot load or fails, you get the answer you would have got without it, plus one `rag_rerank_disabled` line on stderr saying why. |
+| `--rerank-model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which sentence-transformers CrossEncoder `--rerank` uses. Append `@<commit>` to pin the revision. |
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--expansion` | `rag-default` | Which arrows to walk. `navigation`: calls and imports, both ways. `impact-analysis`: callers, importers, subclasses and co-changed files (co-change links files, so use `--hops 2` or more from a function). `strict`: only edges the resolver was certain of, never git history. `rag-default` is the behaviour with no flag. |
 | `--edge-type` | preset's | Walk only this edge type (`CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE`, `TESTS`). Repeatable; overrides the preset's types. Each neighbour's `why` says which edge admitted it. |
@@ -491,13 +497,13 @@ others do:
 
 - **`0` means unlimited** for every numeric ceiling (`--max-files`, `--max-nodes`,
   `--max-edges`, `--max-bytes`, `--max-chunks`, `--max-memory-mb`,
-  `--max-build-seconds`, the budgets). Three flags give `0` a different job, and
+  `--max-build-seconds`, `--parse-timeout`, the budgets). Three flags give `0` a different job, and
   their help says so: `--jobs 0` is one worker per CPU, `github --depth 0` is full
   history, and `--viz-nodes 0` draws an empty map (`--viz-nodes all` is the
   unlimited spelling).
 - **Units are part of the meaning.** Budgets are characters unless the flag says
-  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`
-  and `--max-build-seconds` are seconds. Numbers must be finite and `>= 0`.
+  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`,
+  `--max-build-seconds` and `--parse-timeout` are seconds. Numbers must be finite and `>= 0`.
 - **Lists are repeatable flags** (`--secret-keyword a --secret-keyword b`), except
   `--formats`, which takes one comma-separated value.
 - **A renamed flag keeps its old name** as an alias, so scripts do not break.

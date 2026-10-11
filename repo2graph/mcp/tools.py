@@ -246,6 +246,9 @@ def dispatch(
             # arbitrary one.
         )
     elif name == "repo_neighbours":
+        # `format` (#400) is passed only when sent, like `cursor`, so a call
+        # without it reaches the handler exactly as it always did.
+        fmt = {"format": args["format"]} if args.get("format") is not None else {}
         result = _neighbours(
             index,
             str(args.get("node_id") or ""),
@@ -253,14 +256,18 @@ def dispatch(
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
             min_confidence=args.get("min_confidence", 0.0),
             **paging,
+            **fmt,
         )
     elif name == "repo_find_symbol":
+        # Likewise `path` and `line` (#400): only when the client set them.
+        position = {k: args[k] for k in ("path", "line") if args.get(k) is not None}
         result = _find(
             index,
             str(args.get("name") or ""),
             kind=str(args.get("kind") or ""),
             path_prefix=str(args.get("path_prefix") or ""),
             limit=args.get("limit", MCP_FIND_LIMIT),
+            **position,
         )
     elif name == "repo_read":
         result = tool_repo_read(

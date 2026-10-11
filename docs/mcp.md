@@ -185,6 +185,7 @@ runtime argument — see [`server.json`](../server.json).
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
+| `--staleness-ttl` | `0` | Seconds the working-tree check behind the stale-index note is reused, instead of re-scanning the tree on every tool call (max 300). That scan costs tens of milliseconds per call on a mid-sized repository; an editor that calls on every cursor move (#400) sets this. `0` checks every call. A rebuilt index is checked afresh regardless. |
 | `--secret-keyword` | none | Extra keyword marking a file or path as secret, as `repo2graph build --secret-keyword` takes it. Applied to auto-builds and to every pack. Repeatable. |
 | `--secret-dir` | none | Extra directory name treated as secret. Repeatable. |
 
@@ -202,8 +203,8 @@ runtime argument — see [`server.json`](../server.json).
 |---|---|---|
 | `repo_map` | none | Languages, hub files and top entry points, prefixed with a staleness note (#383) if the working tree has changed since the index was built. Stable across calls, so it caches. Read this first. |
 | `repo_search` | `query`, optional `k`, `hops`, `budget_tokens`, `cursor` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. Pass `cursor` to page through further seeds ([Pagination](#pagination-389)). |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence`, `cursor` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. Pass `cursor` to page past `limit` ([Pagination](#pagination-389)). |
-| `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence`, `cursor`, `format` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. Pass `cursor` to page past `limit` ([Pagination](#pagination-389)). `format: "json"` returns the same rows as JSON ([below](#repo_neighbours-json-output-400)). |
+| `repo_find_symbol` | `name`, or `path` and `line`; optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s), or the symbols enclosing a file position: JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |
 | `repo_blast_radius` | `node_id`, optional `max_hops`, `include_cochange`, `limit` | Reverse reachability from a node_id: callers, subclasses, importers and co-changed files, by hop distance. |
@@ -258,6 +259,7 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | `budget_tokens` | `repo_search` | 6 000 | 1 (≤ 0 → default) | 12 000 |
 | `limit` | `repo_neighbours` | 20 | 1 | 50 |
 | `limit` | `repo_find_symbol` | 20 | 1 | 50 |
+| `line` | `repo_find_symbol` | — | 1 (below is an error) | — |
 | `limit` | `repo_blast_radius` | 40 | 1 | 50 |
 | `context` | `repo_read` | 0 | 0 | 500 lines |
 | output (chars) | `repo_read` | — | — | 20 000 |
@@ -353,10 +355,22 @@ before it can call `repo_neighbours`, `repo_read`, `repo_path_between` or
 
 | Parameter | Type | Meaning |
 |---|---|---|
-| `name` | string (required) | Symbol or file name to look up (e.g. `"validate_token"`). |
+| `name` | string | Symbol or file name to look up (e.g. `"validate_token"`). Required unless `path` and `line` are given. |
 | `kind` | string (optional) | Exact node `kind` filter (e.g. `"function"`, `"class"`, `"method"`). |
 | `path_prefix` | string (optional) | Only node ids whose path starts with this prefix. |
+| `path` | string (optional) | Only nodes in exactly this repo-relative file (a leading `./` and `\` separators are normalised). |
+| `line` | integer (optional) | With `path`: only the nodes whose span contains this 1-based line. |
 | `limit` | integer (optional) | Maximum candidates returned (default 20, clamped 1-50). |
+
+**Lookup by position (#400).** `path` + `line` answers "which symbol is the
+cursor in": every symbol in that file whose `start_line`-`end_line` span
+contains the line, **innermost first** (a method before its class), then the
+file node itself, which contains every line -- so a line outside every symbol
+returns just the file. `name` may then be omitted; given, it narrows the
+enclosing set. A `line` below 1 or not a number, or a `line` without `path`,
+is an `isError` result; a file that is not indexed (or is secret-excluded)
+returns `[]`. This is what the [VS Code extension](../editors/vscode/README.md)
+calls on every cursor move.
 
 **Matching order** (the same precedence `_boost_identifiers` uses for BM25
 identifier boosting): an exact name match first; if none, a case-insensitive
@@ -367,6 +381,24 @@ caller disambiguates rather than the server guessing. A name matching nothing
 returns `[]`, not an error. Secret-excluded paths never appear.
 
 **Output:** JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`.
+
+### `repo_neighbours` JSON output (#400)
+
+`format: "json"` (default `"markdown"`) returns the rows the markdown lists, in
+the same order, as one object -- for a program, such as an editor, that has to
+jump to each neighbour rather than read about it:
+
+| Field | Meaning |
+|---|---|
+| `node` | The node asked about: `{node_id, type, name, qualname, kind, path, start_line, end_line, lang}`. |
+| `neighbours` | One object per row: `edge` (`CALLS`, `DEFINES`, ...), `direction` (`in`/`out`), the neighbour's own fields as in `node`, `via` (the node the edge was followed from), `at` (where the edge is written, `path:line`, or `null`), `confidence`, `candidate_count` and `count` (each `null` when the edge has none). |
+| `cochange` | Files historically edited with the node's file, `{node_id, path, count}`, most frequent first, at most `limit`. A symbol has no `CO_CHANGE` edge of its own -- history is per file -- so this is how a symbol's caller gets it in the same call. |
+| `truncated` | `true` when `limit` cut the listing. |
+| `next_cursor` | Paged calls only: the token for the next page, or `null` on the last. It is a field rather than the trailing `next_cursor:` line, which would stop the reply parsing as JSON; `_meta.nextCursor` carries it too. |
+
+Notes the server adds (an argument it defaulted, the stale-index warning)
+still lead the reply as `_note: ..._` paragraphs before the JSON, as they do
+for every JSON tool. Secret-excluded nodes never appear.
 
 ### `repo_read`
 
@@ -817,9 +849,9 @@ you pass `--include-paths`.
 
 #### What not to rely on
 
-- **Completeness of callers.** Call resolution is name-based. Across the five
-  benchmark repositories, 4.6%–21.3% of `CALLS` edges are ambiguous
-  ([limitations](architecture.md)). No edge does not prove no call.
+- **Completeness of callers.** Call resolution is name-based. Across the eleven
+  gallery repositories in [`examples/`](../examples/README.md), 10%–25% of `CALLS`
+  edges are ambiguous ([limitations](architecture.md)). No edge does not prove no call.
 - **Freshness.** The index is a snapshot and nothing watches the filesystem.
   The server rebuilds when the index is missing, not when it is stale.
 - **Generated code being marked.** It is indexed exactly like hand-written

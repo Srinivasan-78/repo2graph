@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-06T08:15:30Z",
+  "generated_at": "2026-10-11T08:47:22Z",
   "results": [
     {
       "repository": "https://github.com/django/django",
@@ -55,6 +55,72 @@
       "clone_seconds": 56.9,
       "build_seconds": 152.5,
       "generated_at": "2026-10-06T08:15:27Z"
+    },
+    {
+      "repository": "https://github.com/gin-gonic/gin",
+      "commit": "0f09c3a9b4626d9fe9979cf4d0521d6ae32ab646",
+      "repo2graph_version": "3.0.0",
+      "files": 128,
+      "nodes": 2106,
+      "edges": 19552,
+      "clone_seconds": 1.5,
+      "build_seconds": 2.5,
+      "generated_at": "2026-10-11T08:46:01Z"
+    },
+    {
+      "repository": "https://github.com/BurntSushi/ripgrep",
+      "commit": "3fce3b5bb0236da2df6d99672afb8a719642eca7",
+      "repo2graph_version": "3.0.0",
+      "files": 229,
+      "nodes": 4857,
+      "edges": 20381,
+      "clone_seconds": 1.6,
+      "build_seconds": 5.2,
+      "generated_at": "2026-10-11T08:46:09Z"
+    },
+    {
+      "repository": "https://github.com/fastapi/fastapi",
+      "commit": "f5c6e9b4f9cadc1bf0f9a1fd672e621206b63007",
+      "repo2graph_version": "3.0.0",
+      "files": 2994,
+      "nodes": 10384,
+      "edges": 46738,
+      "clone_seconds": 3.9,
+      "build_seconds": 16.8,
+      "generated_at": "2026-10-11T08:47:22Z"
+    },
+    {
+      "repository": "https://github.com/facebook/react",
+      "commit": "b618bbb4422693bbb8d387180687b3f510300f42",
+      "repo2graph_version": "3.0.0",
+      "files": 396,
+      "nodes": 3468,
+      "edges": 8093,
+      "clone_seconds": 2.6,
+      "build_seconds": 4.3,
+      "generated_at": "2026-10-11T08:45:33Z"
+    },
+    {
+      "repository": "https://github.com/google/guava",
+      "commit": "6b3a8d7498a7fde122967ba37a023ba3dcb47792",
+      "repo2graph_version": "3.0.0",
+      "files": 611,
+      "nodes": 16268,
+      "edges": 80339,
+      "clone_seconds": 2.3,
+      "build_seconds": 14.6,
+      "generated_at": "2026-10-11T08:46:30Z"
+    },
+    {
+      "repository": "https://github.com/jekyll/jekyll",
+      "commit": "541d8b2ee75c8907de4744d4b87a7a6f1f997cae",
+      "repo2graph_version": "3.0.0",
+      "files": 771,
+      "nodes": 2888,
+      "edges": 10403,
+      "clone_seconds": 1.8,
+      "build_seconds": 2.6,
+      "generated_at": "2026-10-11T08:46:36Z"
     }
   ]
 }

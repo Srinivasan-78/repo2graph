@@ -92,17 +92,19 @@ TOOL_DESCRIPTIONS = {
         "callers (CALLS in), callees (CALLS out), inheritance, definitions, or the tests that "
         "reach a symbol through calls (TESTS in). When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
-        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`. "
+        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`"
+        ', or with format="json" the same rows as JSON plus co-changed files. '
         'To page past limit, pass cursor="" then each `next_cursor:` token from the reply\'s last line.'
     ),
     "repo_find_symbol": (
-        "Look up a symbol or file's node_id by name, for feeding into repo_neighbours, "
+        "Look up a symbol or file's node_id by name, or by `path` and `line` (the symbols "
+        "enclosing that line, innermost first, then the file), for feeding into repo_neighbours, "
         "repo_read, repo_path_between or repo_blast_radius. Read-only, deterministic, zero "
-        "side effects, secret files (.env) excluded. Matches an exact name first, then "
-        "case-insensitively, then the last segment of a qualname; an ambiguous name returns "
-        "every candidate with its path so you disambiguate rather than the server guessing. "
-        "When to use: you already know a name (from a traceback, a grep, a review comment) "
-        "and want its node_id with no repo_search round trip. When NOT to use: do not use for "
+        "side effects, secret files (.env) excluded. A name matches exactly first, then "
+        "case-insensitively, then as a qualname's last segment; an ambiguous name returns "
+        "every candidate, with its path. "
+        "When to use: you know a name (from a traceback, a grep, a review comment) or a file "
+        "position and want its node_id with no repo_search round trip. When NOT to use: not for "
         "open-ended text search (use repo_search) or for repo layout (use repo_map). "
         "Output: JSON array of {node_id, name, qualname, kind, path, start_line, end_line, lang}."
     ),
@@ -244,6 +246,15 @@ TOOL_SCHEMAS = {
                 "type": "string",
                 "description": _CURSOR_DESCRIPTION.format(page="limit rows"),
             },
+            "format": {
+                "type": "string",
+                "enum": ["markdown", "json"],
+                "description": (
+                    "Output format (default markdown). json returns {node, neighbours, cochange, "
+                    "truncated}: each neighbour row with its edge, direction, path and lines, and "
+                    "the files co-edited with the node's file -- for programs such as editors."
+                ),
+            },
         },
         "required": ["node_id"],
     },
@@ -252,7 +263,24 @@ TOOL_SCHEMAS = {
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Symbol or file name to look up (e.g. 'validate_token').",
+                "description": (
+                    "Symbol or file name to look up (e.g. 'validate_token'). May be omitted "
+                    "when `path` and `line` are given."
+                ),
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "Optional exact repo-relative file path (e.g. 'pkg/mod.py'): only nodes "
+                    "in that file."
+                ),
+            },
+            "line": {
+                "type": "integer",
+                "description": (
+                    "Optional 1-based line in `path` (min 1): only the symbols whose span "
+                    "contains it, innermost first, then the file node."
+                ),
             },
             "kind": {
                 "type": "string",
@@ -272,7 +300,9 @@ TOOL_SCHEMAS = {
                 ),
             },
         },
-        "required": ["name"],
+        # `name` or `path` + `line` (#400): either one is a complete question, so
+        # neither is required by the schema; the handler refuses a call with neither.
+        "required": [],
     },
     "repo_read": {
         "type": "object",

@@ -42,7 +42,13 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 ```
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
-output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
+output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run). What it produces on
+eleven well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
+pinned commit with the command to reproduce it: [examples/](examples/README.md).
+
+In VS Code, the extension in [`editors/vscode/`](editors/vscode/README.md) (a preview, built from
+source) shows the callers, callees, base classes and co-changed files of the symbol at the cursor,
+through the same MCP server.
 
 ## Is it better than grep?
 
@@ -129,8 +135,11 @@ What it does do that grep doesn't:
   bounded by hop count and visit cap, with a citation per edge.
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
-Cursor's index and Claude Code's own search, including when to use those instead:
-**[docs/comparison.md](docs/comparison.md)**.
+Cursor's index and Claude Code's own search, and with the dependency-graph tools Madge,
+dependency-cruiser and CodeSee, including when to use those instead:
+**[docs/comparison.md](docs/comparison.md)**. Looking for a **Sourcetrail alternative**? It is not
+a drop-in replacement — there is no interactive desktop UI — and
+[the comparison says what it does instead](docs/comparison.md#repo2graph-as-a-sourcetrail-alternative).
 
 ## Five questions to start with
 
@@ -179,7 +188,10 @@ Build cost up to 50,000 files: [benchmarks/perf/README.md](benchmarks/perf/READM
 
 - **Resolve calls by type.** Calls are matched by name, scoped by class, file, imports and
   directory. `x.get()` on a receiver of unknown type is recorded as a low-confidence guess, not a
-  fact. For exact references, use a language-server tool.
+  fact. For exact references, use a language-server tool, or hand `build --scip index.scip` a
+  [SCIP](https://github.com/sourcegraph/scip) index (from `scip-python`, `scip-typescript`, ...)
+  to make the calls and bases it covers exact; see
+  [docs/architecture.md](docs/architecture.md#exact-resolution-from-scip---scip-off-by-default).
 - **See dynamic dispatch, reflection or computed imports.** A missing edge doesn't prove that no
   call exists.
 - **Cross language boundaries** (Python calling C++ through bindings).

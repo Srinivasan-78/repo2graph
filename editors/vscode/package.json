@@ -1,0 +1,203 @@
+{
+  "name": "repo2graph-vscode",
+  "displayName": "repo2graph",
+  "description": "The neighbourhood of the symbol at the cursor -- callers, callees, base classes, defining file and co-changed files -- from a repo2graph index.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "repo2graph",
+  "license": "MIT",
+  "author": "Srinivasan Vijayaraghavan",
+  "homepage": "https://github.com/Srinivasan-78/repo2graph/blob/main/editors/vscode/README.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Srinivasan-78/repo2graph.git",
+    "directory": "editors/vscode"
+  },
+  "bugs": "https://github.com/Srinivasan-78/repo2graph/issues",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "code graph",
+    "call graph",
+    "callers",
+    "repo2graph"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onView:repo2graph.neighbourhood"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "The extension starts repo2graph and repo2graph-mcp in the workspace and writes its index there."
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "type": "webview",
+          "id": "repo2graph.neighbourhood",
+          "name": "Symbol Neighbourhood"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "repo2graph.revealInGraph",
+        "title": "Reveal in Graph",
+        "category": "repo2graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "repo2graph.showImpact",
+        "title": "Show Impact",
+        "category": "repo2graph",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "repo2graph.indexStatus",
+        "title": "Index Status",
+        "category": "repo2graph",
+        "icon": "$(info)"
+      },
+      {
+        "command": "repo2graph.goToCoChanged",
+        "title": "Go to Co-changed Files",
+        "category": "repo2graph"
+      },
+      {
+        "command": "repo2graph.buildIndex",
+        "title": "Build Index",
+        "category": "repo2graph"
+      },
+      {
+        "command": "repo2graph.rebuildIndex",
+        "title": "Rebuild Index (incremental)",
+        "category": "repo2graph"
+      },
+      {
+        "command": "repo2graph.refresh",
+        "title": "Refresh Neighbourhood",
+        "category": "repo2graph",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "repo2graph.restartServer",
+        "title": "Restart MCP Server",
+        "category": "repo2graph"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "repo2graph.refresh",
+          "when": "view == repo2graph.neighbourhood",
+          "group": "navigation@1"
+        },
+        {
+          "command": "repo2graph.showImpact",
+          "when": "view == repo2graph.neighbourhood",
+          "group": "navigation@2"
+        },
+        {
+          "command": "repo2graph.indexStatus",
+          "when": "view == repo2graph.neighbourhood",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "repo2graph.revealInGraph",
+          "group": "repo2graph@1"
+        },
+        {
+          "command": "repo2graph.showImpact",
+          "group": "repo2graph@2"
+        },
+        {
+          "command": "repo2graph.goToCoChanged",
+          "group": "repo2graph@3"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "repo2graph",
+      "properties": {
+        "repo2graph.executable": {
+          "type": "string",
+          "default": "repo2graph",
+          "scope": "machine",
+          "markdownDescription": "The `repo2graph` command line, used to build the index and read its status. A bare name is looked up on `PATH`; use an absolute path for a virtual environment (for example `/path/to/.venv/bin/repo2graph`)."
+        },
+        "repo2graph.mcpExecutable": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "The `repo2graph-mcp` server the view queries. Empty: the `repo2graph-mcp` beside `#repo2graph.executable#` when that is a path, else `repo2graph-mcp` on `PATH`. Needs the `mcp` extra: `pip install \"repo2graph[mcp]\"`."
+        },
+        "repo2graph.indexPath": {
+          "type": "string",
+          "default": ".r2g",
+          "scope": "resource",
+          "markdownDescription": "The index directory (`repo2graph build -o`), relative to the workspace folder or absolute."
+        },
+        "repo2graph.repoRoot": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "The source tree the index describes, relative to the workspace folder or absolute. Empty: the workspace folder itself."
+        },
+        "repo2graph.buildArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "--git-history",
+            "300"
+          ],
+          "scope": "machine",
+          "markdownDescription": "Extra arguments for `repo2graph build` when the extension builds or rebuilds the index. The default reads the last 300 commits, which is what records co-changed files."
+        },
+        "repo2graph.debounceMs": {
+          "type": "number",
+          "default": 75,
+          "minimum": 0,
+          "maximum": 2000,
+          "markdownDescription": "How long the cursor must rest, in milliseconds, before the view asks for the symbol under it."
+        },
+        "repo2graph.stalenessTtlSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 300,
+          "markdownDescription": "Passed to `repo2graph-mcp --staleness-ttl`: how long the server reuses its check of whether the working tree has moved since the build. 0 checks on every cursor move, which is slow on a large repository."
+        },
+        "repo2graph.neighbourLimit": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 50,
+          "markdownDescription": "Neighbours fetched per page (the server's ceiling is 50); further pages load on demand."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "node --test out/test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "20.17.6",
+    "@types/vscode": "1.85.0",
+    "typescript": "5.6.3"
+  }
+}
