@@ -48,9 +48,10 @@ WORKER_MEMORY_MB = 2048
 #: parse can cost.
 INPROCESS_MAX_BYTES = 16 * 1024
 
-#: A pool with work queued that neither finishes an item nor starts one for this
-#: long (or three parse budgets, if longer) is abandoned as wedged.
-STALL_S = 60.0
+#: A pool with work queued in which no worker starts up, finishes an item or
+#: starts one for this long (or three parse budgets, if longer) is abandoned as
+#: wedged. Generous: a starved Windows runner can take a minute to spawn workers.
+STALL_S = 120.0
 
 TIMEOUT = "timeout"
 CRASH = "crash"
@@ -141,6 +142,13 @@ def run_batch(
     return out
 
 
+def _claimed(watch: Any) -> int:
+    """How many workers have started up and claimed a slot."""
+    with watch.get_lock():
+        snap = watch[:]
+    return sum(1 for k in range(0, len(snap), _FIELDS) if snap[k])
+
+
 def _running(watch: Any) -> list[tuple[int, int, float]]:
     """(pid, item index, start) for every worker that is mid-item."""
     with watch.get_lock():
@@ -202,6 +210,7 @@ def _round(
         except BrokenProcessPool:
             broken = True  # a worker died while the rest were still being queued
         progress = time.monotonic()
+        claimed = 0
         while True:
             if pending and not broken:
                 done, pending = concurrent.futures.wait(
@@ -217,6 +226,9 @@ def _round(
                         broken = True
             running = _running(watch)
             now = time.monotonic()
+            started_up = _claimed(watch)
+            if started_up > claimed:  # a slow start-up is not a wedge
+                claimed, progress = started_up, now
             if running:
                 progress = max(progress, max(start for _, _, start in running))
             if timeout > 0:
