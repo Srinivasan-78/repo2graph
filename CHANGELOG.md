@@ -123,6 +123,12 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **A question's opening words no longer pick its answer (#382).** "how does", "where is",
+  "what are" and the like are dropped from the ranking query; the rest of the question is scored
+  as before. On Django, "does" matched `test_html_does_not_mask_exceptions` and put an unrelated
+  `url` at rank 1 of "how does URL resolution reach a view"; that question now returns the same
+  top five as "URL resolution view". Only the frame goes — a general stopword list was measured
+  and lost answers, because words inside a question can be the evidence.
 - **A size limit with no `--limit-policy` cut silently (#318):** files, bytes and edges past
   a limit were dropped without the documented warning. It now warns.
 - **The article "a" no longer matches one-letter identifiers (#382):** "how does URL

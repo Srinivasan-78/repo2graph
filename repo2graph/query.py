@@ -144,6 +144,25 @@ QUERY_STOPWORDS = frozenset(
     use used uses using was what when where which who why will with would you your""".split()
 )
 
+# The frame a question opens with ("how does", "where is", "what are"), which
+# names no code. Only the frame goes (#382): a general stopword list was tried
+# twice and lost answers, because inside a question's body even "from" and
+# "an" can be the evidence (SQL `FROM`, a docstring's wording). The frame is
+# never evidence, and it was not harmless either -- on Django, "does" matched
+# `test_html_does_not_mask_exceptions` and put an unrelated `url` at rank 1.
+_QUESTION_FRAME_RE = re.compile(
+    r"^\s*(?:how|what|where|which|why|when|who|whose)"
+    r"(?:\s+(?:do|does|did|is|are|was|were|can|could|should|would|will|has|have|had))?\b",
+    re.I,
+)
+
+
+def strip_question_frame(query: str) -> str:
+    """`query` without its leading question frame, or unchanged if that is all it is."""
+    rest = _QUESTION_FRAME_RE.sub("", query, count=1).rstrip(" ?")
+    return rest if TOKEN_RE.search(rest) else query
+
+
 # Query-side suffix rules: (suffix, replacements). "validation" -> "validate",
 # "validating" -> "validat"/"validate", "parsers" -> "parser". Variants are
 # added *beside* the original term and only when the index's own vocabulary
@@ -880,13 +899,13 @@ class Index:
             Sorted list of (bm25_score, chunk_index) tuples.
         """
         # Support single-character identifiers matching declared symbols:
-        terms = tokenize(query) + [t.lower() for t in _single_char_idents(query)]
-        # Question words stay in (#382 tried dropping them, twice). Their idf
-        # is already near zero, and in a code index they are not noise: "from"
-        # matches SQL `FROM`, and even "an" alone ("rather than an argument")
-        # was the margin that kept app/store.py in the demo's "route to
-        # persistence" answer (test_demo.py). Even a set limited to words that
-        # are no language's keyword lost it.
+        body = strip_question_frame(query)
+        terms = tokenize(body) + [t.lower() for t in _single_char_idents(body)]
+        # Only the question's frame is dropped (strip_question_frame); words in
+        # its body stay (#382 tried dropping them, twice). In a code index they
+        # are not noise: "from" matches SQL `FROM`, and even "an" alone ("rather
+        # than an argument") was the margin that kept app/store.py in the demo's
+        # "route to persistence" answer (test_demo.py).
         q: Counter[str] = Counter(terms)
         weights: dict[str, float] = dict.fromkeys(q, 1.0)
         for term in list(q):
