@@ -322,6 +322,14 @@ def test_component_script_keeps_every_line_and_drops_the_markup():
     assert component_script(b"<template><p/></template>\n")[1] == b"\n"
 
 
+def test_a_script_end_tag_with_whitespace_or_junk_still_ends_the_block():
+    src = b"<script>\nfunction a() {}\n</script\t\n bar>\n<p>function b() {}</p>\n"
+    lang, code = component_script(src)
+    assert lang == "javascript"
+    assert b"function a" in code and b"function b" not in code
+    assert code.count(b"\n") == src.count(b"\n")
+
+
 # --- Jupyter notebooks ------------------------------------------------------------
 
 

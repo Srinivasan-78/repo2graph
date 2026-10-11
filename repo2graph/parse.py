@@ -135,7 +135,9 @@ def sniff_header_lang(raw: bytes) -> str:
     return "cpp" if any(h in raw for h in CPP_HEADER_HINTS) else "c"
 
 
-_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.S | re.I)
+# The end tag may carry whitespace or junk before its `>` (`</script\t\n x>`);
+# HTML still closes the block there, so the code must stop there too.
+_SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\b[^>]*>", re.S | re.I)
 _TS_LANG_ATTR_RE = re.compile(r"""\blang\s*=\s*["']?(tsx|ts|typescript)\b""", re.I)
 
 
