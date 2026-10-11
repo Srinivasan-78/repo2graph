@@ -817,9 +817,9 @@ you pass `--include-paths`.
 
 #### What not to rely on
 
-- **Completeness of callers.** Call resolution is name-based. Across the five
-  benchmark repositories, 4.6%–21.3% of `CALLS` edges are ambiguous
-  ([limitations](architecture.md)). No edge does not prove no call.
+- **Completeness of callers.** Call resolution is name-based. Across the eleven
+  gallery repositories in [`examples/`](../examples/README.md), 10%–25% of `CALLS`
+  edges are ambiguous ([limitations](architecture.md)). No edge does not prove no call.
 - **Freshness.** The index is a snapshot and nothing watches the filesystem.
   The server rebuilds when the index is missing, not when it is stale.
 - **Generated code being marked.** It is indexed exactly like hand-written

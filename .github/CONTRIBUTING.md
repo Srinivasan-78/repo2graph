@@ -127,7 +127,7 @@ labelled is under [Issue triage](#issue-triage).
 
 ## Real-world examples and benchmarks
 
-`examples/` holds five public repositories analyzed at a pinned commit each, and `benchmarks/`
+`examples/` holds eleven public repositories analyzed at a pinned commit each, and `benchmarks/`
 holds the machine-readable results those examples' numbers come from — see
 [docs/architecture.md](../docs/architecture.md) for the full pipeline and
 [benchmarks/README.md](../benchmarks/README.md) for what each results file measures. Two things worth knowing before touching either directory:
