@@ -67,7 +67,11 @@ def default_reranker(name: str | None = None) -> Reranker:
     kwargs = {"revision": revision} if revision else {}
     try:
         model = CrossEncoder(repo_id, **kwargs)
-    except Exception as exc:  # noqa: BLE001 - any load failure (network, disk, format) is reported, never fatal
+    # No `noqa: BLE001` needed, and having one would hide its loss: the broad
+    # catch is fine here *because* the next line re-raises, so narrowing the
+    # catch would not change behaviour but swallowing would -- and a stale
+    # directive would suppress the warning that said so.
+    except Exception as exc:  # any load failure (network, disk, format) is reported, never fatal
         raise RuntimeError(f"could not load reranker {spec}: {type(exc).__name__}: {exc}") from exc
     return _CrossEncoderReranker(model, spec)
 

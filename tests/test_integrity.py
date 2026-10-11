@@ -488,7 +488,7 @@ class TestVerifyArtifacts:
 
         # Plant a fake vectors.meta.json with a different build_id
         manifest_data = json.loads(artifact_path(out, "manifest.json").read_text(encoding="utf8"))
-        _ = manifest_data.get("build_id", "real-id")  # noqa: F841
+        _ = manifest_data.get("build_id", "real-id")
 
         fake_meta = {
             "format": "repo2graph/vectors-1",

@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from check_workflow_summaries import find_violations  # noqa: E402
+from check_workflow_summaries import find_violations
 
 
 def test_real_workflows_have_no_hardcoded_status(tmp_path: Path) -> None:

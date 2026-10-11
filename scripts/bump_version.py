@@ -30,7 +30,7 @@ except ModuleNotFoundError:
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from version_surfaces import ROOT, bumped_paths, rewrite  # noqa: E402
+from version_surfaces import ROOT, bumped_paths, rewrite
 
 __all__ = ["bumped_paths"]  # re-exported for `--files`; see .github/CONTRIBUTING.md
 
