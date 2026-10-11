@@ -26,7 +26,9 @@ def out(tmp_path_factory):
 def pair(out, tmp_path_factory):
     db = tmp_path_factory.mktemp("db") / "graph.sqlite"
     disk = Index(out, store=SqliteGraphStore.from_index(out, db))
-    return Index(out), disk
+    yield Index(out), disk
+    if isinstance(disk.store, SqliteGraphStore):
+        disk.store.close()
 
 
 def test_backends_hold_the_same_graph_in_the_same_order(pair):
@@ -70,7 +72,9 @@ def test_the_store_is_opened_read_only(pair):
 
 
 def test_legacy_attributes_still_work_and_materialise_once(out, tmp_path):
-    idx = Index(out, store=SqliteGraphStore.from_index(out, tmp_path / "g.sqlite"))
+    store = SqliteGraphStore.from_index(out, tmp_path / "g.sqlite")
+    idx = Index(out, store=store)
     nodes = idx.nodes
+    store.close()
     assert isinstance(idx.store, MemoryGraphStore) and idx.nodes is nodes
     assert set(idx.adj) <= set(nodes) | {e["dst"] for e in idx.edges}

@@ -943,17 +943,20 @@ def parse_all(files, jobs: int, config=None):
     `config.parse_timeout`, or takes its worker down, is skipped and counted
     rather than allowed to stall or exhaust the build. A serial build parses
     small files in-process and still sends anything over INPROCESS_MAX_BYTES to
-    a worker, because that is where a parse can no longer be cheap.
+    a worker, because that is where a parse can no longer be cheap -- unless
+    the budget is off (`parse_timeout=0`), when there is nothing to enforce.
     """
     jobs = resolve_jobs(jobs)
     timeout = PARSE_TIMEOUT_S if config is None else config.parse_timeout
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
     if jobs > 1 and len(items) >= PARALLEL_MIN_FILES:
         pooled = list(range(len(items)))
-    else:
+    elif timeout > 0:
         pooled = [
             i for i, (_, abspath, _, _) in enumerate(items) if _size(abspath) > INPROCESS_MAX_BYTES
         ]
+    else:
+        pooled = []  # no budget to enforce: a serial build stays in-process
     results: list[Any] = [None] * len(items)
     if pooled:
         try:
