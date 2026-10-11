@@ -453,69 +453,78 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `graph.py` | 1,883 | Node and edge construction; call and inheritance resolution including the scoped-resolution tiers; the parse pass (`parse_all`, `parse_incremental`, chunked reads). |
+| `graph.py` | 1,886 | Node and edge construction; call and inheritance resolution including the scoped-resolution tiers; the parse pass (`parse_all`, `parse_incremental`, chunked reads). |
 | `imports.py` | 437 | Import resolution: an import statement's text to the in-repo file it names, per language. |
 | `parsecache.py` | 169 | The incremental parse cache: one file's parse result to JSON and back (`PARSE_CACHE_FORMAT`). |
 | `derived.py` | 233 | What is derived from the resolved graph: `READS`/`WRITES`/`REFERENCES`, entrypoint marking, `TESTS`. |
 | `cochange.py` | 239 | `CO_CHANGE` (and `--git-authors`) from a bounded, timed read of `git log`. |
 | `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
-| `discovery.py` | 674 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
+| `discovery.py` | 692 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
 | `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
-| `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
-| `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
+| `export.py` | 1,621 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
+| `query.py` | 2,058 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
 | `store.py` | 178 | `GraphStore`: the one interface traversal and retrieval read the graph through (node by id, a node's incident edges, nodes and edges in file order). `MemoryGraphStore` is the default; `SqliteGraphStore` is a stdlib-only on-disk prototype. Order is part of the contract. |
-| `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
-| `testpaths.py` | 60 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
-| `chunks.py` | 397 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
+| `viz.py` | 1,295 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
+| `testpaths.py` | 59 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
+| `chunks.py` | 494 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
+| `rerank.py` | 105 | `--rerank`: opt-in cross-encoder reordering of the first-stage candidates, before any budget is spent. A leaf. |
+| `tokenizers.py` | 67 | The token counters `--tokenizer` selects, each carrying the `token_count_method` it reports. A leaf. |
+| `federated.py` | 178 | `--index` more than once: per-index retrieval merged by reciprocal rank under one budget. |
 
 ### Surfaces
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `cli.py` | 1,926 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
+| `cli.py` | 1,937 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
 | `cli_inspect.py` | 341 | Commands that inspect an index or explain a result: map, stats, diff, explain-path, explain, index-status, bug-report, doctor, demo, completion. |
 | `cli_embed.py` | 225 | `embed` and `--verify-rag`. |
-| `mcp/` | 2,387 | The MCP server, split by concern — see below. |
-| `answer.py` | 609 | `rag --answer` only — the one network path in the package. |
+| `mcp/` | 3,406 | The MCP server, split by concern — see below. |
+| `answer.py` | 762 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 363 | `explain edge` / `node` / `retrieval`. |
 
 ### `mcp/` package
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `traversal.py` | 373 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
-| `schemas.py` | 374 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
-| `server.py` | 479 | Server lifecycle, stdio connection, SDK version gate. |
-| `retrieval.py` | 367 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
-| `tools.py` | 286 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
-| `indexes.py` | 131 | Index open/reopen, per-directory locking, auto-build. |
-| `guardrails.py` | 114 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
-| `nodes.py` | 96 | Node labelling and staleness helpers both retrieval and traversal need. |
+| `traversal.py` | 375 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
+| `schemas.py` | 429 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
+| `server.py` | 701 | Server lifecycle, stdio connection, SDK version gate. |
+| `retrieval.py` | 718 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
+| `tools.py` | 302 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
+| `indexes.py` | 185 | Index open/reopen, per-directory locking, auto-build. |
+| `guardrails.py` | 103 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
+| `nodes.py` | 164 | Node labelling and staleness helpers both retrieval and traversal need. |
+| `pagination.py` | 157 | Signed, self-contained continuation cursors for paged tool results. A leaf. |
+| `resources.py` | 133 | MCP resources and prompts: the index's own documents, beside the tools. |
 
 ### Support
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `security.py` | 933 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
-| `demo.py` | 669 | The bundled demo repository and its five starter questions. |
-| `status.py` | 601 | `repo2graph index-status` and the shared freshness computation. |
-| `integrity.py` | 575 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
-| `bugreport.py` | 397 | The redacted diagnostic bundle. |
-| `doctor.py` | 382 | Environment and artifact diagnostics. |
-| `fetch.py` | 374 | `repo2graph github` — clone, build, clean up. |
-| `exclusions.py` | 311 | The named exclusion groups and their glob/reason tables. |
-| `embed.py` | 307 | Vectors, and a stdlib-only `.npy` reader/writer. |
-| `scip.py` | 847 | `build --scip`: a bounded protobuf reader for SCIP indexes, symbol-to-node mapping, and the exact-edge merge. |
-| `lock.py` | 299 | Build locking and stale-lock recovery. A leaf. |
-| `audit.py` | 288 | Audit log sink. |
-| `schema.py` | 273 | The record shapes the artifacts promise. |
-| `tasks.py` | 263 | Background `--async-build` state. |
-| `changelog.py` | 239 | The per-push structural graph diff in `human/CHANGELOG.md`. |
+| `security.py` | 1,181 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
+| `demo.py` | 687 | The bundled demo repository and its five starter questions. |
+| `status.py` | 644 | `repo2graph index-status` and the shared freshness computation. |
+| `integrity.py` | 752 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
+| `bugreport.py` | 403 | The redacted diagnostic bundle. |
+| `doctor.py` | 466 | Environment and artifact diagnostics. |
+| `fetch.py` | 443 | `repo2graph github` — clone, build, clean up. |
+| `exclusions.py` | 239 | The named exclusion groups and their glob/reason tables. |
+| `embed.py` | 344 | Vectors, and a stdlib-only `.npy` reader/writer. |
+| `scip.py` | 850 | `build --scip`: a bounded protobuf reader for SCIP indexes, symbol-to-node mapping, and the exact-edge merge. |
+| `lock.py` | 320 | Build locking and stale-lock recovery. A leaf. |
+| `audit.py` | 291 | Audit log sink. |
+| `schema.py` | 315 | The record shapes the artifacts promise. |
+| `tasks.py` | 260 | Background `--async-build` state. |
+| `changelog.py` | 230 | The per-push structural graph diff in `human/CHANGELOG.md`. |
 | `cache.py` | 223 | The MCP result cache. A leaf. |
-| `events.py` | 160 | Structured event sink. |
-| `edgemeta.py` | 158 | Edge citation formatting. |
+| `events.py` | 190 | Structured event sink. |
+| `edgemeta.py` | 171 | Edge citation formatting. |
 | `limits.py` | 141 | Shared numeric ceilings. |
-| `parsepool.py` | 244 | Supervised parse workers: the per-file parse budget, the Linux worker memory cap, and pinning a crash on the file that caused it. A leaf. |
+| `parsepool.py` | 306 | Supervised parse workers: the per-file parse budget, the Linux worker memory cap, and pinning a crash on the file that caused it. A leaf. |
+| `config.py` | 247 | `[tool.repo2graph]` and `.repo2graph.toml`: the build options a repository can set for itself, validated, and where each one came from. A leaf. |
+| `graphdiff.py` | 273 | The structural diff between two builds, behind `repo2graph diff` and the per-build changelog. A leaf. |
+| `watch.py` | 110 | `build --watch`: the polling snapshot and the quiet period before a rebuild. |
+| `neo4j.py` | 131 | `build --neo4j-uri`: pushing `graph.cypher` to Neo4j's transactional endpoint in batches. A leaf. |
 
 **If you add a module, make it a leaf.** `security.py`, `cache.py` and `lock.py` import nothing
 from the package, which is why they are the easiest modules here to change safely.

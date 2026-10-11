@@ -63,9 +63,26 @@ jobs:
         id: format
         run: ruff format --check .
 
-      - name: Type Check (Mypy)
+      # Once per supported platform, on this one runner. typeshed guards a
+      # good deal of the standard library on `sys.platform`, so a single
+      # native run checks only the stubs the runner's own platform selects:
+      # `resource.getrusage` is win32-guarded, and `cli._peak_rss_mb` called
+      # it behind a `try/except ImportError` that mypy cannot narrow, so
+      # `make typecheck` and the `mypy-strict` pre-commit hook were red on
+      # every Windows checkout while this step stayed green (#484).
+      #
+      # `--platform` resolves those guards as the named platform would without
+      # a second runner, so the cost is two extra mypy passes over a warm
+      # cache rather than two more jobs. The test matrix already covers
+      # windows and macos at runtime; this covers them at type level.
+      - name: Type Check (Mypy, every supported platform)
         id: typecheck
-        run: mypy repo2graph
+        run: |
+          for platform in linux darwin win32; do
+            echo "::group::mypy --platform $platform"
+            mypy --platform "$platform" repo2graph
+            echo "::endgroup::"
+          done
 
       - name: Version Surfaces Consistency Check
         id: version_check
@@ -98,7 +115,7 @@ jobs:
             printf '| :--- | :---: | :--- |\n'
             printf '| **Code Linting** | %s | Ruff (inline PR annotations enabled) |\n' "$(status "$LINT")"
             printf '| **Code Formatting** | %s | Ruff Formatter |\n' "$(status "$FORMAT")"
-            printf '| **Strict Type Checking** | %s | Mypy |\n' "$(status "$TYPECHECK")"
+            printf '| **Strict Type Checking** | %s | Mypy (`--platform` linux, darwin, win32) |\n' "$(status "$TYPECHECK")"
             printf '| **Version Surfaces Integrity** | %s | `scripts/check_version.py` |\n' "$(status "$VERSION_CHECK")"
             printf '| **Workflow Summary Integrity** | %s | `scripts/check_workflow_summaries.py` |\n' "$(status "$SUMMARY_CHECK")"
           } >> "$GITHUB_STEP_SUMMARY"

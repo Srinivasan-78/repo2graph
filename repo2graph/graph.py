@@ -61,7 +61,7 @@ from .derived import (  # noqa: F401
     add_tests_edges,
     mark_entrypoints,
 )
-from .imports import import_targets, path_index, repo_context, resolve_import  # noqa: F401
+from .imports import import_targets, path_index, repo_context, resolve_import
 from .parsecache import PARSE_CACHE_FORMAT, ChunkedParsedFile, cache_entry, entry_read  # noqa: F401
 
 # Under this many files a process pool costs more to start than it saves.

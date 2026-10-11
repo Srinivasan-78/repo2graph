@@ -1,16 +1,16 @@
 """Named exclusion groups: generated, vendor, build, dependencies, sensitive.
 
-One authored table, two consumers that used to disagree:
+One authored table, one consumer: `build --exclude-group NAME` turns a group
+into `--exclude` globs, so the paths never reach the graph at all.
 
-- `build --exclude-group NAME` turns a group into `--exclude` globs, so the
-  paths never reach the graph at all;
-- `doctor`'s "Generated / Vendored Code" check classifies paths that *did*
-  reach the graph, and needs a human-readable reason per path rather than a
-  glob.
-
-Keeping the patterns in two places is how the doctor check ends up flagging a
-shape that `--exclude-group` cannot actually exclude, so both derive from
-`GROUPS` here.
+There were two. `doctor`'s "Generated / Vendored Code" check classified paths
+that *did* reach the graph and wanted a reason per path rather than a glob, so
+each group also carried `dir_parts`/`suffixes`/`filenames` and `classify()`
+read them. `56f71d37` slimmed `doctor` down to environment, git and grammar
+probes and that check went with it, leaving `classify()` with no caller and
+those three fields with no reader -- removed in #485 rather than left as a
+second, weaker answer to a question `discovery.explain_path` (behind
+`repo2graph explain-path`) answers with full precedence.
 
 **Glob anchoring.** `parse._glob_re` anchors a pattern containing "/" at the
 repository root and lets a pattern without one match at any depth. So a
@@ -24,21 +24,17 @@ finding was wrong.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class ExclusionGroup:
-    """One named set of paths, expressed both as globs and as path shapes.
+    """One named set of paths, as the globs that exclude them.
 
     Args:
         name: The `--exclude-group` value.
         description: One line, shown by `--exclude-group help`.
         globs: Patterns for `build --exclude`, in `parse._glob_re` syntax.
-        dir_parts: Path segments whose presence marks membership. Used by
-            `classify()` for reporting; the globs are what actually exclude.
-        suffixes: Filename suffixes that mark membership.
-        filenames: Exact filenames (compared lowercased).
         already_default: True when repo2graph's *defaults* already keep these
             out of an index, so naming the group changes nothing. Recorded so
             the docs and `--exclude-group help` cannot overclaim.
@@ -49,9 +45,6 @@ class ExclusionGroup:
     name: str
     description: str
     globs: tuple[str, ...] = ()
-    dir_parts: frozenset[str] = field(default_factory=frozenset)
-    suffixes: tuple[str, ...] = ()
-    filenames: frozenset[str] = field(default_factory=frozenset)
     already_default: bool = False
     representative: tuple[str, ...] = ()
 
@@ -81,26 +74,6 @@ GENERATED = ExclusionGroup(
         "*.min.css",
         "*.bundle.js",
     ),
-    dir_parts=frozenset({"generated", "__generated__", "autogen"}),
-    suffixes=(
-        "_pb2.py",
-        "_pb2_grpc.py",
-        "_pb.js",
-        "_pb.ts",
-        ".pb.go",
-        ".pb.cc",
-        ".pb.h",
-        ".pb.swift",
-        "_generated.go",
-        "_generated.ts",
-        ".generated.cs",
-        ".designer.cs",
-        ".g.dart",
-        ".freezed.dart",
-        ".min.js",
-        ".min.css",
-        ".bundle.js",
-    ),
     representative=(
         "api/generated/client.py",
         "pkg/schema_pb2.py",
@@ -120,7 +93,6 @@ VENDOR = ExclusionGroup(
         "**/Pods/**",
         "**/bower_components/**",
     ),
-    dir_parts=frozenset({"vendor", "third_party", "thirdparty", "Pods", "bower_components"}),
     # `vendor` alone is in parse.DEFAULT_SKIP_DIRS; the other four are not, and
     # DEFAULT_SKIP_DIRS is a flat directory-name set rather than a glob, so it
     # cannot express "under any depth" the way these do.
@@ -144,9 +116,6 @@ BUILD = ExclusionGroup(
         "**/.nuxt/**",
         "**/coverage/**",
         "**/__pycache__/**",
-    ),
-    dir_parts=frozenset(
-        {"dist", "build", "out", "target", ".next", ".nuxt", "coverage", "__pycache__"}
     ),
     # Every one of these names is in parse.DEFAULT_SKIP_DIRS except "out", so
     # at the repository root this group is close to a no-op. It earns its keep
@@ -180,20 +149,6 @@ DEPENDENCIES = ExclusionGroup(
         "Gemfile.lock",
         "go.sum",
     ),
-    dir_parts=frozenset({"node_modules", "site-packages", ".venv", "venv"}),
-    filenames=frozenset(
-        {
-            "package-lock.json",
-            "pnpm-lock.yaml",
-            "yarn.lock",
-            "poetry.lock",
-            "uv.lock",
-            "cargo.lock",
-            "composer.lock",
-            "gemfile.lock",
-            "go.sum",
-        }
-    ),
     representative=(
         "node_modules/react/index.js",
         "packages/web/node_modules/react/index.js",
@@ -221,8 +176,6 @@ SENSITIVE = ExclusionGroup(
         "**/.ssh/**",
         "**/.gnupg/**",
     ),
-    dir_parts=frozenset({"secrets", ".aws", ".ssh", ".gnupg"}),
-    suffixes=(".pem", ".key", ".p12", ".pfx", ".keystore", ".jks"),
     # `repo2graph/security.py` already refuses these by default (and redacts
     # matches inside files it does index). This group is a second, *glob*-shaped
     # net for a tree that names its credentials something security.py does not
@@ -270,31 +223,6 @@ def globs_for(names: list[str] | tuple[str, ...]) -> list[str]:
                 seen.add(glob)
                 out.append(glob)
     return out
-
-
-def classify(rel: str) -> tuple[str, str] | None:
-    """`(group name, human reason)` for a path, or None if it looks hand-written.
-
-    Path-only: never reads the file. Directory segments are checked before the
-    filename so `node_modules/foo/bar.min.js` reports as a dependency rather
-    than as generated -- the actionable fix is excluding the directory, not
-    the suffix.
-    """
-    parts = rel.split("/")
-    for group in GROUPS.values():
-        for part in parts[:-1]:
-            if part in group.dir_parts:
-                return group.name, f"under {part}/"
-
-    name = parts[-1]
-    lowered = name.lower()
-    for group in GROUPS.values():
-        if lowered in group.filenames:
-            return group.name, "lockfile" if group is DEPENDENCIES else "by filename"
-        for suffix in group.suffixes:
-            if name.endswith(suffix):
-                return group.name, f"*{suffix}"
-    return None
 
 
 def describe() -> str:

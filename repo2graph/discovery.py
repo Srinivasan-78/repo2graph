@@ -216,6 +216,24 @@ def _count_gitignored(root: Path) -> int:
         return 0
 
 
+def candidate_files(root: Path, skip_dirs: Iterable[str]) -> list[Path]:
+    """Every path `discover` will consider, before it reads any file's content.
+
+    The two sources `discover` uses, in its precedence: `git ls-files -co
+    --exclude-standard` where git answers, a `skip_dirs`-pruned walk where it
+    does not. `skip_dirs` only reaches the walk, because the git listing
+    honours `.gitignore` instead and `discover` prunes it afterwards -- which
+    is why a caller of this must prune too.
+
+    Exposed for `watch.snapshot` (#483), which has to watch the set a build
+    indexes and no other: its own walk honoured neither `.gitignore` nor the
+    dotfiles a build does index, so it both missed rebuilds and ran them for
+    files that could never enter an index.
+    """
+    files = _git_files(root)
+    return files if files is not None else _walk_files(root, skip_dirs=skip_dirs)
+
+
 def discover(
     root: Path,
     include_globs: Iterable[str] | None = None,

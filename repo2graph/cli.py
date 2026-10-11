@@ -397,7 +397,17 @@ def _build_performance(g, outdir, written, build_s, write_s, chunk_chars) -> dic
 
 
 def _peak_rss_mb() -> float | None:
-    """Peak resident set of this process and its parse workers, or None (Windows)."""
+    """Peak resident set of this process and its parse workers, or None (Windows).
+
+    The `sys.platform` test is what mypy narrows on; `try/except ImportError`
+    is not a platform guard it understands, so typeshed's win32-guarded
+    `getrusage` made `make typecheck` and the `mypy-strict` pre-commit hook red
+    on every Windows checkout -- invisible in CI, which typechecks on Linux
+    only (#484). The import guard stays for a platform that has the module but
+    not the call.
+    """
+    if sys.platform == "win32":
+        return None
     try:
         import resource
     except ImportError:
@@ -802,6 +812,7 @@ def cmd_rag(args):
                 budget_chars=args.budget,
                 budget_tokens=getattr(args, "budget_tokens", None),
                 count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+                token_margin=getattr(args, "token_margin", 0.0) or 0.0,
                 min_confidence=args.min_conf,
                 expand_graph=not args.no_expand,
                 exclude_secrets=not getattr(args, "include_secrets", False),

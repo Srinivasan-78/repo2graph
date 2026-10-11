@@ -92,6 +92,95 @@ def test_rag_cites_the_repo_and_respects_a_token_budget(two, capsys):
     assert pack["tokens_used"] <= 400
 
 
+def test_a_budget_too_small_for_the_header_packs_nothing(two):
+    """A header that does not fit used to switch the budget off entirely (#482).
+
+    `_fit` reads 0 as "no ceiling", which is the caller's sentinel; it was also
+    what `budget - len(header)` came to once the header outgrew the budget, so
+    every merged chunk came back. Measured at 25x the stated ceiling, with
+    `truncated` reporting False.
+    """
+    from repo2graph.federated import open_indexes, pack_context
+
+    # 40 indexes, so the header alone costs ~100 tokens.
+    indexes = open_indexes([str(d) for d in two] * 20)
+    head_tokens = len(
+        pack_context(indexes, "charge", budget_tokens=1000)["markdown"].split("\n")[0]
+    )
+
+    for budget in (1, 10, 50, 90, 100):
+        pack = pack_context(indexes, "how is an order charged", budget_tokens=budget)
+        assert pack["tokens_used"] <= budget, (budget, pack["tokens_used"])
+        assert pack["chunks"] == []
+    assert head_tokens  # the header is real; it is the thing that did not fit
+
+
+@pytest.mark.parametrize("key", ["budget_chars", "budget_tokens"])
+def test_a_budget_of_zero_still_means_unbounded(two, key):
+    """The caller's 0 is the unlimited sentinel, as in `Index.pack_context`.
+
+    The #482 fix has to keep this distinguishable from a remainder of 0, which
+    is why `_fit` takes None rather than reading 0 two ways.
+    """
+    from repo2graph.federated import open_indexes, pack_context
+
+    indexes = open_indexes([str(d) for d in two])
+    assert pack_context(indexes, "how is an order charged", **{key: 0})["chunks"]
+
+
+def test_the_header_is_bounded_by_the_budget(two):
+    """The header is counted against the budget, so it is also cut by it (#482)."""
+    from repo2graph.federated import open_indexes, pack_context
+
+    many = open_indexes([str(d) for d in two] * 20)
+    full = pack_context(many, "charge", budget_tokens=0)["markdown"].split("\n")[0]
+    assert full.endswith("orders#20")  # every name, when there is room
+
+    cut = pack_context(many, "charge", budget_tokens=20)["markdown"].split("\n")[0]
+    assert cut.startswith("# Context from 40 repositories: billing")
+    assert "more" in cut and not cut.endswith("orders#20")
+
+    # Below even the count, nothing: a pack cannot overrun its ceiling to
+    # describe itself.
+    assert pack_context(many, "charge", budget_tokens=1)["markdown"] == ""
+
+
+def test_the_pack_carries_every_declared_packresult_key(two):
+    """A federated `rag --json` promises the same shape as a single-index one.
+
+    Six keys were missing, `token_count_method` among them -- so a consumer
+    reading how `tokens_used` was counted got nothing on this path (#482).
+    """
+    from repo2graph.federated import open_indexes, pack_context
+    from repo2graph.schema import PackResult
+
+    pack = pack_context(open_indexes([str(d) for d in two]), "charge", budget_tokens=400)
+    assert not set(PackResult.__annotations__) - set(pack)
+
+
+def test_token_margin_bounds_the_merged_pack(two):
+    """`--token-margin` reached each index's own pack but never the merged fit (#482)."""
+    from repo2graph.federated import open_indexes, pack_context
+
+    indexes = open_indexes([str(d) for d in two])
+    wide = pack_context(indexes, "how is an order charged", budget_tokens=200, token_margin=0.0)
+    tight = pack_context(indexes, "how is an order charged", budget_tokens=200, token_margin=2.0)
+    assert tight["tokens_used"] < wide["tokens_used"]
+    assert tight["tokens_used"] <= 200 / 3 + 1
+    assert tight["token_safety_margin"] == 2.0
+
+
+def test_the_tokenizer_that_filled_the_pack_is_named(two):
+    from repo2graph.federated import open_indexes, pack_context
+    from repo2graph.tokenizers import get_token_counter
+
+    indexes = open_indexes([str(d) for d in two])
+    pack = pack_context(
+        indexes, "charge", budget_tokens=400, count_tokens=get_token_counter("conservative")
+    )
+    assert pack["token_count_method"] == "estimate:conservative-3cpt"
+
+
 def test_a_missing_index_is_skipped_with_a_warning(two, tmp_path, capsys):
     billing, _orders = two
     main(

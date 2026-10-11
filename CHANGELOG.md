@@ -143,6 +143,14 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **`docs/architecture.md` §5 names every module, and a test keeps it that way (#486).** Nine were
+  absent — `config.py`, `federated.py`, `graphdiff.py`, `neo4j.py`, `pagination.py`, `rerank.py`,
+  `resources.py`, `tokenizers.py`, `watch.py`, every one added in #477–#481 and eight of them
+  appearing nowhere in the file — and 33 of 48 line counts were wrong, `mcp/` by 1,019 and
+  `query.py` by 438, which is no longer the "rough guide" the table calls itself. Counts corrected,
+  rows added, and `tests/test_doc_consistency.py` now fails when a module has no row. Completeness
+  is what is gated and not the counts: a test on the exact numbers would make every PR that touches
+  a module edit the doc too.
 - **Graph storage behind an interface (#306).** Traversal, retrieval, `explain` and every MCP
   tool read the graph through `Index.store` (`repo2graph.store.GraphStore`) instead of its
   dicts and lists. The in-memory store is the default and output is unchanged.
@@ -173,6 +181,43 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **A federated pack no longer overruns its token budget (#482).** `federated._fit` read a budget
+  of `0` as "no ceiling" — the caller's sentinel, as in `Index.pack_context` — but `0` was also
+  what `budget - len(header)` came to once the `# Context from N repositories: ...` header outgrew
+  the budget, so every merged chunk came back. Measured at 2,522 tokens against a stated 100, with
+  `truncated` reporting `False`. The remainder is now a number and `None` alone means unbounded;
+  the header is cut to fit rather than counted and never bounded (it lists as many names as there
+  is room for, then `and N more`, then the count alone); `--token-margin`, which reached each
+  index's own pack but never the fit over the merged list, now bounds the merged pack too; and the
+  result carries every `PackResult` key, six of which — `token_count_method`,
+  `token_safety_margin`, `budget_exhausted`, `omitted_chunk_count`, `source_text_chars`,
+  `rendered_context_chars` — were absent from a federated `rag --json` altogether, so a consumer
+  could not read how `tokens_used` had been counted. A budget that already fits the header is
+  byte-identical to before.
+- **`build --watch` watches the set a build indexes (#483).** `watch.snapshot` walked the tree
+  itself and skipped every dotfile, so an edit to `.pre-commit-config.yaml` — or any of the other
+  dotfiles discovery does index — never triggered a rebuild, while the walk honoured no
+  `.gitignore` and so followed files no build can see: on this repository it watched 747 files to
+  the build's 386, 305 of them under `.hypothesis`, which every `pytest` run rewrites, so running
+  the suite under `--watch` rebuilt continuously. It now enumerates through
+  `discovery.candidate_files`, the same `git ls-files -co --exclude-standard` (walk fallback) a
+  build uses. Discovery's content-level exclusions are deliberately not repeated: they only narrow
+  the set, so a needless rebuild is the failure direction rather than a missed one.
+- **`make typecheck` and the `mypy-strict` pre-commit hook pass on Windows (#484).**
+  `cli._peak_rss_mb` reached for the win32-guarded `resource.getrusage` behind a
+  `try/except ImportError`, which mypy cannot narrow, so four `attr-defined` errors failed every
+  Windows checkout — and `ci.yml` typechecked on `ubuntu-latest` only, so nothing noticed. A
+  `sys.platform` test narrows it, and CI now runs `mypy --platform linux`, `mypy --platform
+  darwin` and `mypy --platform win32` on the one runner, which reproduces the failure without a
+  second job.
+- **Four rows of `docs/mcp.md`'s MCP troubleshooting table pointed at `doctor` sections that do
+  not exist (#485).** `56f71d37` slimmed `doctor` down to environment, git and grammar probes;
+  the table went on sending readers to "MCP Client Configuration", "Generated / Vendored Code"
+  and "Parser Coverage". Each is the remedy for a named symptom, so following one got nothing.
+  The rows now name checks `doctor` prints, or the command that actually fixes the symptom, and
+  `tests/test_doc_consistency.py` fails if a doc names a check `doctor` does not have. The sample
+  `repo_neighbours` output in the same file cited `repo2graph/doctor.py:1051` in a 466-line file;
+  it is regenerated from a real run.
 - **Reading a small index file no longer allocates its whole size ceiling.** `read_bounded` asked
   for `limit + 1` bytes in one `read()`, and CPython allocates that buffer before reading: every
   2 KB `vectors.meta.json` cost 256 MB and every `vectors.npy` 512 MB (the SCIP reader did the same
@@ -300,6 +345,18 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 - `repo2graph.mcp.IMPACT_FORMATS`, `fetch.GITHUB_SPEC` and `mcp.guardrails._scrub_paths`, all
   unused (#318). `IMPACT_FORMATS` was left over from the removed impact tool.
+- `exclusions.classify()`, and the `dir_parts`/`suffixes`/`filenames` fields of `ExclusionGroup`
+  that nothing else read (#485). Its one caller was `doctor`'s "Generated / Vendored Code" check,
+  removed with the rest of that slim-down in `56f71d37`; what remained was a second, weaker answer
+  to a question `discovery.explain_path` (behind `repo2graph explain-path`) answers with full
+  precedence. `GROUPS`, `globs_for` and `describe` — everything `--exclude-group` uses — are
+  unchanged, and `--exclude-group` output is byte-identical.
+- Eight `# noqa` directives naming a rule that no longer fires at that line (3 `F401`, 3 `E402`,
+  one `F841`, one `BLE001`). A dead suppression hides whether its rule would fire, so a later edit
+  that did trip it would be silently excused. `RUF100` is deliberately **not** added to the ruff
+  `select` list: it also reports directives for rules this project does not select, and deleting
+  those `# noqa: S105` / `SIM115` / `N802` markers would break anyone running a wider sweep such as
+  `ruff check --select S`.
 
 ## [3.0.0] — 2026-10-06
 
