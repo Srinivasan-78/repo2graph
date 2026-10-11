@@ -769,21 +769,21 @@ Every tool returns a string. There is no per-result `path` field to parse — th
 citation is in the text, in a stable form:
 
 ```
-- CALLS in: `check_index_freshness` (repo2graph/doctor.py:1051) [sym:repo2graph/doctor.py::check_index_freshness]  -- at repo2graph/doctor.py:1075
+- CALLS in: `check_git` (repo2graph/doctor.py:202) [sym:repo2graph/doctor.py::check_git]  -- at repo2graph/doctor.py:206
 ```
 
 Three things in that line, and the distinction matters:
 
-- `(repo2graph/doctor.py:1051)` — where the **neighbour** is defined.
+- `(repo2graph/doctor.py:202)` — where the **neighbour** is defined.
 - `[sym:...]` — the node id, which is the argument for the next
   `repo_neighbours` call.
-- `-- at repo2graph/doctor.py:1075` — where the **call is written**. For "what
+- `-- at repo2graph/doctor.py:206` — where the **call is written**. For "what
   calls this", this is the line you actually want to open.
 
 An edge repo2graph is unsure of says so:
 
 ```
-- CALLS out: `ResultCache.get` (repo2graph/cache.py:128) [sym:...]  -- at repo2graph/status.py:124, AMBIGUOUS 0.5 of 3 candidates
+- CALLS out: `ResultCache.get` (repo2graph/cache.py:146) [sym:...]  -- at .github/scripts/summary.py:114, AMBIGUOUS 0.067 of 3 candidates
 ```
 
 That is a `.get()` on a dictionary that matched three methods named `get`.
@@ -835,12 +835,12 @@ reached through a plugin registry.
 
 | Symptom | Likely cause | Check |
 |---|---|---|
-| "server failed to start" | missing `[mcp]` extra, or invalid JSON in the config | `repo2graph doctor .` → MCP Client Configuration |
-| Tools listed but return nothing | the server's path argument does not exist, or is relative | same check; it validates the path |
+| "server failed to start" | missing `[mcp]` extra, or invalid JSON in the config | `repo2graph doctor .` → MCP Server |
+| Tools listed but return nothing | the server's path argument does not exist, or is relative | `repo2graph index-status -o .r2g` names the index the server would open |
 | First call times out | auto-build on a large repo | pre-build, or add `--async-build` |
 | Answers cite code you deleted | stale index | `repo2graph index-status -o .r2g` |
-| Answers are vague and repetitive | generated code dominating retrieval | `repo2graph doctor .` → Generated / Vendored Code prints the `--exclude-group` flags |
-| A whole language returns no symbols | grammar not loading | `repo2graph doctor .` → Parser Coverage |
+| Answers are vague and repetitive | generated code dominating retrieval | rebuild with `--exclude-group generated,vendor`; `--exclude-group help` lists them, and `repo2graph explain-path <path>` says why one file is in or out |
+| A whole language returns no symbols | grammar not loading | `repo2graph doctor .` → Tree-sitter Grammars |
 
 Still stuck? `repo2graph bug-report --category answer-unhelpful` assembles a
 bundle that is safe to paste into a public issue: no file content, no
