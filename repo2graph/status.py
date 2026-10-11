@@ -266,7 +266,8 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
             "comparing against defaults, so any --exclude may show as added files"
         )
     try:
-        from .parse import BuildConfig, discover
+        from .discovery import discover
+        from .parse import BuildConfig
 
         filter_dict = filters or {}
         max_bytes = int(filter_dict.get("max_file_bytes") or 0)

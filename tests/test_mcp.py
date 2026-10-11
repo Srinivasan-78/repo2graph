@@ -1331,10 +1331,11 @@ def test_git_subprocesses_never_inherit_stdin(monkeypatch, tmp_path, call):
         # Popen, not run: since log streaming add_cochange streams the log so the byte
         # cap can bind during the read. The stdin=DEVNULL requirement is the
         # same either way -- capture_output was never what redirected it.
-        from repo2graph import graph as mod
+        from repo2graph import cochange as mod
+        from repo2graph.graph import Graph
 
         target, attr = mod, "Popen"
-        run = lambda: mod.add_cochange(mod.Graph(tmp_path, "t"), tmp_path, 10, set())
+        run = lambda: mod.add_cochange(Graph(tmp_path, "t"), tmp_path, 10, set())
     monkeypatch.setattr(target.subprocess, attr, spy)
     run()  # the OSError is caught by the caller; we only want the kwargs
 

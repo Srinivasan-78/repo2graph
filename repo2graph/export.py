@@ -1281,7 +1281,7 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         g: The Graph just built; its `parse_cache` is the payload.
         path: Destination for `parse.cache.json`.
     """
-    from .graph import PARSE_CACHE_FORMAT
+    from .parsecache import PARSE_CACHE_FORMAT
     from .parse import grammar_fingerprint, parse_cache_identity
 
     payload = {
@@ -1334,7 +1334,7 @@ def load_parse_cache_report(outdir: Path, config: Any = None) -> tuple[dict[str,
         present; `reason` then says why a cache that *was* there was discarded
         (None when there was simply no cache).
     """
-    from .graph import PARSE_CACHE_FORMAT
+    from .parsecache import PARSE_CACHE_FORMAT
     from .integrity import is_foreign_index
     from .parse import grammar_fingerprint, parse_cache_identity
 

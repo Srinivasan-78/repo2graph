@@ -451,8 +451,14 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `graph.py` | 2,333 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; `TESTS` derived from `CALLS`; entrypoint marking. |
-| `parse.py` | 2,114 | File discovery (`discover`, `_git_files`, `_walk_files`, `explain_path`), the language table (`LANG_CFG`, `EXT_LANG`), tree-sitter invocation, symbol and import extraction, `_callee_name`. |
+| `graph.py` | 1,883 | Node and edge construction; call and inheritance resolution including the scoped-resolution tiers; the parse pass (`parse_all`, `parse_incremental`, chunked reads). |
+| `imports.py` | 437 | Import resolution: an import statement's text to the in-repo file it names, per language. |
+| `parsecache.py` | 169 | The incremental parse cache: one file's parse result to JSON and back (`PARSE_CACHE_FORMAT`). |
+| `derived.py` | 233 | What is derived from the resolved graph: `READS`/`WRITES`/`REFERENCES`, entrypoint marking, `TESTS`. |
+| `cochange.py` | 239 | `CO_CHANGE` (and `--git-authors`) from a bounded, timed read of `git log`. |
+| `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
+| `discovery.py` | 674 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
+| `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
 | `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
 | `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
 | `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
@@ -463,7 +469,9 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `cli.py` | 1,924 | Argument parsing and every subcommand. The widest module by fan-out. |
+| `cli.py` | 1,926 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
+| `cli_inspect.py` | 341 | Commands that inspect an index or explain a result: map, stats, diff, explain-path, explain, index-status, bug-report, doctor, demo, completion. |
+| `cli_embed.py` | 225 | `embed` and `--verify-rag`. |
 | `mcp/` | 2,387 | The MCP server, split by concern — see below. |
 | `answer.py` | 609 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 363 | `explain edge` / `node` / `retrieval`. |

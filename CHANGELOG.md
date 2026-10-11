@@ -126,6 +126,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **`graph.py`, `parse.py` and `cli.py` split by responsibility (#315).** Moves only, no
+  behaviour change: import resolution (`imports.py`), the parse cache (`parsecache.py`), derived
+  edges and entrypoints (`derived.py`), co-change (`cochange.py`), file discovery and
+  `explain_path` (`discovery.py`), reference capture (`refcapture.py`), and the inspect and embed
+  commands (`cli_inspect.py`, `cli_embed.py`). Every new module is strict-typed. Existing
+  `from repo2graph.graph/parse/cli import X` imports keep working.
+
 - **`graph.html` on large repositories (#305):** past `--viz-nodes` the page says it is
   sampled, in a banner on the page, and opens on a Directories view counting every node in at
   most 60 directory groups, with drill-down into the detail view and a language filter. The
