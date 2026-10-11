@@ -948,9 +948,9 @@ def test_repeated_begin_without_end_stays_linear():
     """
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
-    start = time.perf_counter()
+    start = time.process_time()
     findings = security.scan_content_secrets(text)
-    elapsed = time.perf_counter() - start
+    elapsed = time.process_time() - start
 
     assert elapsed < 3.0, f"scan took {elapsed:.2f}s; the quadratic form is back"
     # Every BEGIN is still reported -- fast and wrong would be worse.
@@ -983,9 +983,9 @@ def test_repeated_incomplete_begin_header_stays_linear():
     # 440 KB of incomplete headers, still inside the server's 1 MB body cap.
     text = "-----BEGIN " * 40_000
 
-    start = time.perf_counter()
+    start = time.process_time()
     findings = security.scan_content_secrets(text)
-    elapsed = time.perf_counter() - start
+    elapsed = time.process_time() - start
 
     assert elapsed < 5.0, (
         f"scan took {elapsed:.2f}s on {len(text) // 1024}KB of incomplete "
@@ -1009,15 +1009,19 @@ def test_redact_content_on_repeated_begin_stays_linear():
     """redact_content runs the scan and then rewrites; both must stay bounded.
 
     Sized at 200k, not 100k: at 100k the quadratic form takes ~2s, which slips
-    under this bound and makes the test a detector in name only.
+    under this bound and makes the test a detector in name only. At 200k the
+    fixed form takes ~0.8s and the quadratic one ~8s.
+
+    CPU time, not wall clock, in all three tests here: under `-n auto` on a
+    shared Windows runner, preemption alone pushed the fixed form to 13s.
     """
     text = (BEGIN_PEM + "\n") * (200_000 // 32)
 
-    start = time.perf_counter()
+    start = time.process_time()
     redacted, count = security.redact_content(text)
-    elapsed = time.perf_counter() - start
+    elapsed = time.process_time() - start
 
-    assert elapsed < 3.0, f"redact took {elapsed:.2f}s"
+    assert elapsed < 5.0, f"redact took {elapsed:.2f}s"
     assert count == 200_000 // 32
     assert BEGIN_PEM not in redacted
     assert len(text.split("\n")) == len(redacted.split("\n"))
