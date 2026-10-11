@@ -542,6 +542,24 @@ def _assert_inferable_repo_root(path: Path) -> None:
         )
 
 
+#: Longest `--staleness-ttl` accepted. A stale-index warning held for longer
+#: than this stops being a warning about the tree as it is now.
+MAX_STALENESS_TTL = 300.0
+
+
+def _staleness_ttl(text: str) -> float:
+    """argparse type for `--staleness-ttl`: finite seconds in [0, MAX_STALENESS_TTL]."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {text!r}") from None
+    if not (0.0 <= value <= MAX_STALENESS_TTL):
+        raise argparse.ArgumentTypeError(
+            f"must be between 0 and {MAX_STALENESS_TTL:g} seconds, got {text!r}"
+        )
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entrypoint for repo2graph-mcp."""
     p = argparse.ArgumentParser(
@@ -592,6 +610,16 @@ def main(argv: list[str] | None = None) -> int:
         f"recomputed (default: {DEFAULT_TTL:g})",
     )
     p.add_argument(
+        "--staleness-ttl",
+        type=_staleness_ttl,
+        default=0.0,
+        metavar="SECONDS",
+        help="reuse the working-tree staleness check behind each result's "
+        "stale-index note for this long, instead of re-scanning the tree on "
+        "every tool call; for clients such as editors that call on every "
+        f"cursor move (default: 0, check every call; max {MAX_STALENESS_TTL:g})",
+    )
+    p.add_argument(
         "--secret-keyword",
         action="append",
         default=[],
@@ -630,9 +658,11 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
     from .indexes import SECRET_RULES
+    from .nodes import STALENESS_TTL
 
     SECRET_RULES["keywords"] = list(args.extra_secret_keywords)
     SECRET_RULES["dirs"] = list(args.extra_secret_dirs)
+    STALENESS_TTL["seconds"] = args.staleness_ttl
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
     build_from = None if args.no_auto_build else repo
 

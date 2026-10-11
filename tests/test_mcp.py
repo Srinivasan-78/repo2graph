@@ -408,7 +408,9 @@ def test_tool_schemas_have_informative_parameter_descriptions():
         "repo_search": ["query"],
         "repo_neighbours": ["node_id"],
         "repo_impact": [],
-        "repo_find_symbol": ["name"],
+        # `name`, or `path` + `line` (#400): either is a complete question, so the
+        # schema requires neither and the handler refuses a call with neither.
+        "repo_find_symbol": [],
         "repo_read": ["path"],
         "repo_path_between": ["from_id", "to_id"],
         "repo_blast_radius": ["node_id"],

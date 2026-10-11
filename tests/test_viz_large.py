@@ -131,7 +131,9 @@ def test_the_page_never_exceeds_the_byte_ceiling(tmp_path, monkeypatch):
 def test_the_page_has_the_banner_view_switch_and_language_filter():
     for marker in ('id="banner"', 'id="btn-dirs"', 'id="btn-detail"', 'id="lang-legend"'):
         assert marker in TEMPLATE
-    assert 'show(DATA.dirs ? "dirs" : "detail")' in TEMPLATE
+    # The summary opens first when there is one, unless a #node= link (#400)
+    # names a node to select, which only the detail view can show.
+    assert 'show(applySeed() || !DATA.dirs ? "detail" : "dirs")' in TEMPLATE
 
 
 def test_summary_language_is_the_dominant_code_language():

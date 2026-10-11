@@ -32,6 +32,23 @@ makes keeping it current a release-blocking step rather than a good intention.
   never a failed build. Never auto-detected; also `scip = "<path inside the repo>"` in the config
   file. Without it every artifact is byte-identical, and full and `--incremental` builds with it
   are byte-identical too.
+- **VS Code extension (#400):** `editors/vscode/` shows the neighbourhood of the symbol at the
+  cursor -- callers, callees, base classes, defining file, tests and co-changed files -- and
+  follows the cursor; each row opens its file and line. Commands: Reveal in Graph, Show Impact,
+  Index Status (with rebuild), Go to Co-changed Files, Build Index. It drives one warm
+  `repo2graph-mcp` over stdio rather than reimplementing anything; with no index it offers to
+  build one. Its language, node and edge tables are generated from the Python ones
+  (`scripts/generate_vscode_tables.py`) and checked by the test suite. A preview, built from
+  source. Fixes #400.
+- **`repo_find_symbol` by position (#400):** `path` + `line` returns the symbols enclosing that
+  line, innermost first, then the file; `name` is no longer required when they are given.
+- **`repo_neighbours` `format: "json"` (#400):** the same rows as an object with each
+  neighbour's path and lines, edge evidence and confidence, plus the co-changed files of the
+  node's file; a paged reply carries `next_cursor` as a field.
+- **`repo2graph-mcp --staleness-ttl SECONDS` (#400):** reuses the working-tree check behind the
+  stale-index note for that long instead of re-scanning on every call (default `0`, unchanged).
+- **`graph.html#node=<id>` (#400):** the map opens in its detail view selected on that node, and
+  says so when the node is not among those drawn.
 - **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
   `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
   sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.

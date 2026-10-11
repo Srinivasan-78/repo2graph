@@ -46,6 +46,10 @@ output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run). Wha
 eleven well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
 pinned commit with the command to reproduce it: [examples/](examples/README.md).
 
+In VS Code, the extension in [`editors/vscode/`](editors/vscode/README.md) (a preview, built from
+source) shows the callers, callees, base classes and co-changed files of the symbol at the cursor,
+through the same MCP server.
+
 ## Is it better than grep?
 
 **On cross-file structural questions, yes. On single-file lexical queries, no — grep is the

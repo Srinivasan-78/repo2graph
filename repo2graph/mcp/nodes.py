@@ -7,11 +7,25 @@ under the open handle.
 
 from __future__ import annotations
 
+import time
+import weakref
 from pathlib import Path
+from typing import Any
 
 from ..edgemeta import cite as edge_cite
 from ..export import path as artifact_path
 from ..query import Index
+
+#: Seconds one index's staleness check is reused (`repo2graph-mcp --staleness-ttl`).
+#: Process-wide, set once by `server.main` before the first tool call. The default,
+#: 0, re-checks the working tree on every call, which is what every client had
+#: before the option existed.
+STALENESS_TTL: dict[str, float] = {"seconds": 0.0}
+
+# index -> (monotonic time computed, note). Keyed by the Index object, so a
+# rebuild -- which `open_index` answers with a new Index -- never reuses a note
+# computed against the build it replaced.
+_STALENESS_MEMO: weakref.WeakKeyDictionary[Index, tuple[float, str]] = weakref.WeakKeyDictionary()
 
 
 def _path_secret(index: Index, node_id: str) -> bool:
@@ -44,6 +58,25 @@ def _impact_root(index: Index) -> Path:
 
 
 def _staleness_note(index: Index) -> str:
+    """The stale-index warning a tool result leads with, or "" when the index is current.
+
+    Checking re-discovers the working tree, which costs tens of milliseconds on
+    a small repository and far more on a large one -- per tool call. Under
+    `--staleness-ttl` the answer is reused for that long, which is what lets an
+    editor call two tools on every cursor move.
+    """
+    ttl = STALENESS_TTL["seconds"]
+    if ttl > 0:
+        hit = _STALENESS_MEMO.get(index)
+        if hit is not None and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+    note = _compute_staleness_note(index)
+    if ttl > 0:
+        _STALENESS_MEMO[index] = (time.monotonic(), note)
+    return note
+
+
+def _compute_staleness_note(index: Index) -> str:
     try:
         index_dir = Path(getattr(index, "dir", ".") or ".")
         from ..integrity import is_foreign_index
@@ -71,12 +104,43 @@ def _staleness_note(index: Index) -> str:
     )
 
 
-def _edge_note(index: Index, src: str, dst: str, etype: str) -> str:
-    edge = None
+def _edge_record(index: Index, src: str, dst: str, etype: str) -> dict[str, Any] | None:
+    """The `etype` edge between `src` and `dst`, as `src`'s adjacency holds it."""
     for other, other_type, _direction, record in index.adj.get(src, ()):
         if other == dst and other_type == etype:
-            edge = record
-            break
+            return record
+    return None
+
+
+def _node_fields(index: Index, node_id: str) -> dict[str, Any]:
+    """The fields a client needs to show a node and jump to it."""
+    node = index.nodes.get(node_id) or {}
+    return {
+        "node_id": node_id,
+        "type": node.get("type") or "",
+        "name": node.get("name") or "",
+        "qualname": node.get("qualname") or "",
+        "kind": node.get("kind") or "",
+        "path": node.get("path") or "",
+        "start_line": node.get("start_line"),
+        "end_line": node.get("end_line"),
+        "lang": node.get("lang") or "",
+    }
+
+
+def _cochange_pairs(index: Index, file_id: str) -> list[tuple[str, dict[str, Any]]]:
+    """`file_id`'s CO_CHANGE partners and their edges, most frequent first, secrets excluded."""
+    pairs = [
+        (dst, edge)
+        for dst, etype, _direction, edge in index.adj.get(file_id, ())
+        if etype == "CO_CHANGE" and not _path_secret(index, dst)
+    ]
+    pairs.sort(key=lambda p: -(p[1].get("count") or 0))
+    return pairs
+
+
+def _edge_note(index: Index, src: str, dst: str, etype: str) -> str:
+    edge = _edge_record(index, src, dst, etype)
     if edge is None:
         return ""
 

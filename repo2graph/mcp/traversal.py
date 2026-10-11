@@ -30,7 +30,7 @@ from .guardrails import (
     _defaulted_notes,
     _str,
 )
-from .nodes import _containing_file, _path_secret
+from .nodes import _cochange_pairs, _containing_file, _path_secret
 from .schemas import ToolError
 
 
@@ -324,12 +324,7 @@ def tool_repo_blast_radius(
     cochange_rows: list[dict[str, Any]] = []
     cochange_trunc = False
     if want_cochange and file_id is not None:
-        pairs = [
-            (dst, edge)
-            for dst, etype, _direction, edge in index.adj.get(file_id, ())
-            if etype == "CO_CHANGE" and not _path_secret(index, dst)
-        ]
-        pairs.sort(key=lambda p: -(p[1].get("count") or 0))
+        pairs = _cochange_pairs(index, file_id)
         cochange_trunc = len(pairs) > lim
         for dst, edge in pairs[:lim]:
             cochange_rows.append(

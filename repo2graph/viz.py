@@ -655,6 +655,9 @@ const linkShown = l => !hiddenEdgeTypes.has(l.type) && nodeShown(l.source) && no
 let tx = 0, ty = 0, scale = 1, alpha = 1, raf = null, drag = null, pan = null, selected = null;
 // The in-flight incremental settle, so a second relayout can cancel the first.
 let settleRaf = null;
+// A node named by the page's #node=<id> link, selected once the layout settles,
+// or the id it named when that node is not drawn (see applySeed).
+let pendingSeed = null, seedMissing = null;
 
 // ---------- model ----------
 const adjacency = new Map();
@@ -867,6 +870,11 @@ function relayout() {
     settleRaf = null;
     progress.hidden = true;
     fit();
+    if (pendingSeed && mode === "detail") {
+      const n = pendingSeed;
+      pendingSeed = null;
+      selectNode(n, true);
+    }
   }
   settleRaf = requestAnimationFrame(settle);
 }
@@ -1069,7 +1077,10 @@ const banner = document.getElementById("banner");
 function bannerText() {
   banner.replaceChildren();
   const s = DATA.sampled;
-  if (mode === "detail" && dirFilter !== null) {
+  if (seedMissing !== null) {
+    banner.append("The node this link names (" + seedMissing + ") is not among the " +
+      DATA.nodes.length + " drawn nodes" + (s ? "; raise --viz-nodes to draw more" : "") + ".");
+  } else if (mode === "detail" && dirFilter !== null) {
     banner.append("Only the drawn nodes in " + (dirFilter.path || "(root)") +
       (dirFilter.except ? ", except its subdirectories shown separately" : "") + ".");
     const clear = el("button", "", "Show all");
@@ -1104,8 +1115,8 @@ function show(next) {
   relayout();
 }
 document.getElementById("view-btns").hidden = !DATA.dirs;
-btnDirs.addEventListener("click", () => show("dirs"));
-btnDetail.addEventListener("click", () => { dirFilter = null; show("detail"); });
+btnDirs.addEventListener("click", () => { seedMissing = null; show("dirs"); });
+btnDetail.addEventListener("click", () => { seedMissing = null; dirFilter = null; show("detail"); });
 
 // ---------- legend collapse, persisted per-viewer ----------
 const legendToggle = document.getElementById("legend-toggle");
@@ -1245,7 +1256,39 @@ svg.addEventListener("wheel", ev => {
 }, { passive: false });
 window.addEventListener("resize", render);
 
-show(DATA.dirs ? "dirs" : "detail");
+// ---------- seed: graph.html#node=<id> opens selected on that node (#400) ----------
+// The fragment never leaves the browser. Its text is only ever compared, by
+// exact id, against the drawn nodes and shown through textContent, so a
+// crafted link can pick a node but cannot put markup on the page.
+const MAX_SEED_CHARS = 2000;
+function seedFromHash() {
+  const m = /^#node=([^&]*)/.exec(location.hash || "");
+  if (!m) return null;
+  let id;
+  try { id = decodeURIComponent(m[1]); } catch (_) { return null; }
+  return id && id.length <= MAX_SEED_CHARS ? id : null;
+}
+function applySeed() {
+  const id = seedFromHash();
+  pendingSeed = null;
+  seedMissing = null;
+  if (id === null) return false;
+  const n = DATA.nodes.find(x => x.id === id);
+  if (!n) { seedMissing = id; return false; }
+  pendingSeed = n;
+  return true;
+}
+window.addEventListener("hashchange", () => {
+  if (!applySeed()) { bannerText(); return; }
+  if (mode !== "detail" || dirFilter !== null) { dirFilter = null; show("detail"); return; }
+  bannerText();
+  if (settleRaf) return;   // the layout still settling selects it when it is done
+  const n = pendingSeed;
+  pendingSeed = null;
+  selectNode(n, true);
+});
+
+show(applySeed() || !DATA.dirs ? "detail" : "dirs");
 </script>
 </body>
 </html>
