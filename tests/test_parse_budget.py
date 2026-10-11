@@ -76,12 +76,24 @@ def test_strict_policy_fails_instead_of_skipping(tmp_path):
         build(root, jobs=1, config=BuildConfig(parse_timeout=0.3, parse_policy="strict"))
 
 
-def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path):
+def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch):
     """Small files in a serial build parse in-process, where the budget can only
     discard the result afterwards; the outcome is the same as a kill."""
+    from repo2graph import graph as graph_mod
+
     p = tmp_path / "small.py"
     p.write_text("def f():\n    return 1\n", encoding="utf8")
-    ((rel, lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=1e-9))
+    real = graph_mod._read_and_parse
+
+    def slow(item):
+        # Sleep well past the budget: Windows' monotonic clock ticks every
+        # ~15 ms, so a near-zero budget alone can measure a real parse as 0 s.
+        time.sleep(0.2)
+        return real(item)
+
+    monkeypatch.setattr(graph_mod, "_read_and_parse", slow)
+    ((rel, lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=0.05))
+    monkeypatch.setattr(graph_mod, "_read_and_parse", real)
     assert read is not None and read[2].parse_skipped == TIMEOUT and read[2].symbols == []
     ((_, _, read),) = parse_all([("small.py", p)], 1, BuildConfig())
     assert read[2].parse_skipped == "" and read[2].symbols
