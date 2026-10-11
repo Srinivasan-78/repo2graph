@@ -23,6 +23,7 @@ from .security import (
     redact_content,
 )
 from .testpaths import is_test_path
+from .rerank import CROSS_ENCODER_CANDIDATES, Reranker, rerank as _rerank
 
 __all__ = [
     "BM25_FORMAT",
@@ -1131,6 +1132,31 @@ class Index:
         fused.sort(reverse=True)
         return fused
 
+    def rerank(
+        self, query: str, ranked: list[tuple[float, int]], reranker: "Reranker"
+    ) -> list[tuple[float, int]]:
+        """`ranked` with its top candidates re-ordered by `reranker` (#381).
+
+        A reranker that fails leaves the order as it was and says so, once, as
+        a `rag_rerank_disabled` event -- never silently.
+        """
+        return self._apply_rerank(query, ranked, reranker)[0]
+
+    def _apply_rerank(
+        self, query: str, ranked: list[tuple[float, int]], reranker: "Reranker"
+    ) -> tuple[list[tuple[float, int]], bool]:
+        out, why = _rerank(query, ranked, lambda i: self.chunks[i].get("text") or "", reranker)
+        if why:
+            from .events import emit
+
+            emit(
+                "rag_rerank_disabled",
+                level="warning",
+                reason=why,
+                candidates=min(len(ranked), CROSS_ENCODER_CANDIDATES),
+            )
+        return out, not why
+
     def _vectors_for(
         self,
         query: str,
@@ -1281,6 +1307,7 @@ class Index:
         extra_secret_dirs: list[str] | None = None,
         neighbours: str = "full",
         conditional_expansion: bool = False,
+        rerank: "Reranker | None" = None,
     ) -> list[Record]:
         """Retrieve ranked seed chunks and graph neighbors within character budget.
 
@@ -1299,6 +1326,8 @@ class Index:
                 'cite' emits one-line signature citations without chunk body.
             conditional_expansion: If True, only expands graph neighbours when lexical
                 evidence is weak or ambiguous.
+            rerank: Optional cross-encoder that re-orders the top candidates
+                before any are picked (rerank.py); None keeps today's order.
 
         Returns:
             List of matching chunk dictionaries.
@@ -1318,6 +1347,9 @@ class Index:
             if vectors is None and embedder is None
             else self.score_rrf(query, vectors=vectors, embedder=embedder)
         )
+        lexical = ranked
+        if rerank is not None:
+            ranked = self.rerank(query, ranked, rerank)
         scored = ranked[: k * 3]
         picked: list[Record] = []
         seen_nodes_list: list[str] = []
@@ -1347,7 +1379,7 @@ class Index:
                 break
         # Bound the expansion pass by both count and budget:
         if conditional_expansion and not is_lexical_weak(
-            self._lexical_for_weakness(query, ranked, vectors, embedder),
+            self._lexical_for_weakness(query, lexical, vectors, embedder),
             k=k,
             num_chunks=len(self.chunks),
         ):
@@ -1425,6 +1457,7 @@ class Index:
         expansion: str | None = None,
         seed_offset: int | None = None,
         token_margin: float = 0.0,
+        rerank: "Reranker | None" = None,
     ) -> dict[str, Any]:
         """Assemble an agent-ready markdown context pack within budget.
 
@@ -1469,6 +1502,11 @@ class Index:
                 `PAGED_SEED_WINDOW`, take the next `k`, and cut the page at the
                 first seed that does not fit (the map is only packed on the
                 first page). None (the default) is the unpaged behaviour.
+            rerank: Optional cross-encoder that re-orders the top first-stage
+                candidates before seeds are taken (rerank.py, #381), in place of
+                the answerability re-rank. It changes which chunks are spent
+                first, never how the budget is counted. If it fails, the pack is
+                exactly the one without it.
 
         Returns:
             Dictionary containing 'markdown', 'chunks', 'used_chars', 'budget_chars',
@@ -1496,6 +1534,9 @@ class Index:
             num_chunks=len(self.chunks),
         ):
             expand_graph = False
+        reranked = False
+        if rerank is not None:
+            ranked, reranked = self._apply_rerank(query, ranked, rerank)
         # One classification drives all three adjustments below: which chunks are
         # answer-shaped, which seeds win slots, and which direction expansion
         # follows.
@@ -1506,7 +1547,9 @@ class Index:
         asks_tests = asks_about_tests(query)
         # Answerability re-rank, before seeds are taken. `is_lexical_weak` above
         # reads the *lexical* distribution and so must see the unadjusted list.
-        if rerank_answerability:
+        # A cross-encoder that ran has already judged answer-shape, from the
+        # question and the chunk together; the heuristic would only overrule it.
+        if rerank_answerability and not reranked:
             terms = self.query_content_terms(query)
             boost_tests = asks_tests
             ranked = (

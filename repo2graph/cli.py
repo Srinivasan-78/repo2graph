@@ -18,6 +18,7 @@ from .chunks import iter_chunks
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
+from .rerank import DEFAULT_RERANK_MODEL as RERANK_DEFAULT_MODEL
 from .export import (
     dump_all,
     load_parse_cache_report,
@@ -547,6 +548,27 @@ def _resolve_vectors(idx, args, out=None):
     return idx.vectors, embedder
 
 
+def _resolve_reranker(args):
+    """The cross-encoder for `--rerank`, or None (#381).
+
+    Unlike `--vectors`, a reranker that cannot load is not an error: the
+    first-stage order is still a correct answer, so the query proceeds on it
+    and the reason goes to stderr as one `rag_rerank_disabled` line.
+    """
+    if not getattr(args, "rerank", False):
+        return None
+    from .rerank import DEFAULT_RERANK_MODEL, default_reranker
+
+    model = getattr(args, "rerank_model", None) or DEFAULT_RERANK_MODEL
+    try:
+        return default_reranker(model)
+    except RuntimeError as exc:
+        from .events import emit
+
+        emit("rag_rerank_disabled", level="warning", reason=str(exc))
+        return None
+
+
 def cmd_embed(args):
     """Embed an index's chunks, reusing every vector whose text is unchanged."""
     if getattr(args, "verify_rag", False):
@@ -739,6 +761,7 @@ def cmd_query(args):
             hops=args.hops,
             min_confidence=getattr(args, "min_conf", None),
             exclude_secrets=not getattr(args, "include_secrets", False),
+            rerank=_resolve_reranker(args),
         )
         _emit(json.dumps(res, indent=2) if args.format == "json" or args.json else format_pack(res))
         return 0
@@ -768,6 +791,7 @@ def cmd_query(args):
         # caller opts in *now*: an index built with --include-secrets must not
         # hand them to every later plain query.
         exclude_secrets=not getattr(args, "include_secrets", False),
+        rerank=_resolve_reranker(args),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -977,6 +1001,7 @@ def cmd_rag(args):
                 min_confidence=args.min_conf,
                 expand_graph=not args.no_expand,
                 exclude_secrets=not getattr(args, "include_secrets", False),
+                rerank=_resolve_reranker(args),
             ),
         )
 
@@ -1012,6 +1037,7 @@ def cmd_rag(args):
         edge_types=getattr(args, "edge_types", None) or None,
         count_tokens=_token_counter(getattr(args, "tokenizer", None)),
         token_margin=getattr(args, "token_margin", 0.0) or 0.0,
+        rerank=_resolve_reranker(args),
     )
     return _rag_output(args, pack)
 
@@ -1453,6 +1479,23 @@ def _add_vector_flags(parser) -> None:
     )
 
 
+def _add_rerank_flags(parser) -> None:
+    """--rerank / --rerank-model, for `query` and `rag` (#381)."""
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="re-order the top candidates with a local cross-encoder before the budget is "
+        "spent (needs the `rag` extra; if it cannot load, the query runs unchanged and says so)",
+    )
+    parser.add_argument(
+        "--rerank-model",
+        dest="rerank_model",
+        default=None,
+        help=f"sentence-transformers CrossEncoder for --rerank, @<commit> to pin "
+        f"(default: {RERANK_DEFAULT_MODEL})",
+    )
+
+
 def _max_file_mb(value: str) -> float:
     try:
         f = float(value)
@@ -1883,6 +1926,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(q)
+    _add_rerank_flags(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
@@ -2045,6 +2089,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(r)
+    _add_rerank_flags(r)
     r.set_defaults(func=cmd_rag)
 
     e = sub.add_parser("embed", help="embed an index's chunks for dense retrieval")

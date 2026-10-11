@@ -277,6 +277,7 @@ functions around each answer come along too.
 | `--conditional-expansion` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
 | `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
 | `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
+| `--rerank` / `--rerank-model` | off / `cross-encoder/ms-marco-MiniLM-L-6-v2` | Re-order the top 50 candidates with a local cross-encoder before they are picked. Same meaning as on `rag`. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -335,6 +336,8 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
+| `--rerank` | off | Re-order the top 50 candidates with a cross-encoder that reads your question and each chunk together, before the budget is spent; it breaks the near-ties word matching leaves. Runs locally and needs the `rag` extra (the model, ~90 MB, downloads on first use). If it cannot load or fails, you get the answer you would have got without it, plus one `rag_rerank_disabled` line on stderr saying why. |
+| `--rerank-model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which sentence-transformers CrossEncoder `--rerank` uses. Append `@<commit>` to pin the revision. |
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--expansion` | `rag-default` | Which arrows to walk. `navigation`: calls and imports, both ways. `impact-analysis`: callers, importers, subclasses and co-changed files (co-change links files, so use `--hops 2` or more from a function). `strict`: only edges the resolver was certain of, never git history. `rag-default` is the behaviour with no flag. |
 | `--edge-type` | preset's | Walk only this edge type (`CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE`, `TESTS`). Repeatable; overrides the preset's types. Each neighbour's `why` says which edge admitted it. |

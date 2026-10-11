@@ -15,6 +15,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **`--rerank` on `rag` and `query`, and `rerank=` on `Index.pack_context`/`retrieve`
+  (#381):** a local cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default,
+  `--rerank-model` to change or `@<commit>` to pin) re-orders the top 50 candidates before any
+  budget is spent, breaking the near-ties BM25 leaves. Only the order changes — score values and
+  budget accounting do not. Opt-in; if the `rag` extra is missing or the model fails, the output
+  is byte-identical to a run without it and one `rag_rerank_disabled` line on stderr says why.
+  `scripts/bench_real_repos.py --rerank` adds the `repo2graph-rerank` row to measure it.
 - **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
   `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
   sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.
