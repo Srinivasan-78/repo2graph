@@ -179,7 +179,10 @@ Build cost up to 50,000 files: [benchmarks/perf/README.md](benchmarks/perf/READM
 
 - **Resolve calls by type.** Calls are matched by name, scoped by class, file, imports and
   directory. `x.get()` on a receiver of unknown type is recorded as a low-confidence guess, not a
-  fact. For exact references, use a language-server tool.
+  fact. For exact references, use a language-server tool, or hand `build --scip index.scip` a
+  [SCIP](https://github.com/sourcegraph/scip) index (from `scip-python`, `scip-typescript`, ...)
+  to make the calls and bases it covers exact; see
+  [docs/architecture.md](docs/architecture.md#exact-resolution-from-scip---scip-off-by-default).
 - **See dynamic dispatch, reflection or computed imports.** A missing edge doesn't prove that no
   call exists.
 - **Cross language boundaries** (Python calling C++ through bindings).

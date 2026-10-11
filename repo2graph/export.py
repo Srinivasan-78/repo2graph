@@ -20,7 +20,7 @@ from typing import IO, TYPE_CHECKING, Any
 # edgemeta is stdlib-only (typing), so importing it here does not pull the
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
-from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
+from .edgemeta import EDGE_SCHEMA_VERSION, METHOD_SCIP, counts_as_call
 from .security import escape_hidden_unicode
 from .viz import (
     EDGE_TYPES,
@@ -815,6 +815,12 @@ EDGE_FIELDS = {
         "`evidence` cites the call in the test where that path starts"
     ),
 }
+# Appended to EDGE_FIELDS["method"] only when the graph has `build --scip`
+# edges (#380), so a default build's manifest is unchanged.
+SCIP_METHOD_NOTE = (
+    "; scip (build --scip only: the target a SCIP index names for that call site or base, "
+    "confidence 1.0, resolution_kind scip)"
+)
 
 ID_GRAMMAR = {
     "repo": "repo:<name>",
@@ -960,6 +966,9 @@ def write_manifest(
         **EDGE_TYPES,
         **{k: v for k, v in REFERENCE_EDGE_TYPES.items() if k in present},
     }
+    edge_fields = EDGE_FIELDS
+    if any(e.get("method") == METHOD_SCIP for e in getattr(g, "edges", ())):
+        edge_fields = {**EDGE_FIELDS, "method": EDGE_FIELDS["method"] + SCIP_METHOD_NOTE}
     cfg = getattr(g, "config", None)
     if cfg and getattr(cfg, "include_secrets", False):
         secret_filter_policy = "include-secrets"
@@ -1021,7 +1030,7 @@ def write_manifest(
         },
         "node_types": NODE_TYPES,
         "edge_types": edge_types,
-        "edge_fields": EDGE_FIELDS,
+        "edge_fields": edge_fields,
         "edge_schema_version": EDGE_SCHEMA_VERSION,
         "id_grammar": ID_GRAMMAR,
         "chunk_fields": [

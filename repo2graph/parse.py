@@ -517,6 +517,10 @@ class BuildConfig:
     # Wall-clock budget for one file's parse, in seconds; 0 = none (#81). See
     # parsepool.py for why it needs a worker process and how it was calibrated.
     parse_timeout: float = PARSE_TIMEOUT_S
+    # Opt-in SCIP index (#380), read after parsing to make CALLS/INHERITS
+    # exact where it covers a file. None, the default, changes nothing; it is
+    # not part of the parse cache's identity because no parse result uses it.
+    scip_index: str | None = None
     # The directory this build writes its artifacts to. When it lies inside
     # the indexed root, discovery must never index it: `git ls-files -co`
     # lists untracked files and os.walk sees everything, so without this a

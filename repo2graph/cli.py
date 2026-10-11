@@ -154,6 +154,16 @@ def _with_repo_config(args, repo):
     return merged, applied
 
 
+def _scip_index(args, from_config: bool, repo_path: Path) -> str | None:
+    """`--scip` as typed, or the config key's path inside the repo (#380)."""
+    from .scip import ScipError, index_path
+
+    try:
+        return index_path(getattr(args, "scip", None), repo_path, from_config)
+    except ScipError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
 def _require_history_for_authors(args) -> None:
     if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
         raise SystemExit(
@@ -170,7 +180,8 @@ def cmd_build(args):
         raise SystemExit(
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
-    args, _ = _with_repo_config(args, repo_path)
+    args, applied = _with_repo_config(args, repo_path)
+    scip_index = _scip_index(args, "scip" in applied.values, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # Resolved before validate_outdir and the build lock: `--exclude-group
@@ -224,6 +235,7 @@ def cmd_build(args):
         parse_policy=getattr(args, "parse_policy", "best-effort"),
         parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
         output_dir=str(outdir),
+        scip_index=scip_index,
     )
     cache = None
     cache_invalidated = None
@@ -1814,6 +1826,13 @@ def main(argv=None):
         metavar="SECONDS",
         help="seconds the tree must be still before a rebuild, so a burst of saves "
         "costs one rebuild (default: 1)",
+    )
+    b.add_argument(
+        "--scip",
+        default=None,
+        metavar="INDEX",
+        help="read this SCIP index (e.g. from scip-python) for exact CALLS and INHERITS "
+        "targets in the files it covers; other files stay name-resolved (default: off)",
     )
     b.add_argument(
         "--incremental",

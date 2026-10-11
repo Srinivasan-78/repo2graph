@@ -40,6 +40,9 @@ METHOD_GIT_LOG = "git-log"
 # history. `TESTS` is the one user: a path over CALLS edges, so its confidence
 # is the product of theirs and its evidence is the call site the path starts at.
 METHOD_CALL_GRAPH = "call-graph"
+# `build --scip` only (#380): the target a SCIP index (a compiler-grade
+# indexer's output) names for the call or base at `evidence`. Always 1.0.
+METHOD_SCIP = "scip"
 
 METHODS: dict[str, str] = {
     METHOD_TREE_SITTER: "read directly from a tree-sitter parse tree",
@@ -47,6 +50,7 @@ METHODS: dict[str, str] = {
     METHOD_FILESYSTEM: "directory structure; no parsing involved",
     METHOD_GIT_LOG: "commit history; correlational, never causal",
     METHOD_CALL_GRAPH: "derived from a path of CALLS edges; inherits their confidence",
+    METHOD_SCIP: "the target a SCIP index names for this call site or base; exact",
 }
 
 STANDARD_FIELDS: tuple[str, ...] = ("src", "dst", "type", "method", "confidence", "evidence")

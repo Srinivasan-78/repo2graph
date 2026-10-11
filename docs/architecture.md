@@ -135,6 +135,53 @@ Django 28% nodes, 8.5% edges and 13.5% output, for 7,688 `READS`, 219 `WRITES` a
 `REFERENCES` (Django annotates almost nothing). `stats.json` reports
 `reference_edges_reads`, `_writes`, `_references` and `_unresolved` when it is on.
 
+### Exact resolution from SCIP (`--scip`, off by default)
+
+`CALLS` and `INHERITS` are name-resolved (the tiers in `graph.build`). `build --scip index.scip`
+(#380) reads a [SCIP](https://github.com/sourcegraph/scip) index, the protobuf a compiler-grade
+indexer writes (`scip-python`, `scip-typescript`, `scip-java`, ...), and uses it wherever it has an
+answer. `scip.py` owns all of it; `graph.build` calls into it at three points.
+
+- **Reading.** A hand-rolled protobuf wire-format reader for the few `scip.proto` messages used
+  (no protobuf dependency, like `embed.py`'s `.npy` reader). The file is untrusted: size capped at
+  256 MiB before it is read, varints at most 10 bytes, every length checked against what is left,
+  group wire types refused, nesting fixed by the schema with no recursion, and occurrence,
+  document and string counts bounded. Malformed input raises `ScipError`; the build then warns
+  (a stderr line plus a `scip_index_rejected` event), records `scip_error` in `stats.json`, and
+  keeps every heuristic edge. Both range encodings are read (the deprecated packed `range` and the
+  typed `single_line_range`/`multi_line_range`, which wins when both are set).
+- **Identity.** A SCIP symbol maps to a node through its *definition site*, not by translating its
+  moniker: the `Definition` occurrence in document `path` on line `L` whose last descriptor is
+  named `n` is the repo2graph symbol of `path` that starts on line `L` and is named `n`
+  (parameters and type parameters never map; a `local N` symbol is named by its `display_name`).
+  A SCIP symbol that lands on two nodes (a conditional redefinition) is left unmapped.
+- **Merge.** Only for files whose document is in the index. For each call site of `callee`, the
+  reference occurrences on the call's line whose last descriptor is `callee`'s name decide it
+  (several same-named calls on one line pair up by column). A mapped symbol is a `CALLS` edge at
+  confidence 1.0 with `method` and `resolution_kind` `scip`; a symbol no indexed file defines is a
+  `CALLS_EXTERNAL` edge, also `scip`; anything else -- no occurrence, a parameter, an attribute,
+  a symbol that did not map -- leaves that site to the tiers, with the heuristic edge's `count`
+  reduced to the sites left. A class's base resolves through its `is_implementation`
+  relationships, else the base's occurrence in the class header; a base defined outside the index
+  gets no `INHERITS` edge, as an unresolved base never did. A file absent from the index is not
+  touched.
+
+The pass runs after parsing over the parsed symbols and the index, so full and `--incremental`
+builds stay byte-identical (the parse cache holds parse results only; `scip_index` is not part of
+its identity). Without the flag nothing is read, and every artifact is byte-identical to a build
+that never had the feature; `manifest.json` describes the `scip` method only when such edges exist.
+`stats.json` reports `scip_documents`, `scip_files_covered`, `scip_files_uncovered`,
+`scip_symbols_mapped`, `scip_call_sites_resolved` (of which `scip_call_sites_external`),
+`scip_call_sites_heuristic` (sites in covered files left to the tiers),
+`scip_call_sites_uncovered`, `scip_calls_ambiguous` (ambiguous fan-outs still emitted from covered
+files), `scip_bases_resolved` and `scip_bases_heuristic` -- all of them, and only, with `--scip`.
+
+The index is never auto-detected: a repository shipping an `index.scip` does not change how it is
+resolved unless the user passes `--scip` or the repository's own config sets `scip`, whose path
+must resolve inside the repository. Even a crafted index can only pick among definitions whose
+names already sit on the cited line. A stale index degrades to name resolution wherever a name
+moved off its recorded line; regenerate it with the code.
+
 ### Edge metadata
 
 Every edge goes through `Graph.add_edge()`, which normalises three fields:
@@ -447,6 +494,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `fetch.py` | 374 | `repo2graph github` — clone, build, clean up. |
 | `exclusions.py` | 311 | The named exclusion groups and their glob/reason tables. |
 | `embed.py` | 307 | Vectors, and a stdlib-only `.npy` reader/writer. |
+| `scip.py` | 847 | `build --scip`: a bounded protobuf reader for SCIP indexes, symbol-to-node mapping, and the exact-edge merge. |
 | `lock.py` | 299 | Build locking and stale-lock recovery. A leaf. |
 | `audit.py` | 288 | Audit log sink. |
 | `schema.py` | 273 | The record shapes the artifacts promise. |

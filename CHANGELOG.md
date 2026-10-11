@@ -22,6 +22,16 @@ makes keeping it current a release-blocking step rather than a good intention.
   budget accounting do not. Opt-in; if the `rag` extra is missing or the model fails, the output
   is byte-identical to a run without it and one `rag_rerank_disabled` line on stderr says why.
   `scripts/bench_real_repos.py --rerank` adds the `repo2graph-rerank` row to measure it.
+- **`build --scip <index.scip>` (#380):** opt-in exact `CALLS` and `INHERITS` from a SCIP index
+  (e.g. `scip-python index`). In files the index covers, each call site and base it names gets a
+  confidence-1.0 edge with `method`/`resolution_kind` `scip` (or `CALLS_EXTERNAL` for a symbol no
+  indexed file defines); other sites and uncovered files keep their name-resolved edges.
+  `stats.json` reports coverage (`scip_files_covered`, `scip_call_sites_resolved`,
+  `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). The index is read by a bounded,
+  dependency-free protobuf reader; a malformed or oversized one is a warning and heuristic edges,
+  never a failed build. Never auto-detected; also `scip = "<path inside the repo>"` in the config
+  file. Without it every artifact is byte-identical, and full and `--incremental` builds with it
+  are byte-identical too.
 - **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
   `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
   sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.

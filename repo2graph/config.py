@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Callable
 
 CONFIG_FILE = ".repo2graph.toml"
@@ -73,6 +73,20 @@ def _secret_policy(v: Any) -> str:
     return str(v)
 
 
+def _repo_relative_path(v: Any) -> str:
+    # The repository naming a file of its own: never an absolute path or one
+    # that climbs out (`build` also re-checks the resolved path, for symlinks).
+    if not isinstance(v, str) or not v.strip() or "\0" in v:
+        raise TypeError("expected a path relative to the repository root")
+    if (
+        PurePosixPath(v).is_absolute()
+        or PureWindowsPath(v).anchor
+        or ".." in PurePosixPath(v.replace("\\", "/")).parts
+    ):
+        raise TypeError("expected a path inside the repository, relative to its root")
+    return v
+
+
 # key -> (argparse dest it stands in for, validator)
 KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "include": ("include", _str_list),
@@ -89,6 +103,9 @@ KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "chunk-large-files": ("chunk_large_files", _bool),
     "include-vendor": ("include_vendor", _bool),
     "reference-edges": ("reference_edges", _bool),
+    # `build` only: the in-process auto-builds (`rag <src>`, the MCP server)
+    # never read an index, so `build_options` below leaves it out.
+    "scip": ("scip", _repo_relative_path),
 }
 
 

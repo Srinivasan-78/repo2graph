@@ -35,6 +35,7 @@ from .parsepool import (
     claim_slot,
     supervised_map,
 )
+from .scip import ScipResolver
 from .parse import (
     JAVA_IMPORT_RE,
     PY_FROM_IMPORT_RE,
@@ -2148,6 +2149,10 @@ def build(
         cands = [c for c in named_in(callee, imported) if c in pool]
         return (cands, "imported_symbol") if cands else ([], "")
 
+    # `build --scip` (#380): exact targets for the call sites and bases a SCIP
+    # index covers; None (the default) leaves every edge below name-resolved.
+    scip = ScipResolver.for_build(getattr(config, "scip_index", None), g, parsed)
+
     for rel, pf in parsed.items():
         rel_dir = rel.rpartition("/")[0]
         by_key = {symbol_key(s): s for s in pf.symbols}
@@ -2214,6 +2219,14 @@ def build(
             for callee, count in Counter(sym.calls).items():
                 call_kind = call_kinds.get(callee, "static")
                 call_evidence = make_evidence(rel, call_lines.get(callee))
+                if scip is not None:
+                    # Emits the sites SCIP resolves; the tiers get the rest.
+                    count, rest = scip.calls(
+                        rel, sid, callee, count, call_kind, details.get(callee, [])
+                    )
+                    if not count:
+                        continue
+                    call_evidence = make_evidence(rel, rest) if rest else call_evidence
                 all_cands = by_name.get(callee, [])
                 if callee not in details:
                     # no receiver information (a call recorded without details):
@@ -2398,6 +2411,8 @@ def build(
                         )
                     g.stats["calls_ambiguous"] += 1
                     g.stats["ambiguous_calls"] += 1
+                    if scip is not None:
+                        scip.note_ambiguous(rel)
                     if untyped_builtin:
                         g.stats["calls_untyped_receiver"] += 1
                     if shadowed_builtin:
@@ -2409,6 +2424,8 @@ def build(
                 bd = base_details_map.get(base, {})
                 raw_base = bd.get("raw", base)
                 subtype = bd.get("subtype", "INHERITS")
+                if scip is not None and scip.base(rel, sid, sym, base, subtype, raw_base):
+                    continue
                 matched_base, base_cands = match_bases(rel, base)
 
                 if matched_base:

@@ -73,6 +73,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
 | `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
+| `--scip` | unset | Path to a [SCIP](https://github.com/sourcegraph/scip) index (e.g. from `scip-python index` run at the repository root). For the files it covers, each call site and base class it names gets an exact `CALLS`/`INHERITS` edge (`method`/`resolution_kind` `scip`, confidence 1.0) or a `CALLS_EXTERNAL` edge; call sites it does not name, and files it does not cover, keep their name-resolved edges. `stats.json` then reports coverage (`scip_documents`, `scip_files_covered`, `scip_call_sites_resolved`, `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). A missing, oversized (over 256 MiB) or malformed index is a warning plus a `scip_index_rejected` event on stderr and `scip_error` in `stats.json`, never a failed build. Never auto-detected: an `index.scip` shipped in a repository is ignored unless asked for. Also `scip = "index.scip"` in the config file (relative to, and confined to, the repository; `build` only — `rag <source-dir>` and the MCP auto-build never read an index). Regenerate the index when the code changes: a stale one only falls back to name resolution where a name no longer sits on the line it recorded. Details: docs/architecture.md, *Exact resolution from SCIP*. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
@@ -220,7 +221,8 @@ Keys are spelled like the flags they stand in for: `include`, `exclude`,
 `exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
 `git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
 `"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
-choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`. A list given
+choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`;
+`scip` a path relative to the repository root that must stay inside it (read by `build` only). A list given
 on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file
