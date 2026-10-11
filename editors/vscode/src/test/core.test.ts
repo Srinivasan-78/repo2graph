@@ -188,7 +188,7 @@ test("reveal links seed graph.html by node id, escaped for the page", () => {
   const url = graphUrl("/i/human/graph.html", "sym:a b.py::f&<g>");
   assert.equal(url, "file:///i/human/graph.html#node=sym%3Aa%20b.py%3A%3Af%26%3Cg%3E");
   const page = revealPage("/i/human/graph.html", 'sym:x.py::"><script>alert(1)</script>');
-  assert.doesNotMatch(page, /<script>/);
+  assert.doesNotMatch(page, /<script/i);
   assert.match(page, /default-src 'none'/);
   assert.match(page, /http-equiv="refresh" content="0;url=file:\/\/\/i\/human\/graph\.html#node=/);
 });
