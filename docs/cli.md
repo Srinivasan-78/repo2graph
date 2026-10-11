@@ -69,6 +69,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--include` | none | Glob(s) to keep, e.g. `'**/*.py'`. |
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
+| `--parse-timeout` | `10` | Wall-clock budget, in seconds, for one file's parse. A file over it keeps its file node but gets no symbols, is counted as `skipped_parse_timeout` in `stats.json`, and is named in a stderr warning (`--parse-policy strict` fails the build instead). Enforced by killing the parse worker, so it holds even though tree-sitter cannot be interrupted; Linux workers also have their address space capped, and a file that exhausts it or crashes the parser is counted as `skipped_parse_crash`. `0` turns the time budget off. Deliberately not a `.repo2graph.toml` key: the repository being indexed must not be able to lift it. |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
 | `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
@@ -491,13 +492,13 @@ others do:
 
 - **`0` means unlimited** for every numeric ceiling (`--max-files`, `--max-nodes`,
   `--max-edges`, `--max-bytes`, `--max-chunks`, `--max-memory-mb`,
-  `--max-build-seconds`, the budgets). Three flags give `0` a different job, and
+  `--max-build-seconds`, `--parse-timeout`, the budgets). Three flags give `0` a different job, and
   their help says so: `--jobs 0` is one worker per CPU, `github --depth 0` is full
   history, and `--viz-nodes 0` draws an empty map (`--viz-nodes all` is the
   unlimited spelling).
 - **Units are part of the meaning.** Budgets are characters unless the flag says
-  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`
-  and `--max-build-seconds` are seconds. Numbers must be finite and `>= 0`.
+  tokens; `--max-file-mb` is megabytes; `--max-bytes` is bytes; `--lock-timeout`,
+  `--max-build-seconds` and `--parse-timeout` are seconds. Numbers must be finite and `>= 0`.
 - **Lists are repeatable flags** (`--secret-keyword a --secret-keyword b`), except
   `--formats`, which takes one comma-separated value.
 - **A renamed flag keeps its old name** as an alias, so scripts do not break.

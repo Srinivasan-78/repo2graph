@@ -199,6 +199,23 @@ rather than going quietly stale:
 | A fresh clone, whose mtimes all moved, does not read as stale | `test_freshness_ignores_a_touched_but_unchanged_file` |
 | A build does not index its own output directory | `test_freshness_does_not_count_the_index_as_added_source` |
 
+### Parse budget
+
+A file's parse can be far costlier than its size suggests: `x = a<b<a<b<...;` as C++ is quadratic
+in tree-sitter's time and memory, and 300 KB of it exhausted 13.8 GB. tree-sitter cannot be
+interrupted from Python, so `parsepool.py` runs parses that can be expensive in worker processes and
+kills a worker whose file runs over `--parse-timeout` (10 s by default; the slowest real file across
+the five benchmark corpora took 0.74 s). On Linux a worker's address space is capped too, so a
+runaway allocation crashes only that worker, and the parent re-runs the files in flight one at a time
+to pin the crash on the file that caused it. Either way the file keeps its node, contributes no
+symbols, is counted (`skipped_parse_timeout`, `skipped_parse_crash`) and is never cached. A parallel
+build supervises every file; a serial one parses files up to 16 KB in-process, where a parse over
+budget is discarded after the fact rather than interrupted.
+
+The budget is the one input to the graph that is not a function of the tree: a file that runs over
+it on a slow machine and under it on a fast one indexes differently. It is set an order of magnitude
+above any real file so that this never happens outside an adversarial input.
+
 ### Provenance recorded in the manifest
 
 `manifest.json` records where the index came from. Two top-level keys carry it:
@@ -439,6 +456,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `events.py` | 160 | Structured event sink. |
 | `edgemeta.py` | 158 | Edge citation formatting. |
 | `limits.py` | 141 | Shared numeric ceilings. |
+| `parsepool.py` | 244 | Supervised parse workers: the per-file parse budget, the Linux worker memory cap, and pinning a crash on the file that caused it. A leaf. |
 
 **If you add a module, make it a leaf.** `security.py`, `cache.py` and `lock.py` import nothing
 from the package, which is why they are the easiest modules here to change safely.

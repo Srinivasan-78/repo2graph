@@ -27,6 +27,14 @@ from .edgemeta import (
     tree_sitter_method,
 )
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+from .parsepool import (
+    CRASH,
+    INPROCESS_MAX_BYTES,
+    PARSE_TIMEOUT_S,
+    TIMEOUT,
+    claim_slot,
+    supervised_map,
+)
 from .parse import (
     JAVA_IMPORT_RE,
     PY_FROM_IMPORT_RE,
@@ -1455,7 +1463,7 @@ _STD_INPUT_HANDLE = 0xFFFFFFF6  # (DWORD)-10
 _STD_OUTPUT_HANDLE = 0xFFFFFFF5  # (DWORD)-11
 
 
-def silence_worker_io() -> None:
+def silence_worker_io(watch: Any = None) -> None:
     """Detach a parse worker from the stdin/stdout it inherited (#90).
 
     Runs as the `ProcessPoolExecutor` initializer, i.e. *inside* the worker and
@@ -1477,7 +1485,13 @@ def silence_worker_io() -> None:
     Every step is best effort: a worker that cannot open devnull must still
     parse files. Nothing here raises, because an initializer that raises breaks
     the pool for every task.
+
+    `watch` is the supervisor's shared array (parsepool.py, #81): the worker
+    claims a slot in it, so the parent can see which file it is on and kill it
+    when that file runs over the parse budget.
     """
+    if watch is not None:
+        claim_slot(watch)
     try:
         devnull = os.open(os.devnull, os.O_RDWR)
     except OSError:
@@ -1523,35 +1537,122 @@ def parse_all(files, jobs: int, config=None):
     Every worker runs `silence_worker_io` first, so the pool is safe to start
     from a process whose stdin/stdout are a protocol stream rather than a
     terminal -- which is what `repo2graph-mcp`'s auto-build is (#90).
+
+    Workers are supervised (parsepool.py, #81): a file whose parse runs over
+    `config.parse_timeout`, or takes its worker down, is skipped and counted
+    rather than allowed to stall or exhaust the build. A serial build parses
+    small files in-process and still sends anything over INPROCESS_MAX_BYTES to
+    a worker, because that is where a parse can no longer be cheap.
     """
     jobs = resolve_jobs(jobs)
+    timeout = PARSE_TIMEOUT_S if config is None else config.parse_timeout
     items = [(rel, abspath, EXT_LANG.get(abspath.suffix.lower()), config) for rel, abspath in files]
-    if jobs == 1 or len(items) < PARALLEL_MIN_FILES:
-        return [_read_and_parse(i) for i in items]
-    import concurrent.futures
-
-    try:
-        # Note: accessed as concurrent.futures.ProcessPoolExecutor to allow monkeypatching in tests:
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=jobs, initializer=silence_worker_io
-        ) as pool:
-            return list(
-                pool.map(_read_and_parse, items, chunksize=max(1, len(items) // (jobs * 8)))
+    if jobs > 1 and len(items) >= PARALLEL_MIN_FILES:
+        pooled = list(range(len(items)))
+    else:
+        pooled = [
+            i for i, (_, abspath, _, _) in enumerate(items) if _size(abspath) > INPROCESS_MAX_BYTES
+        ]
+    results: list[Any] = [None] * len(items)
+    if pooled:
+        try:
+            outcomes = supervised_map(
+                _read_and_parse,
+                [items[i] for i in pooled],
+                min(jobs, len(pooled)),
+                timeout,
+                silence_worker_io,
             )
-    except ParseError:
-        # A strict-policy failure is the worker doing its job, not a broken
-        # pool -- falling through to the serial fallback below would just
-        # re-parse every file a second time and raise this same error again.
-        raise
-    except Exception as exc:  # noqa: BLE001 - resilience boundary: process pool execution failure falls back to serial
-        from .events import reraise_if_debug
+            for i, outcome in zip(pooled, outcomes):
+                results[i] = _settle(items[i], outcome, timeout)
+        except ParseError:
+            # A strict-policy failure is the worker doing its job, not a broken
+            # pool -- falling through to the serial fallback below would just
+            # re-parse every file a second time and raise this same error again.
+            raise
+        except Exception as exc:  # noqa: BLE001 - resilience boundary: process pool execution failure falls back to serial
+            from .events import reraise_if_debug
 
-        reraise_if_debug(exc)
-        # No fork / no POSIX semaphores to build on, a BrokenProcessPool, a
-        # worker ImportError, or a pickling failure on the call or its result:
-        # the comment above promises a serial fallback, so honour it for all of
-        # them rather than aborting the whole build.
-        return [_read_and_parse(i) for i in items]
+            reraise_if_debug(exc)
+            # No fork / no POSIX semaphores to build on, a pool that broke before
+            # parsing anything, a worker ImportError, or a pickling failure on
+            # the call or its result: parse in-process rather than abort the
+            # build -- but say so, because in-process the budget cannot stop a
+            # parse, only discard it afterwards.
+            diagnostic(
+                f"repo2graph: warning: parse workers unavailable ({type(exc).__name__}); "
+                "parsing in-process, where the per-file parse budget cannot interrupt a parse"
+            )
+            results = [None] * len(items)
+    for i, item in enumerate(results):
+        if item is None:
+            started = time.monotonic()
+            res = _read_and_parse(items[i])
+            results[i] = _settle(items[i], (res, time.monotonic() - started), timeout)
+    if getattr(config, "parse_policy", "best-effort") == "strict":
+        for rel, lang, read in results:
+            if read is not None and read[2] is not None and read[2].parse_skipped:
+                raise ParseError(
+                    f"Strict parse policy: {_skip_reason(read[2], timeout)} on '{rel}'"
+                )
+    return results
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.lstat().st_size
+    except OSError:
+        return 0
+
+
+def _settle(item, outcome, timeout: float):
+    """`parse_all`'s result for one file, from what its parse came back with.
+
+    `outcome` is `(result, seconds)` or parsepool's TIMEOUT / CRASH marker. A
+    parse that finished but over budget is discarded the same as one that had
+    to be killed, so where the deadline is noticed never changes the output.
+    """
+    if outcome in (TIMEOUT, CRASH):
+        return _abandoned(item, outcome)
+    res, elapsed = outcome
+    rel, lang, read = res
+    if timeout > 0 and elapsed > timeout and read is not None and read[2] is not None:
+        skipped = ParsedFile(lang=read[2].lang, symbols=[], imports=[], parse_skipped=TIMEOUT)
+        return rel, lang, (read[0], read[1], skipped, read[3])
+    return res
+
+
+def _abandoned(item, reason: str):
+    """The result for a file whose worker was killed or died under it (#81).
+
+    Read again here because the bytes died with the worker. Size, line count
+    and digest come out exactly as a finished parse reports them, so the file
+    node is the one a parse would have made; the language is settled from the
+    first slice, as `_chunk_and_parse` settles it for a file too big to hold.
+    """
+    rel, abspath, lang, config = item
+    block = getattr(config, "max_file_bytes", 0) or 1_500_000
+    hasher = hashlib.sha256()
+    size = newlines = 0
+    head = b""
+    try:
+        with _safe_open(abspath) as fh:
+            while chunk := fh.read(block):
+                head = head or chunk
+                hasher.update(chunk)
+                size += len(chunk)
+                newlines += chunk.count(b"\n")
+    except OSError:
+        return rel, lang, None
+    lang = refine_lang(lang, abspath.suffix.lower(), head)[0]
+    pf = ParsedFile(lang=lang or "", symbols=[], imports=[], parse_skipped=reason)
+    return rel, lang, (size, newlines + 1, pf, hasher.hexdigest())
+
+
+def _skip_reason(pf, timeout: float) -> str:
+    if pf.parse_skipped == TIMEOUT:
+        return f"parse exceeded the {timeout:g}s budget (--parse-timeout)"
+    return "parse crashed or exhausted its worker's memory"
 
 
 def _within_byte_budget(files, budget: int, g: "Graph"):
@@ -1723,7 +1824,10 @@ def build(
             continue
         size, lines, pf, digest = read
         g.file_hashes[rel] = digest
-        g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
+        skipped = pf is not None and pf.parse_skipped
+        if not skipped:
+            # Never cached: a later build, maybe with a bigger budget, retries it.
+            g.parse_cache[rel] = cache_entry(lang, size, lines, pf, digest)
         ext = Path(rel).suffix.lower()
         if ext == ".h":
             # Auditable record of the #377 content sniff: how many `.h` files
@@ -1762,6 +1866,14 @@ def build(
         g.add_edge(parent, fid, "CONTAINS", method=METHOD_FILESYSTEM)
 
         if pf is None:
+            continue
+        if skipped:
+            # Like an oversized file: a file node, no symbols, and a count (#81).
+            g.stats[f"skipped_parse_{pf.parse_skipped}"] += 1
+            diagnostic(
+                f"repo2graph: warning: '{rel}' indexed without symbols: "
+                + _skip_reason(pf, getattr(config, "parse_timeout", PARSE_TIMEOUT_S))
+            )
             continue
         if getattr(pf, "grammar_unavailable", False):
             # Counted, not parsed: a supported language whose grammar would not

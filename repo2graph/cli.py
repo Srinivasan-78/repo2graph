@@ -30,6 +30,7 @@ from .events import encodable, write_safe
 from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
+from .parsepool import PARSE_TIMEOUT_S
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -220,6 +221,7 @@ def cmd_build(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
         output_dir=str(outdir),
     )
     cache = None
@@ -447,6 +449,7 @@ def cmd_github(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
     )
     lock_timeout = getattr(args, "lock_timeout", 60.0)
     try:
@@ -1712,6 +1715,17 @@ def main(argv=None):
         choices=("best-effort", "warn", "strict"),
         default="best-effort",
         help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
+    build_out.add_argument(
+        "--parse-timeout",
+        type=_nonneg_float,
+        default=PARSE_TIMEOUT_S,
+        metavar="SECONDS",
+        help=(
+            f"wall-clock budget per file's parse (default: {PARSE_TIMEOUT_S:g}); a file over it "
+            "keeps its file node, gets no symbols and is counted as skipped_parse_timeout "
+            "(0 = no budget)"
+        ),
     )
 
     b = sub.add_parser(

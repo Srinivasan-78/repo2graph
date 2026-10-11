@@ -16,6 +16,7 @@ from tree_sitter import Node, Parser
 
 from .events import diagnostic
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
+from .parsepool import PARSE_TIMEOUT_S
 from .security import MAX_QUALNAME_CHARS, clean_identifier, has_unsafe_path_chars
 
 if TYPE_CHECKING:
@@ -513,6 +514,9 @@ class BuildConfig:
     # Opt-in READS / WRITES / REFERENCES edges (#397). Off by default, so the
     # default graph, and every artifact made from it, is unchanged.
     reference_edges: bool = False
+    # Wall-clock budget for one file's parse, in seconds; 0 = none (#81). See
+    # parsepool.py for why it needs a worker process and how it was calibrated.
+    parse_timeout: float = PARSE_TIMEOUT_S
     # The directory this build writes its artifacts to. When it lies inside
     # the indexed root, discovery must never index it: `git ls-files -co`
     # lists untracked files and os.walk sees everything, so without this a
@@ -1126,6 +1130,10 @@ class ParsedFile:
     # chars and `import_details[].raw` is a cleaned form, so the strings do
     # not always agree.
     import_lines: list[int] = field(default_factory=list)
+    # Why this file has no symbols although its grammar loaded: "timeout" when
+    # its parse ran over BuildConfig.parse_timeout, "crash" when it took its
+    # worker down (#81). Empty for every file that was actually parsed.
+    parse_skipped: str = ""
 
 
 def _text(src: bytes, node) -> str:

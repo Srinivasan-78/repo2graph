@@ -1084,18 +1084,13 @@ for, so picking one up starts from a decision rather than a blank page.
 ### Deferred engineering items
 
 Found during earlier security and architecture reviews and deliberately deferred. Every row here was
-re-checked against the code on 2026-09-30; a row that had shipped was deleted rather than annotated,
+re-checked against the code on 2026-10-11; a row that had shipped was deleted rather than annotated,
 because a backlog that lists finished work stops being read. Still verify before you start — this is
 a record of past state, like any other document.
 
 | Item | Size | Why deferred |
 |---|---|---|
-| **No per-file tree-sitter parse timeout** | M | `MAX_BYTES` bounds file size, not parse time. `tree_sitter.Parser.set_timeout_micros` support varies across grammar bindings in `tree-sitter-language-pack`; a wrong per-language timeout risks truncated parses on legitimately large generated files, with no fixture to prove the value is well-calibrated. |
-| **Secret-path denylist (`security.py` `SECRET_KEYWORDS`/`SECRET_DIR_NAMES`, re-exported from `query.py`) is not user-configurable** | S | Solid and independent of `.gitignore`, but hardcoded — an org with nonstandard secret-file naming can't extend it without a code change. Needs a CLI flag / config file design, not a quick patch. |
-| **No enforced cap on total graph nodes/edges/files** | M | `graph.py`'s `max_files` is opt-in and defaults unbounded. `Graph.nodes`/`edges` are fully in-memory with no size guard, unlike the already-streamed chunk emission path. |
 | **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: exploiting it requires local code execution on the same host, and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. |
-| **No benchmark above 6,000 files** | L | The largest measured tree is VS Code at 6,000 files (`benchmarks/results.json`, and each `examples/<id>/README.md`). Nothing has been run at 50k/100k+, so the scaling curve past that point is unmeasured rather than known. |
-| **A real `sentence-transformers` smoke test, opt-in and network-gated** | S | Every embedder in the suite is `StubEmbedder`. `default_embedder()` is tested only for its *failure* message, so nothing proves the real wrapper's `model_id`/`dim` agree with what `vectors.meta.json` records — the exact pair `fuse_ok` compares. |
 
 Issues routing the work deferred during earlier stabilization passes:
 

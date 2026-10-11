@@ -774,7 +774,7 @@ def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch)
         def __exit__(self, *exc):
             return False
 
-        def map(self, fn, items, chunksize=1):
+        def submit(self, fn, *args):
             raise ParseError("f0.py: 3 syntax error(s) under --parse-policy strict")
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", StrictFailurePool)

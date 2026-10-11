@@ -213,6 +213,21 @@ makes keeping it current a release-blocking step rather than a good intention.
   `tests/test_version_surfaces.py` walks every test's AST for assertions that spell out the
   current version, so the next one fails on its own PR instead.
 
+### Security
+
+- **A per-file parse budget that can stop a parse (#81, closes the #79 audit backlog).** A
+  300 KB C++ file of `x = a<b<a<b<...;` — well under the 1.5 MB size cap — made tree-sitter
+  grow quadratically in time and memory (32 KB: 1 s and 640 MB; 300 KB: OOM-killed at 13.8 GB),
+  so one hostile file could take down the machine building the index. tree-sitter cannot be
+  interrupted from Python (no timeout in py-tree-sitter 0.25+, `progress_callback` ignored for
+  bytes and crashing with a reader, the GIL held throughout), so parses that can be expensive now
+  run in supervised workers: the parent kills a worker whose file runs over `--parse-timeout`
+  (default 10 s; the slowest of 18,608 files across the five benchmark corpora took 0.74 s), and on
+  Linux each worker's address space is capped, so a runaway allocation kills only that worker.
+  Such a file keeps its file node, gets no symbols, is counted as `skipped_parse_timeout` or
+  `skipped_parse_crash` and named on stderr, and is never cached, so the next build retries it.
+  Serial builds parse small files in-process as before and send files over 16 KB to a worker.
+
 ### Removed
 
 - `repo2graph.mcp.IMPACT_FORMATS`, `fetch.GITHUB_SPEC` and `mcp.guardrails._scrub_paths`, all
