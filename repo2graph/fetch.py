@@ -72,9 +72,6 @@ def _github_spec_regex() -> re.Pattern[str]:
     )
 
 
-GITHUB_SPEC = _github_spec_regex()
-
-
 # A refname is one or more "/"-separated components. Each component must open
 # with an alphanumeric or "_", which is what makes the pattern a security check
 # and not just a spelling check: it forbids a leading "-" on the whole value (so
@@ -365,6 +362,7 @@ def index_github(
     ref: str | None = None,
     depth: int = 0,
     git_history: int = 0,
+    git_authors: bool = False,
     formats: str = "jsonl,graphml,cypher,overview,html",
     include: list[str] | None = None,
     exclude: list[str] | None = None,
@@ -400,6 +398,7 @@ def index_github(
             include=include,
             exclude=exclude,
             git_history=git_history,
+            git_authors=git_authors,
             max_files=max_files,
             jobs=jobs,
             config=config,

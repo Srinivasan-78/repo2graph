@@ -408,6 +408,25 @@ def test_explain_path_agrees_with_build_and_names_the_matching_glob(tmp_path, ca
     assert res["reason"].count("'") == 2, f"reason should name one glob: {res['reason']}"
 
 
+@pytest.mark.parametrize(
+    "flags, rule",
+    [
+        (["--exclude-dir", "gen"], "skip_dir"),
+        (["--secret-dir", "gen"], "secret_file"),
+        (["--max-file-mb", "0.1"], "too_large"),
+    ],
+)
+def test_explain_path_takes_builds_path_flags(tmp_path, capsys, flags, rule):
+    """Every flag `build` decides inclusion with, explain-path accepts too (#461)."""
+    src = tmp_path / "proj"
+    (src / "gen").mkdir(parents=True)
+    (src / "gen" / "big.py").write_text("X = 1\n" * 40_000, encoding="utf-8")
+
+    main(["explain-path", "gen/big.py", "-r", str(src), "--json", *flags])
+    res = json.loads(capsys.readouterr().out)
+    assert res["included"] is False and res["rule"] == rule, res
+
+
 def test_exclude_group_help_prints_every_group_and_exits_zero(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["build", ".", "-o", "unused", "--exclude-group", "help"])

@@ -1302,6 +1302,19 @@ def test_rag_cli_answer_integration(monkeypatch, rag_out):
     assert call["pack"]["query"] == "auth query"
 
 
+def test_rag_answer_exits_3_when_a_bound_cut_the_answer_short(monkeypatch, rag_out):
+    """#285: a partial answer is printed, but the exit status says it is partial."""
+    import repo2graph.answer as answer
+
+    def fake_stream_answer(pack, model=None, provider=None, **kwargs):
+        text = answer.AnswerText("half an ans")
+        text.complete = False
+        return text
+
+    monkeypatch.setattr(answer, "stream_answer", fake_stream_answer)
+    assert main(["rag", "-o", str(rag_out), "--answer", "auth query"]) == 3
+
+
 def test_score_rrf_with_precomputed_vectors(rag_index):
     """Item 7 (S-9): score_rrf with precomputed vectors dict ranks high-similarity chunks higher."""
     numpy_was_loaded = "numpy" in sys.modules

@@ -28,6 +28,7 @@ from .viz import (
     NODE_COLORS,
     NODE_TYPES,
     OTHER_COLOR,
+    REFERENCE_EDGE_TYPES,
     node_label,
     write_html,
 )
@@ -650,6 +651,7 @@ _SKIP_STAT_LABELS = (
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
     ("skipped_secret", "secret / credential files"),
+    ("skipped_secret_dir_source", "of which source files under secret-named directories"),
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case-colliding files"),
     ("skipped_unreadable", "unreadable files"),
@@ -953,6 +955,11 @@ def write_manifest(
         (n for n in g.nodes.values() if n.get("entrypoint")),
         key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
     )
+    present = {e.get("type") for e in getattr(g, "edges", ())}
+    edge_types = {
+        **EDGE_TYPES,
+        **{k: v for k, v in REFERENCE_EDGE_TYPES.items() if k in present},
+    }
     cfg = getattr(g, "config", None)
     if cfg and getattr(cfg, "include_secrets", False):
         secret_filter_policy = "include-secrets"
@@ -1013,7 +1020,7 @@ def write_manifest(
             for name in sorted({w.split("/", 1)[1] for w in written} & set(FILE_NOTES))
         },
         "node_types": NODE_TYPES,
-        "edge_types": EDGE_TYPES,
+        "edge_types": edge_types,
         "edge_fields": EDGE_FIELDS,
         "edge_schema_version": EDGE_SCHEMA_VERSION,
         "id_grammar": ID_GRAMMAR,
@@ -1077,7 +1084,7 @@ def write_manifest(
             "confidence_semantics": {k: _fanout(v, mcc) for k, v in CONFIDENCE_SEMANTICS.items()},
             # Same EDGE_TYPES dict manifest.json's top-level "edge_types" key
             # already carries -- one authored copy, not a second one to drift.
-            "edge_type_meanings": EDGE_TYPES,
+            "edge_type_meanings": edge_types,
             # Same labels write_overview_human's "## What was skipped" section
             # counts against (_SKIP_STAT_LABELS) -- what's excluded by policy,
             # not just what this particular build happened to skip.

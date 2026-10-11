@@ -70,6 +70,8 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude` | none | Glob(s) to skip, e.g. `'**/test/**'`. Patterns are globs, not gitignore rules: a trailing slash is stripped and a pattern with no `/` left matches a *file name* at any depth, so `--exclude tests/` matches only a file literally named `tests` and still indexes the directory. Spell a directory as `dir/**` (or use `--exclude-dir NAME`). |
 | `--parse-policy` | `best-effort` | AST error handling policy: `best-effort` (log and continue), `warn` (emit stderr warnings), `strict` (fail build on syntax error). |
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
+| `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
+| `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
 | `--max-bytes` | `0` (no limit) | Stop once discovered files exceed N bytes in total. Keeps a *prefix* of discovery order, so the selection is reproducible; a file that would cross the budget stops the build rather than being skipped over. |
@@ -79,9 +81,9 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--max-chunks` | `0` (no limit) | Keep at most N retrieval chunks; further chunks are dropped. |
 | `--max-memory-mb` | `0` (no limit) | Stop or truncate when estimated memory consumption exceeds N MB. |
 | `--max-build-seconds` | `0` (no limit) | Stop or truncate when wall-clock build duration exceeds N seconds. |
-| `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
+| `--limit-policy` | `warn` | What a reached limit does. `warn` (default) says so on stderr once per limit; `truncate` cuts quietly; `fail` aborts immediately with `GraphLimitExceeded`. With no policy given, `--max-nodes` alone fails rather than warns. All record the cut under `limits_hit` in `stats.json` and mark the index as incomplete in `manifest.json`. |
 | `--jobs` | `0` (auto) | Parallel workers. Auto means one per core, up to 8. |
-| `--viz-nodes` | `300` | Node cap in `graph.html`. `0` draws an empty graph; `all` draws every node. |
+| `--viz-nodes` | `300` | Node cap in `graph.html`'s detail view. `0` draws an empty graph; `all` draws every node, up to the page's 12 MB limit. Above the cap the page opens on a directory summary of every node (see `map`). |
 | `--no-chunks` | off | Skip the retrieval chunks entirely. |
 | `--max-call-candidates` | `5` | When a call's name matches several symbols and none can be picked by scope, it fans out to at most this many `CALLS` edges, each at confidence 1/n (n = the edges kept); further candidates get no edge. Minimum 1. Recorded as `max_call_candidates` in `manifest.json`. |
 | `--max-file-mb` | `1.5` | Files larger than this are skipped (or chunked). Minimum is 0.1 MB. |
@@ -90,6 +92,9 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--exclude-group` | none | Exclude a named group of paths: `generated`, `vendor`, `build`, `dependencies`, `sensitive`, or `all`. Repeatable, composable with `--exclude`. `--exclude-group help` prints what each covers and builds nothing. See **[docs/architecture.md](architecture.md#what-gets-excluded-and-by-which-layer)**. |
 | `--chunk-large-files` | off | Instead of skipping, split files larger than `--max-file-mb` into parseable chunks. |
 | `--incremental` | off | Reuse parse results for files whose content hash is unchanged. |
+| `--watch` | off | After building, keep watching and rebuild incrementally when the tree changes. `--watch-interval` (default 1 s, raised on large trees) and `--watch-quiet` (default 1 s of stillness before rebuilding). |
+| `--neo4j-uri` | unset | After building, push `graph.cypher` to this Neo4j HTTP endpoint, e.g. `http://localhost:7474` (Memgraph serves the same API). Needs `cypher` in `--formats`. Credentials come from `NEO4J_USER` (default `neo4j`) and `NEO4J_PASSWORD`, never a flag. Statements go in batches of 500; every one is a `MERGE` behind a uniqueness constraint, so pushing again is safe, and a failure says how many were applied. |
+| `--neo4j-database` | `neo4j` | Database to push into. |
 | `--include-secrets` | off | Explicitly opt in to indexing secret/credential files (excluded by default). |
 | `--secret-policy` | `redact-match` | Inline content secret handling: `redact-match` (default, line-preserving), `exclude-file`, `warn-only`, `off`. |
 | `--secret-keyword` | none | Custom substring keyword for secret file matching (repeatable). |
@@ -151,6 +156,19 @@ The build report gains an `incremental` block when the flag is on:
 { "incremental": { "cached": 812, "reparsed": 3 } }
 ```
 
+Every build report also carries a `performance` block, for tracking build cost
+over time. It lives in the report rather than `stats.json`, which stays
+byte-identical between a full and an incremental build:
+
+```json
+{ "performance": { "build_seconds": 1.09, "write_seconds": 4.55, "peak_rss_mb": 170.0,
+                   "source_bytes": 7316338, "output_bytes": 40010607, "chunk_text_ratio": 1.43 } }
+```
+
+`peak_rss_mb` covers the parse workers too and is `null` on Windows.
+`chunk_text_ratio` is chunk text over source size: chunk overlap and part
+headers repeat some lines, and on this repository that costs 43%.
+
 **When a full rebuild is still required.** The cache is keyed on file content, so
 it cannot see a change in how content is *interpreted*. Rerun without the flag
 after upgrading repo2graph, after a `tree-sitter-language-pack` upgrade that
@@ -159,6 +177,20 @@ a full build overwrites the cache and puts you back on a known-good footing.
 Cache entries written by a different cache format are ignored automatically, as
 is a cache that is missing, unreadable or corrupt; each of those degrades to a
 full build rather than to a wrong one.
+
+### `--watch`
+
+`repo2graph build . --watch` builds once, then polls the tree and rebuilds with
+`--incremental` whenever it changes, printing each build's report as it goes.
+A change starts a quiet period that every further change restarts, so a save,
+a `git checkout` or a formatter run touching fifty files is one rebuild. Polling
+lists the tree the way discovery does (the output directory, `.git`,
+`node_modules` and the other skipped directories left out, dotfiles and `~`
+backups ignored) and compares sizes and modification times: standard library
+only, a stat per file. Trees over 50,000 files are polled less often, one second
+per 50,000 files. Ctrl-C stops it; a rebuild that is interrupted leaves the
+previous index in place and no lock behind, because it runs under the same build
+lock and atomic swap as any build.
 
 ### Config file
 
@@ -187,7 +219,7 @@ Keys are spelled like the flags they stand in for: `include`, `exclude`,
 `exclude-dir`, `secret-keywords` and `secret-dirs` take lists of strings;
 `git-history` and `max-call-candidates` integers; `viz-nodes` an integer or
 `"all"`; `max-file-mb` a number; `secret-policy` one of the `--secret-policy`
-choices; `chunk-large-files` and `include-vendor` `true`/`false`. A list given
+choices; `chunk-large-files`, `include-vendor`, `git-authors` and `reference-edges` `true`/`false`. A list given
 on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file
@@ -231,6 +263,7 @@ functions around each answer come along too.
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to read. |
+| `--index` | unset | Search this index; repeat it to search several repositories at once (replaces `-o`). Results are merged by rank, held to one budget, and each names its repository: `billing:invoice.py`, `[cite: billing:invoice.py:1-2]`. A missing index is skipped with a warning. Not with `--vectors`. |
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **chunk text only**. |
@@ -289,10 +322,13 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to read, or to write when a target has to be indexed first. |
+| `--index` | unset | Search this index; repeat it to search several repositories at once (replaces `-o`). Results are merged by rank, held to one budget, and each names its repository: `billing:invoice.py`, `[cite: billing:invoice.py:1-2]`. A missing index is skipped with a warning. Not with `--vectors`. |
 | `-k` | `8` | Pieces the text search starts with. |
 | `--hops` | `1` | Steps to walk along the arrows. |
 | `--budget` | `24000` | Character budget for the **whole** pack. `0` means no budget. |
 | `--budget-tokens` | unset | Token budget for the **whole** pack. When given it replaces `--budget` as the unit. |
+| `--tokenizer` | `heuristic` | How `--budget-tokens` counts: `heuristic` (4 characters per token), `conservative` (3 per token, over-counts most text) or `tiktoken[:ENCODING]` (exact for that BPE encoding, default `o200k_base`; needs `pip install tiktoken`, which downloads the encoding on first use). The pack's `token_count_method` names the one used. |
+| `--token-margin` | `0` | Fill the pack to `--budget-tokens / (1 + FRACTION)`, headroom for a counter that under-counts a model's real tokenizer. Reported as `token_safety_margin`. |
 | `--context-budget-chars` | — | Alias of `--budget`: rendered context, in characters. |
 | `--context-budget-tokens` | — | Alias of `--budget-tokens`: rendered context, in estimated tokens. |
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
@@ -357,7 +393,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to embed. |
-| `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. |
+| `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. Append `@<commit>` to pin the Hugging Face revision; the pin is part of the model id stored with the vectors, so the query side names it the same way. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
 | `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. `rag_extra_installed` is always `true`/`false`, even for an index with no vectors. |
@@ -384,6 +420,22 @@ repo2graph map -o .r2g --viz-nodes 80    # redraw graph.html with fewer dots
 repo2graph stats -o .r2g                 # raw stats.json, verbatim (default)
 repo2graph stats -o .r2g --format text   # human-readable quality summary
 ```
+
+**When the graph is bigger than `--viz-nodes`**, `graph.html` says so in a banner
+on the page itself (how many of how many nodes it draws, and by what rule), and
+opens on a **Directories** view instead: every node in the graph counted in one of
+at most 60 directory groups, with the `CALLS`, `IMPORTS`, `INHERITS` and other
+relationships between two groups drawn as one link whose width is how many there
+are. The groups are cut by carving out the biggest directory, wherever it is,
+until there are 60; a name ending `/…` is the rest of a directory whose biggest
+parts are shown separately. Click a group to see its size and best-connected
+members, then **Show its nodes** to switch to the detail view filtered to it. The
+legend filters by node type, relationship and language in either view.
+
+The embedded data is capped at 12 MB: past that (`--viz-nodes all` on a large
+repository) the detail view is halved until the page fits, and the banner says it
+was cut for size. The page is still deterministic: the same graph writes the same
+bytes.
 
 `stats` prints `agent/stats.json` verbatim by default — that has always been the
 default, and `--json` is just an explicit way to ask for it. Pass `--format text`
@@ -495,11 +547,17 @@ LLM provider over HTTPS, and streams the grounded answer back to stdout.
   `.env`, `.pem`, `.key`, keystores and friends are excluded. This is a guard, not
   a guarantee: a secret pasted into an ordinary `.py` file is still ordinary
   source and still goes.
-- **Pick the provider deliberately.** With no `--provider`, the first of
-  `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OLLAMA_HOST` that is
-  set wins. If several are set you may not be sending where you think.
-  `--provider ollama` with `OLLAMA_HOST` pointed at your own machine keeps
-  everything local.
+- **Pick the provider deliberately.** With no `--provider`, the one of
+  `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `OLLAMA_HOST` that is set is used. If several are set it stops and asks for
+  `--provider` rather than guess where your code goes. `--provider ollama` with
+  `OLLAMA_HOST` pointed at your own machine keeps everything local; a plain-HTTP
+  `OLLAMA_HOST` on another host gets a warning.
+- **Every request is bounded.** 30 s to connect, 300 s between bytes, 600 s and
+  8 MiB for the whole stream, 200,000 characters of answer text. A bound that cuts
+  an answer short says so on stderr and makes `rag` exit with status 3, so a
+  script cannot mistake a partial answer for a whole one. Provider error bodies
+  are echoed with the key and anything secret-shaped redacted.
 - **Zero SDKs.** All four providers are spoken to with the standard library's
   `urllib`. Nothing extra to install, and nothing extra with an opinion about your
   credentials.
@@ -509,6 +567,40 @@ Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`
 `claude-haiku-5-5` thinking is turned off, since thinking tokens would come out
 of the 2,048-token answer. `--answer` also refuses a pack that leaves no room for
 that answer in a default model's context window.
+
+## `diff` — what changed between two builds
+
+```bash
+repo2graph diff OLD_INDEX NEW_INDEX [--format text|json] [--include-confidence] [--limit N]
+```
+
+Compares two index directories, for example `.r2g` built on `main` and on a
+branch. It reports symbols added and removed, symbols renamed or moved, edges
+added and removed, and every symbol whose callers changed:
+
+```
+symbols: +1 -1, 1 renamed, 1 possible renames; 1 files moved
+edges: +3 -2 (0 confidence-only changes not counted)
+
+callers changed:
+  sym:pkg/auth.py::validate_token: +sym:pkg/auth.py::audit
+```
+
+- **A move is a rename, not a delete and an add.** A symbol id contains its
+  path, so moving a file renames every symbol in it. A removed and an added
+  symbol of the same kind with an identical body are reported as renamed, and
+  their edges are compared as one symbol's. The same name with a changed body
+  is a *possible* rename, listed separately and never used to hide an edge
+  change. A file whose renamed symbols all went to one new file is a moved file.
+- **Confidence-only edge changes are not changes.** One new `get` anywhere
+  shifts the `1/n` confidence of every ambiguous `get` call. Those moves are
+  counted, and listed with `--include-confidence`.
+- **It reads indexes, not git refs.** Build the older revision into its own
+  directory first; `build --incremental` on a copy of the newer index makes
+  that cheap.
+
+The per-build `human/CHANGELOG.md` and the GitHub Action's job summary come
+from the same comparison, without the rename pairing.
 
 ## `index-status` — is this index current, and what is in it?
 

@@ -388,6 +388,7 @@ _SKIP_LABELS: tuple[tuple[str, str], ...] = (
     ("skipped_binary", "binary"),
     ("skipped_too_large", "over the size ceiling"),
     ("skipped_secret", "secret/credential paths"),
+    ("skipped_secret_dir_source", "of which source files under secret-named directories"),
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case collisions"),
     ("skipped_unreadable", "unreadable/inaccessible files"),

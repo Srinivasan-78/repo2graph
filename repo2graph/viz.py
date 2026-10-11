@@ -1,5 +1,6 @@
 """Interactive knowledge-graph map: one self-contained HTML file, no CDN, no build step."""
 
+import heapq
 import html
 import json
 import re
@@ -37,6 +38,25 @@ EDGE_WEIGHT = {
 }
 MAX_NODES = 300
 LABEL_CHARS = 15
+# A hard ceiling on the JSON embedded in graph.html (#305). Past it a browser
+# struggles to open the page at all, so the detail view is halved until the
+# page fits, and the page says that it was.
+MAX_PAGE_BYTES = 12_000_000
+# Relationships the directory summary adds up. Containment is the hierarchy
+# being summarised, not a relationship between directories.
+AGG_EDGE_TYPES = (
+    "CALLS",
+    "IMPORTS",
+    "INHERITS",
+    "CO_CHANGE",
+    "TESTS",
+    "READS",
+    "WRITES",
+    "REFERENCES",
+)
+AGG_TOP_MEMBERS = 8
+# Directory groups in the summary: past this a summary stops being one.
+AGG_MAX_DIRS = 60
 # Stdlib and third-party call targets triple the edge count and tell you little
 # about the repo itself, so the map opens without them; the legend turns them on.
 HIDDEN_NODE_TYPES = ["external"]
@@ -76,6 +96,14 @@ EDGE_TYPES = {
     ),
 }
 
+# Only with `build --reference-edges` (#397), and only listed in manifest.json
+# when the graph has them, so a default build's manifest is unchanged.
+REFERENCE_EDGE_TYPES = {
+    "READS": "symbol -> module-level variable/constant or class field it reads",
+    "WRITES": "symbol -> module-level variable (Python: under `global`) or class field it assigns",
+    "REFERENCES": "symbol -> class/interface/type it names in a type annotation",
+}
+
 
 def _trim(text: str, limit: int) -> str:
     text = " ".join(str(text).split())
@@ -87,14 +115,8 @@ def node_label(n: dict[str, Any]) -> str:
     return _trim(text, LABEL_CHARS)
 
 
-def select(
-    nodes: dict[str, Any], edges: list[dict[str, Any]], max_nodes: int = MAX_NODES
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Keep the max_nodes best-connected nodes, and the edges between them.
-
-    A force layout stops being readable long before a real repo stops having
-    nodes, so the map shows the hubs: rank by edge weight, drop the tail.
-    """
+def _scores(edges: list[dict[str, Any]]) -> dict[str, float]:
+    """Weighted degree per node id, by EDGE_WEIGHT."""
     # Edge weights are fractional (EDGE_WEIGHT), so this accumulates float
     # scores -- a plain dict, not Counter, which typeshed pins to int counts.
     score: dict[str, float] = defaultdict(float)
@@ -102,6 +124,18 @@ def select(
         w = EDGE_WEIGHT.get(e["type"], 1.0)
         score[e["src"]] += w
         score[e["dst"]] += w
+    return score
+
+
+def select(
+    nodes: dict[str, Any], edges: list[dict[str, Any]], max_nodes: int | None = MAX_NODES
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep the max_nodes best-connected nodes, and the edges between them.
+
+    A force layout stops being readable long before a real repo stops having
+    nodes, so the map shows the hubs: rank by edge weight, drop the tail.
+    """
+    score = _scores(edges)
     # `None` means no cap; an integer is taken literally, 0 included. 0 used to
     # mean "no cap" as well, which made the two most opposite intentions a
     # caller could have -- "draw everything" and "draw nothing" -- share one
@@ -121,8 +155,154 @@ def select(
     return kept_nodes, kept_edges
 
 
-def payload(g: Any, max_nodes: int = MAX_NODES) -> dict[str, Any]:
-    """The JSON the page draws: nodes, edges by index, legend counts."""
+def _home_dir(n: dict[str, Any]) -> str | None:
+    """The directory a node lives in; None for repo/module/external nodes."""
+    if n["type"] == "dir":
+        return str(n.get("path") or "")
+    if n["type"] in ("file", "symbol"):
+        return str(n.get("path") or "").rpartition("/")[0]
+    return None
+
+
+def _parent_dir(d: str) -> str | None:
+    if not d:
+        return None
+    return d.rpartition("/")[0]
+
+
+def _groups(dirs: Counter[str], max_dirs: int) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Partition directories into at most `max_dirs` groups, biggest directory first.
+
+    Starts with the whole tree as one group and repeatedly carves out the
+    biggest directory not yet carved (by node count) into a group of its own,
+    until the cap. A directory it is carved from keeps a group for what is
+    left in it, its own files and the subdirectories not carved out. So the
+    big parts of the tree are shown in detail wherever they are, small ones
+    stay whole, and every node is counted in exactly one group.
+
+    Returns:
+        (directory -> its group, group -> the subdirectories carved out of it).
+    """
+    under: Counter[str] = Counter()
+    children: dict[str, set[str]] = defaultdict(set)
+    for d, n in dirs.items():
+        cur: str | None = d
+        while cur is not None:
+            under[cur] += n
+            parent = _parent_dir(cur)
+            if parent is not None:
+                children[parent].add(cur)
+            cur = parent
+    groups = {""}
+    left = {"": under[""]}  # nodes each group still holds
+    carved: dict[str, list[str]] = defaultdict(list)
+
+    def group_of(d: str) -> str:
+        cur: str | None = d
+        while cur is not None and cur not in groups:
+            cur = _parent_dir(cur)
+        return cur if cur is not None else ""
+
+    heap = [(-under[k], k) for k in children.get("", ())]
+    heapq.heapify(heap)
+    shown = 1
+    while heap and shown < max_dirs:
+        _neg, d = heapq.heappop(heap)
+        host = group_of(_parent_dir(d) or "")
+        groups.add(d)
+        left[d] = under[d]
+        left[host] -= under[d]
+        carved[host].append(d)
+        # Carving everything out of a group replaces it rather than adding one.
+        shown += 0 if left[host] == 0 else 1
+        for k in children.get(d, ()):
+            heapq.heappush(heap, (-under[k], k))
+    return {d: group_of(d) for d in dirs}, {
+        g: sorted(kids) for g, kids in carved.items() if left[g] > 0
+    }
+
+
+def aggregate(g: Any, max_dirs: int) -> dict[str, Any] | None:
+    """The summary view (#305): one node per directory group, relationships added up.
+
+    Every node in the graph is counted in exactly one group, so nothing is
+    sampled; see `_groups` for how the tree is cut. None when the result is a
+    single group, which summarises nothing.
+    """
+    home = {nid: d for nid, n in g.nodes.items() if (d := _home_dir(n)) is not None}
+    to_group, carved = _groups(Counter(home.values()), max_dirs)
+    group = {nid: to_group[d] for nid, d in home.items()}
+    members: dict[str, list[str]] = defaultdict(list)
+    for nid in sorted(group):
+        members[group[nid]].append(nid)
+    if len(members) < 2:
+        return None
+
+    score = _scores(g.edges)
+    weight: Counter[tuple[str, str, str]] = Counter()
+    for e in g.edges:
+        if e["type"] not in AGG_EDGE_TYPES:
+            continue
+        a, b = group.get(e["src"]), group.get(e["dst"])
+        if a is not None and b is not None and a != b:
+            weight[(a, b, e["type"])] += 1
+    names = sorted(members)
+    index = {d: i for i, d in enumerate(names)}
+    deg: Counter[str] = Counter()
+    for a, b, _t in weight:
+        deg[a] += 1
+        deg[b] += 1
+
+    out_nodes = []
+    for d in names:
+        ns = [g.nodes[m] for m in members[d]]
+        files = [n for n in ns if n["type"] == "file"]
+        langs = Counter(
+            n["lang"] for n in files if n.get("lang") and n.get("file_type", "code") == "code"
+        )
+        top = sorted(
+            (n for n in ns if n["type"] in ("file", "symbol")),
+            key=lambda n: (-score.get(n["id"], 0.0), n["id"]),
+        )[:AGG_TOP_MEMBERS]
+        label = d.rsplit("/", 1)[-1] if d else "(root)"
+        item: dict[str, Any] = {
+            "id": f"agg:{d}",
+            "label": _trim(label + ("/…" if d in carved else ""), LABEL_CHARS),
+            "type": "dir",
+            "path": d,
+            "deg": deg[d],
+            "files": len(files),
+            "symbols": sum(1 for n in ns if n["type"] == "symbol"),
+            "lines": sum(int(n.get("lines") or 0) for n in files),
+            "top": [n.get("qualname") or n.get("path") or n["id"] for n in top],
+        }
+        if d in carved:
+            # These subdirectories have groups of their own; this one is the rest.
+            item["except"] = carved[d]
+        if langs:
+            item["lang"] = min(langs, key=lambda k: (-langs[k], k))
+        out_nodes.append(item)
+    edges = [
+        {"s": index[a], "t": index[b], "type": t, "w": w}
+        for (a, b, t), w in sorted(weight.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
+    return {
+        "nodes": out_nodes,
+        "edges": edges,
+        "nodeTypes": [["dir", len(out_nodes)]],
+        "edgeTypes": sorted(Counter(e["type"] for e in edges).items()),
+    }
+
+
+def payload(
+    g: Any, max_nodes: int | None = MAX_NODES, shrunk_from: int | None = None
+) -> dict[str, Any]:
+    """The JSON the page draws: nodes, edges by index, legend counts.
+
+    When the cap leaves nodes out, it also carries `sampled` (what was left
+    out and why, for the page's banner) and, where the tree has more than one
+    directory, `dirs`: the directory summary every node is counted in.
+    """
     nodes, edges = select(g.nodes, g.edges, max_nodes)
     index = {n["id"]: i for i, n in enumerate(nodes)}
     deg: Counter[str] = Counter()
@@ -142,7 +322,7 @@ def payload(g: Any, max_nodes: int = MAX_NODES) -> dict[str, Any]:
             item["doc"] = _trim(n["docstring"], 400)
         out_nodes.append(item)
 
-    return {
+    data: dict[str, Any] = {
         "name": g.name,
         "nodes": out_nodes,
         "edges": [{"s": index[e["src"]], "t": index[e["dst"]], "type": e["type"]} for e in edges],
@@ -154,10 +334,23 @@ def payload(g: Any, max_nodes: int = MAX_NODES) -> dict[str, Any]:
         "edgeTypes": sorted(Counter(e["type"] for e in edges).items()),
         "totals": {"nodes": len(g.nodes), "edges": len(g.edges)},
     }
+    if len(out_nodes) < len(g.nodes):
+        data["sampled"] = {
+            "nodes": len(out_nodes),
+            "edges": len(edges),
+            "rule": "the best-connected nodes, by weighted degree",
+        }
+        if shrunk_from is not None:
+            data["sampled"]["shrunk_from"] = shrunk_from
+            data["sampled"]["page_limit_bytes"] = MAX_PAGE_BYTES
+        if max_nodes:
+            agg = aggregate(g, min(max_nodes, AGG_MAX_DIRS))
+            if agg is not None:
+                data["dirs"] = agg
+    return data
 
 
-def write_html(g: Any, path: Path, max_nodes: int = MAX_NODES) -> dict[str, Any]:
-    data = payload(g, max_nodes)
+def _blob(data: dict[str, Any]) -> str:
     # Escape every "<": json.dumps only emits it inside a string literal, and
     # "\u003c" parses back to "<" through JSON.parse. This stops not just a
     # literal "</script>" but "<!--" followed by "<script" — which drive the
@@ -174,7 +367,20 @@ def write_html(g: Any, path: Path, max_nodes: int = MAX_NODES) -> dict[str, Any]
     # Bidi overrides and zero-width characters are invisible on the page, which
     # is the whole problem with them. Spell them out as the visible text
     # `\u202e` (an escaped backslash, so JSON.parse yields the six characters).
-    blob = HIDDEN_UNICODE_RE.sub(lambda m: f"\\\\u{ord(m.group(0)):04x}", blob)
+    return HIDDEN_UNICODE_RE.sub(lambda m: f"\\\\u{ord(m.group(0)):04x}", blob)
+
+
+def write_html(g: Any, path: Path, max_nodes: int | None = MAX_NODES) -> dict[str, Any]:
+    data = payload(g, max_nodes)
+    blob = _blob(data)
+    # Never a page too big to open (#305): halve the detail view until the
+    # page fits, and record that it was cut for size, not by the cap asked for.
+    asked = len(g.nodes) if max_nodes is None else max_nodes
+    cap = asked
+    while len(blob.encode("utf8")) > MAX_PAGE_BYTES and cap > 0:
+        cap //= 2
+        data = payload(g, cap, shrunk_from=asked)
+        blob = _blob(data)
     # Single-pass replace prevents __R2G_DATA__ in repo title from expanding
     replacements = {
         "__R2G_DATA__": blob,
@@ -327,6 +533,14 @@ TEMPLATE = r"""<!doctype html>
     position: absolute; right: 12px; bottom: 10px; color: var(--muted); font-size: 11px;
     background: rgba(255,255,255,.85); padding: 4px 8px; border-radius: 6px;
   }
+  #banner {
+    position: absolute; top: 10px; left: 12px; right: 12px; z-index: 4; padding: 7px 10px;
+    background: #fff8e1; border: 1px solid #f0d58a; border-radius: 6px; font-size: 12px;
+  }
+  #banner[hidden] { display: none; }
+  #banner button { font-size: 11px; padding: 2px 8px; margin-left: 6px; }
+  button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #lang-pad[hidden], #view-btns[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -356,6 +570,14 @@ TEMPLATE = r"""<!doctype html>
         <h2>Relationships</h2>
         <div class="legend" id="edge-legend"></div>
       </div>
+      <div class="pad" id="lang-pad" hidden>
+        <h2>Languages</h2>
+        <div class="legend" id="lang-legend"></div>
+      </div>
+    </div>
+    <div class="pad btns" id="view-btns" hidden>
+      <button id="btn-dirs">Directories</button>
+      <button id="btn-detail">Detail</button>
     </div>
     <div class="pad btns">
       <button id="btn-fit">Fit</button>
@@ -366,6 +588,7 @@ TEMPLATE = r"""<!doctype html>
     <div id="details"></div>
   </aside>
   <div id="stage" data-max-iterations="500">
+    <div id="banner" hidden></div>
     <div id="progress" hidden><span>laying out…</span>
       <div id="progress-track"><div id="progress-bar"></div></div></div>
     <svg id="svg">
@@ -388,7 +611,11 @@ TEMPLATE = r"""<!doctype html>
 "use strict";
 const DATA = __R2G_DATA__;
 const NS = "http://www.w3.org/2000/svg";
-const nodes = DATA.nodes, links = DATA.edges;
+// The graph on screen: DATA itself (detail) or DATA.dirs (the directory summary).
+let nodes = [], links = [], current = DATA;
+let mode = "detail";
+// Detail view only: show just the nodes under this directory (null = all).
+let dirFilter = null;
 const svg = document.getElementById("svg");
 const view = document.getElementById("view");
 const gEdges = document.getElementById("g-edges");
@@ -403,7 +630,26 @@ const colorOf = n => DATA.colors[n.type] || DATA.colors._;
 const radius = n => 13 + Math.min(20, Math.sqrt(n.deg || 1) * 3.2);
 const hiddenNodeTypes = new Set(DATA.hidden.nodes);
 const hiddenEdgeTypes = new Set(DATA.hidden.edges);
-const nodeShown = n => !hiddenNodeTypes.has(n.type);
+const hiddenLangs = new Set();
+// The directory a node lives in, as the summary groups it (viz._home_dir).
+function homeOf(n) {
+  if (n.path === undefined) return null;
+  if (n.type === "dir") return n.path;
+  const i = n.path.lastIndexOf("/");
+  return i < 0 ? "" : n.path.slice(0, i);
+}
+// A summary group: everything under its path, minus subdirectories carved out.
+function underGroup(n, group) {
+  const h = homeOf(n);
+  if (h === null) return false;
+  const under = p => p === "" || h === p || h.startsWith(p + "/");
+  return under(group.path) && !(group.except || []).some(under);
+}
+function inDir(n) {
+  return dirFilter === null || mode !== "detail" || underGroup(n, dirFilter);
+}
+const nodeShown = n =>
+  !hiddenNodeTypes.has(n.type) && !(n.lang && hiddenLangs.has(n.lang)) && inDir(n);
 const linkShown = l => !hiddenEdgeTypes.has(l.type) && nodeShown(l.source) && nodeShown(l.target);
 
 let tx = 0, ty = 0, scale = 1, alpha = 1, raf = null, drag = null, pan = null, selected = null;
@@ -417,13 +663,16 @@ function neighbours(id) {
   if (!list) { list = []; adjacency.set(id, list); }
   return list;
 }
-for (const l of links) {
-  l.source = nodes[l.s];
-  l.target = nodes[l.t];
-  neighbours(l.source.id).push({ other: l.target, type: l.type, dir: "out" });
-  neighbours(l.target.id).push({ other: l.source, type: l.type, dir: "in" });
+function model() {
+  adjacency.clear();
+  for (const l of links) {
+    l.source = nodes[l.s];
+    l.target = nodes[l.t];
+    neighbours(l.source.id).push({ other: l.target, type: l.type, dir: "out" });
+    neighbours(l.target.id).push({ other: l.source, type: l.type, dir: "in" });
+  }
+  for (const n of nodes) n.hay = (n.id + " " + n.label + " " + (n.path || "")).toLowerCase();
 }
-for (const n of nodes) n.hay = (n.id + " " + n.label + " " + (n.path || "")).toLowerCase();
 
 // A fixed seed keeps two runs of the same graph looking the same.
 let seed = 20260823;
@@ -439,14 +688,18 @@ function scatter() {
 }
 
 // ---------- drawing surface ----------
+function draw() {
+gEdges.replaceChildren(); gEdgeLabels.replaceChildren(); gNodes.replaceChildren();
 for (const l of links) {
   l.line = document.createElementNS(NS, "line");
   l.line.setAttribute("class", "link");
   l.line.setAttribute("marker-end", "url(#arrow)");
+  // A summary edge stands for `w` relationships; its width says how many.
+  if (l.w) l.line.style.strokeWidth = (1 + Math.log2(l.w)).toFixed(2) + "px";
   gEdges.appendChild(l.line);
   l.text = document.createElementNS(NS, "text");
   l.text.setAttribute("class", "link-label");
-  l.text.textContent = l.type;
+  l.text.textContent = l.w ? l.type + " ×" + l.w : l.type;
   gEdgeLabels.appendChild(l.text);
 }
 for (const n of nodes) {
@@ -468,6 +721,7 @@ for (const n of nodes) {
   });
   gNodes.appendChild(g);
   n.el = g;
+}
 }
 
 // ---------- force layout ----------
@@ -644,8 +898,25 @@ function showDetails(n) {
   kv(box, "kind", n.kind);
   kv(box, "lang", n.lang);
   kv(box, "lines", n.start_line ? n.start_line + "-" + n.end_line : n.lines);
+  kv(box, "files", n.files);
+  kv(box, "symbols", n.symbols);
   kv(box, "degree", n.deg);
   panel.appendChild(box);
+  if (mode === "dirs") {
+    kv(box, "holds", n.except ? "all of it except " + n.except.join(", ") : "everything under it");
+    const drawn = DATA.nodes.filter(m => underGroup(m, n)).length;
+    if (drawn) {
+      const open = el("button", "nb", "Show its " + drawn + " drawn nodes in the detail view");
+      open.addEventListener("click", () => { dirFilter = n; show("detail"); });
+      panel.appendChild(open);
+    } else {
+      panel.appendChild(el("p", "sub", "None of its nodes made the " + DATA.nodes.length +
+        "-node detail view. Raise --viz-nodes, or ask the index: repo2graph query."));
+    }
+    if (n.top && n.top.length) {
+      panel.append(el("h2", "", "best-connected inside"), el("pre", "", n.top.join("\n")));
+    }
+  }
   if (n.sig) { panel.append(el("h2", "", "signature"), el("pre", "", n.sig)); }
   if (n.doc) { panel.append(el("h2", "", "doc"), el("pre", "", n.doc)); }
 
@@ -755,16 +1026,86 @@ function legendRow(host, key, count, colour, kind, desc) {
   if (desc) wrap.appendChild(el("div", "legend-desc", desc));
   host.appendChild(wrap);
 }
-for (const [type, count] of DATA.nodeTypes) {
-  legendRow(document.getElementById("node-legend"), type, count,
-            DATA.colors[type] || DATA.colors._, "node", DATA.nodeDesc[type]);
+function langRow(host, lang, count) {
+  const label = el("label");
+  const box = el("input");
+  box.type = "checkbox";
+  box.checked = !hiddenLangs.has(lang);
+  box.addEventListener("change", () => {
+    if (box.checked) hiddenLangs.delete(lang); else hiddenLangs.add(lang);
+    reheat(0.5);
+  });
+  label.append(box, el("span", "", lang), el("span", "count", count));
+  host.appendChild(label);
 }
-for (const [type, count] of DATA.edgeTypes) {
-  legendRow(document.getElementById("edge-legend"), type, count, null, "edge", DATA.edgeDesc[type]);
+function legends() {
+  const nodeLegend = document.getElementById("node-legend");
+  const edgeLegend = document.getElementById("edge-legend");
+  const langLegend = document.getElementById("lang-legend");
+  nodeLegend.replaceChildren(); edgeLegend.replaceChildren(); langLegend.replaceChildren();
+  for (const [type, count] of current.nodeTypes) {
+    legendRow(nodeLegend, type, count, DATA.colors[type] || DATA.colors._, "node",
+              DATA.nodeDesc[type]);
+  }
+  for (const [type, count] of current.edgeTypes) {
+    legendRow(edgeLegend, type, count, null, "edge", DATA.edgeDesc[type]);
+  }
+  const langs = new Map();
+  for (const n of nodes) if (n.lang) langs.set(n.lang, (langs.get(n.lang) || 0) + 1);
+  const sorted = [...langs].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+  for (const [lang, count] of sorted) langRow(langLegend, lang, count);
+  document.getElementById("lang-pad").hidden = sorted.length < 2;
 }
-document.getElementById("counts").textContent =
-  nodes.length + " of " + DATA.totals.nodes + " nodes · " +
-  links.length + " of " + DATA.totals.edges + " edges";
+function counts() {
+  document.getElementById("counts").textContent = mode === "dirs"
+    ? nodes.length + " directories summarising " + DATA.totals.nodes + " nodes · " +
+      links.length + " links"
+    : nodes.length + " of " + DATA.totals.nodes + " nodes · " +
+      links.length + " of " + DATA.totals.edges + " edges";
+}
+// Said on the page itself, not only by the CLI: a sampled map that looks
+// complete is a wrong answer (#305).
+const banner = document.getElementById("banner");
+function bannerText() {
+  banner.replaceChildren();
+  const s = DATA.sampled;
+  if (mode === "detail" && dirFilter !== null) {
+    banner.append("Only the drawn nodes in " + (dirFilter.path || "(root)") +
+      (dirFilter.except ? ", except its subdirectories shown separately" : "") + ".");
+    const clear = el("button", "", "Show all");
+    clear.addEventListener("click", () => { dirFilter = null; show("detail"); });
+    banner.appendChild(clear);
+  } else if (mode === "dirs") {
+    banner.append("Summary: every node, counted in its directory. A link is the " +
+      "relationships between two directories; its width is how many. A name ending /… " +
+      "is the rest of a directory whose biggest parts are shown separately. " +
+      "Click a directory to see inside it.");
+  } else if (s) {
+    banner.append("Sampled: drawing " + s.nodes + " of " + DATA.totals.nodes +
+      " nodes — " + s.rule + "." + (s.shrunk_from !== undefined
+        ? " Cut from " + s.shrunk_from + " to fit the page size limit." : "") +
+      (DATA.dirs ? " The Directories view counts all of them." : ""));
+  }
+  banner.hidden = !banner.childNodes.length;
+}
+const btnDirs = document.getElementById("btn-dirs");
+const btnDetail = document.getElementById("btn-detail");
+function show(next) {
+  if (settleRaf) { cancelAnimationFrame(settleRaf); settleRaf = null; }
+  if (raf) { cancelAnimationFrame(raf); raf = null; }
+  mode = next;
+  current = mode === "dirs" ? DATA.dirs : DATA;
+  nodes = current.nodes; links = current.edges;
+  selected = null; focusNode = null; focusDist = new Map();
+  model(); draw(); legends(); counts(); bannerText();
+  btnDirs.classList.toggle("on", mode === "dirs");
+  btnDetail.classList.toggle("on", mode === "detail");
+  emptyDetails();
+  relayout();
+}
+document.getElementById("view-btns").hidden = !DATA.dirs;
+btnDirs.addEventListener("click", () => show("dirs"));
+btnDetail.addEventListener("click", () => { dirFilter = null; show("detail"); });
 
 // ---------- legend collapse, persisted per-viewer ----------
 const legendToggle = document.getElementById("legend-toggle");
@@ -904,8 +1245,7 @@ svg.addEventListener("wheel", ev => {
 }, { passive: false });
 window.addEventListener("resize", render);
 
-emptyDetails();
-relayout();
+show(DATA.dirs ? "dirs" : "detail");
 </script>
 </body>
 </html>

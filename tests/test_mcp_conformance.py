@@ -293,3 +293,55 @@ def test_official_client_pages_repo_neighbours_to_the_end(tmp_path):
     assert pages == 2
     assert len(rows) == len(set(rows)) == 61
     assert any("caller_59" in r for r in rows)
+
+
+# ------------------------------------------------ #388: resources and prompts
+
+
+def test_resources_list_and_read_over_stdio(mini_index):
+    async def body(session):
+        listed = (await session.list_resources()).resources
+        stats = await session.read_resource("repo2graph://stats")
+        repo_map = await session.read_resource("repo2graph://map")
+        return listed, stats, repo_map
+
+    listed, stats, repo_map = _run(mini_index, body)
+    uris = {str(r.uri) for r in listed}
+    assert {"repo2graph://map", "repo2graph://stats", "repo2graph://manifest"} <= uris
+    assert json.loads(stats.contents[0].text)["files"] > 0
+    assert stats.contents[0].mime_type == "application/json"
+    assert repo_map.contents[0].text.strip()
+
+
+def test_an_unknown_resource_is_an_error_and_the_server_keeps_answering(mini_index):
+    async def body(session):
+        try:
+            await session.read_resource("repo2graph://secrets")
+        except Exception as exc:  # noqa: BLE001 - any JSON-RPC error shape is acceptable
+            err = str(exc)
+        else:
+            err = ""
+        after = await session.call_tool("repo_search", {"query": MINI_QUERY})
+        return err, after
+
+    err, after = _run(mini_index, body)
+    assert err and not after.is_error
+
+
+def test_prompts_list_and_get_over_stdio(mini_index):
+    async def body(session):
+        prompts = (await session.list_prompts()).prompts
+        got = await session.get_prompt("explain-symbol", {"symbol": "parse_config"})
+        return prompts, got
+
+    prompts, got = _run(mini_index, body)
+    assert {"explain-symbol", "trace-flow", "what-breaks", "orient"} <= {p.name for p in prompts}
+    text = got.messages[0].content.text
+    assert "parse_config" in text and "repo_find_symbol" in text
+
+
+def test_tools_still_list_identically_with_resources_on(mini_index):
+    async def body(session):
+        return (await session.list_tools()).tools
+
+    assert {t.name for t in _run(mini_index, body)} == set(TOOL_DESCRIPTIONS)

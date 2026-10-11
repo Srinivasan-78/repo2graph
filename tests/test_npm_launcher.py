@@ -223,3 +223,23 @@ def test_launcher_refuses_a_batch_shim_it_cannot_quote_for(tmp_path, bad_arg):
         assert proc.returncode == 0, f"expected the shim's exit 0, got {proc.returncode}: {stderr}"
         assert "UVX-RAN" in stdout, f"uvx shim was never reached: {stdout!r} / {stderr!r}"
         assert bad_arg in stdout, f"no shell is involved, so the argument must survive: {stdout!r}"
+
+
+def test_the_launcher_is_published_from_the_release_tag_after_pypi():
+    """#399: npm ships from the same publish.yml run as PyPI, after it, with provenance,
+    and cannot hold up the GitHub Release."""
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    wf = yaml.safe_load((root / ".github/workflows/publish.yml").read_text(encoding="utf8"))
+    jobs = wf["jobs"]
+    npm = jobs["npm"]
+    assert set(npm["needs"]) == {"prepare-release", "pypi"}
+    assert "npm" not in jobs["release"]["needs"]
+    assert npm["permissions"]["id-token"] == "write"
+    run = "\n".join(step.get("run", "") for step in npm["steps"])
+    assert "npm publish --provenance" in run
+    assert "npm/package.json" in run and "VERSION" in run  # the version check
+    checkout = npm["steps"][0]
+    assert checkout["with"]["persist-credentials"] is False
+    assert "prepare-release.outputs.tag" in checkout["with"]["ref"]

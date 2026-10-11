@@ -118,6 +118,7 @@ def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
         "budget_exhausted",
         "omitted_chunk_count",
         "token_count_method",
+        "token_safety_margin",
     }, added
     assert not set(baseline) - set(payload), set(baseline) - set(payload)
     for key in baseline:

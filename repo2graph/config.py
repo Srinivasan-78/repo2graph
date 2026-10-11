@@ -79,6 +79,7 @@ KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "exclude": ("exclude", _str_list),
     "exclude-dir": ("extra_exclude_dirs", _str_list),
     "git-history": ("git_history", _nonneg_int),
+    "git-authors": ("git_authors", _bool),
     "viz-nodes": ("viz_nodes", _viz_nodes),
     "max-call-candidates": ("max_call_candidates", _pos_int),
     "secret-policy": ("secret_policy", _secret_policy),
@@ -87,6 +88,7 @@ KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "max-file-mb": ("max_file_mb", _max_file_mb),
     "chunk-large-files": ("chunk_large_files", _bool),
     "include-vendor": ("include_vendor", _bool),
+    "reference-edges": ("reference_edges", _bool),
 }
 
 
@@ -203,11 +205,12 @@ _BUILD_CONFIG_DESTS = (
     "extra_exclude_dirs",
     "include_vendor",
     "chunk_large_files",
+    "reference_edges",
     "secret_policy",
     "extra_secret_keywords",
     "extra_secret_dirs",
 )
-_BUILD_DESTS = ("include", "exclude", "git_history", "max_call_candidates")
+_BUILD_DESTS = ("include", "exclude", "git_history", "git_authors", "max_call_candidates")
 
 
 def build_options(values: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
