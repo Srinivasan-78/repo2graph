@@ -21,8 +21,10 @@ from repo2graph.graph import PARALLEL_MIN_FILES, build, parse_all
 from repo2graph.parse import BuildConfig, ParseError
 from repo2graph.parsepool import CRASH, PARSE_TIMEOUT_S, TIMEOUT, supervised_map
 
-# ~1.2 s to parse unsupervised on a laptop core, so a 0.3 s budget always fires.
-RUNAWAY = b"x = " + b"a<b<" * 9_000 + b";\n"
+# ~5 s to parse unsupervised on a laptop core (quadratic), so a 1 s budget always
+# fires. The budget is not tighter because it also covers a fresh worker's first
+# parse, grammar load included, which takes a few hundred ms on a slow runner.
+RUNAWAY = b"x = " + b"a<b<" * 18_000 + b";\n"
 
 
 def _repo(tmp_path: Path, extra: int = 0) -> Path:
@@ -43,7 +45,7 @@ def _symbols_in(g, rel: str) -> list[str]:
 def test_a_runaway_parse_is_stopped_and_counted(tmp_path, capsys, extra):
     root = _repo(tmp_path, extra)
     started = time.monotonic()
-    g = build(root, jobs=2, config=BuildConfig(parse_timeout=0.3))
+    g = build(root, jobs=2, config=BuildConfig(parse_timeout=1.0))
     assert time.monotonic() - started < 30
     assert g.stats["skipped_parse_timeout"] == 1
     assert "file:bad.cpp" in g.nodes and not _symbols_in(g, "bad.cpp")
@@ -51,7 +53,7 @@ def test_a_runaway_parse_is_stopped_and_counted(tmp_path, capsys, extra):
     assert _symbols_in(g, "ok.py") == ["sym:ok.py::fine"]
     assert g.stats["parsed"] == 1 + extra
     assert "bad.cpp" not in g.parse_cache  # never cached: the next build retries it
-    assert "'bad.cpp' indexed without symbols: parse exceeded the 0.3s budget" in (
+    assert "'bad.cpp' indexed without symbols: parse exceeded the 1s budget" in (
         capsys.readouterr().err
     )
 
@@ -71,8 +73,8 @@ def test_a_deep_legitimate_file_is_not_a_false_positive(tmp_path):
 
 def test_strict_policy_fails_instead_of_skipping(tmp_path):
     root = _repo(tmp_path)
-    with pytest.raises(ParseError, match="exceeded the 0.3s budget.*bad.cpp"):
-        build(root, jobs=1, config=BuildConfig(parse_timeout=0.3, parse_policy="strict"))
+    with pytest.raises(ParseError, match="exceeded the 1s budget.*bad.cpp"):
+        build(root, jobs=1, config=BuildConfig(parse_timeout=1.0, parse_policy="strict"))
 
 
 def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch):
@@ -101,7 +103,7 @@ def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch)
 def test_cli_flag_reaches_the_build(tmp_path, capsys):
     root = _repo(tmp_path)
     out = tmp_path / "out"
-    main(["build", str(root), "-o", str(out), "--formats", "jsonl", "--parse-timeout", "0.3"])
+    main(["build", str(root), "-o", str(out), "--formats", "jsonl", "--parse-timeout", "1"])
     assert json.loads(capsys.readouterr().out)["stats"]["skipped_parse_timeout"] == 1
     assert PARSE_TIMEOUT_S == BuildConfig().parse_timeout == 10.0
 
@@ -137,7 +139,7 @@ def test_supervisor_without_a_time_budget_waits():
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="RLIMIT_AS is enforced on Linux")
 def test_a_parse_that_exhausts_worker_memory_is_a_crash_not_an_oom(tmp_path, monkeypatch):
-    # The runaway input needs ~200 MB here, far over a 64 MB cap, and far
+    # The runaway input needs hundreds of MB, far over a 64 MB cap, and far
     # under the time budget.
     # The cap is read in the parent and handed to each worker, so patching it
     # here reaches workers however they are started.
