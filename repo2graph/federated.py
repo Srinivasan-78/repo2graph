@@ -53,8 +53,17 @@ def merge_by_rank(per_index: list[tuple[str, list[Record]]]) -> list[Record]:
     return [r for *_rest, r in scored]
 
 
-def _fit(records: list[Record], cost: Callable[[Record], int], budget: int) -> list[Record]:
-    if budget <= 0:
+def _fit(records: list[Record], cost: Callable[[Record], int], budget: int | None) -> list[Record]:
+    """The records that fit, in rank order; `None` is the only unbounded value.
+
+    `None` and `0` have to stay distinguishable (#482). A caller's budget of 0
+    means "no ceiling", the convention `query.pack_context` also uses
+    (`bounded = budget > 0`), but 0 is equally what is *left* of a positive
+    budget the header already spent -- and reading that as unbounded is how a
+    budget too small for the header returned a pack 25x over it, with
+    `truncated` reporting False.
+    """
+    if budget is None:
         return records
     kept, used = [], 0
     for r in records:
@@ -70,7 +79,30 @@ def retrieve(
 ) -> list[Record]:
     """`Index.retrieve` on each index, merged, under one character budget."""
     per = [(repo, idx.retrieve(query, budget_chars=budget_chars, **kw)) for repo, idx in indexes]
-    return _fit(merge_by_rank(per), lambda r: len(r.get("text") or ""), budget_chars)
+    room = None if budget_chars <= 0 else budget_chars
+    return _fit(merge_by_rank(per), lambda r: len(r.get("text") or ""), room)
+
+
+def _head(names: list[str], measure: Callable[[str], int], budget: int | None) -> str:
+    """`# Context from N repositories: ...`, listing as many names as fit.
+
+    Byte-identical to the full list whenever it fits, which at any ordinary
+    budget it does -- a name costs about two tokens, so it takes hundreds of
+    indexes to trouble a 2,000-token pack. Past that the list is cut rather
+    than allowed to push the pack over its ceiling, which is what a header
+    counted against the budget but never bounded by it used to do (#482). The
+    count is the part that survives longest: it says how much was searched,
+    which the names only elaborate.
+    """
+    lead = f"# Context from {len(names)} repositories"
+    full = f"{lead}: {', '.join(names)}\n\n"
+    if budget is None or measure(full) <= budget:
+        return full
+    for k in range(len(names) - 1, 0, -1):
+        cut = f"{lead}: {', '.join(names[:k])} and {len(names) - k} more\n\n"
+        if measure(cut) <= budget:
+            return cut
+    return f"{lead}\n\n" if measure(f"{lead}\n\n") <= budget else ""
 
 
 def pack_context(
@@ -80,12 +112,20 @@ def pack_context(
     budget_chars: int = 24000,
     budget_tokens: int | None = None,
     count_tokens: Callable[[str], int] = count_tokens,
+    token_margin: float = 0.0,
     **kw: Any,
 ) -> dict[str, Any]:
     """A cited pack drawn from every index, under one budget.
 
     Each index packs as it would alone (no repo map: maps do not merge), and
     the chunks the packs chose are interleaved by rank and re-cut to fit.
+
+    The budget is accounted for exactly as `Index.pack_context` accounts for
+    it, and the result carries the same `ContextPack` keys. The two used to
+    diverge: `--token-margin` reached the per-index packs but never the fit
+    over the merged list, and the six budget-reporting fields -- including the
+    `token_count_method` that says how `tokens_used` was counted -- were
+    absent from a federated `rag --json` altogether (#482).
     """
     per = []
     for repo, idx in indexes:
@@ -94,6 +134,7 @@ def pack_context(
             budget_chars=budget_chars,
             budget_tokens=budget_tokens,
             count_tokens=count_tokens,
+            token_margin=token_margin,
             **kw,
         )
         per.append((repo, pack["chunks"]))
@@ -102,23 +143,36 @@ def pack_context(
     def block(r: Record) -> str:
         return _cite_block({**r, "path": f"{r['repo']}:{r.get('path') or ''}"}, r.get("text") or "")
 
-    head = f"# Context from {len(indexes)} repositories: {', '.join(n for n, _ in indexes)}\n\n"
-    measure: Callable[[str], int] = count_tokens if budget_tokens is not None else len
+    use_tokens = budget_tokens is not None
+    measure: Callable[[str], int] = count_tokens if use_tokens else len
     budget = budget_tokens if budget_tokens is not None else budget_chars
-    picked = _fit(
-        merged, lambda r: measure(block(r)), max(0, budget - measure(head)) if budget else 0
-    )
+    if use_tokens and token_margin > 0 and budget > 0:
+        budget = max(1, int(budget / (1 + token_margin)))
+    bounded = budget > 0
+    head = _head([n for n, _ in indexes], measure, budget if bounded else None)
+    # The header is part of the pack, so it is paid for out of the budget. A
+    # header that leaves no room is 0, not unbounded; only the caller's own 0
+    # means that.
+    room = max(0, budget - measure(head)) if bounded else None
+    picked = _fit(merged, lambda r: measure(block(r)), room)
     markdown = head + "".join(block(r) for r in picked)
+    truncated = len(picked) < len(merged)
     return {
         "markdown": markdown,
         "chunks": picked,
         "seeds": [c for c in picked if c.get("why") == "seed"],
         "neighbors": [c for c in picked if c.get("why") != "seed"],
-        "truncated": len(picked) < len(merged),
+        "truncated": truncated,
         "repos": [n for n, _ in indexes],
         "query": query,
         "used_chars": len(markdown),
         "tokens_used": count_tokens(markdown),
         "budget_chars": budget_chars,
         "tokens_budget": budget_tokens or 0,
+        "source_text_chars": sum(len(c.get("text") or "") for c in picked),
+        "rendered_context_chars": len(markdown),
+        "budget_exhausted": truncated,
+        "omitted_chunk_count": len(merged) - len(picked),
+        "token_count_method": getattr(count_tokens, "token_count_method", "caller-supplied"),
+        "token_safety_margin": token_margin if use_tokens else 0.0,
     }
