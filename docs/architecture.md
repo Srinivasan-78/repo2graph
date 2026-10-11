@@ -257,7 +257,9 @@ runaway allocation crashes only that worker, and the parent re-runs the files in
 to pin the crash on the file that caused it. Either way the file keeps its node, contributes no
 symbols, is counted (`skipped_parse_timeout`, `skipped_parse_crash`) and is never cached. A parallel
 build supervises every file; a serial one parses files up to 16 KB in-process, where a parse over
-budget is discarded after the fact rather than interrupted.
+budget is discarded after the fact rather than interrupted. Workers start from a forkserver on
+POSIX, never by forking the (often multi-threaded) build process, and a pool that makes no
+progress for 60 s is abandoned for an in-process parse rather than waited on.
 
 The budget is the one input to the graph that is not a function of the tree: a file that runs over
 it on a slow machine and under it on a fast one indexes differently. It is set an order of magnitude

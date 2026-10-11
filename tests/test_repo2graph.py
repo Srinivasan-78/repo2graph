@@ -1517,11 +1517,11 @@ def test_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def __enter__(self):
+        def submit(self, *a, **k):
             raise BrokenProcessPool("boom")
 
-        def __exit__(self, *a):
-            return False
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BoomPool)
     got = parse_all(files, jobs=4)

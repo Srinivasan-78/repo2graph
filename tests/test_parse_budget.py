@@ -8,7 +8,6 @@ fixture is deep and large but ordinary, and must parse under the default budget.
 from __future__ import annotations
 
 import json
-import multiprocessing
 import os
 import sys
 import time
@@ -138,12 +137,24 @@ def test_supervisor_without_a_time_budget_waits():
 
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="RLIMIT_AS is enforced on Linux")
 def test_a_parse_that_exhausts_worker_memory_is_a_crash_not_an_oom(tmp_path, monkeypatch):
-    # Fork-started workers inherit the patched cap. The runaway input needs
-    # ~200 MB here, far over a 64 MB cap, and far under the time budget.
-    if multiprocessing.get_start_method() != "fork":
-        pytest.skip("needs fork-started workers to inherit the patched cap")
+    # The runaway input needs ~200 MB here, far over a 64 MB cap, and far
+    # under the time budget.
+    # The cap is read in the parent and handed to each worker, so patching it
+    # here reaches workers however they are started.
     monkeypatch.setattr(parsepool, "WORKER_MEMORY_MB", 64)
     root = _repo(tmp_path)
     g = build(root, jobs=1)
     assert g.stats["skipped_parse_crash"] == 1
     assert _symbols_in(g, "ok.py") == ["sym:ok.py::fine"]
+
+
+def _wedged(watch):
+    time.sleep(3600)  # a worker that never gets as far as its first file
+
+
+def test_a_pool_whose_workers_never_start_is_abandoned_not_waited_on(monkeypatch):
+    monkeypatch.setattr(parsepool, "STALL_S", 1.0)
+    started = time.monotonic()
+    with pytest.raises(parsepool.PoolUnavailable, match="no progress"):
+        supervised_map(_work, [("ok", 1)], 1, 0, _wedged)
+    assert time.monotonic() - started < 30

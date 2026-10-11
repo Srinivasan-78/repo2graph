@@ -777,6 +777,9 @@ def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch)
         def submit(self, fn, *args):
             raise ParseError("f0.py: 3 syntax error(s) under --parse-policy strict")
 
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
+
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", StrictFailurePool)
 
     with pytest.raises(ParseError):
