@@ -173,6 +173,11 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **Reading a small index file no longer allocates its whole size ceiling.** `read_bounded` asked
+  for `limit + 1` bytes in one `read()`, and CPython allocates that buffer before reading: every
+  2 KB `vectors.meta.json` cost 256 MB and every `vectors.npy` 512 MB (the SCIP reader did the same
+  with 256 MB). Linux overcommit hid it; on Windows it is real commit charge, and parallel test
+  workers ran CI runners out of memory. Reads now go in 1 MB blocks.
 - **A question's opening words no longer pick its answer (#382).** "how does", "where is",
   "what are" and the like are dropped from the ranking query; the rest of the question is scored
   as before. On Django, "does" matched `test_html_does_not_mask_exceptions` and put an unrelated

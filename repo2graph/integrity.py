@@ -155,6 +155,9 @@ MAX_METADATA_BYTES = 256 * 1024 * 1024
 MAX_VECTORS_BYTES = 512 * 1024 * 1024
 
 
+_READ_BLOCK = 1 << 20
+
+
 def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
     """Read `path` whole, refusing anything over `limit` bytes.
 
@@ -164,6 +167,12 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
     still capped at `limit + 1` so a file that grows underneath us is caught by
     the length check rather than by trusting the stat.
 
+    Read in blocks, never as one `read(limit + 1)`: CPython allocates that
+    whole buffer before reading, so every 2 KB `vectors.meta.json` cost a 256 MB
+    allocation and every `vectors.npy` 512 MB. Linux overcommit hid it; on
+    Windows it is real commit charge, and a few of these at once in parallel
+    test workers exhausted the runner with `MemoryError`.
+
     Raises:
         ValueError: When the file is larger than `limit`.
     """
@@ -171,7 +180,15 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
         size = os.fstat(fh.fileno()).st_size
         if size > limit:
             raise ValueError(f"{path}: {what} is {size} bytes, over the {limit}-byte limit")
-        raw = fh.read(limit + 1)
+        blocks: list[bytes] = []
+        remaining = limit + 1
+        while remaining > 0:
+            block = fh.read(min(remaining, _READ_BLOCK))
+            if not block:
+                break
+            blocks.append(block)
+            remaining -= len(block)
+        raw = b"".join(blocks)
     if len(raw) > limit:
         raise ValueError(f"{path}: {what} grew past the {limit}-byte limit while being read")
     return raw

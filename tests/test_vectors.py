@@ -847,6 +847,25 @@ def test_real_sentence_transformers_smoke_test(mini_index):
 # --------------------------------------------------------------------------
 
 
+def test_read_bounded_does_not_allocate_its_limit(tmp_path):
+    """A small file under a 512 MB ceiling must not cost a 512 MB buffer: on
+    Windows that is real commit charge, and parallel test workers ran the runner
+    out of memory with it."""
+    import tracemalloc
+
+    from repo2graph.integrity import MAX_VECTORS_BYTES, read_bounded
+
+    f = tmp_path / "small.bin"
+    f.write_bytes(b"x" * 3_000_000)
+    tracemalloc.start()
+    try:
+        assert len(read_bounded(f, MAX_VECTORS_BYTES)) == 3_000_000
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 32 * 1024 * 1024, peak
+
+
 def test_read_bounded_refuses_a_file_over_the_limit(tmp_path):
     from repo2graph.integrity import read_bounded
 

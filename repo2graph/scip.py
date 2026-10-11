@@ -434,10 +434,13 @@ def read_index_bytes(path: Path, max_bytes: int | None = None) -> bytes:
         raise ScipError("not a regular file")
     if st.st_size > max_bytes:
         raise ScipError(f"index is {st.st_size} bytes, over the {max_bytes}-byte limit")
+    # Read what the stat promised plus one byte, not `max_bytes + 1`: CPython
+    # allocates the whole requested buffer up front, which on Windows is real
+    # commit charge (256 MB per read). The extra byte still catches growth.
     with open(path, "rb") as fh:
-        data = fh.read(max_bytes + 1)
-    if len(data) > max_bytes:  # grew between stat and read
-        raise ScipError(f"index is over the {max_bytes}-byte limit")
+        data = fh.read(st.st_size + 1)
+    if len(data) > st.st_size:  # grew between stat and read
+        raise ScipError("index changed while it was being read")
     return data
 
 
