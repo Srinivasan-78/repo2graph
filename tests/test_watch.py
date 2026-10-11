@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import itertools
 
+import pytest
+
 from repo2graph import watch as watch_mod
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
+from repo2graph.parse import DEFAULT_SKIP_DIRS, BuildConfig, discover
 from repo2graph.watch import poll_interval, snapshot, watch
 
 
@@ -44,17 +47,69 @@ def test_no_change_means_no_rebuild():
     assert calls == []
 
 
-def test_snapshot_skips_the_index_dotfiles_and_skip_dirs(tmp_path):
+def test_snapshot_watches_what_a_build_indexes_and_nothing_else(tmp_path):
+    """The watched set is discovery's set, not an approximation of it (#483).
+
+    This asserted `["src/a.py"]` while `discover` on the same tree yields
+    `.pre-commit-config.yaml`, `src/.a.py.swp` and `src/a.py~` as well -- a
+    walk-fallback build indexes every file that is not in a skipped directory,
+    whatever its name begins or ends with. Ignoring a file the build indexes is
+    a rebuild that never happens, which is the whole failure `--watch` exists
+    to avoid, so the dotfile and `~` rules are gone and the two sets agree.
+    """
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.py").write_text("A = 1\n")
     (tmp_path / "src" / ".a.py.swp").write_text("x")
     (tmp_path / "src" / "a.py~").write_text("x")
+    (tmp_path / ".pre-commit-config.yaml").write_text("repos: []\n")
     (tmp_path / "node_modules").mkdir()
     (tmp_path / "node_modules" / "m.js").write_text("x")
     (tmp_path / ".r2g").mkdir()
     (tmp_path / ".r2g" / "nodes.jsonl").write_text("x")
+    (tmp_path / ".idx.r2glock").write_text("x")
+
     snap = snapshot(tmp_path, {"node_modules"}, tmp_path / ".r2g")
-    assert list(snap) == ["src/a.py"]
+    assert sorted(snap) == [
+        ".pre-commit-config.yaml",
+        "src/.a.py.swp",
+        "src/a.py",
+        "src/a.py~",
+    ]
+
+    indexed = {
+        rel
+        for rel, _ in discover(tmp_path, config=BuildConfig(extra_exclude_dirs=["node_modules"]))
+    }
+    assert not indexed - set(snap) - {".r2g/nodes.jsonl"}
+
+
+def test_snapshot_ignores_gitignored_paths(tmp_path):
+    """A build never sees them, so a change to one must not trigger a rebuild.
+
+    `snapshot` walked the tree itself, honouring no `.gitignore`: on
+    repo2graph's own checkout that meant watching 305 files under
+    `.hypothesis`, which every `pytest` run rewrites, so running the suite
+    under `--watch` rebuilt continuously (#483).
+    """
+    import subprocess
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("A = 1\n")
+    (tmp_path / ".gitignore").write_text("generated/\n")
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "generated" / "big.py").write_text("B = 1\n")
+    for args in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"],
+    ):
+        if subprocess.run(["git", "-C", str(tmp_path), *args], capture_output=True).returncode:
+            pytest.skip("git unavailable")
+
+    snap = snapshot(tmp_path, DEFAULT_SKIP_DIRS)
+    assert "src/a.py" in snap and ".gitignore" in snap
+    assert "generated/big.py" not in snap
+    assert not any(p.startswith(".git/") for p in snap)
 
 
 def test_large_trees_are_polled_less_often():
