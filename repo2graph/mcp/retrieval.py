@@ -222,7 +222,7 @@ def _cochange_records(index: Index, node_id: str, limit: int) -> list[dict[str, 
     return [
         {
             "node_id": dst,
-            "path": (index.nodes.get(dst) or {}).get("path") or dst,
+            "path": (index.store.node(dst) or {}).get("path") or dst,
             "count": edge.get("count") or 0,
         }
         for dst, edge in _cochange_pairs(index, file_id)[:limit]
@@ -270,7 +270,7 @@ def tool_repo_neighbours(
             "repo_neighbours needs a `node_id`. Ids look like file:<path>, "
             "sym:<path>::<qualname> or dir:<path>; repo_search results cite them."
         )
-    node = index.nodes.get(node_id)
+    node = index.store.node(node_id)
     if node is None:
         return ToolError(
             f"node not found: {node_id!r}. Ids look like "
@@ -294,7 +294,7 @@ def tool_repo_neighbours(
         edge_dirs=ALL_EDGE_DIRS,
         min_confidence=floor,
     ):
-        target = index.nodes.get(dst, {})
+        target = index.store.node(dst) or {}
         if index._is_secret_path(target.get("path") or ""):
             continue
         if len(rows) >= limit:
@@ -307,7 +307,7 @@ def tool_repo_neighbours(
     # per-hop cap would hide the rest behind the structural edges listed first.
     if not truncated:
         for dst, direction, conf in _tests_of(index, node_id, floor):
-            if index._is_secret_path(index.nodes.get(dst, {}).get("path") or ""):
+            if index._is_secret_path((index.store.node(dst) or {}).get("path") or ""):
                 continue
             if len(rows) >= limit:
                 truncated = True
@@ -327,7 +327,7 @@ def tool_repo_neighbours(
 def _tests_of(index: Index, node_id: str, floor: float) -> list[tuple[str, str, float]]:
     """`node_id`'s TESTS edges at or above `floor`, most confident first."""
     rows = []
-    for dst, etype, direction, edge in index.adj.get(node_id, ()):
+    for dst, etype, direction, edge in index.store.neighbours(node_id):
         if etype != "TESTS":
             continue
         try:
@@ -382,7 +382,7 @@ def _paged_neighbours(
     rows = [
         row
         for row in walk[:MCP_MAX_PAGED_NEIGHBOURS]
-        if not index._is_secret_path(index.nodes.get(row[0], {}).get("path") or "")
+        if not index._is_secret_path((index.store.node(row[0]) or {}).get("path") or "")
     ]
     # Rows stop at `limit` or at the token ceiling, whichever comes first, so
     # paging never yields a response larger than an unpaged one may be. The
@@ -476,7 +476,8 @@ def _aux(index: Index) -> dict[str, Any]:
     last_seg: dict[str, list[str]] = defaultdict(list)
     # Symbol and file nodes by their file, for `repo_find_symbol(path, line)`.
     in_file: dict[str, list[str]] = defaultdict(list)
-    for node_id, node in index.nodes.items():
+    for node in index.store.iter_nodes():
+        node_id = node["id"]
         name = node.get("name") or ""
         qual = node.get("qualname") or ""
         if name:
@@ -584,7 +585,7 @@ def tool_repo_find_symbol(
 
     matched: list[tuple[str, dict[str, Any]]] = []
     for node_id in candidates:
-        node = index.nodes.get(node_id) or {}
+        node = index.store.node(node_id) or {}
         node_path = node.get("path") or ""
         if index._is_secret_path(node_path):
             continue

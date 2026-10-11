@@ -10,11 +10,11 @@ from .query import ALL_EDGE_DIRS, RETRIEVE_BUDGET_CHARS, Index, tokenize
 def explain_edge(outdir: Path, src: str, dst: str) -> dict[str, Any]:
     """Explain edges between two nodes in the code graph."""
     idx = Index(outdir)
-    src_node = idx.nodes.get(src)
-    dst_node = idx.nodes.get(dst)
+    src_node = idx.store.node(src)
+    dst_node = idx.store.node(dst)
 
     matching_edges = []
-    for e in idx.edges:
+    for e in idx.store.iter_edges():
         if (e.get("src") == src and e.get("dst") == dst) or (
             e.get("src") == dst and e.get("dst") == src
         ):
@@ -46,7 +46,7 @@ def explain_edge(outdir: Path, src: str, dst: str) -> dict[str, Any]:
 def explain_node(outdir: Path, node_id: str) -> dict[str, Any]:
     """Explain a node, its metadata, incoming/outgoing edges, and chunks."""
     idx = Index(outdir)
-    node = idx.nodes.get(node_id)
+    node = idx.store.node(node_id)
     if node is None:
         return {
             "found": False,
@@ -56,7 +56,7 @@ def explain_node(outdir: Path, node_id: str) -> dict[str, Any]:
 
     in_edges = []
     out_edges = []
-    for other, etype, direction, edge in idx.adj.get(node_id, []):
+    for other, etype, direction, edge in idx.store.neighbours(node_id):
         if direction == "in":
             in_edges.append(edge)
         else:
@@ -135,7 +135,7 @@ def explain_retrieval(
         nid = c["node_id"]
         # Same skip as retrieve(): a secret chunk never becomes a seed and
         # never consumes budget -- and is not listed either.
-        if _secret_path(c.get("path") or idx.nodes.get(nid, {}).get("path") or ""):
+        if _secret_path(c.get("path") or (idx.store.node(nid) or {}).get("path") or ""):
             hidden += 1
             continue
         # Find matched terms
@@ -180,7 +180,7 @@ def explain_retrieval(
 
     expansion_steps = []
     for dst, etype, direction, src in expansion_order:
-        dst_node = idx.nodes.get(dst, {})
+        dst_node = idx.store.node(dst) or {}
         if _secret_path(dst_node.get("path") or ""):
             hidden += 1
             continue

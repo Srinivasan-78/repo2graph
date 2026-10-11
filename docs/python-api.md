@@ -146,6 +146,24 @@ Keep each chunk's `node_id` when you store it; that is the handle that lets you
 jump back onto the map after a search, and turn a flat list of hits into hits plus
 the code around them.
 
+### Graph storage
+
+`Index` reads the graph through `idx.store`, a `repo2graph.store.GraphStore`: `node(id)`,
+`has(id)`, `neighbours(id)` (`(other, edge_type, "out"|"in", edge)` tuples), `iter_nodes()`,
+`iter_edges()`. The default keeps it in memory. For a graph you would rather not hold
+resident, `SqliteGraphStore` (standard-library `sqlite3`, opened read-only) answers the same
+calls in the same order from disk:
+
+```python
+from repo2graph.store import SqliteGraphStore
+
+store = SqliteGraphStore.from_index(".r2g", "graph.sqlite")  # streams the JSONL in once
+idx = Index(".r2g", store=store)
+```
+
+It is a prototype: the chunks and the BM25 index still load into memory, and the older
+`idx.nodes` / `idx.edges` / `idx.adj` attributes load the whole graph back if you touch them.
+
 ### Reranking with a cross-encoder
 
 `retrieve()` and `pack_context()` take `rerank=`: anything with a `model_id` and a

@@ -461,6 +461,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
 | `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
 | `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
+| `store.py` | 178 | `GraphStore`: the one interface traversal and retrieval read the graph through (node by id, a node's incident edges, nodes and edges in file order). `MemoryGraphStore` is the default; `SqliteGraphStore` is a stdlib-only on-disk prototype. Order is part of the contract. |
 | `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
 | `testpaths.py` | 60 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
 | `chunks.py` | 397 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |

@@ -29,19 +29,19 @@ _STALENESS_MEMO: weakref.WeakKeyDictionary[Index, tuple[float, str]] = weakref.W
 
 
 def _path_secret(index: Index, node_id: str) -> bool:
-    node = index.nodes.get(node_id) or {}
+    node = index.store.node(node_id) or {}
     return index._is_secret_path(node.get("path") or "")
 
 
 def _containing_file(index: Index, node_id: str) -> str | None:
     if node_id.startswith("file:"):
-        return node_id if node_id in index.nodes else None
-    node = index.nodes.get(node_id) or {}
+        return node_id if index.store.has(node_id) else None
+    node = index.store.node(node_id) or {}
     path = node.get("path") or ""
     if not path:
         return None
     fid = f"file:{path}"
-    return fid if fid in index.nodes else None
+    return fid if index.store.has(fid) else None
 
 
 def _impact_root(index: Index) -> Path:
@@ -106,7 +106,7 @@ def _compute_staleness_note(index: Index) -> str:
 
 def _edge_record(index: Index, src: str, dst: str, etype: str) -> dict[str, Any] | None:
     """The `etype` edge between `src` and `dst`, as `src`'s adjacency holds it."""
-    for other, other_type, _direction, record in index.adj.get(src, ()):
+    for other, other_type, _direction, record in index.store.neighbours(src):
         if other == dst and other_type == etype:
             return record
     return None
@@ -114,7 +114,7 @@ def _edge_record(index: Index, src: str, dst: str, etype: str) -> dict[str, Any]
 
 def _node_fields(index: Index, node_id: str) -> dict[str, Any]:
     """The fields a client needs to show a node and jump to it."""
-    node = index.nodes.get(node_id) or {}
+    node = index.store.node(node_id) or {}
     return {
         "node_id": node_id,
         "type": node.get("type") or "",
@@ -132,7 +132,7 @@ def _cochange_pairs(index: Index, file_id: str) -> list[tuple[str, dict[str, Any
     """`file_id`'s CO_CHANGE partners and their edges, most frequent first, secrets excluded."""
     pairs = [
         (dst, edge)
-        for dst, etype, _direction, edge in index.adj.get(file_id, ())
+        for dst, etype, _direction, edge in index.store.neighbours(file_id)
         if etype == "CO_CHANGE" and not _path_secret(index, dst)
     ]
     pairs.sort(key=lambda p: -(p[1].get("count") or 0))
@@ -156,7 +156,7 @@ def _edge_note(index: Index, src: str, dst: str, etype: str) -> str:
 
 
 def _label(index: Index, node_id: str) -> str:
-    node = index.nodes.get(node_id) or {}
+    node = index.store.node(node_id) or {}
     name = node.get("qualname") or node.get("name") or node_id
     where = node.get("path") or ""
     start = node.get("start_line")

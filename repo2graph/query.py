@@ -23,6 +23,7 @@ from .security import (
     redact_content,
 )
 from .testpaths import is_test_path
+from .store import GraphStore, MemoryGraphStore
 from .rerank import CROSS_ENCODER_CANDIDATES, Reranker, rerank as _rerank
 
 __all__ = [
@@ -597,21 +598,18 @@ class Index:
     # server sets it from its --repo). None means "not known here".
     repo_root: Path | None = None
 
-    def __init__(self, outdir: Path):
+    def __init__(self, outdir: Path, store: GraphStore | None = None):
         self.dir = Path(outdir).resolve()
         self._overview: str | None = None
         self._manifest: dict[str, Any] | None = None
         self._check_manifest_format()
         self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
-        self.nodes = {n["id"]: n for n in read_jsonl(artifact_path(self.dir, "nodes.jsonl"))}
-        self.edges = read_jsonl(artifact_path(self.dir, "edges.jsonl"))
-        # node id -> (other node id, edge type, "in"|"out", the edge record)
-        self.adj: dict[str, list[tuple[str, str, str, Record]]] = defaultdict(list)
-        for e in self.edges:
-            # The edge record itself (not a copy) rides along: traversal needs
-            # `confidence` on CALLS, and `count` on CO_CHANGE, without a lookup.
-            self.adj[e["src"]].append((e["dst"], e["type"], "out", e))
-            self.adj[e["dst"]].append((e["src"], e["type"], "in", e))
+        # Every graph read goes through `self.store` (store.py, #306). The
+        # default holds the graph in memory, exactly as this class always did.
+        self.store: GraphStore = store or MemoryGraphStore(
+            read_jsonl(artifact_path(self.dir, "nodes.jsonl")),
+            read_jsonl(artifact_path(self.dir, "edges.jsonl")),
+        )
         # The repo map, for pack_context()'s prepend. Both are optional: a
         # `--formats jsonl` build writes no overview.md, and a build interrupted
         # before write_manifest leaves no manifest.json. Neither may raise here.
@@ -626,6 +624,26 @@ class Index:
         # or it loaded; a dropped vector set must be reportable, never silent.
         self.vectors_unavailable: str | None = None
         self._load_vectors()
+
+    # `nodes`, `edges` and `adj` predate the store interface. They are the
+    # in-memory store's own containers (mutable, as tests and callers rely on);
+    # for another backend they are materialised once, at full memory cost.
+    @property
+    def nodes(self) -> dict[str, Record]:
+        return self._memory().nodes
+
+    @property
+    def edges(self) -> list[Record]:
+        return self._memory().edges
+
+    @property
+    def adj(self) -> dict[str, list[tuple[str, str, str, Record]]]:
+        return self._memory().adj
+
+    def _memory(self) -> MemoryGraphStore:
+        if not isinstance(self.store, MemoryGraphStore):
+            self.store = MemoryGraphStore(self.store.iter_nodes(), self.store.iter_edges())
+        return self.store
 
     def _build_bm25(self) -> None:
         """Compute the BM25 inverted index dynamically across all chunks."""
@@ -1287,7 +1305,7 @@ class Index:
                 if len(nxt) >= cap:
                     break
                 added_for_nid = 0
-                for dst, etype, direction, edge in self.adj.get(nid, []):
+                for dst, etype, direction, edge in self.store.neighbours(nid):
                     if etype not in wanted or dst in seen:
                         continue
                     allowed = dirs.get(etype)
@@ -1356,7 +1374,7 @@ class Index:
         def _secret(c: Record, nid: str) -> bool:
             if not exclude_secrets:
                 return False
-            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
             return _is_secret_path(
                 c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
             )
@@ -1422,7 +1440,7 @@ class Index:
                 chunk_len = len(chunk_text)
                 if used + chunk_len > budget_chars:
                     break
-                src_name = self.nodes.get(src, {}).get("name") or src
+                src_name = (self.store.node(src) or {}).get("name") or src
                 picked.append({**rec, "score": 0.0, "why": f"{etype} {direction} of {src_name}"})
                 used += chunk_len
                 if len(picked) >= max_total or used >= budget_chars:
@@ -1610,7 +1628,7 @@ class Index:
             # "CALLS out of query", not as a seed.
             if c.get("kind") == "alias":
                 continue
-            c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+            c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
             if exclude_secrets and _is_secret_path(
                 c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
             ):
@@ -1676,7 +1694,7 @@ class Index:
                         if not node_chunks:
                             continue
                         c = node_chunks[0]
-                        c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                        c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
                         seen_nodes.add(nid)
                         if exclude_secrets and _is_secret_path(
                             c_path,
@@ -1686,7 +1704,7 @@ class Index:
                             continue
                         if exclude_secrets:
                             c = self._served(c)
-                        src_name = self.nodes.get(src, {}).get("name") or src
+                        src_name = (self.store.node(src) or {}).get("name") or src
                         graph_neighbours.append(
                             {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
                         )
@@ -1706,7 +1724,7 @@ class Index:
                     if not node_chunks:
                         continue
                     c = node_chunks[0]
-                    c_path = c.get("path") or self.nodes.get(nid, {}).get("path") or ""
+                    c_path = c.get("path") or (self.store.node(nid) or {}).get("path") or ""
                     seen_nodes.add(nid)
                     if exclude_secrets and _is_secret_path(
                         c_path, extra_keywords=extra_secret_keywords, extra_dirs=extra_secret_dirs
@@ -1714,7 +1732,7 @@ class Index:
                         continue
                     if exclude_secrets:
                         c = self._served(c)
-                    src_name = self.nodes.get(src, {}).get("name") or src
+                    src_name = (self.store.node(src) or {}).get("name") or src
                     graph_neighbours.append(
                         {**c, "score": 0.0, "why": f"{etype} {direction} of {src_name}"}
                     )

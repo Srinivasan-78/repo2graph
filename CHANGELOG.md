@@ -143,6 +143,11 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **Graph storage behind an interface (#306).** Traversal, retrieval, `explain` and every MCP
+  tool read the graph through `Index.store` (`repo2graph.store.GraphStore`) instead of its
+  dicts and lists. The in-memory store is the default and output is unchanged.
+  `SqliteGraphStore` is a standard-library prototype that answers from disk; a test runs the
+  same traversals over both and requires byte-identical results, ordering included.
 - **`graph.py`, `parse.py` and `cli.py` split by responsibility (#315).** Moves only, no
   behaviour change: import resolution (`imports.py`), the parse cache (`parsecache.py`), derived
   edges and entrypoints (`derived.py`), co-change (`cochange.py`), file discovery and
