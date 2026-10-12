@@ -1,100 +1,106 @@
 {
   "discovery": "git",
-  "skipped_gitignore": 25,
-  "skipped_binary": 8,
-  "files": 294,
-  "edge:CONTAINS": 358,
-  "parsed": 190,
+  "skipped_gitignore": 4,
+  "skipped_binary": 9,
+  "skipped_dotfile": 2,
+  "files": 390,
+  "edge:CONTAINS": 473,
+  "parsed": 254,
   "parse_errors": 0,
-  "symbol:function": 2556,
-  "edge:DEFINES": 2755,
-  "edge:IMPORTS": 1231,
-  "imports_unresolved": 792,
-  "imports_resolved": 1043,
-  "symbol:class": 167,
-  "symbol:method": 28,
-  "symbol:interface": 4,
-  "redacted_secret_metadata": 2,
-  "edge:CALLS_EXTERNAL": 6484,
-  "calls_external": 6484,
-  "edge:CALLS": 6129,
-  "calls_scoped": 3509,
-  "calls_ambiguous": 967,
-  "ambiguous_calls": 967,
-  "calls_untyped_receiver": 730,
-  "edge:INHERITS": 10,
-  "unresolved_bases": 32,
-  "calls_unique_global": 509,
-  "calls_shadowed_builtin": 48,
+  "symbol:function": 3374,
+  "edge:DEFINES": 3706,
+  "edge:IMPORTS": 1853,
+  "imports_unresolved": 1216,
+  "imports_resolved": 1457,
+  "symbol:class": 223,
+  "symbol:method": 80,
+  "symbol:interface": 25,
+  "symbol:type": 4,
+  "redacted_secret_metadata": 4,
+  "edge:CALLS_EXTERNAL": 8369,
+  "calls_external": 8369,
+  "edge:CALLS": 9300,
+  "calls_scoped": 4742,
+  "calls_ambiguous": 1440,
+  "ambiguous_calls": 1440,
+  "calls_untyped_receiver": 1072,
+  "edge:INHERITS": 17,
+  "unresolved_bases": 58,
+  "calls_unique_global": 668,
+  "calls_shadowed_builtin": 52,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 379,
+  "cochange_sampled_commits": 399,
   "cochange_min_pairs": 3,
-  "cochange_commits_skipped": 11,
-  "edge:CO_CHANGE": 531,
-  "entrypoints": 1697,
-  "nodes": 3732,
-  "edges": 17498,
+  "cochange_commits_skipped": 15,
+  "edge:CO_CHANGE": 565,
+  "edge:TESTS": 17799,
+  "testable_symbols": 1072,
+  "tested_symbols": 578,
+  "entrypoints": 2143,
+  "nodes": 5063,
+  "edges": 42082,
   "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
-  "redacted_secret_chunks": 167,
-  "total_symbols": 2755,
+  "redacted_secret_chunks": 201,
+  "hidden_unicode_chars": 6,
+  "total_symbols": 3706,
   "top_hub_nodes": [
+    {
+      "node_id": "sym:repo2graph/scip.py::_Strings.get",
+      "label": "_Strings.get",
+      "in_degree": 410
+    },
     {
       "node_id": "sym:repo2graph/cache.py::ResultCache.get",
       "label": "ResultCache.get",
-      "in_degree": 345
+      "in_degree": 408
     },
     {
       "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
       "label": "TaskManager.get",
-      "in_degree": 337
+      "in_degree": 397
     },
     {
       "node_id": "sym:repo2graph/answer.py::_writer.write_text",
       "label": "_writer.write_text",
-      "in_degree": 287
+      "in_degree": 353
     },
     {
       "node_id": "sym:repo2graph/query.py::Index",
       "label": "Index",
-      "in_degree": 176
+      "in_degree": 234
     },
     {
       "node_id": "sym:tests/_pool_stdio_probe.py::main",
       "label": "main",
-      "in_degree": 127
+      "in_degree": 165
     },
     {
       "node_id": "sym:tests/_mcp_pool_server.py::main",
       "label": "main",
-      "in_degree": 125
+      "in_degree": 163
+    },
+    {
+      "node_id": "sym:tests/test_mcp_conformance.py::_run.main",
+      "label": "_run.main",
+      "in_degree": 163
+    },
+    {
+      "node_id": "sym:tests/test_mcp_conformance.py::test_auto_build_annotations_admit_side_effects.main",
+      "label": "test_auto_build_annotations_admit_side_effects.main",
+      "in_degree": 163
     },
     {
       "node_id": "sym:repo2graph/graph.py::build",
       "label": "build",
-      "in_degree": 116
-    },
-    {
-      "node_id": "sym:tests/test_audit.py::test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
-      "label": "test_params_that_cannot_be_sanitized_fall_back_to_a_record.Hostile.items",
-      "in_degree": 88
-    },
-    {
-      "node_id": "sym:tests/test_classified_errors.py::test_audit_serialization_resilience_and_debug_reraise.BrokenDict.items",
-      "label": "test_audit_serialization_resilience_and_debug_reraise.BrokenDict.items",
-      "in_degree": 88
-    },
-    {
-      "node_id": "sym:repo2graph/export.py::path",
-      "label": "path",
-      "in_degree": 73
+      "in_degree": 143
     }
   ],
   "languages": {
-    "python": 167,
-    "json": 36,
-    "md": 31,
-    "yml": 21,
-    "typescript": 13,
+    "python": 219,
+    "md": 54,
+    "json": 41,
+    "typescript": 25,
+    "yml": 23,
     "tsx": 8,
     "toml": 3,
     "javascript": 2,
@@ -106,7 +112,8 @@
   "has_vectors": false,
   "index_schema_version": "2",
   "limits_hit": {},
-  "built_at_commit": "c933a93",
+  "tested_symbol_fraction": 0.539,
+  "built_at_commit": "4ee550c",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/cli.py",
@@ -124,14 +131,14 @@
       "weight": 26
     },
     {
-      "file_a": "repo2graph/graph.py",
-      "file_b": "repo2graph/parse.py",
+      "file_a": "repo2graph/cli.py",
+      "file_b": "repo2graph/graph.py",
       "weight": 25
     },
     {
-      "file_a": "repo2graph/cli.py",
-      "file_b": "repo2graph/graph.py",
-      "weight": 24
+      "file_a": "repo2graph/graph.py",
+      "file_b": "repo2graph/parse.py",
+      "weight": 25
     }
   ]
 }
