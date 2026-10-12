@@ -202,9 +202,12 @@ makes keeping it current a release-blocking step rather than a good intention.
   it — `WinError 1455` ("the paging file is too small") spawning `node`, return code `3221225773`
   (`0xC000012D`, `STATUS_COMMITMENT_LIMIT`) spawning `bash`, and a `MemoryError` that killed an
   xdist worker — the last of them after `2606 passed`, so the suite was finishing and only a
-  subprocess could not start. The Windows cells now set a fixed 16 GB pagefile before the suite
-  runs, printing the limit before and after so the log says whether it took, and warning rather
-  than failing if it cannot. Two wall-clock assertions that #480 and #481 missed are
+  subprocess could not start. Together the two changes took Windows from four red cells to one and
+  each cell from 6–10 minutes to about 5m35s. Raising the limit was tried and rejected on its own
+  evidence: a step that set a fixed 16 GB pagefile through CIM reported the same 18.9 GB commit
+  limit before and after itself, so it is not in the tree — the note in `ci.yml` records that,
+  along with where the remaining Windows 3.10 `MemoryError` should be looked for, so the next
+  person does not repeat the experiment. Two wall-clock assertions that #480 and #481 missed are
   rewritten to assert what they meant — a hung item is *abandoned*, proved by the gap between a
   300 s item and a 120 s bound, rather than by a 30 s bound that a runner spending 50 s starting
   worker processes could not meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,

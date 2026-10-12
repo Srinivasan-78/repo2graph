@@ -188,54 +188,22 @@ jobs:
       # suite, not of the operating system, and the `fail_under = 80` floor is
       # still enforced on the eight Linux and macOS cells; the one cell that
       # reports coverage anywhere (the step summary below) is Ubuntu 3.13.
+      # Together these took Windows from four red cells to one, and each cell
+      # from 6-10 minutes to around 5m35s.
+      #
+      # What is left on Windows 3.10, so nobody re-derives it: the worker dies
+      # with `MemoryError` partway through, and the image's commit limit is
+      # 18.9 GB against 16 GB of RAM. Raising it is not the lever -- a step
+      # that set a fixed 16 GB pagefile through CIM was tried here and removed
+      # again, because it printed the same 18.9 GB before and after (a
+      # pagefile resize wants the reboot a CI job cannot do). The demand side
+      # is where the remaining work is, and `integrity.read_bounded`'s
+      # docstring describes the pattern to look for: an allocation sized by a
+      # *ceiling* rather than by the data, free on Linux's overcommit and real
+      # commit charge on Windows.
       - name: Run Test Suite & Branch Coverage
         if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
-
-      # Windows has no overcommit: a process reserves against a commit limit of
-      # physical RAM plus the pagefile, and the hosted image ships a small,
-      # automatically managed one. Three different failures on this job were the
-      # same wall, and all three name it:
-      #
-      #   OSError: [WinError 1455] The paging file is too small    (spawning node)
-      #   returncode 3221225773 == 0xC000012D STATUS_COMMITMENT_LIMIT  (spawning bash)
-      #   MemoryError, killing an xdist worker mid-test             (test_vectors)
-      #
-      # Not one is a finding about the code, and capping the workers and
-      # dropping the tracer only narrowed it -- the last run reached
-      # `2606 passed` before a subprocess could not start. So raise the limit
-      # itself: a fixed 16 GB pagefile, which takes effect without the reboot a
-      # CI job cannot do.
-      #
-      # Written out rather than taken from a third-party action, since this
-      # repository SHA-pins every action it uses and this is a dozen lines. It
-      # prints the limit before and after so the log says whether it worked,
-      # and a failure to apply only warns: that leaves the job exactly where it
-      # was without adding a red cell of its own.
-      - name: Raise the Windows commit limit
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          function Show-Limit($when) {
-            $os = Get-CimInstance Win32_OperatingSystem
-            $commit = [math]::Round($os.TotalVirtualMemorySize / 1MB, 1)
-            $ram = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
-            Write-Host "${when}: commit limit ${commit} GB, physical RAM ${ram} GB"
-          }
-          Show-Limit "before"
-          try {
-            $cs = Get-CimInstance Win32_ComputerSystem
-            if ($cs.AutomaticManagedPagefile) {
-              Set-CimInstance -InputObject $cs -Property @{ AutomaticManagedPagefile = $false } -ErrorAction Stop
-            }
-            Get-CimInstance Win32_PageFileSetting -ErrorAction SilentlyContinue | Remove-CimInstance -ErrorAction Stop
-            $null = New-CimInstance -ClassName Win32_PageFileSetting -ErrorAction Stop -Property @{
-              Name = 'C:\pagefile.sys'; InitialSize = 16384; MaximumSize = 16384
-            }
-          } catch {
-            Write-Host "::warning::could not resize the pagefile: $($_.Exception.Message)"
-          }
-          Show-Limit "after"
 
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
