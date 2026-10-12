@@ -181,37 +181,32 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
-- **CI stops failing on the Windows runner's load instead of on the code.** Five of the twelve CI
-  runs before this change were red, every one on a Windows cell and every one on a resource
-  symptom rather than a finding: three elapsed-time assertions, one count that depends on a
-  timeout firing, and `WinError 1455` — the Windows commit limit — raised while spawning `node` in
-  `test_npm_launcher`. The cause is oversubscription: `-n auto` gives four xdist workers on a
-  4-vCPU image, and a large share of this suite's tests spawn their own coverage-traced
-  multiprocessing pools plus `node` and `git` children on top of that. Windows now runs `-n auto`
-  as a single worker through `PYTEST_XDIST_AUTO_NUM_WORKERS` and uninstrumented, with pytest-cov switched off, which was the
-  larger half: `[tool.coverage.run]` sets `concurrency = multiprocessing`, so every process the
-  suite spawns starts a tracer and writes its own data file (`test_mcp.py` plus
-  `test_mcp_tools.py` measured 17 s uninstrumented against 26 s instrumented, on a Windows box
-  with 16 cores to spare). Capping the workers alone was not enough — two cells went green, one
-  still lost an xdist worker mid-test and one still timed out spawning a subprocess. Nothing is
-  given up: coverage is a property of the suite, not of the OS, and `fail_under = 80` is still
-  enforced on the eight Linux and macOS cells, one of which is the only cell that ever reported
-  the number. Narrowing it that far is what made the real wall legible: Windows has no overcommit,
-  so a process reserves against a commit limit of physical RAM plus the pagefile, and the hosted
-  image ships a small automatically managed one. Three failures that read as unrelated all name
-  it — `WinError 1455` ("the paging file is too small") spawning `node`, return code `3221225773`
-  (`0xC000012D`, `STATUS_COMMITMENT_LIMIT`) spawning `bash`, and a `MemoryError` that killed an
-  xdist worker — the last of them after `2606 passed`, so the suite was finishing and only a
-  subprocess could not start. Together the two changes took Windows from four red cells to one and
-  each cell from 6–10 minutes to about 5m35s. Raising the limit was tried and rejected on its own
-  evidence: a step that set a fixed 16 GB pagefile through CIM reported the same 18.9 GB commit
-  limit before and after itself, so it is not in the tree — the note in `ci.yml` records that,
-  along with where the remaining Windows 3.10 `MemoryError` should be looked for, so the next
-  person does not repeat the experiment. Two wall-clock assertions that #480 and #481 missed are
-  rewritten to assert what they meant — a hung item is *abandoned*, proved by the gap between a
-  300 s item and a 120 s bound, rather than by a 30 s bound that a runner spending 50 s starting
-  worker processes could not meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
-  matching the three in `test_secrets_hardening` that #481 converted for exactly this reason.
+- **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
+  twelve runs before this change were red, every one on a Windows cell and not one on a finding
+  about the code. Three were the suite's own fault and are fixed: two wall-clock assertions that
+  #480 and #481 missed now assert what they meant — a hung item is *abandoned*, proved by the gap
+  between a 300 s item and a 120 s bound, not by a 30 s bound that a runner spending 50 s starting
+  worker processes cannot meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
+  matching the three in `test_secrets_hardening` that #481 converted for the same reason. The
+  Windows cells also now run two xdist workers instead of four and without pytest-cov, which
+  together took them from 6–10 minutes to about 5m35s; `[tool.coverage.run]` sets
+  `concurrency = multiprocessing`, so every process the suite spawns was starting a tracer of its
+  own, and coverage is a property of the suite rather than of the OS — `fail_under = 80` is still
+  enforced on the eight Linux and macOS cells, and the only cell that ever reported the number is
+  Ubuntu 3.13. The `timeout-minutes` ceiling goes to 35, after a cell that had finished in 5m37s
+  reached 93% of the same suite in 20 minutes on a runner about 4x slower and was cancelled.
+
+  **Not fixed, and recorded in `ci.yml` so it is not re-derived:** the Windows cells are still
+  intermittently red, always on an allocation or a spawn that could not be satisfied —
+  `WinError 1455`, `0xC000012D` (`STATUS_COMMITMENT_LIMIT`), `RuntimeError: can't start new
+  thread`, `exit 127`, `MemoryError` — and never on behaviour. Windows has no overcommit, and the
+  image's commit limit measures 18.9 GB against 16 GB of RAM. Both levers a workflow has were
+  tried and neither closes it: a step setting a fixed 16 GB pagefile through CIM reported the same
+  18.9 GB before and after itself (a resize wants a reboot CI cannot do) and is not in the tree,
+  and cutting to a single worker failed the same cells while costing three minutes each. So the
+  cause is upstream of CI — one pytest process consuming an 18.9 GB commit limit is a memory
+  accumulation in the suite or the library, and locating it needs per-process commit profiling
+  across a run.
 - **A federated pack no longer overruns its token budget (#482).** `federated._fit` read a budget
   of `0` as "no ceiling" — the caller's sentinel, as in `Index.pack_context` — but `0` was also
   what `budget - len(header)` came to once the `# Context from N repositories: ...` header outgrew

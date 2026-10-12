@@ -197,16 +197,36 @@ jobs:
       # Together these took Windows from four red cells to one, and each cell
       # from 6-10 minutes to around 5m35s.
       #
-      # What is left on Windows 3.10, so nobody re-derives it: the worker dies
-      # with `MemoryError` partway through, and the image's commit limit is
-      # 18.9 GB against 16 GB of RAM. Raising it is not the lever -- a step
-      # that set a fixed 16 GB pagefile through CIM was tried here and removed
-      # again, because it printed the same 18.9 GB before and after (a
-      # pagefile resize wants the reboot a CI job cannot do). The demand side
-      # is where the remaining work is, and `integrity.read_bounded`'s
-      # docstring describes the pattern to look for: an allocation sized by a
-      # *ceiling* rather than by the data, free on Linux's overcommit and real
-      # commit charge on Windows.
+      # What is still wrong, so nobody re-derives it. Windows cells remain
+      # intermittently red, and every failure is an allocation or a spawn that
+      # could not be satisfied -- never an assertion about behaviour:
+      #
+      #   OSError: [WinError 1455] The paging file is too small
+      #   returncode 3221225773 == 0xC000012D STATUS_COMMITMENT_LIMIT
+      #   RuntimeError: can't start new thread
+      #   assert 127 == 0            (a child that could not exec)
+      #   MemoryError                (including at integrity.py's 1 MB block read)
+      #
+      # Windows has no overcommit: a process reserves against physical RAM plus
+      # the pagefile, measured at 18.9 GB against 16 GB on this image. Both
+      # levers a workflow has were tried and neither clears it:
+      #
+      #   - Raising the ceiling. A step setting a fixed 16 GB pagefile through
+      #     CIM printed the same 18.9 GB before and after itself -- a resize
+      #     wants the reboot a CI job cannot do. Removed; do not re-add it.
+      #   - Lowering the demand. 4 workers -> 2 -> 1, and the tracer off. Each
+      #     step helped (four red cells to one or two, 6-10 min to ~5m35s) and
+      #     none finished the job.
+      #
+      # So the remaining cause is upstream of CI: a pytest process is consuming
+      # an 18.9 GB commit limit on its own, which is a memory accumulation in
+      # the suite or the library, not a runner that is too small. Finding it
+      # needs per-process commit profiling across the run; `read_bounded`'s own
+      # docstring names the shape to look for, an allocation sized by a ceiling
+      # rather than by the data, free under Linux overcommit and real charge
+      # here. Note that the MemoryError at integrity.py:186 is *not* it: that
+      # line reads 1 MB blocks, so failing there means the process was already
+      # out of commit.
       - name: Run Test Suite & Branch Coverage
         if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
@@ -214,12 +234,12 @@ jobs:
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
         env:
-          # One worker, not two. At two the commit wall was still being hit,
-          # just later and in more shapes -- `exit 127` from a child that could
-          # not exec, `RuntimeError: can't start new thread`, `MemoryError`.
-          # Peak demand is what has to come down, and the job timeout above now
-          # has room for the slower run this costs.
-          PYTEST_XDIST_AUTO_NUM_WORKERS: "1"
+          # Two, after measuring one. A single worker was tried for exactly the
+          # reason above and did not clear the wall either -- it failed the same
+          # two-of-four cells while adding three minutes to each (8m40s against
+          # 5m35s), so there is no evidence for paying that. See the note above
+          # the non-Windows step for what is actually left.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
         run: pytest -q -n auto
 
       - name: Append Test Coverage to Step Summary
