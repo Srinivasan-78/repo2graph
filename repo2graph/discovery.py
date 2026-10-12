@@ -509,6 +509,41 @@ def explain_path(
             "precedence_step": 1,
         }
 
+    # Still step 1: the two rules `discover()` applies to the relative path the
+    # moment it has one, before any of the checks below. Modelled here because
+    # an explainer that does not know a drop rule answers INCLUDED for a file
+    # no build will ever index -- the same divergence `_explain_index_dir`
+    # exists to patch up for the output directory. Sharing step 1 with
+    # `not_found` rather than renumbering: both are properties of the path
+    # itself, `rule` tells them apart, and docs/cli.md already documents two
+    # rules sharing a step.
+    try:
+        rel_str.encode("utf8")
+    except UnicodeEncodeError:
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "undecodable_path",
+            "reason": (
+                "Path is not valid UTF-8, so no JSONL, overview or HTML writer downstream "
+                "can encode it"
+            ),
+            "precedence_step": 1,
+        }
+    if has_unsafe_path_chars(rel_str):
+        return {
+            "path": str(target_path),
+            "relative_path": rel_str,
+            "included": False,
+            "rule": "unsafe_path",
+            "reason": (
+                "Path holds a control, line-separator or hidden character, which forges "
+                "structure wherever the path is printed"
+            ),
+            "precedence_step": 1,
+        }
+
     # Step 2: Skip directories (DEFAULT_SKIP_DIRS | extra_exclude_dirs)
     skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
     if config.include_vendor:
