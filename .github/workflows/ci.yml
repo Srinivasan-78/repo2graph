@@ -125,7 +125,13 @@ jobs:
     # The scheduled run exists for `drift` alone; this job is what gates a PR.
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Headroom for a slow runner, not for a slow suite. A Windows cell that
+    # finished in 5m37s on one run reached 93% of the same suite in 20 minutes
+    # on the next and was cancelled at the ceiling -- same commit, same
+    # configuration, a runner roughly 4x slower. A timeout is a ceiling rather
+    # than a cost, so it should sit above the worst runner rather than just
+    # above the usual one; this is ~3x the slowest honest run (10m2s).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
