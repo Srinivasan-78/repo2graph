@@ -156,7 +156,25 @@ jobs:
       # Windows images). Coverage still combines correctly because
       # [tool.coverage.run] sets parallel = true, which the multiprocessing
       # build path already needed.
+      #
+      # Windows caps that at 2. Four xdist workers there each run tests that
+      # spawn their own coverage-traced multiprocessing pools, plus `node` and
+      # `git` children, on a 4-vCPU image with a small pagefile -- so the
+      # runner is oversubscribed several times over and what breaks is never
+      # the code under test. Five of the twelve CI runs before this change
+      # were red, every one of them on a Windows cell and every one of them on
+      # a resource symptom: three elapsed-time assertions, one count that
+      # depends on a timeout, and `WinError 1455` (the commit limit) raised
+      # while spawning `node` in test_npm_launcher. A 40% red rate with no
+      # real finding behind it is worse than a slower Windows cell, because it
+      # teaches everyone to re-run the job rather than read it.
+      #
+      # `PYTEST_XDIST_AUTO_NUM_WORKERS` is how xdist takes this without
+      # changing the command: it overrides what `-n auto` resolves to, and an
+      # empty value (every non-Windows cell) leaves `auto` alone.
       - name: Run Test Suite & Branch Coverage
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: ${{ matrix.os == 'windows-latest' && '2' || '' }}
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
 
       - name: Append Test Coverage to Step Summary

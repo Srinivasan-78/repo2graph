@@ -181,6 +181,19 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **CI stops failing on the Windows runner's load instead of on the code.** Five of the twelve CI
+  runs before this change were red, every one on a Windows cell and every one on a resource
+  symptom rather than a finding: three elapsed-time assertions, one count that depends on a
+  timeout firing, and `WinError 1455` — the Windows commit limit — raised while spawning `node` in
+  `test_npm_launcher`. The cause is oversubscription: `-n auto` gives four xdist workers on a
+  4-vCPU image, and a large share of this suite's tests spawn their own coverage-traced
+  multiprocessing pools plus `node` and `git` children on top of that. Windows now caps `-n auto`
+  at 2 workers through `PYTEST_XDIST_AUTO_NUM_WORKERS`, which needs no change to the command and
+  leaves every other cell on `auto`. Two wall-clock assertions that #480 and #481 missed are
+  rewritten to assert what they meant — a hung item is *abandoned*, proved by the gap between a
+  300 s item and a 120 s bound, rather than by a 30 s bound that a runner spending 50 s starting
+  worker processes could not meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
+  matching the three in `test_secrets_hardening` that #481 converted for exactly this reason.
 - **A federated pack no longer overruns its token budget (#482).** `federated._fit` read a budget
   of `0` as "no ceiling" — the caller's sentinel, as in `Index.pack_context` — but `0` was also
   what `budget - len(header)` came to once the `# Context from N repositories: ...` header outgrew

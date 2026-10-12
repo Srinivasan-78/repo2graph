@@ -383,10 +383,19 @@ def test_run_cpp_returns_small_output_whole():
 
 def test_include_strip_is_linear_on_nested_comment_lookalikes():
     """CodeQL py/redos: `/\\*.*?\\*/` inside a repeated group backtracked
-    exponentially on `#/*` followed by many `*//*`."""
+    exponentially on `#/*` followed by many `*//*`.
+
+    CPU time, not wall clock, for the reason `test_secrets_hardening.py`'s
+    three linearity checks give: under `-n auto` on a shared runner,
+    preemption alone can stretch this work past a one-second wall bound, which
+    turns a ReDoS detector into a test of how busy the machine is. The fixed
+    form costs ~0.02 s of CPU here, so the bound keeps its 50x margin while
+    the backtracking form takes seconds.
+    """
     import time
 
     evil = b"#/*" + b"*//*" * 20000
-    t0 = time.monotonic()
+    start = time.process_time()
     parse_mod._strip_cpp_includes(evil)
-    assert time.monotonic() - t0 < 1.0
+    elapsed = time.process_time() - start
+    assert elapsed < 1.0, f"strip took {elapsed:.2f}s of CPU; the backtracking form is back"

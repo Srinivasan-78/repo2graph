@@ -131,11 +131,29 @@ def _init(watch):
     parsepool.claim_slot(watch)
 
 
+# A hung item sleeps far longer than the supervisor should ever wait for it;
+# the clock bound is far longer than starting the pool can plausibly cost.
+# Both numbers are loose on purpose. What these two tests assert is that a hung
+# item is *abandoned*, and what proves it is the gap between the two bounds,
+# not a tight reading of the clock -- #480 and #481 converted this suite's
+# other timing assertions for the same reason and missed these. A 60 s item
+# under a 30 s bound then failed on a Windows runner that spent 50 s of that
+# budget starting three coverage-traced worker processes, with the supervisor
+# behaving correctly throughout.
+HUNG_S = 300
+ABANDONED_WITHIN_S = 120
+
+
 def test_supervisor_names_the_item_that_hung_or_died_and_keeps_order():
-    items = [("ok", 0), ("sleep", 60), ("ok", 2), ("exit", 0), ("ok", 4), ("ok", 5)]
+    items = [("ok", 0), ("sleep", HUNG_S), ("ok", 2), ("exit", 0), ("ok", 4), ("ok", 5)]
     started = time.monotonic()
     got = supervised_map(_work, items, 2, 0.5, _init)
-    assert time.monotonic() - started < 30
+    elapsed = time.monotonic() - started
+    assert elapsed < ABANDONED_WITHIN_S, (
+        f"waited {elapsed:.1f}s, so the {HUNG_S}s item was waited on rather than abandoned"
+    )
+    # The real contract: the hung item reports TIMEOUT rather than its own
+    # return value, which it could not do if the supervisor had sat through it.
     assert [g if isinstance(g, str) else g[0] for g in got] == [0, TIMEOUT, 2, CRASH, 4, 5]
 
 
@@ -166,4 +184,7 @@ def test_a_pool_whose_workers_never_start_is_abandoned_not_waited_on(monkeypatch
     started = time.monotonic()
     with pytest.raises(parsepool.PoolUnavailable, match="no progress"):
         supervised_map(_work, [("ok", 1)], 1, 0, _wedged)
-    assert time.monotonic() - started < 30
+    elapsed = time.monotonic() - started
+    assert elapsed < ABANDONED_WITHIN_S, (
+        f"waited {elapsed:.1f}s on a worker that sleeps for an hour before its first file"
+    )
