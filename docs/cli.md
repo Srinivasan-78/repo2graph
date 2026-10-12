@@ -1038,14 +1038,22 @@ Never point `commit-branch` at a primary or protected branch (e.g. `main`, `deve
 
 ### 3. Safe Force-Pushes with `commit-force`
 
-By default, `commit-branch` creates an orphan branch with a single root commit and uses `--force` (`commit-force: true`) so the graph branch remains clean and minimal.
-If your compliance or security policy disallows force pushes, set `commit-force: false` to require standard fast-forward pushes:
+By default (`commit-force: false`) the push is a plain fast-forward: the action
+fetches the current tip of `commit-branch` and commits the new graph on top of
+it, so the branch accumulates one commit per run and no history is ever
+rewritten. The branch is created as an orphan root commit on the first run only.
+
+Set `commit-force: true` to replace the branch outright with a single fresh root
+commit each run, keeping it one commit deep so the artifacts never accumulate in
+the repository's history:
 ```yaml
 - uses: Srinivasan-78/repo2graph@v3
   with:
     commit-branch: graph
-    commit-force: "false"
+    commit-force: "true"
 ```
+Force-push is only permitted when the branch name contains `graph`, so it cannot
+be pointed at a working branch.
 
 ### 4. Handling Private Repositories
 

@@ -706,6 +706,34 @@ def test_commit_force_true_uses_force_push(tmp_path):
 
 
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_plain_push_builds_on_the_existing_branch(tmp_path):
+    """A non-force push must fast-forward, so when the branch already exists the
+    step commits on top of its tip instead of a fresh orphan root -- an orphan
+    root is never a fast-forward, so every run after the branch's creation was
+    rejected with `! [rejected] (fetch first)`."""
+    token = "ghs_TotallyFakeFetchFirstProbeToken"  # noqa: S105
+    calls = _resolved_push_git_calls(tmp_path, token)
+    verbs = [c[0] for c in calls]
+    assert "fetch" in verbs, calls
+    fetch = next(c for c in calls if c[0] == "fetch")
+    assert fetch[-1] == "+refs/heads/r2g-graph:refs/remotes/origin/r2g-graph", fetch
+    # -B, i.e. the fetched tip becomes the branch's parent; a plain `-b` would
+    # start the orphan root this issue is about.
+    assert ["checkout", "-q", "-B", "r2g-graph", "refs/remotes/origin/r2g-graph"] in calls, calls
+    assert not any(c[:4] == ["checkout", "-q", "-b", "r2g-graph"] for c in calls), calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+def test_force_push_commits_a_fresh_root(tmp_path):
+    """The force path keeps its single-root-commit behaviour: it must not fetch
+    the old tip, since the whole point is to replace it."""
+    token = "ghs_TotallyFakeForceRootProbeToken"  # noqa: S105
+    calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "true"})
+    assert not any(c[0] == "fetch" for c in calls), calls
+    assert ["checkout", "-q", "-b", "r2g-graph"] in calls, calls
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
 def test_push_refused_on_fork_pull_request(tmp_path):
     """The action refuses to push graph to branch when run from a fork PR (#310)."""
     body = _run_body(
