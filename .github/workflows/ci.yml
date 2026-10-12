@@ -245,21 +245,29 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $out = "$env:RUNNER_TEMP\commit-samples.txt"
-          "$out" | Out-File -FilePath "$env:RUNNER_TEMP\commit-sample-path.txt" -Encoding utf8
-          Start-Job -Name commitsampler -ScriptBlock {
-            param($out)
-            while ($true) {
-              $m = Get-CimInstance Win32_OperatingSystem
-              $committedMB = [math]::Round(($m.TotalVirtualMemorySize - $m.FreeVirtualMemory) / 1KB, 0)
-              $top = (Get-Process | Sort-Object -Property PM -Descending | Select-Object -First 6 |
-                ForEach-Object { "{0}={1}MB" -f $_.ProcessName, [math]::Round($_.PM / 1MB, 0) }) -join " "
-              $procs = (Get-Process).Count
-              "$committedMB`t$procs`t$top" | Add-Content -Path $out
-              Start-Sleep -Seconds 5
-            }
-          } -ArgumentList $out | Out-Null
-          Write-Host "sampler started -> $out"
+          # Detached, not Start-Job: a PowerShell job belongs to the step's own
+          # process and dies with it, which is why the first attempt at this
+          # reported "no samples". Start-Process outlives the step, and the
+          # child inherits RUNNER_TEMP so it needs no arguments.
+          $sampler = @'
+          $out = Join-Path $env:RUNNER_TEMP 'commit-samples.txt'
+          while ($true) {
+            $m = Get-CimInstance Win32_OperatingSystem
+            $committed = [math]::Round(($m.TotalVirtualMemorySize - $m.FreeVirtualMemory) / 1KB, 0)
+            $procs = (Get-Process).Count
+            $top = (Get-Process | Sort-Object -Property PM -Descending | Select-Object -First 6 |
+              ForEach-Object { '{0}={1}' -f $_.ProcessName, [math]::Round($_.PM / 1MB, 0) }) -join ' '
+            "$committed`t$procs`t$top" | Add-Content -Path $out
+            Start-Sleep -Seconds 5
+          }
+          '@
+          $path = Join-Path $env:RUNNER_TEMP 'sampler.ps1'
+          $sampler | Out-File -FilePath $path -Encoding utf8
+          Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile','-File',$path -WindowStyle Hidden
+          Start-Sleep -Seconds 6
+          $out = Join-Path $env:RUNNER_TEMP 'commit-samples.txt'
+          if (Test-Path $out) { Write-Host "sampler running: $(Get-Content $out -Tail 1)" }
+          else { Write-Host '::warning::sampler produced nothing in 6s' }
 
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
