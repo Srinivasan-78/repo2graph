@@ -296,9 +296,15 @@ typeshed guards much of the standard library on `sys.platform`, and a `try: impo
 - Test `sys.platform == "win32"` (or `!=`) before the call, and keep the import guard for the runtime.
 - CI runs `mypy --platform linux`, `--platform darwin` and `--platform win32` on one runner, so a regression fails there even though `make typecheck` locally only checks your own platform.
 
+### 2b. `EACCES`/`EPERM` Are Transient on Windows, Permanent on POSIX
+A permission error does not clear by itself on POSIX, so treating one as unrecoverable is correct there. On Windows the same errno is also what a *sharing violation* raises (`WinError` 5 and 32) while OneDrive, an antivirus scanner or the search indexer briefly holds a file open — which it stops doing a moment later. Code that fails fast on `EACCES` therefore turns a self-clearing hiccup into a hard failure, and usually reports the wrong cause.
+- Retry `EACCES`/`EPERM` on Windows; fail fast on them only on POSIX. `EROFS`, `ENOSPC`, `ENOENT` and `ENOTDIR` are unrecoverable on both.
+- Two places already do this and are the patterns to copy: `export._rename` retries the rename, and `lock.BuildLock.acquire` keeps `EACCES`/`EPERM` in its retry loop on Windows and reports them only once `--lock-timeout` is spent.
+- A unit test for this must be skipped off-Windows (`sys.platform != "win32"`), because the behaviour under test is the platform branch itself.
+
 ### 3. Deterministic Discovery Order
 The order in which files are discovered dictates the emitted order of nodes, edges, and chunks across `nodes.jsonl`, `edges.jsonl`, and `chunks.jsonl`.
-- `parse.discover()` must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
+- `discovery.discover()` (re-exported as `parse.discover`) must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
 - Discovery applies `DEFAULT_SKIP_DIRS` consistently across both git-tracked files and fallback directory scans.
 
 ### 4. Retrieval and Context Packing Budget Models
@@ -993,7 +999,13 @@ therefore publishes nothing.** There is one route, and it is the one below.
      tag tracks. That table is also what `scripts/check_version.py` verifies and what
      `publish.yml` asks for its `--files` list, so a surface cannot be known to the bump
      and not the check.
-   - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`.
+   - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`, and writes the
+     heading's matching link definition at the foot of the file
+     (`[<version>]: .../compare/v<previous>...v<version>`), re-basing `[Unreleased]` onto
+     the new tag. A `## [x.y.z]` heading is a markdown *reference* link, so a heading
+     without its definition renders as literal text; the two are written in the same step
+     for that reason. The previous version is read from the existing definitions, so it
+     works offline and in a shallow checkout, and a version already defined is left alone.
    - Commits and pushes the version bump to `main` and creates Git tag `v<version>`.
    - Runs tests, builds wheels/sdist, and publishes to PyPI via Trusted Publishing.
    - Waits for PyPI CDN and publishes `server.json` to the MCP Registry.

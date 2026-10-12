@@ -47,7 +47,7 @@ is a bug in the change, not a missing feature.
 
 The stages, in order:
 
-1. **Discover** (`parse.discover`) — enumerate candidate files from `git ls-files`, falling back to
+1. **Discover** (`discovery.discover`, re-exported as `parse.discover`) — enumerate candidate files from `git ls-files`, falling back to
    a directory walk. Applies `DEFAULT_SKIP_DIRS`, the size ceiling, and the exclusion layers below.
 2. **Parse** (`parse.py`) — run the tree-sitter grammar for each file's language, extract symbol
    definitions and import statements.
@@ -225,7 +225,7 @@ index; the GitHub Action drops it from both the upload and the branch push.
 ### Determinism
 
 The discovery order dictates the emitted order of every record in `nodes.jsonl`, `edges.jsonl` and
-`chunks.jsonl`. `parse.discover()` therefore sorts by `Path.as_posix()` rather than returning
+`chunks.jsonl`. `discovery.discover()` therefore sorts by `Path.as_posix()` rather than returning
 filesystem order, and applies `DEFAULT_SKIP_DIRS` identically on both the git-tracked and
 directory-walk paths. Two builds of the same commit on different machines produce byte-identical
 artifacts.
@@ -459,7 +459,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `derived.py` | 233 | What is derived from the resolved graph: `READS`/`WRITES`/`REFERENCES`, entrypoint marking, `TESTS`. |
 | `cochange.py` | 239 | `CO_CHANGE` (and `--git-authors`) from a bounded, timed read of `git log`. |
 | `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
-| `discovery.py` | 692 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
+| `discovery.py` | 727 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
 | `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
 | `export.py` | 1,621 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
 | `query.py` | 2,058 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
@@ -475,7 +475,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `cli.py` | 1,937 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
+| `cli.py` | 1,942 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
 | `cli_inspect.py` | 341 | Commands that inspect an index or explain a result: map, stats, diff, explain-path, explain, index-status, bug-report, doctor, demo, completion. |
 | `cli_embed.py` | 225 | `embed` and `--verify-rag`. |
 | `mcp/` | 3,406 | The MCP server, split by concern — see below. |
@@ -487,10 +487,10 @@ Sizes are a rough guide to where the complexity is, not a target.
 | Module | Lines | Owns |
 |---|---:|---|
 | `traversal.py` | 375 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
-| `schemas.py` | 429 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
-| `server.py` | 701 | Server lifecycle, stdio connection, SDK version gate. |
+| `schemas.py` | 453 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
+| `server.py` | 711 | Server lifecycle, stdio connection, SDK version gate. |
 | `retrieval.py` | 718 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
-| `tools.py` | 302 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
+| `tools.py` | 304 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
 | `indexes.py` | 185 | Index open/reopen, per-directory locking, auto-build. |
 | `guardrails.py` | 103 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
 | `nodes.py` | 164 | Node labelling and staleness helpers both retrieval and traversal need. |
@@ -511,7 +511,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `exclusions.py` | 239 | The named exclusion groups and their glob/reason tables. |
 | `embed.py` | 344 | Vectors, and a stdlib-only `.npy` reader/writer. |
 | `scip.py` | 850 | `build --scip`: a bounded protobuf reader for SCIP indexes, symbol-to-node mapping, and the exact-edge merge. |
-| `lock.py` | 320 | Build locking and stale-lock recovery. A leaf. |
+| `lock.py` | 345 | Build locking and stale-lock recovery. A leaf. |
 | `audit.py` | 291 | Audit log sink. |
 | `schema.py` | 315 | The record shapes the artifacts promise. |
 | `tasks.py` | 260 | Background `--async-build` state. |

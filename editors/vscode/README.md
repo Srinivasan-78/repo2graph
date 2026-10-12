@@ -98,4 +98,17 @@ npm test
 The tests build a small repository with the real `repo2graph build` and talk
 to a real `repo2graph-mcp`. They look for the executables in `$REPO2GRAPH_BIN`,
 then this repository's `.venv`, then `PATH`, and print the measured cursor-move
-round trip.
+round trip. A missing install fails them with that explanation rather than
+skipping them.
+
+`$REPO2GRAPH_BIN` is a directory, and it must be a native path: the suite
+joins it with `path.join` and appends `.exe` on Windows, so an MSYS-style
+`/c/...` path from Git Bash's `command -v` will not resolve. `python -c
+'import sysconfig; print(sysconfig.get_path("scripts"))'` gives the right
+answer on both platforms, and is what `.github/workflows/vscode.yml` passes.
+
+CI runs this job on `ubuntu-latest` and `windows-latest`. The platform
+difference is real rather than theoretical — `src/test/fixture.ts` branches on
+`process.platform` for `Scripts` vs `bin` and the `.exe` suffix, and
+`graphUrl` goes through `pathToFileURL`, which resolves a drive-relative path
+against the current drive on Windows.

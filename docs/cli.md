@@ -103,7 +103,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--secret-dir` | none | Custom directory name for secret directory matching (repeatable). |
 | `--allow-symlink-out` | off | Allow `-o` to point through a symbolic link. Off by default to prevent accidental writes outside the repo tree. |
 | `--force` | off | Allow overwriting an existing directory that was not created by repo2graph. Without this flag, build refuses to write into any non-empty directory that does not contain a recognised index. |
-| `--lock-timeout` | `60` | Seconds to wait for the per-output-directory build lock before failing. Increase this when several CI jobs share the same network-mounted output path. |
+| `--lock-timeout` | `60` | Seconds to wait for the per-output-directory build lock before failing. Increase this when several CI jobs share the same network-mounted output path. A lock file that cannot be created at all fails immediately instead of waiting out the timeout — a read-only mount, a full disk or a missing parent directory does not clear by itself. The exception is Windows, where a permission error is also what a transient sharing violation raises while OneDrive, an antivirus scanner or the search indexer holds a new index's files open; there it keeps retrying for the full timeout and reports the permission error only once that is spent. |
 | `--debug` | off | Enable debug mode: re-raise unexpected internal errors instead of swallowing them (also controlled via `REPO2GRAPH_DEBUG=1`). |
 
 **Examples:**
@@ -227,6 +227,13 @@ on the command line replaces the file's list rather than adding to it, and a
 flag typed at its default value (`--git-history 0`) still beats the file. An
 unknown key or a mistyped value stops the build with an error naming the file
 and the key.
+
+Cross-flag checks run against the merged settings, not against the command
+line alone, so either half of a pair can come from the file: `git-authors`
+needs a non-zero `git-history`, and a `git-history` the file supplies
+satisfies `--git-authors` typed on the command line. `git-authors = true` with
+no history from either source is an error rather than a build that records no
+authors.
 
 `build`, the auto-build `rag <source-dir>` runs, and the MCP server's auto-build
 all read it; `explain-path` does too, and names the file when one of its rules
@@ -764,13 +771,15 @@ Reason:          Path component '.git' is in excluded dot-directory filter (DEFA
 
 ### Precedence order
 
-`explain_path` (`repo2graph/parse.py`) checks rules in this order and stops at
-the first match:
+`explain_path` (`repo2graph/discovery.py`, still importable from
+`repo2graph.parse`) checks rules in this order and stops at the first match:
 
 | Step | Rule | What it means |
 | --- | --- | --- |
 | 0 | `outside_root` | The path resolves outside `-r`/`--repo`. |
 | 1 | `not_found` | The path does not exist on disk. |
+| 1 | `undecodable_path` | The relative path is not encodable as UTF-8, so no JSONL, overview or HTML writer downstream can emit it. |
+| 1 | `unsafe_path` | The relative path holds a control, line-separator or hidden character, which would forge structure wherever the path is printed — a newline starts a fake `[cite: ...]` header in a pack. |
 | 2 | `skip_dir` | A path component is a dot-directory, or is in `DEFAULT_SKIP_DIRS` / `--exclude-dir` (`vendor/` only counts here when `--include-vendor` is off). |
 | 3 | `internal_lock` | The path is a sibling `.*.r2glock` build-lock file. |
 | 4 | `gitignore` | `.gitignore` excludes it, checked with `git check-ignore` — only when `-r` is a git checkout. |
@@ -781,8 +790,16 @@ the first match:
 | 9 | `exclude_glob` | The path matches an `--exclude` glob. |
 | 10 | `binary` or `included` | A null byte in the first 4 KB marks it binary; otherwise every check passed. |
 
-Step 10 covers both outcomes of the last check — `rule` (`binary` vs. `included`)
-tells them apart, `precedence_step` is `10` either way.
+A step number can carry more than one rule: `rule` is what distinguishes them,
+`precedence_step` only says how far down the order the decision was reached.
+Step 1 holds the three checks that are properties of the path itself, and step
+10 covers both outcomes of the last check — `binary` vs. `included`.
+
+Two of the step-1 rules are the checks `discover` counts during a build:
+a path `explain-path` reports as `undecodable_path` is counted as
+`skipped_undecodable_path` in `stats.json`, and `unsafe_path` as
+`skipped_unsafe_path`. `not_found` has no counter — a path that does not exist
+is never walked in the first place.
 
 
 ## `explain` — graph and retrieval inspection

@@ -93,6 +93,17 @@ a command — `core.fsmonitor`, `diff.external` and `core.hooksPath` — and dro
 `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_CONFIG_*` from the environment it passes, so neither the
 checkout nor an ambient variable can run code or redirect which repository is read.
 
+A checkout also controls its own *filenames*, and a path is printed in places where its text
+carries structure — a `[cite: path:start-end]` header in a retrieval pack, a row in `overview.md`,
+a label in `graph.html`. Discovery therefore drops two shapes of path rather than emitting them:
+one holding a control, line-separator or hidden character (a newline in a filename would otherwise
+open a forged citation header), and one whose relative path is not encodable as UTF-8 (no JSONL,
+overview or HTML writer downstream can represent it). Each is counted in `stats.json` as
+`skipped_unsafe_path` and `skipped_undecodable_path`, and `repo2graph explain-path` reports them as
+the `unsafe_path` and `undecodable_path` rules, so a file missing from an index for this reason can
+be identified rather than guessed at. Symbol names drawn from file *contents* are escaped rather
+than dropped, by `security.clean_identifier`.
+
 One network caveat: in a *partial* clone (`git clone --filter=blob:none`), git fetches missing
 objects from the remote on demand, so `--git-history` can make network requests that a build is
 otherwise documented not to make. Index a full clone (`fetch-depth: 0` in Actions) to avoid it.

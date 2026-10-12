@@ -222,6 +222,28 @@ the one answer guaranteed to be out of date.
 > answers a graph question ("what depends on this symbol") rather than a diff
 > question, and renaming it now would break every client that already calls it.
 
+### Notes lead a reply, in every format
+
+Two kinds of `_note: ..._` paragraph can come before a reply's body: one for
+an argument the server coerced or defaulted ([Argument bounds](#argument-bounds)),
+and one warning that the index is stale relative to the working tree. The
+stale-index note is added to `repo_search`, `repo_neighbours`,
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius`;
+`repo_map` carries its own.
+
+They precede the body in the JSON formats exactly as they do in markdown, so a
+client that calls `JSON.parse` on a whole reply fails the first time either
+note appears. Parse the JSON that follows the last `_note:` paragraph instead.
+The bundled VS Code extension does this in `toolText.splitNotes`.
+
+Because that convention holds for every tool, the server states it once in the
+`instructions` field of the `initialize` result rather than in each tool's
+description — tool descriptions ship on every session and are kept under 800
+characters each. A client that reads `instructions` has what it needs to parse
+replies without reading this page. `SERVER_INSTRUCTIONS` in
+`repo2graph/mcp/schemas.py` is the text; an SDK that does not accept the
+keyword simply goes without it, as with `_meta`.
+
 ### Tool annotations are honest about auto-build (#292)
 
 MCP's `readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint` are
@@ -398,7 +420,8 @@ jump to each neighbour rather than read about it:
 
 Notes the server adds (an argument it defaulted, the stale-index warning)
 still lead the reply as `_note: ..._` paragraphs before the JSON, as they do
-for every JSON tool. Secret-excluded nodes never appear.
+for every JSON tool — see [Notes lead a reply](#notes-lead-a-reply-in-every-format).
+Secret-excluded nodes never appear.
 
 ### `repo_read`
 
@@ -630,11 +653,14 @@ extra: without it the CLI, the Action and the Python API are all unaffected.
 
 ### What it does not promise: freshness
 
-A long-running server does not watch the filesystem. `repo_map` compares the
-index against the working tree (per-file sha256 from `index.state.json`,
-same signal `repo2graph index-status`/`doctor` use) and prepends a `_note:`
-line when they have diverged -- but that check only *runs* when `repo_map` is
-called, and answers from a stale graph are still served in the meantime: a
+A long-running server does not watch the filesystem. It compares the index
+against the working tree (per-file sha256 from `index.state.json`, same signal
+`repo2graph index-status`/`doctor` use) and prepends a `_note:` line when they
+have diverged -- `repo_map` and the six tools listed under
+[Notes lead a reply](#notes-lead-a-reply-in-every-format) -- but that check
+only *runs* when one of them is called, and `--staleness-ttl` can reuse its
+answer for up to 300 seconds. Answers from a stale graph are still served in
+the meantime: a
 `[cite: path:start-end]` citation from a stale index names real lines that
 may hold different code. Treat a staleness note as "rebuild before trusting
 citations," and `repo2graph index-status -o <out>` for the full diff of what
