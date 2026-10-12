@@ -214,7 +214,12 @@ jobs:
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
         env:
-          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
+          # One worker, not two. At two the commit wall was still being hit,
+          # just later and in more shapes -- `exit 127` from a child that could
+          # not exec, `RuntimeError: can't start new thread`, `MemoryError`.
+          # Peak demand is what has to come down, and the job timeout above now
+          # has room for the slower run this costs.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "1"
         run: pytest -q -n auto
 
       - name: Append Test Coverage to Step Summary

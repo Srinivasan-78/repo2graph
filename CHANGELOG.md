@@ -187,8 +187,8 @@ makes keeping it current a release-blocking step rather than a good intention.
   timeout firing, and `WinError 1455` — the Windows commit limit — raised while spawning `node` in
   `test_npm_launcher`. The cause is oversubscription: `-n auto` gives four xdist workers on a
   4-vCPU image, and a large share of this suite's tests spawn their own coverage-traced
-  multiprocessing pools plus `node` and `git` children on top of that. Windows now caps `-n auto`
-  at 2 workers through `PYTEST_XDIST_AUTO_NUM_WORKERS` and runs uninstrumented, with pytest-cov switched off, which was the
+  multiprocessing pools plus `node` and `git` children on top of that. Windows now runs `-n auto`
+  as a single worker through `PYTEST_XDIST_AUTO_NUM_WORKERS` and uninstrumented, with pytest-cov switched off, which was the
   larger half: `[tool.coverage.run]` sets `concurrency = multiprocessing`, so every process the
   suite spawns starts a tracer and writes its own data file (`test_mcp.py` plus
   `test_mcp_tools.py` measured 17 s uninstrumented against 26 s instrumented, on a Windows box
