@@ -218,18 +218,48 @@ jobs:
       #     step helped (four red cells to one or two, 6-10 min to ~5m35s) and
       #     none finished the job.
       #
-      # So the remaining cause is upstream of CI: a pytest process is consuming
-      # an 18.9 GB commit limit on its own, which is a memory accumulation in
-      # the suite or the library, not a runner that is too small. Finding it
-      # needs per-process commit profiling across the run; `read_bounded`'s own
-      # docstring names the shape to look for, an allocation sized by a ceiling
-      # rather than by the data, free under Linux overcommit and real charge
-      # here. Note that the MemoryError at integrity.py:186 is *not* it: that
-      # line reads 1 MB blocks, so failing there means the process was already
-      # out of commit.
+      # And it is *not* this suite's demand, which was the obvious suspect and
+      # is measured wrong. Profiled on Windows with `PrivateUsage` and
+      # `PeakPagefileUsage` sampled around all 2,620 tests, in a venv built
+      # from this job's own `uv export --extra dev --extra mcp` (same 18 skips
+      # as CI, so the same tests run):
+      #
+      #   peak commit, any single process : 167 MB
+      #   system commit rise, whole run   : 356 MB
+      #
+      # Half a gigabyte against an 18.9 GB limit. Two workers cannot exhaust it
+      # and no test allocates a ceiling-sized buffer -- the `MemoryError` at
+      # integrity.py:186 reads 1 MB blocks, so failing *there* means the
+      # process was already out of commit, not that it asked for much. The
+      # consumer is therefore something else on the runner, and the sampler
+      # step below is what identifies it; delete that step once it has.
       - name: Run Test Suite & Branch Coverage
         if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
+
+      # TEMPORARY diagnostic. The suite has been measured and cleared (see
+      # above), so this samples what else on the runner is holding commit while
+      # the tests run, and prints the worst moment afterwards. Remove it, and
+      # this comment, once it has named the consumer.
+      - name: Sample what holds commit during the suite (diagnostic)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\commit-samples.txt"
+          "$out" | Out-File -FilePath "$env:RUNNER_TEMP\commit-sample-path.txt" -Encoding utf8
+          Start-Job -Name commitsampler -ScriptBlock {
+            param($out)
+            while ($true) {
+              $m = Get-CimInstance Win32_OperatingSystem
+              $committedMB = [math]::Round(($m.TotalVirtualMemorySize - $m.FreeVirtualMemory) / 1KB, 0)
+              $top = (Get-Process | Sort-Object -Property PM -Descending | Select-Object -First 6 |
+                ForEach-Object { "{0}={1}MB" -f $_.ProcessName, [math]::Round($_.PM / 1MB, 0) }) -join " "
+              $procs = (Get-Process).Count
+              "$committedMB`t$procs`t$top" | Add-Content -Path $out
+              Start-Sleep -Seconds 5
+            }
+          } -ArgumentList $out | Out-Null
+          Write-Host "sampler started -> $out"
 
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
@@ -241,6 +271,24 @@ jobs:
           # the non-Windows step for what is actually left.
           PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
         run: pytest -q -n auto
+
+      - name: Report the worst commit moment (diagnostic)
+        if: always() && matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Stop-Job -Name commitsampler -ErrorAction SilentlyContinue
+          $out = "$env:RUNNER_TEMP\commit-samples.txt"
+          if (-not (Test-Path $out)) { Write-Host "no samples"; exit 0 }
+          $rows = Get-Content $out | Where-Object { $_ -match "^\d" }
+          Write-Host "samples: $($rows.Count)"
+          $m = Get-CimInstance Win32_OperatingSystem
+          Write-Host ("commit limit: {0:N0} MB" -f ($m.TotalVirtualMemorySize / 1KB))
+          $worst = $rows | Sort-Object { [int]($_ -split "`t")[0] } -Descending | Select-Object -First 5
+          Write-Host "--- highest commit samples (committedMB, process count, top by private bytes) ---"
+          $worst | ForEach-Object { Write-Host $_ }
+          Write-Host "--- first and last ---"
+          Write-Host $rows[0]
+          Write-Host $rows[-1]
 
       - name: Append Test Coverage to Step Summary
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
