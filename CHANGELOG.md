@@ -181,6 +181,44 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
+  twelve runs before this change were red, every one on a Windows cell and not one on a finding
+  about the code. Three were the suite's own fault and are fixed: two wall-clock assertions that
+  #480 and #481 missed now assert what they meant — a hung item is *abandoned*, proved by the gap
+  between a 300 s item and a 120 s bound, not by a 30 s bound that a runner spending 50 s starting
+  worker processes cannot meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
+  matching the three in `test_secrets_hardening` that #481 converted for the same reason. The
+  Windows cells also now run two xdist workers instead of four and without pytest-cov, which
+  together took them from 6–10 minutes to about 5m35s; `[tool.coverage.run]` sets
+  `concurrency = multiprocessing`, so every process the suite spawns was starting a tracer of its
+  own, and coverage is a property of the suite rather than of the OS — `fail_under = 80` is still
+  enforced on the eight Linux and macOS cells, and the only cell that ever reported the number is
+  Ubuntu 3.13. The `timeout-minutes` ceiling goes to 35, after a cell that had finished in 5m37s
+  reached 93% of the same suite in 20 minutes on a runner about 4x slower and was cancelled.
+
+  **The cause was `cpp`, not the runner.** Windows cells kept failing on an
+  allocation or a spawn rather than on behaviour — `WinError 1455`,
+  `0xC000012D` (`STATUS_COMMITMENT_LIMIT`), `MemoryError`,
+  `RuntimeError: can't start new thread` — on a different test each run.
+  Sampling total commit every five seconds during a run named it:
+  `cc1=32656MB` against a 33,665 MB limit, while every Python process sat at
+  ~120 MB. That is the 40-deep doubling macro bomb in `tests/test_cpp_parse.py`
+  expanding inside the real preprocessor. `_run_cpp` bounded the output it read
+  and the wall clock, which is not the same as bounding what `cpp` allocates to
+  produce that output — expansion happens before anything is printed, so the
+  output guard never saw it. `parse.CPP_MEMORY_MB` (1 GB) now caps the child
+  through a Windows Job Object, which covers the `cc1` that `cpp` spawns and is
+  the mechanism `parsepool._cap_memory` was missing when it noted that "Windows
+  has no rlimits". Measured with a stand-in child: capped, it is refused at
+  192 MB of a 256 MB cap; uncapped, the same child reaches 6,336 MB.
+
+  This is also a real limit on untrusted input, not only a CI problem:
+  repo2graph runs the system preprocessor over repository source it did not
+  write, and a hostile file could take the host's memory with it on any
+  platform. Profiling the test suite first was a detour, and the numbers are
+  worth keeping: peak commit of any single pytest process is 167 MB and a whole
+  run moves system commit by 356 MB, so the suite was never the consumer.
+
 - **A federated pack no longer overruns its token budget (#482).** `federated._fit` read a budget
   of `0` as "no ceiling" — the caller's sentinel, as in `Index.pack_context` — but `0` was also
   what `budget - len(header)` came to once the `# Context from N repositories: ...` header outgrew

@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -1378,6 +1379,120 @@ _CPP_INCLUDE_RE = re.compile(
 CPP_TIMEOUT = 10
 _CPP_READ_BLOCK = 1 << 16
 
+#: Memory the `cpp` child may commit. `_run_cpp` bounds the output *this*
+#: process reads, which is not the same thing: cpp allocates while expanding
+#: and before it prints anything, so a bomb can be killed for its output while
+#: having already taken the machine's memory to get there. The 40-deep doubling
+#: macro bomb in `tests/test_cpp_parse.py` drove `cc1` to **32.6 GB** on a CI
+#: runner whose commit limit is 33.6 GB. That never failed the parse -- it
+#: failed whatever else on the machine next asked for memory, which is how it
+#: was eventually found: unrelated tests dying with `MemoryError`,
+#: `WinError 1455` and `can't start new thread`.
+#:
+#: 1 GB against a 0.74 s / <100 MB worst case across the five benchmark corpora
+#: (see `parsepool`'s module docstring for that calibration).
+CPP_MEMORY_MB = 1024
+
+# Job Object plumbing: Windows has no rlimits, which is why `parsepool`'s
+# `_cap_memory` is Linux-only, but a job is the equivalent and -- unlike an
+# rlimit set on `cpp` itself -- covers the `cc1` it spawns, which is the
+# process that actually allocates.
+_JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x00000100
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
+
+
+def _win_cap_child_memory(pid: int, cap_bytes: int) -> int | None:
+    """Put `pid` and its descendants under a job capping per-process memory.
+
+    Returns the job handle, which the caller must keep alive: the job dies with
+    its last handle, and `KILL_ON_JOB_CLOSE` makes that take any surviving cpp
+    with it rather than leaving one behind holding memory.
+
+    Best effort. On any failure this returns None and the wall-clock bound in
+    `_run_cpp` is what remains, which is the behaviour this had before.
+    """
+    if sys.platform != "win32":  # pragma: no cover - platform-guarded
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in ("r", "w", "o", "rt", "wt", "ot")]
+
+        class _BASIC(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_void_p),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _EXTENDED(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC),
+                ("IoInfo", _IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _EXTENDED()
+        info.BasicLimitInformation.LimitFlags = (
+            _JOB_OBJECT_LIMIT_PROCESS_MEMORY | _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        )
+        info.ProcessMemoryLimit = cap_bytes
+        if not k32.SetInformationJobObject(
+            wintypes.HANDLE(job),
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            k32.CloseHandle(wintypes.HANDLE(job))
+            return None
+        handle = k32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+        if not handle:
+            k32.CloseHandle(wintypes.HANDLE(job))
+            return None
+        try:
+            if not k32.AssignProcessToJobObject(wintypes.HANDLE(job), wintypes.HANDLE(handle)):
+                k32.CloseHandle(wintypes.HANDLE(job))
+                return None
+        finally:
+            k32.CloseHandle(wintypes.HANDLE(handle))
+        return job
+    except (OSError, AttributeError, ValueError):  # pragma: no cover - defensive
+        return None
+
+
+def _win_close_job(job: int | None) -> None:
+    if job is None or sys.platform != "win32":  # pragma: no cover - platform-guarded
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        ctypes.WinDLL("kernel32").CloseHandle(wintypes.HANDLE(job))
+    except (OSError, AttributeError, ValueError):  # pragma: no cover - defensive
+        pass
+
 
 def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[int, bytes | None]:
     """Preprocess `source` on stdin; return (returncode, output or None if over `limit`).
@@ -1400,6 +1515,10 @@ def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[i
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
+    # Capped as early as the pid exists. cpp has to start, read stdin and begin
+    # expanding before it can allocate anything worth capping, so assigning it
+    # here rather than spawning it suspended is enough in practice.
+    job = _win_cap_child_memory(proc.pid, CPP_MEMORY_MB * 1024 * 1024)
     assert proc.stdin is not None and proc.stdout is not None
     stdin, stdout = proc.stdin, proc.stdout
 
@@ -1450,6 +1569,9 @@ def _run_cpp(source: bytes, limit: int, timeout: float = CPP_TIMEOUT) -> tuple[i
         rc = proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         rc = -1
+    # After the wait: closing the job kills anything still in it, which is the
+    # point, but doing it earlier would race the kill above.
+    _win_close_job(job)
     if timed_out:
         raise subprocess.TimeoutExpired(proc.args, timeout)
     if over:
