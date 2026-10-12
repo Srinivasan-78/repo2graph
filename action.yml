@@ -88,7 +88,7 @@ inputs:
     required: false
     default: ""
   commit-force:
-    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: false). Force-push is only permitted for dedicated graph branches (branch names containing 'graph')."
+    description: "Whether to force-push when pushing to `commit-branch` (true or false, default: false). False commits the graph on top of the branch's current tip (a plain fast-forward push); true replaces the branch with a single fresh root commit, and is only permitted for dedicated graph branches (branch names containing 'graph')."
     required: false
     default: "false"
   version:
@@ -514,13 +514,15 @@ runs:
         cp -r "$R2G_OUT/." "$tmp/"
         # Machine-local build facts (the runner's absolute path) never ship.
         rm -f "$tmp/local.json"
-        cd "$tmp"
+        # The git work tree is a *separate* temp dir from the copied output:
+        # the non-force path below checks the existing branch out into it, and
+        # a checkout refuses to overwrite untracked files that are already
+        # sitting there.
+        work="$(mktemp -d)"
+        cd "$work"
         git init -q
-        git checkout -q -b "$R2G_BRANCH"
         git config user.name "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add -A
-        git commit -qm "graph for ${GITHUB_SHA:0:12}"
         # GITHUB_SERVER_URL/GITHUB_API_URL (set by the runner for every job,
         # including GHES) rather than a hardcoded github.com -- otherwise an
         # enterprise token leaves the GHES instance and is sent to github.com.
@@ -528,6 +530,7 @@ runs:
         git remote add origin "${server_url}/${GITHUB_REPOSITORY}.git"
         # Credential goes through a config value, never CLI argv or a URL: argv is
         # readable via `ps`/`/proc/$PID/cmdline` by any process on the host.
+        # Configured before the fetch below, which needs it on a private repo.
         git config --local "http.${server_url}/.extraheader" \
           "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
         force_flag="$(printf '%s' "${R2G_COMMIT_FORCE:-false}" | tr '[:upper:]' '[:lower:]')"
@@ -540,6 +543,33 @@ runs:
               exit 1
               ;;
           esac
+          # A force-push replaces the branch outright, so a fresh root commit
+          # is the point: the graph branch stays one commit deep forever.
+          git checkout -q -b "$R2G_BRANCH"
+        elif git ls-remote --exit-code --heads origin "$R2G_BRANCH" >/dev/null 2>&1; then
+          # A plain push has to fast-forward, so the new commit must have the
+          # branch's current tip as its parent. Committing a fresh orphan root
+          # instead -- which is what this step used to do on both paths -- can
+          # only succeed the very first time the branch is created; every run
+          # after that was rejected as `! [rejected] (fetch first)`, because an
+          # unrelated root commit is never a fast-forward.
+          git fetch -q --depth=1 origin "+refs/heads/${R2G_BRANCH}:refs/remotes/origin/${R2G_BRANCH}"
+          git checkout -q -B "$R2G_BRANCH" "refs/remotes/origin/${R2G_BRANCH}"
+          # Clear the previous graph out of the index and work tree first, so a
+          # file the new build no longer emits is recorded as a deletion rather
+          # than surviving forever as stale output.
+          git rm -r -q --ignore-unmatch .
+        else
+          # Branch does not exist yet: the first push creates it.
+          git checkout -q -b "$R2G_BRANCH"
+        fi
+        cp -r "$tmp/." "$work/"
+        git add -A
+        # --allow-empty: on the fast-forward path a rebuild of an unchanged
+        # commit produces byte-identical output, and `git commit` with nothing
+        # staged exits non-zero -- which would fail the job over a no-op.
+        git commit -q --allow-empty -m "graph for ${GITHUB_SHA:0:12}"
+        if [ "$force_flag" = "true" ]; then
           git push -q --force origin "$R2G_BRANCH"
         else
           git push -q origin "$R2G_BRANCH"

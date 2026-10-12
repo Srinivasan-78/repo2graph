@@ -234,6 +234,18 @@ makes keeping it current a release-blocking step rather than a good intention.
   now emits each release's definition and re-bases `[Unreleased]` in the same step that writes the
   heading, and `tests/test_version_surfaces.py` reads the foot of the file so a future gap fails a
   test instead of shipping.
+- **`commit-branch` could only ever publish once.** The Action's push step built a fresh orphan
+  repository in a temp directory and committed a new root commit, then pushed it without `--force`
+  — which `commit-force: false`, the default since #310, is. An unrelated root commit is never a
+  fast-forward, so the first run created the branch and every run after it died on
+  `! [rejected] graph -> graph (fetch first)`; `self-index.yml`, which ships with
+  `commit-branch: graph`, was red on every push after the branch existed. The default path now
+  fetches the branch's current tip (`--depth=1`) and commits the graph on top of it, clearing the
+  old files out of the index first so a file the new build stops emitting is recorded as a deletion
+  instead of lingering. `commit-force: true` is unchanged and still commits a fresh root so the
+  branch stays one commit deep. The commit is allowed to be empty, so re-indexing an unchanged
+  commit is a no-op rather than a failed job. `docs/cli.md` had the two defaults backwards — it documented
+  force-push as the default — and now describes what each one actually does.
 - **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
   twelve runs before this change were red, every one on a Windows cell and not one on a finding
   about the code. Three were the suite's own fault and are fixed: two wall-clock assertions that
