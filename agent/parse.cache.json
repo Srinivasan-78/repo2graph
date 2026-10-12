@@ -75,7 +75,7 @@
       "lang": "",
       "lines": 245,
       "parsed": null,
-      "sha256": "adec17c5e95f8c7ba12f7449a101382d3230e57712f0a3b86b950b9cf25b3372",
+      "sha256": "d4c97a577dd68149f1160b78bd04aaa2b849d96f33e4cd16ba9a26e9c03a7548",
       "size": 16605
     },
     ".github/dependabot.yml": {
@@ -4279,16 +4279,16 @@
     },
     "CHANGELOG.md": {
       "lang": "",
-      "lines": 2545,
+      "lines": 2548,
       "parsed": null,
-      "sha256": "b7d88e3e21ee569d3fd77bec775576885c863d9f9fcd18f25a5565c41852941d",
-      "size": 193481
+      "sha256": "ef2ab42976d32a364f3f6e6c84d85740b79ecd42a2493f72c577de87001c0d5d",
+      "size": 193585
     },
     "CITATION.cff": {
       "lang": "",
       "lines": 30,
       "parsed": null,
-      "sha256": "4cfc4c51451741e3b91cebc988b958641c30262bc00c1364ed0f6b69c9f03363",
+      "sha256": "1cf51ad5046fc7075ce9cfd23481e70c6c2a2eac5a580adb225e2530cc6228b8",
       "size": 1265
     },
     "CODE_OF_CONDUCT.md": {
@@ -4330,7 +4330,7 @@
       "lang": "",
       "lines": 259,
       "parsed": null,
-      "sha256": "8cd713a1d30b599facf882677dab0970072924c65a12b5d4b8214c1362502bfb",
+      "sha256": "17d5fc2b149aa7df0788d6c0ff17003bd4f863a56bd3420ed46244186dcda89f",
       "size": 15760
     },
     "REUSE.toml": {
@@ -10837,7 +10837,7 @@
       "lang": "",
       "lines": 1138,
       "parsed": null,
-      "sha256": "149beef1b88bcb4d13a898711ca03d62df24949a7cc89851bc8164b9e05d5bbb",
+      "sha256": "e0a0407bdb876c786a171d59532e92471ddce077c2d5c182483ba2e7c1c638a2",
       "size": 66923
     },
     "docs/comparison.md": {
@@ -20625,14 +20625,14 @@
       "lang": "",
       "lines": 40,
       "parsed": null,
-      "sha256": "ee4313ad0aec53d0c9c9f6dd21301a2a9050469c4212bc2426e85f67752ef1e6",
+      "sha256": "814ad8287e566e87cbb43db17b3abcbd9a54a425be2d0454f82ea5a9a35ae729",
       "size": 873
     },
     "pyproject.toml": {
       "lang": "",
       "lines": 207,
       "parsed": null,
-      "sha256": "61646acc38cd199efdf248a3041f3cd688111c6c6d735f15ea95633b5c980d2d",
+      "sha256": "95843dabd3aed75dd483039c7f9b6c7c82f3cac45aaf24c192285bb146047bf4",
       "size": 9273
     },
     "repo2graph/__init__.py": {
@@ -20915,7 +20915,7 @@
         "undecodable_slices": 0,
         "used_cpp": false
       },
-      "sha256": "42a7b7c06e38fb5fda94d713d69f6a1c9b68c34b698ce81db0d3e4097cd807b9",
+      "sha256": "6c2652bfbad14b5b7cfd53a09e85684fb1677e852cf9ec5113054a5df9178ab5",
       "size": 4080
     },
     "repo2graph/answer.py": {
@@ -115559,7 +115559,7 @@
       "lang": "",
       "lines": 50,
       "parsed": null,
-      "sha256": "ad2bda7f5c8923b5c3906e1478491e472ef10ccda698a6b548c35479882fba27",
+      "sha256": "ced239e9a495670d34325c98cbf55dd87054c1a5ffb2a10ea2bb6e55b75e1332",
       "size": 1764
     },
     "tests/_mcp_pool_server.py": {
@@ -266975,7 +266975,7 @@
       "lang": "",
       "lines": 3394,
       "parsed": null,
-      "sha256": "2e6c6dd5c4dbc6bac0aba4db12aa780a65293ec72dce7893e67d408e5dae62d8",
+      "sha256": "fd13e6e5aa99fab69542de7b63088842a9f9abf710ad7cc7ba217b4e44205779",
       "size": 691033
     }
   },

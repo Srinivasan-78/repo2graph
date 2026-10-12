@@ -1,6 +1,6 @@
 # Repo map: repo2graph
 
-files: 390  nodes: 5063  edges: 42082
+files: 390  nodes: 5063  edges: 42089
 languages: python=219, md=54, json=41, typescript=25, yml=23, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1
 
 ## Most depended-on files

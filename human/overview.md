@@ -7,9 +7,9 @@
 | Files indexed | 390 |
 | Functions | 3374 |
 | Classes | 223 |
-| Total edges | 42082 |
+| Total edges | 42089 |
 | Languages | python=219, md=54, json=41, typescript=25, yml=23, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1 |
-| Built at | a2fbd28 |
+| Built at | 48afbeb |
 
 ## Top 10 most-connected files (by in-degree)
 
@@ -47,7 +47,7 @@ These files are frequently edited together — treat as implicit dependencies ev
 | CALLS_EXTERNAL | 8369 | 19.9% |
 | DEFINES | 3706 | 8.8% |
 | IMPORTS | 1853 | 4.4% |
-| CO_CHANGE | 565 | 1.3% |
+| CO_CHANGE | 572 | 1.4% |
 | CONTAINS | 473 | 1.1% |
 | INHERITS | 17 | 0.0% |
 
