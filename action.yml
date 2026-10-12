@@ -510,10 +510,10 @@ runs:
             exit 1
             ;;
         esac
-        src="$(mktemp -d)"
-        cp -r "$R2G_OUT/." "$src/"
+        tmp="$(mktemp -d)"
+        cp -r "$R2G_OUT/." "$tmp/"
         # Machine-local build facts (the runner's absolute path) never ship.
-        rm -f "$src/local.json"
+        rm -f "$tmp/local.json"
         # The git work tree is a *separate* temp dir from the copied output:
         # the non-force path below checks the existing branch out into it, and
         # a checkout refuses to overwrite untracked files that are already
@@ -563,7 +563,7 @@ runs:
           # Branch does not exist yet: the first push creates it.
           git checkout -q -b "$R2G_BRANCH"
         fi
-        cp -r "$src/." "$work/"
+        cp -r "$tmp/." "$work/"
         git add -A
         # --allow-empty: on the fast-forward path a rebuild of an unchanged
         # commit produces byte-identical output, and `git commit` with nothing

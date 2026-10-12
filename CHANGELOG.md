@@ -243,8 +243,8 @@ makes keeping it current a release-blocking step rather than a good intention.
   fetches the branch's current tip (`--depth=1`) and commits the graph on top of it, clearing the
   old files out of the index first so a file the new build stops emitting is recorded as a deletion
   instead of lingering. `commit-force: true` is unchanged and still commits a fresh root so the
-  branch stays one commit deep. The commit is `--allow-empty`, so re-indexing an unchanged commit
-  is a no-op rather than a failed job. `docs/cli.md` had the two defaults backwards — it documented
+  branch stays one commit deep. The commit is allowed to be empty, so re-indexing an unchanged
+  commit is a no-op rather than a failed job. `docs/cli.md` had the two defaults backwards — it documented
   force-push as the default — and now describes what each one actually does.
 - **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
   twelve runs before this change were red, every one on a Windows cell and not one on a finding
