@@ -43,7 +43,7 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
 output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run). What it produces on
-eleven well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
+thirteen well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
 pinned commit with the command to reproduce it: [examples/](examples/README.md).
 
 In VS Code, the extension in [`editors/vscode/`](editors/vscode/README.md) (a preview, built from

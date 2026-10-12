@@ -1,6 +1,6 @@
 # Real-world repository examples
 
-Eleven public repositories, each analyzed by `repo2graph` at a pinned commit, with the exact
+Thirteen public repositories, each analyzed by `repo2graph` at a pinned commit, with the exact
 reproduction command for every one. This is evidence, not a demo: every number below came from an
 actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json), never typed in
 by hand.
@@ -18,8 +18,12 @@ only within one:
   which the 2.2.0 batch does not have, so edge totals in particular do not compare across the two
   batches — on Gin, `TESTS` is 9,187 of 19,552 edges. Their pages also carry three rows the older
   pages lack: files with parse errors, symbols of every kind, and methods.
+- **Two added on 2026-10-12** — Rails and Spring Framework — were generated from `develop` at
+  `ef1242bf`, three commits past that batch. Same version string and same `TESTS`-edge era, so they
+  compare to the six far better than to the 2.2.0 five, but not exactly: #480 changed the parse
+  budget in between, which can move what a large file contributes.
 
-`python scripts/generate_examples.py --all` regenerates all eleven with one version, which is what
+`python scripts/generate_examples.py --all` regenerates all thirteen with one version, which is what
 makes them one batch again.
 
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
@@ -27,7 +31,7 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 [`../docs/architecture.md`](../docs/architecture.md) for how the pipeline works and
 [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for what is and is not committed from each repository.
 
-## The eleven repositories
+## The thirteen repositories
 
 | Repository | Language(s) | Scope | Files | Nodes | Edges | repo2graph | Example |
 |---|---|---|---:|---:|---:|---|---|
@@ -42,6 +46,8 @@ The registry that drives generation is [`repositories.yaml`](repositories.yaml);
 | [ripgrep](https://github.com/BurntSushi/ripgrep) | Rust | full repository, with git history | 229 | 4,857 | 20,381 | 3.0.0+ | [examples/ripgrep](ripgrep/) |
 | [Guava](https://github.com/google/guava) | Java | scoped (`guava/src/`, the JRE library's production source) | 611 | 16,268 | 80,339 | 3.0.0+ | [examples/guava](guava/) |
 | [Jekyll](https://github.com/jekyll/jekyll) | Ruby | full repository, with git history | 771 | 2,888 | 10,403 | 3.0.0+ | [examples/jekyll](jekyll/) |
+| [Rails](https://github.com/rails/rails) | Ruby | scoped (`actionpack`, `activerecord`, `activesupport`, `railties` — `lib/` only) | 1,276 | 18,774 | 99,912 | 3.0.0+ | [examples/rails](rails/) |
+| [Spring Framework](https://github.com/spring-projects/spring-framework) | Java | scoped (bean container and web stack, production source) | 2,121 | 27,469 | 136,027 | 3.0.0+ | [examples/spring-framework](spring-framework/) |
 
 `3.0.0+` is the second batch above: `develop` at `23bf953`, not the 3.0.0 release.
 
@@ -63,7 +69,7 @@ component, is not among them. The React graph is a lower bound on the code's rea
 It is in the gallery because a Flow codebase is a common case and this is the honest picture of it
 today — not as a showcase.
 
-## Why these eleven
+## Why these thirteen
 
 The first five were chosen for architectural variety, not popularity: a large single-language
 monorepo (Kubernetes), a genuinely multi-language repository where Python calls into C++
@@ -77,6 +83,15 @@ slices. FastAPI is also one of the four repositories in the
 [retrieval benchmark](../benchmarks/real/README.md), and ripgrep is the tool that benchmark's grep
 baseline runs. See each `why:` field in [`repositories.yaml`](repositories.yaml) for the specific
 reasoning.
+
+The last two are the big frameworks of their languages, and each is in the gallery for a limit it
+makes visible rather than for its size. Rails builds much of its own API at load time — `included
+do` blocks, `delegate`, `define_method`, Active Record's `method_missing` — so a name-based call
+graph finds no call site for a large part of what application code invokes. Spring shows the other
+half of the same problem: dependency injection means the container picks the implementation at
+runtime from annotations and component scans, so the graph maps the framework's machinery while the
+wiring that machinery exists to perform is not in the source to find. Both are honest pictures, and
+both are the kind of repository someone evaluating this tool is most likely to point it at.
 
 ## What is in each `examples/<id>/`
 
