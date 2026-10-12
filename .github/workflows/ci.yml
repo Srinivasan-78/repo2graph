@@ -197,77 +197,27 @@ jobs:
       # Together these took Windows from four red cells to one, and each cell
       # from 6-10 minutes to around 5m35s.
       #
-      # What is still wrong, so nobody re-derives it. Windows cells remain
-      # intermittently red, and every failure is an allocation or a spawn that
-      # could not be satisfied -- never an assertion about behaviour:
+      # These two were found while chasing Windows cells that failed on
+      # allocation rather than on behaviour -- `WinError 1455`,
+      # `0xC000012D STATUS_COMMITMENT_LIMIT`, `MemoryError`,
+      # `RuntimeError: can't start new thread`, a different test each run. The
+      # cause turned out not to be the runner being small or the suite being
+      # greedy: sampling total commit every 5s during a run named it outright,
       #
-      #   OSError: [WinError 1455] The paging file is too small
-      #   returncode 3221225773 == 0xC000012D STATUS_COMMITMENT_LIMIT
-      #   RuntimeError: can't start new thread
-      #   assert 127 == 0            (a child that could not exec)
-      #   MemoryError                (including at integrity.py's 1 MB block read)
+      #   35,518 MB committed, limit 33,665 MB
+      #   cc1=32656MB  MsMpEng=249  python=122  python=119
       #
-      # Windows has no overcommit: a process reserves against physical RAM plus
-      # the pagefile, measured at 18.9 GB against 16 GB on this image. Both
-      # levers a workflow has were tried and neither clears it:
-      #
-      #   - Raising the ceiling. A step setting a fixed 16 GB pagefile through
-      #     CIM printed the same 18.9 GB before and after itself -- a resize
-      #     wants the reboot a CI job cannot do. Removed; do not re-add it.
-      #   - Lowering the demand. 4 workers -> 2 -> 1, and the tracer off. Each
-      #     step helped (four red cells to one or two, 6-10 min to ~5m35s) and
-      #     none finished the job.
-      #
-      # And it is *not* this suite's demand, which was the obvious suspect and
-      # is measured wrong. Profiled on Windows with `PrivateUsage` and
-      # `PeakPagefileUsage` sampled around all 2,620 tests, in a venv built
-      # from this job's own `uv export --extra dev --extra mcp` (same 18 skips
-      # as CI, so the same tests run):
-      #
-      #   peak commit, any single process : 167 MB
-      #   system commit rise, whole run   : 356 MB
-      #
-      # Half a gigabyte against an 18.9 GB limit. Two workers cannot exhaust it
-      # and no test allocates a ceiling-sized buffer -- the `MemoryError` at
-      # integrity.py:186 reads 1 MB blocks, so failing *there* means the
-      # process was already out of commit, not that it asked for much. The
-      # consumer is therefore something else on the runner, and the sampler
-      # step below is what identifies it; delete that step once it has.
+      # a single `cc1` holding 32.6 GB while every Python process sat at ~120
+      # MB. That is `tests/test_cpp_parse.py`'s macro bomb expanding inside the
+      # real preprocessor, which `_run_cpp` bounded for output and wall clock
+      # but not for memory; `parse.CPP_MEMORY_MB` now caps it. Profiling the
+      # suite itself first was a detour worth recording: peak commit of any
+      # single pytest process is 167 MB and the whole run moves system commit
+      # by 356 MB, so the suite was never the consumer.
+
       - name: Run Test Suite & Branch Coverage
         if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
-
-      # TEMPORARY diagnostic. The suite has been measured and cleared (see
-      # above), so this samples what else on the runner is holding commit while
-      # the tests run, and prints the worst moment afterwards. Remove it, and
-      # this comment, once it has named the consumer.
-      - name: Sample what holds commit during the suite (diagnostic)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # Detached, not Start-Job: a PowerShell job belongs to the step's own
-          # process and dies with it, which is why the first attempt at this
-          # reported "no samples". Start-Process outlives the step, and the
-          # child inherits RUNNER_TEMP so it needs no arguments.
-          $sampler = @'
-          $out = Join-Path $env:RUNNER_TEMP 'commit-samples.txt'
-          while ($true) {
-            $m = Get-CimInstance Win32_OperatingSystem
-            $committed = [math]::Round(($m.TotalVirtualMemorySize - $m.FreeVirtualMemory) / 1KB, 0)
-            $procs = (Get-Process).Count
-            $top = (Get-Process | Sort-Object -Property PM -Descending | Select-Object -First 6 |
-              ForEach-Object { '{0}={1}' -f $_.ProcessName, [math]::Round($_.PM / 1MB, 0) }) -join ' '
-            "$committed`t$procs`t$top" | Add-Content -Path $out
-            Start-Sleep -Seconds 5
-          }
-          '@
-          $path = Join-Path $env:RUNNER_TEMP 'sampler.ps1'
-          $sampler | Out-File -FilePath $path -Encoding utf8
-          Start-Process -FilePath 'pwsh' -ArgumentList '-NoProfile','-File',$path -WindowStyle Hidden
-          Start-Sleep -Seconds 6
-          $out = Join-Path $env:RUNNER_TEMP 'commit-samples.txt'
-          if (Test-Path $out) { Write-Host "sampler running: $(Get-Content $out -Tail 1)" }
-          else { Write-Host '::warning::sampler produced nothing in 6s' }
 
       - name: Run Test Suite (Windows, uninstrumented)
         if: matrix.os == 'windows-latest'
@@ -279,24 +229,6 @@ jobs:
           # the non-Windows step for what is actually left.
           PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
         run: pytest -q -n auto
-
-      - name: Report the worst commit moment (diagnostic)
-        if: always() && matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          Stop-Job -Name commitsampler -ErrorAction SilentlyContinue
-          $out = "$env:RUNNER_TEMP\commit-samples.txt"
-          if (-not (Test-Path $out)) { Write-Host "no samples"; exit 0 }
-          $rows = Get-Content $out | Where-Object { $_ -match "^\d" }
-          Write-Host "samples: $($rows.Count)"
-          $m = Get-CimInstance Win32_OperatingSystem
-          Write-Host ("commit limit: {0:N0} MB" -f ($m.TotalVirtualMemorySize / 1KB))
-          $worst = $rows | Sort-Object { [int]($_ -split "`t")[0] } -Descending | Select-Object -First 5
-          Write-Host "--- highest commit samples (committedMB, process count, top by private bytes) ---"
-          $worst | ForEach-Object { Write-Host $_ }
-          Write-Host "--- first and last ---"
-          Write-Host $rows[0]
-          Write-Host $rows[-1]
 
       - name: Append Test Coverage to Step Summary
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'

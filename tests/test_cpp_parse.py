@@ -1,5 +1,6 @@
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -373,6 +374,65 @@ def test_run_cpp_stops_a_macro_bomb_at_the_limit():
     )
     rc, out = _REAL_RUN_CPP(bomb, 2 * len(bomb), timeout=30)
     assert out is None
+
+
+def test_the_cpp_child_is_refused_memory_past_its_cap():
+    """The bomb above is stopped for its *output*; this is about what cpp spent
+    getting there, which nothing bounded.
+
+    cpp allocates while expanding and before it prints, so the output bound
+    cannot see it. The same 40-deep doubling bomb drove `cc1` to **32.6 GB** on
+    a CI runner whose commit limit is 33.6 GB -- which never failed a parse. It
+    failed whatever else on the machine asked for memory next, surfacing as
+    unrelated tests dying with `MemoryError`, `WinError 1455` and
+    `RuntimeError: can't start new thread`, on a different test each run.
+
+    Driven with a Python child rather than cpp so it runs on a machine with no
+    compiler: what is under test is the job object, not cpp. Windows-only
+    because that is where the mechanism is -- `parsepool._cap_memory` already
+    covers Linux with RLIMIT_AS, and its comment that "Windows has no rlimits"
+    is exactly the gap this fills.
+    """
+    if sys.platform != "win32":
+        pytest.skip("job objects are the Windows mechanism; Linux uses RLIMIT_AS")
+    child = (
+        "blocks = []\n"
+        "try:\n"
+        "    for i in range(1, 49):\n"
+        "        blocks.append(bytearray(64 * 1024 * 1024))\n"
+        "        print(i * 64, flush=True)\n"
+        "except MemoryError:\n"
+        "    print('REFUSED', flush=True)\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", child], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    job = parse_mod._win_cap_child_memory(proc.pid, 256 * 1024 * 1024)
+    assert job, "no job object was created, so nothing would bound cpp"
+    try:
+        out, _ = proc.communicate(timeout=120)
+    finally:
+        parse_mod._win_close_job(job)
+    reached = [int(word) for word in out.split() if word.isdigit()]
+    assert b"REFUSED" in out, f"the child was never refused; it reached {reached[-1:]} MB"
+    # Generous: the cap counts the whole process, not just these buffers.
+    assert reached[-1] <= 320, f"the 256 MB cap did not bind: reached {reached[-1]} MB"
+
+
+def test_run_cpp_asks_for_the_memory_cap():
+    """Platform-independent half: whatever the OS does with it, `_run_cpp` must
+    request the cap for the pid it just spawned. A refactor that drops the call
+    puts the 32.6 GB back."""
+    _require_cpp()
+    seen = []
+    real = parse_mod._win_cap_child_memory
+    parse_mod._win_cap_child_memory = lambda pid, cap: seen.append((pid, cap)) or real(pid, cap)
+    try:
+        _REAL_RUN_CPP(b"#define M {\nint main() M }\n", 1000)
+    finally:
+        parse_mod._win_cap_child_memory = real
+    assert len(seen) == 1, seen
+    assert seen[0][1] == parse_mod.CPP_MEMORY_MB * 1024 * 1024
 
 
 def test_run_cpp_returns_small_output_whole():
