@@ -172,10 +172,31 @@ jobs:
       # `PYTEST_XDIST_AUTO_NUM_WORKERS` is how xdist takes this without
       # changing the command: it overrides what `-n auto` resolves to, and an
       # empty value (every non-Windows cell) leaves `auto` alone.
+      #
+      # Windows also runs without `--cov`, which is the other half of the same
+      # problem and the larger half. `[tool.coverage.run]` sets
+      # `concurrency = multiprocessing`, so every process the suite spawns --
+      # parse pools, the MCP stdio probe, `node`, `git` -- starts a tracer of
+      # its own and writes its own data file. Measured on a Windows box,
+      # `tests/test_mcp.py tests/test_mcp_tools.py` take 17s without `--cov`
+      # and 26s with it; on a 4-vCPU runner that multiplier is what turned a
+      # 180s subprocess timeout and a worker's startup into failures. Capping
+      # the workers alone was not enough: 3.11 and 3.12 went green, 3.10 still
+      # lost a worker mid-test and 3.13 still timed out spawning the probe.
+      #
+      # Nothing is given up by doing this. Coverage is a property of the test
+      # suite, not of the operating system, and the `fail_under = 80` floor is
+      # still enforced on the eight Linux and macOS cells; the one cell that
+      # reports coverage anywhere (the step summary below) is Ubuntu 3.13.
       - name: Run Test Suite & Branch Coverage
-        env:
-          PYTEST_XDIST_AUTO_NUM_WORKERS: ${{ matrix.os == 'windows-latest' && '2' || '' }}
+        if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
+
+      - name: Run Test Suite (Windows, uninstrumented)
+        if: matrix.os == 'windows-latest'
+        env:
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
+        run: pytest -q -n auto
 
       - name: Append Test Coverage to Step Summary
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'

@@ -188,8 +188,15 @@ makes keeping it current a release-blocking step rather than a good intention.
   `test_npm_launcher`. The cause is oversubscription: `-n auto` gives four xdist workers on a
   4-vCPU image, and a large share of this suite's tests spawn their own coverage-traced
   multiprocessing pools plus `node` and `git` children on top of that. Windows now caps `-n auto`
-  at 2 workers through `PYTEST_XDIST_AUTO_NUM_WORKERS`, which needs no change to the command and
-  leaves every other cell on `auto`. Two wall-clock assertions that #480 and #481 missed are
+  at 2 workers through `PYTEST_XDIST_AUTO_NUM_WORKERS` and runs uninstrumented, with pytest-cov switched off, which was the
+  larger half: `[tool.coverage.run]` sets `concurrency = multiprocessing`, so every process the
+  suite spawns starts a tracer and writes its own data file (`test_mcp.py` plus
+  `test_mcp_tools.py` measured 17 s uninstrumented against 26 s instrumented, on a Windows box
+  with 16 cores to spare). Capping the workers alone was not enough — two cells went green, one
+  still lost an xdist worker mid-test and one still timed out spawning a subprocess. Nothing is
+  given up: coverage is a property of the suite, not of the OS, and `fail_under = 80` is still
+  enforced on the eight Linux and macOS cells, one of which is the only cell that ever reported
+  the number. Two wall-clock assertions that #480 and #481 missed are
   rewritten to assert what they meant — a hung item is *abandoned*, proved by the gap between a
   300 s item and a 120 s bound, rather than by a 30 s bound that a runner spending 50 s starting
   worker processes could not meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
