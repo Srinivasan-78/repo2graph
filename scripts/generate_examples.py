@@ -37,6 +37,8 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -160,6 +162,41 @@ def run_queries(index_dir: Path, queries: list[str]) -> list[dict]:
     return flows
 
 
+# Characters that can sit inside a path component or join two of them. An
+# occurrence preceded by one of these is not the start of a path, it is the
+# tail of a longer unrelated one: Rails' own docstrings say
+# "/my/rails/root/config", which ends with "/root" but names nothing of ours.
+_PATH_CHAR = re.compile(r"[\w/\\.\-~]")
+# What may legitimately follow a leaked path: more path (a separator), the end
+# of the text, or a delimiter that closes it. Markup brackets are deliberately
+# absent, because "</root>" is a closing tag rather than a reference to the
+# home directory "/root" -- that and the rule above are what let repositories
+# whose own fixtures contain such strings through this check.
+_PATH_END = re.compile(r"[\s\"'`,;:)\]}]")
+
+
+def _leaks_path(text: str, prefix: str) -> bool:
+    """True when `prefix` occurs in `text` as a filesystem path rather than as
+    a coincidental substring of unrelated content.
+
+    Boundary-matched on both sides. The cost of that precision is a leak
+    embedded with no boundary at all (``file:///root/x``) going unreported;
+    the cost of the bare substring check it replaces was flagging real
+    repository content, which blocks a repository from the gallery outright.
+    """
+    start = text.find(prefix)
+    while start != -1:
+        end = start + len(prefix)
+        before = text[start - 1] if start else ""
+        after = text[end : end + 1]
+        if (not before or not _PATH_CHAR.match(before)) and (
+            not after or after in "/\\" or _PATH_END.match(after)
+        ):
+            return True
+        start = text.find(prefix, start + 1)
+    return False
+
+
 def validate_example(repo_dir: Path, meta: dict, workdir: Path) -> list[str]:
     """Section-29-style checks. Returns a list of problems (empty = clean)."""
     problems = []
@@ -202,13 +239,17 @@ def validate_example(repo_dir: Path, meta: dict, workdir: Path) -> list[str]:
     # generic "C:\\" / "/home/" / "AppData" substring check: source code that
     # legitimately handles filesystem paths (e.g. vscode's own path.ts) says
     # things like "C:\\Windows" in docstrings and test fixtures, and a bare
-    # substring check flags that real content as a false positive.
-    import os as _os
-
-    suspicious = [str(workdir), str(workdir.resolve())]
-    home = _os.path.expanduser("~")
+    # substring check flags that real content as a false positive. Matched at
+    # a path boundary for the same reason -- see `_leaks_path`. A short,
+    # generic home such as a container's `/root` is a substring of plenty of
+    # real content.
+    suspicious = {str(workdir), str(workdir.resolve())}
+    home = os.path.expanduser("~")
     if home and home not in ("~", "/"):
-        suspicious.append(home)
+        suspicious.add(home)
+    # Committed artifacts are JSON, so a Windows path reaches them backslash-
+    # escaped and the literal form never appears.
+    suspicious |= {s.replace("\\", "\\\\") for s in suspicious if "\\" in s}
     for f in list(repo_dir.glob("*")) + list(repo_dir.glob("flows/*")):
         if not f.is_file():
             continue
@@ -216,8 +257,8 @@ def validate_example(repo_dir: Path, meta: dict, workdir: Path) -> list[str]:
             text = "\n".join(_read_jsonl_maybe_gz(f))
         else:
             text = f.read_text(encoding="utf8", errors="replace")
-        for s in suspicious:
-            if s and s in text:
+        for s in sorted(suspicious):
+            if s and _leaks_path(text, s):
                 problems.append(
                     f"{f.relative_to(repo_dir)}: contains this machine's scratch/home path {s!r}"
                 )
