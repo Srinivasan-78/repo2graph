@@ -344,6 +344,24 @@ def test_tool_descriptions_stay_under_budget():
     assert total <= 6000, f"Combined tool descriptions ({total} chars) exceed 6000-char budget"
 
 
+def test_server_instructions_tell_a_client_how_to_parse_a_noted_reply():
+    """Notes lead a reply in both formats, JSON included, so a client that
+    calls `JSON.parse` on the whole thing breaks the first time an argument is
+    defaulted or the index goes stale.
+
+    docs/mcp.md says so, but a client's model reads the server's metadata and
+    never the repository's docs. It lives in `instructions` rather than in each
+    JSON tool's description because those are capped at 800 chars each -- four
+    copies did not fit, and this ships once per session instead of per tool.
+    """
+    from repo2graph.mcp.schemas import SERVER_INSTRUCTIONS
+
+    assert "_note:" in SERVER_INSTRUCTIONS
+    assert "json" in SERVER_INSTRUCTIONS.lower()
+    # The budget the per-tool descriptions could not absorb.
+    assert len(SERVER_INSTRUCTIONS) <= 1200
+
+
 def test_tool_descriptions_contain_usage_guidance_and_siblings():
     """Glama TDQS: Every tool description must contain explicit usage guidance
     ('when to use' or 'use when') and cross-reference alternative sibling tools
@@ -655,6 +673,11 @@ def test_stdio_server_roundtrip(mini_index):
         )
         assert "result" in init_resp
         assert init_resp["result"]["serverInfo"]["name"] == "repo2graph"
+        # The handshake is the only place the reply-shape convention is stated
+        # to a client that is not the bundled extension. Asserted over the real
+        # transport because `serve()` passes it through a TypeError-guarded
+        # kwargs ladder: an SDK that rejected it would silently drop it.
+        assert "_note:" in init_resp["result"]["instructions"]
 
         proc.stdin.write(
             json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"

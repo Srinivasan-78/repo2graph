@@ -15,6 +15,7 @@ from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .guardrails import INDEX_DIRNAME
 from .pagination import PagedText
 from .tools import (
+    SERVER_INSTRUCTIONS,
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
     ToolError,
@@ -442,10 +443,19 @@ def serve(
     # Newest registration first. An SDK without the resource and prompt hooks
     # still gets the tools; only one with no keyword handlers at all falls back
     # to a bare server.
+    # `instructions` is tried before the same handler set without it: it is the
+    # one place a server-wide output convention can be stated once instead of
+    # once per tool. Every JSON reply can be led by `_note: ..._` paragraphs,
+    # and TOOL_DESCRIPTIONS cannot absorb that sentence four times -- they are
+    # capped at 800 chars each because they ship on every session.
     mcp_server: Any = None
+    attempts: list[dict[str, Any]] = []
     for handlers in ({**tool_handlers, **extra_handlers}, tool_handlers):
+        attempts.append({**handlers, "instructions": SERVER_INSTRUCTIONS})
+        attempts.append(dict(handlers))
+    for kwargs in attempts:
         try:
-            mcp_server = server_cls(server.name, version=server.version, **handlers)
+            mcp_server = server_cls(server.name, version=server.version, **kwargs)
             break
         except TypeError:
             continue

@@ -64,6 +64,30 @@ TOOL_TITLES = {
     "repo_build_status": "Build Task Status",
 }
 
+# Sent once at initialize, so a convention that holds for every tool is stated
+# here rather than four times in TOOL_DESCRIPTIONS, which are capped at 800
+# chars each because they ship on every session.
+#
+# The reply-shape sentence is the load-bearing one. `docs/mcp.md` documents
+# that notes lead a reply, JSON replies included -- but a client's model reads
+# the server's own metadata and never the repository's docs, so a bare
+# `JSON.parse` of a reply breaks the first time an argument is defaulted or the
+# index goes stale. The bundled VS Code client has always split the notes off
+# first (`toolText.splitNotes`); this is what lets any other client do the same.
+SERVER_INSTRUCTIONS = (
+    "repo2graph answers questions about one indexed repository: a code graph plus "
+    "retrieval over it. Start with repo_map for layout, repo_search for open-ended "
+    "questions, and repo_find_symbol when you already know a name; feed the node_ids "
+    "they return to repo_neighbours, repo_read, repo_path_between and repo_blast_radius. "
+    "Every tool is read-only and deterministic, and secret files are excluded. "
+    "Replies may be led by one or more `_note: ..._` paragraphs -- an argument the server "
+    "defaulted, or a warning that the index is stale relative to the working tree. They "
+    "come before the body in both the markdown and the JSON formats, so parse the JSON "
+    "that follows the last such paragraph rather than the whole reply, and surface a "
+    "staleness note to the user instead of dropping it: it means cited line numbers may "
+    "no longer match the source."
+)
+
 TOOL_DESCRIPTIONS = {
     "repo_map": (
         "Retrieve a high-level structural map of the repository: languages, hub files, "

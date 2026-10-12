@@ -190,6 +190,31 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **`--git-authors` now sees a `git-history` the repo's config file supplied (#391, #394).** The
+  check ran before `_with_repo_config`, so it read the raw command line and not the merged
+  settings: a repo with `git-history = 10` in `.repo2graph.toml` had `build --git-authors`
+  rejected outright, and the mirror case — `git-authors = true` in the config with no history
+  anywhere — was accepted silently and recorded no authors at all, because the walk that
+  collects them never ran. Both are the case the check exists to catch.
+- **A Windows sharing violation no longer fails a build with a message about a read-only
+  directory.** Adding `LockUnavailableError` put `EACCES`/`EPERM` in the fast-fail set, but those
+  are only permanently unwritable on POSIX: on Windows the same errno is what OneDrive, antivirus
+  scanners and the search indexer raise while they briefly hold a new index's files open, and it
+  clears on its own — `export._rename` already retries exactly that. They stay in the retry loop
+  on Windows now, and are only reported, with an accurate message, if the whole `--lock-timeout`
+  is spent on them. `EROFS`/`ENOSPC`/`ENOENT`/`ENOTDIR` still fail fast.
+- **`explain-path` no longer answers `INCLUDED` for a file no build will index.** `discover()`
+  gained two drop rules — a path that is not encodable UTF-8, and one holding a control,
+  line-separator or hidden character — and `explain_path` modelled neither, so a zero-width space
+  in a filename (legal on NTFS and ext4) got `INCLUDED`, `precedence_step: 10`, while every build
+  silently skipped it. Both rules are now explained, as `undecodable_path` and `unsafe_path`.
+- **The MCP server states its reply-shape convention in the initialize handshake.** Notes lead a
+  reply as `_note: ..._` paragraphs in both formats, JSON included — `docs/mcp.md` documents it
+  and the bundled VS Code client splits them off, but a third-party client's model reads the
+  server's own metadata and never the repo's docs, so a bare `JSON.parse` broke the first time an
+  argument was defaulted or the index went stale. It is `instructions` rather than four more
+  sentences in `TOOL_DESCRIPTIONS`, which are capped at 800 characters each because they ship on
+  every session.
 - **The VS Code extension's test suite now runs on Windows, and the one assertion that could not
   pass there is fixed.** `src/test/fixture.ts` has always branched on `process.platform` for
   `Scripts` vs `bin` and the `.exe` suffix, so the platform difference was real — but the workflow
