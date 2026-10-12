@@ -849,7 +849,7 @@ you pass `--include-paths`.
 
 #### What not to rely on
 
-- **Completeness of callers.** Call resolution is name-based. Across the eleven
+- **Completeness of callers.** Call resolution is name-based. Across the thirteen
   gallery repositories in [`examples/`](../examples/README.md), 10%–25% of `CALLS`
   edges are ambiguous ([limitations](architecture.md)). No edge does not prove no call.
 - **Freshness.** The index is a snapshot and nothing watches the filesystem.

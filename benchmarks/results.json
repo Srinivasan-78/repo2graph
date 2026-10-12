@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-11T08:47:22Z",
+  "generated_at": "2026-10-12T08:39:55Z",
   "results": [
     {
       "repository": "https://github.com/django/django",
@@ -121,6 +121,28 @@
       "clone_seconds": 1.8,
       "build_seconds": 2.6,
       "generated_at": "2026-10-11T08:46:36Z"
+    },
+    {
+      "repository": "https://github.com/rails/rails",
+      "commit": "5cdfd5d87800e79ee9d951a4f5a86d4e9c47c423",
+      "repo2graph_version": "3.0.0",
+      "files": 1276,
+      "nodes": 18774,
+      "edges": 99912,
+      "clone_seconds": 4.1,
+      "build_seconds": 23.2,
+      "generated_at": "2026-10-12T08:37:58Z"
+    },
+    {
+      "repository": "https://github.com/spring-projects/spring-framework",
+      "commit": "8caa935ae95078f8973314393a219d03cb7f43af",
+      "repo2graph_version": "3.0.0",
+      "files": 2121,
+      "nodes": 27469,
+      "edges": 136027,
+      "clone_seconds": 5.2,
+      "build_seconds": 33.5,
+      "generated_at": "2026-10-12T08:39:54Z"
     }
   ]
 }

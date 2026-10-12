@@ -271,7 +271,7 @@ recall over BM25 alone; on the structural benchmark it adds 20 to 30 points over
 
 Retrieval-quality numbers come from `benchmarks/real/results.json`
 ([method and diagnosis](../benchmarks/real/README.md), `scripts/bench_real_repos.py`).
-Build-scale numbers come from `benchmarks/results.json`, generated against eleven pinned public
+Build-scale numbers come from `benchmarks/results.json`, generated against thirteen pinned public
 repositories; [`benchmarks/methodology.md`](../benchmarks/methodology.md) has the methodology and
 [`examples/README.md`](../examples/README.md) the exact reproduction command per repository.
 Nothing on this page is estimated: where a figure is not measured, it is not given.

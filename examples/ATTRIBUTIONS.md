@@ -169,3 +169,29 @@ structure, not the expression the repository's license protects.
 - **Generated artifacts committed:** prose only (`README.md`, `overview.md`)
 - **Source code copied:** no
 - **Attribution requirement:** as for React (MIT).
+
+## Rails
+
+- **Repository:** https://github.com/rails/rails
+- **Organization:** David Heinemeier Hansson and the Rails contributors
+- **License:** MIT (declared in the repository's own `MIT-LICENSE`)
+- **Analyzed commit:** see `examples/rails/README.md`, "Revision"
+- **Purpose of inclusion:** the gallery's scoped Ruby entry, and the clearest case of a codebase
+  that builds its own API at load time — `included do`, `delegate`, `define_method` and
+  `method_missing` leave a name-based call graph with no call site to find
+- **Generated artifacts committed:** prose only (`README.md`, `overview.md`)
+- **Source code copied:** no
+- **Attribution requirement:** as for React (MIT).
+
+## Spring Framework
+
+- **Repository:** https://github.com/spring-projects/spring-framework
+- **Organization:** VMware / Broadcom and the Spring contributors
+- **License:** Apache-2.0 (declared in the repository's own `LICENSE.txt`)
+- **Analyzed commit:** see `examples/spring-framework/README.md`, "Revision"
+- **Purpose of inclusion:** the gallery's second Java entry; dependency injection puts the choice
+  of implementation in annotations and component scans rather than in a call, so the graph maps the
+  container's machinery and not the wiring it performs
+- **Generated artifacts committed:** prose only (`README.md`, `overview.md`)
+- **Source code copied:** no
+- **Attribution requirement:** as for Kubernetes (Apache-2.0).

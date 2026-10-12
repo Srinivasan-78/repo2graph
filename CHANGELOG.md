@@ -15,6 +15,15 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Rails and Spring Framework in the gallery, bringing it to thirteen (#462).** Each is in for a
+  limit it makes visible rather than for its size. Rails builds much of its own API at load time
+  (`included do`, `delegate`, `define_method`, Active Record's `method_missing`), so a name-based
+  call graph finds no call site for a large part of what application code invokes; Spring is the
+  other half of that problem, where dependency injection leaves the container to pick the
+  implementation at runtime from annotations and component scans. Both are scoped to the subtrees a
+  request passes through — `actionpack`/`activerecord`/`activesupport`/`railties` `lib/` for Rails
+  (1,276 files, 18,774 nodes, 99,912 edges), the bean container and web stack for Spring (2,121
+  files, 27,469 nodes, 136,027 edges). Both were blocked until now by the leak check fixed below.
 - **`--rerank` on `rag` and `query`, and `rerank=` on `Index.pack_context`/`retrieve`
   (#381):** a local cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default,
   `--rerank-model` to change or `@<commit>` to pin) re-orders the top 50 candidates before any
