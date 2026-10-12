@@ -171,7 +171,6 @@ def _require_history_for_authors(args) -> None:
 
 
 def cmd_build(args):
-    _require_history_for_authors(args)
     if getattr(args, "neo4j_uri", None) and "cypher" not in parse_formats(args.formats):
         raise SystemExit("error: --neo4j-uri pushes graph.cypher; add cypher to --formats")
     repo_path = Path(args.repo)
@@ -180,6 +179,12 @@ def cmd_build(args):
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
     args, applied = _with_repo_config(args, repo_path)
+    # After the merge, not before it: `git-history` and `git-authors` are both
+    # `[tool.repo2graph]` keys, so checking the raw namespace rejected a repo
+    # that configured the history in its config file and silently accepted
+    # `git-authors = true` with no history anywhere -- recording no authors and
+    # saying nothing, which is the case this check exists to catch.
+    _require_history_for_authors(args)
     scip_index = _scip_index(args, "scip" in applied.values, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)

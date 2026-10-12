@@ -286,3 +286,36 @@ def test_git_authors_needs_git_history(tmp_path: Path):
 
     with pytest.raises(SystemExit, match="--git-history"):
         main(["build", str(_authored_repo(tmp_path)), "-o", str(tmp_path / "o"), "--git-authors"])
+
+
+def test_git_history_from_the_config_file_satisfies_git_authors(tmp_path: Path):
+    """The check ran before `_with_repo_config`, so it could not see a
+    `git-history` the repo's own config file supplied -- and rejected a build
+    whose history *was* configured."""
+    import json
+
+    from repo2graph.cli import main
+
+    repo = _authored_repo(tmp_path)
+    (repo / ".repo2graph.toml").write_text("git-history = 10\n", encoding="utf8")
+    out = tmp_path / "o"
+    assert main(["build", str(repo), "-o", str(out), "--git-authors"]) == 0
+    nodes = [
+        json.loads(line)
+        for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ]
+    assert any("authors" in n for n in nodes)
+
+
+def test_git_authors_from_the_config_file_still_needs_a_history(tmp_path: Path):
+    """The mirror of the above: `git-authors = true` in the config with no
+    history anywhere used to be accepted silently and record no authors at
+    all, because the walk that collects them never ran."""
+    import pytest
+
+    from repo2graph.cli import main
+
+    repo = _authored_repo(tmp_path)
+    (repo / ".repo2graph.toml").write_text("git-authors = true\n", encoding="utf8")
+    with pytest.raises(SystemExit, match="--git-history"):
+        main(["build", str(repo), "-o", str(tmp_path / "o")])
