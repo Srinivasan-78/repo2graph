@@ -196,7 +196,15 @@ makes keeping it current a release-blocking step rather than a good intention.
   still lost an xdist worker mid-test and one still timed out spawning a subprocess. Nothing is
   given up: coverage is a property of the suite, not of the OS, and `fail_under = 80` is still
   enforced on the eight Linux and macOS cells, one of which is the only cell that ever reported
-  the number. Two wall-clock assertions that #480 and #481 missed are
+  the number. Narrowing it that far is what made the real wall legible: Windows has no overcommit,
+  so a process reserves against a commit limit of physical RAM plus the pagefile, and the hosted
+  image ships a small automatically managed one. Three failures that read as unrelated all name
+  it — `WinError 1455` ("the paging file is too small") spawning `node`, return code `3221225773`
+  (`0xC000012D`, `STATUS_COMMITMENT_LIMIT`) spawning `bash`, and a `MemoryError` that killed an
+  xdist worker — the last of them after `2606 passed`, so the suite was finishing and only a
+  subprocess could not start. The Windows cells now set a fixed 16 GB pagefile before the suite
+  runs, printing the limit before and after so the log says whether it took, and warning rather
+  than failing if it cannot. Two wall-clock assertions that #480 and #481 missed are
   rewritten to assert what they meant — a hung item is *abandoned*, proved by the gap between a
   300 s item and a 120 s bound, rather than by a 30 s bound that a runner spending 50 s starting
   worker processes could not meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
