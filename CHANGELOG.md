@@ -190,6 +190,25 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **The VS Code extension's test suite now runs on Windows, and the one assertion that could not
+  pass there is fixed.** `src/test/fixture.ts` has always branched on `process.platform` for
+  `Scripts` vs `bin` and the `.exe` suffix, so the platform difference was real — but the workflow
+  ran `ubuntu-latest` only, so nothing exercised it. `core.test.ts` spelled out
+  `file:///i/human/graph.html` as the expected output of `pathToFileURL`, which on Windows resolves
+  a drive-relative path against the current drive and returns `file:///C:/i/human/graph.html`: red
+  on every Windows checkout, green in CI. The assertion now derives the origin and checks what it
+  was actually about, the fragment encoding, and `vscode.yml` gains a `windows-latest` cell. The
+  server directory is passed as `sysconfig.get_path("scripts")` rather than
+  `dirname $(command -v …)`, because Git Bash's answer is an MSYS path (`/c/hostedtoolcache/…`)
+  that Node's `path.join` cannot resolve.
+- **Nine `## [version]` headings in this file rendered as literal text instead of links.**
+  `## [3.0.0]` is a markdown *reference* link and needs a matching `[3.0.0]: <url>` definition at
+  the foot of the file. `scripts/bump_version.py`'s `bump_changelog` wrote the heading and nothing
+  wrote the definition, so every release from 1.5.1 on added a dead reference, and `[Unreleased]`
+  still diffed from v1.5.0 — three majors behind. The definitions are restored, `bump_changelog`
+  now emits each release's definition and re-bases `[Unreleased]` in the same step that writes the
+  heading, and `tests/test_version_surfaces.py` reads the foot of the file so a future gap fails a
+  test instead of shipping.
 - **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
   twelve runs before this change were red, every one on a Windows cell and not one on a finding
   about the code. Three were the suite's own fault and are fixed: two wall-clock assertions that
@@ -2468,7 +2487,16 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.2.0...v3.0.0
+[2.2.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.6.0...v2.0.0
+[1.6.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.4...v1.6.0
+[1.5.4]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.2.0...v1.3.0

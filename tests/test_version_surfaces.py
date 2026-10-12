@@ -236,6 +236,57 @@ def test_major_surfaces_carry_only_the_major():
             assert surface.expected("4.5.6") == "4.5.6"
 
 
+def test_every_changelog_heading_has_a_link_definition():
+    """`## [3.0.0]` is a markdown reference link, so a heading without a
+    matching `[3.0.0]: <url>` definition renders as the literal text `[3.0.0]`.
+
+    The bug: `bump_changelog` wrote the heading and nothing wrote the
+    definition, so every release from 1.5.1 on added a dead reference -- nine of
+    them by 3.0.0 -- and `[Unreleased]` still diffed from v1.5.0. Nothing could
+    fail on it, because no test read the foot of the file.
+    """
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf8")
+    headings = re.findall(r"^## \[([^\]]+)\]", text, re.MULTILINE)
+    defined = set(re.findall(r"^\[([^\]]+)\]: \S+$", text, re.MULTILINE))
+    assert headings, "CHANGELOG.md has no `## [version]` headings"
+    missing = [h for h in headings if h not in defined]
+    assert not missing, (
+        f"these CHANGELOG.md headings render as literal text, not links: {missing}. "
+        f"Add a `[version]: .../compare/vPREV...vVERSION` definition at the foot of the file."
+    )
+
+
+def test_unreleased_diffs_from_the_newest_released_heading():
+    """`[Unreleased]` must compare against the latest release, not whichever one
+    happened to be current when the definition was last hand-edited."""
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf8")
+    headings = re.findall(r"^## \[([^\]]+)\]", text, re.MULTILINE)
+    newest = next(h for h in headings if h != "Unreleased")
+    unreleased = re.search(r"^\[Unreleased\]: (\S+)$", text, re.MULTILINE)
+    assert unreleased, "CHANGELOG.md has no [Unreleased] link definition"
+    assert unreleased.group(1).endswith(f"/compare/v{newest}...HEAD"), (
+        f"[Unreleased] diffs from {unreleased.group(1)}, but the newest released "
+        f"section is {newest}"
+    )
+
+
+def test_bumping_the_changelog_adds_the_new_version_s_link_definition():
+    """The regression guard on the fix: heading and definition move together."""
+    sys.path.insert(0, str(SCRIPTS))
+    import bump_version  # noqa: PLC0415
+
+    text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf8")
+    newest = next(
+        h for h in re.findall(r"^## \[([^\]]+)\]", text, re.MULTILINE) if h != "Unreleased"
+    )
+    out = bump_version.bump_changelog_links(text, "9.9.9")
+    assert f"[9.9.9]: https://github.com/Srinivasan-78/repo2graph/compare/v{newest}...v9.9.9" in out
+    assert "[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v9.9.9...HEAD" in out
+    # Idempotent: a re-run on a version already defined is a no-op, so a retried
+    # release does not stack two definitions for the same tag.
+    assert bump_version.bump_changelog_links(out, "9.9.9") == out
+
+
 def test_no_assertion_in_the_suite_spells_out_the_current_version():
     """A test that hardcodes the version under release is red the moment the
     bump lands -- and the first run that can see it is publish.yml's `pypi`
