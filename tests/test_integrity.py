@@ -10,6 +10,7 @@ by the code under test.
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,59 @@ class TestBuildLock:
                 second.acquire()
         finally:
             first.release()
+
+    def test_a_read_only_parent_fails_fast_instead_of_waiting_out_the_timeout(self, tmp_path):
+        """EROFS cannot clear by itself, so retrying for the whole timeout and
+        then blaming a holder that does not exist sends the user elsewhere."""
+        import errno
+
+        from repo2graph.lock import BuildLock, LockUnavailableError
+
+        lock = BuildLock(tmp_path / "idx", timeout=30.0)
+
+        def refuse(*a, **k):
+            raise OSError(errno.EROFS, "Read-only file system")
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.open", refuse)
+            started = time.monotonic()
+            with pytest.raises(LockUnavailableError, match="read-only"):
+                lock.acquire()
+        # Fast-fail, not the 30s timeout.
+        assert time.monotonic() - started < 5.0
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="EACCES is transient only on Windows")
+    def test_a_windows_sharing_violation_is_retried_not_treated_as_unwritable(self, tmp_path):
+        """OneDrive, antivirus and the search indexer briefly hold a new index's
+        files open; NTFS answers EACCES until they let go, and it clears.
+
+        `export._rename` already retries exactly that. This lock used to retry
+        every OSError too, then started fast-failing on EACCES -- turning a
+        self-clearing hiccup into a build failure that blamed a read-only
+        parent. The third attempt here succeeds, so acquire() must as well.
+        """
+        import errno
+
+        from repo2graph.lock import BuildLock
+
+        real_open = open
+        attempts = []
+
+        def flaky(*a, **k):
+            attempts.append(1)
+            if len(attempts) <= 2:
+                raise PermissionError(errno.EACCES, "Permission denied")
+            return real_open(*a, **k)
+
+        lock = BuildLock(tmp_path / "idx", timeout=30.0)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr("builtins.open", flaky)
+            lock.acquire()
+        try:
+            assert lock._acquired
+            assert len(attempts) == 3
+        finally:
+            lock.release()
 
     def test_stale_lock_is_reclaimed(self, tmp_path):
         """A lock file from a non-existent PID is reclaimed on next acquire."""
