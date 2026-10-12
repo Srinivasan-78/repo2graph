@@ -29,9 +29,9 @@
   "calls_unique_global": 668,
   "calls_shadowed_builtin": 52,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 399,
+  "cochange_sampled_commits": 400,
   "cochange_min_pairs": 3,
-  "cochange_commits_skipped": 15,
+  "cochange_commits_skipped": 16,
   "edge:CO_CHANGE": 565,
   "edge:TESTS": 17799,
   "testable_symbols": 1072,
@@ -113,7 +113,7 @@
   "index_schema_version": "2",
   "limits_hit": {},
   "tested_symbol_fraction": 0.539,
-  "built_at_commit": "4ee550c",
+  "built_at_commit": "a2fbd28",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/cli.py",
