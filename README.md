@@ -21,7 +21,8 @@ together in git. Retrieval starts from BM25 matches and follows those links.
 
 It needs no model, no API key, no language server and no database. Building, querying and the
 MCP server make no network calls; the only exceptions are `rag --answer` (opt-in, sends the pack
-to an LLM) and `repo2graph github` (clones a repository). Parsers are part of that promise:
+to an LLM), `repo2graph github` and a `rag`/`query` target given as a GitHub spec (both clone a
+repository), and `--vectors`/`embed` (download the embedding model on first use). Parsers are part of that promise:
 `tree-sitter-language-pack` is pinned below 1.0 so every grammar arrives compiled into the
 installed wheel, rather than being downloaded on first parse — see
 [SECURITY.md](.github/SECURITY.md#why-this-is-safe-for-enterprise-use). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
@@ -41,7 +42,13 @@ claude mcp add repo2graph -- uvx --from "repo2graph[mcp]" repo2graph-mcp .
 ```
 
 Cursor, Claude Desktop and other clients: [docs/mcp.md](docs/mcp.md). Step-by-step with expected
-output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run).
+output: [`demo` in docs/cli.md](docs/cli.md#demo--the-first-command-to-run). What it produces on
+thirteen well-known repositories — Django, FastAPI, React, Kubernetes, Linux and others, each at a
+pinned commit with the command to reproduce it: [examples/](examples/README.md).
+
+In VS Code, the extension in [`editors/vscode/`](editors/vscode/README.md) (a preview, built from
+source) shows the callers, callees, base classes and co-changed files of the symbol at the cursor,
+through the same MCP server.
 
 ## Is it better than grep?
 
@@ -89,6 +96,9 @@ code that says "timestamp" — which is why the
 [dense-vector path](benchmarks/real/README.md#the-dense-result) closes it to −2 pp at 8,000
 tokens and more BM25 tuning has not. That path needs a downloaded model, so it is opt-in
 (`pip install "repo2graph[rag]"`) and the zero-dependency default stays the default.
+That extra pulls PyTorch, which on Linux brings the NVIDIA CUDA wheels (several GB); the model is
+fetched from Hugging Face on first use and its own licence and training data are yours to review
+before you adopt it. Once it is cached, set `HF_HUB_OFFLINE=1` so later runs make no request.
 
 ### Where repo2graph wins for agents: fewer turns
 
@@ -125,8 +135,11 @@ What it does do that grep doesn't:
   bounded by hop count and visit cap, with a citation per edge.
 
 How it compares with Serena, Aider's repo map, CodeGraphContext, code-graph-rag, Sourcegraph,
-Cursor's index and Claude Code's own search, including when to use those instead:
-**[docs/comparison.md](docs/comparison.md)**.
+Cursor's index and Claude Code's own search, and with the dependency-graph tools Madge,
+dependency-cruiser and CodeSee, including when to use those instead:
+**[docs/comparison.md](docs/comparison.md)**. Looking for a **Sourcetrail alternative**? It is not
+a drop-in replacement — there is no interactive desktop UI — and
+[the comparison says what it does instead](docs/comparison.md#repo2graph-as-a-sourcetrail-alternative).
 
 ## Five questions to start with
 
@@ -164,31 +177,36 @@ calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 | `repo2graph github <owner/repo> -o <dir>` | Fetch, build and clean up without a local clone |
 | `repo2graph demo` | Index a bundled example and answer the five questions above |
 | `repo2graph map`, `repo2graph stats`, `repo2graph index-status`, `repo2graph embed` | Re-render `graph.html`, report counts and freshness, add optional dense vectors |
+| `repo2graph diff` | What changed structurally between two builds: symbols added, removed and renamed, edges, and whose callers changed |
 | `repo2graph doctor`, `repo2graph bug-report`, `repo2graph explain-path`, `repo2graph completion` | Diagnose setup, build a privacy-safe bug bundle, say why a path is (not) indexed, shell completion |
 | `repo2graph-mcp <path>` | stdio MCP server: `repo_map`, `repo_search`, `repo_neighbours`, `repo_blast_radius`, and five more |
 
 Full flags: [docs/cli.md](docs/cli.md). Python API: [docs/python-api.md](docs/python-api.md).
+Build cost up to 50,000 files: [benchmarks/perf/README.md](benchmarks/perf/README.md).
 
 ## What it can't do
 
 - **Resolve calls by type.** Calls are matched by name, scoped by class, file, imports and
   directory. `x.get()` on a receiver of unknown type is recorded as a low-confidence guess, not a
-  fact. For exact references, use a language-server tool.
+  fact. For exact references, use a language-server tool, or hand `build --scip index.scip` a
+  [SCIP](https://github.com/sourcegraph/scip) index (from `scip-python`, `scip-typescript`, ...)
+  to make the calls and bases it covers exact; see
+  [docs/architecture.md](docs/architecture.md#exact-resolution-from-scip---scip-off-by-default).
 - **See dynamic dispatch, reflection or computed imports.** A missing edge doesn't prove that no
   call exists.
 - **Cross language boundaries** (Python calling C++ through bindings).
-- **Rebuild itself when files change.** `index-status` reports staleness; rebuild with
-  `build --incremental`.
 
 <a id="languages"></a>Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
-C#, PHP, Kotlin, Swift, Scala, Bash and Lua. Every other file is still indexed as text. The
+C#, PHP, Kotlin, Swift, Scala, Bash, Lua, Objective-C and HCL (Terraform), plus the `<script>` blocks
+of Vue and Svelte components and the code cells of Jupyter notebooks. Every other file is still
+indexed as text. The
 specific cases that defeat it — reflection dispatch, string-keyed registries, barrel re-exports —
 are pinned as known failures in the
 [synthetic regression suite](benchmarks/corpus/README.md#known-failure-cases-it-pins), and
 per-language coverage is scored, unevenly, in
 [docs/architecture.md §4](docs/architecture.md#4-language-support).
 
-**Two of those seventeen are benchmarked on real repositories**: Python (Flask, requests,
+**Two of those nineteen are benchmarked on real repositories**: Python (Flask, requests,
 FastAPI) and TypeScript (Hono). Treat the rest as parsed-and-unmeasured. That is not a formality —
 the retrieval benchmark found two parse gaps in the *one* TypeScript repository as soon as it
 looked, one of which was hiding
@@ -221,7 +239,7 @@ Run `repo2graph doctor` to diagnose environment and platform support.
 - **Automated gates:** Pull requests must pass automated CI checks (ruff, mypy, multi-OS test matrix, synthetic regression benchmarks).
 - **Review policy:** Pull requests require 0 third-party review approvals to merge to `main`.
 - **Commit signing:** Commit signing is not currently enforced on `main`.
-- **Integrity:** Releases are published to PyPI with provenance attestations, and `uv.lock` is pinned in the repository for reproducible builds.
+- **Integrity:** Releases are published to PyPI with provenance attestations. `uv.lock` pins every dependency by hash for CI and contributors (`uv sync --frozen`); a plain `pip install repo2graph` resolves its own versions within the ranges in `pyproject.toml` and does not read it.
 
 ## Contributing
 

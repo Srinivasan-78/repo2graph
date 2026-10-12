@@ -2,13 +2,15 @@
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 
 import argparse
+from typing import Any
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
-from typing import cast
 
+from .events import diagnostic
 from . import __version__
 from .chunks import iter_chunks
 
@@ -16,18 +18,19 @@ from .chunks import iter_chunks
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
 from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
+from .rerank import DEFAULT_RERANK_MODEL as RERANK_DEFAULT_MODEL
 from .export import (
     dump_all,
-    load_parse_cache,
-    make_path,
+    load_parse_cache_report,
     path as artifact_path,
     register_written,
     rel as artifact_rel,
 )
-from .events import SAFE_ERRORS, encodable, write_safe
+from .events import encodable, write_safe
 from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
 from .parse import ParseError
+from .parsepool import PARSE_TIMEOUT_S
 from .viz import MAX_NODES
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
@@ -41,12 +44,6 @@ def parse_formats(spec: str) -> set[str]:
             f"unknown format(s): {', '.join(unknown)}; choose from {', '.join(FORMATS)}"
         )
     return wanted
-
-
-# Kept as a re-export: the canonical definition now lives in events, which both
-# the CLI and the server-side loggers share so the rule cannot drift in two
-# places. Existing importers of cli._SAFE_ERRORS keep working.
-_SAFE_ERRORS = SAFE_ERRORS
 
 
 def _emit(text: str) -> None:
@@ -109,12 +106,86 @@ def _effective_exclude(args) -> list[str] | None:
     return explicit + globs_for(groups)
 
 
+def _explicit_dests(root, sub, argv) -> set[str]:
+    """The dests the user actually typed on `sub`'s command line.
+
+    A config file fills in flags that were not given, and a parsed namespace
+    cannot tell `--git-history 0` typed on purpose from the default 0. Parse
+    once more with every default suppressed: only typed flags land in it.
+    """
+    saved = [(a, a.default) for a in sub._actions]
+    try:
+        for a, _ in saved:
+            a.default = argparse.SUPPRESS
+        ns, _ = root.parse_known_args(argv)
+    finally:
+        for a, d in saved:
+            a.default = d
+    return set(vars(ns))
+
+
+def _with_repo_config(args: argparse.Namespace, repo: Path) -> tuple[argparse.Namespace, Any]:
+    """`args` with the repo's config file filling every flag not typed (#391).
+
+    Returns `(merged, applied)`: a copy of `args`, and a `RepoConfig` holding
+    only the settings that took effect, for attribution. With no config file
+    the original `args` comes back untouched.
+    """
+    from .config import ConfigError, RepoConfig, load
+
+    try:
+        cfg = load(repo)
+    except ConfigError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    applied = RepoConfig()
+    if not cfg:
+        return args, applied
+    # Set by main(). A namespace built by hand has no record of what was typed,
+    # so every attribute it carries counts as given.
+    explicit = getattr(args, "explicit_flags", None)
+    merged = argparse.Namespace(**vars(args))
+    for dest, value in cfg.values.items():
+        given = dest in explicit if explicit is not None else hasattr(args, dest)
+        if not given:
+            setattr(merged, dest, value)
+            applied.values[dest] = value
+            applied.sources[dest] = cfg.sources[dest]
+    return merged, applied
+
+
+def _scip_index(args, from_config: bool, repo_path: Path) -> str | None:
+    """`--scip` as typed, or the config key's path inside the repo (#380)."""
+    from .scip import ScipError, index_path
+
+    try:
+        return index_path(getattr(args, "scip", None), repo_path, from_config)
+    except ScipError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
+def _require_history_for_authors(args) -> None:
+    if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
+        raise SystemExit(
+            "error: --git-authors reads the commits --git-history walks; pass --git-history N too"
+        )
+
+
 def cmd_build(args):
+    if getattr(args, "neo4j_uri", None) and "cypher" not in parse_formats(args.formats):
+        raise SystemExit("error: --neo4j-uri pushes graph.cypher; add cypher to --formats")
     repo_path = Path(args.repo)
     if not repo_path.is_dir():
         raise SystemExit(
             f"error: repository directory does not exist or is not a directory: {repo_path}"
         )
+    args, applied = _with_repo_config(args, repo_path)
+    # After the merge, not before it: `git-history` and `git-authors` are both
+    # `[tool.repo2graph]` keys, so checking the raw namespace rejected a repo
+    # that configured the history in its config file and silently accepted
+    # `git-authors = true` with no history anywhere -- recording no authors and
+    # saying nothing, which is the case this check exists to catch.
+    _require_history_for_authors(args)
+    scip_index = _scip_index(args, "scip" in applied.values, repo_path)
     formats = parse_formats(args.formats)
     outdir = Path(args.out)
     # Resolved before validate_outdir and the build lock: `--exclude-group
@@ -144,8 +215,8 @@ def cmd_build(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -153,6 +224,7 @@ def cmd_build(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -165,9 +237,19 @@ def cmd_build(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
         output_dir=str(outdir),
+        scip_index=scip_index,
     )
-    cache = load_parse_cache(outdir) if getattr(args, "incremental", False) else None
+    cache = None
+    cache_invalidated = None
+    if getattr(args, "incremental", False):
+        cache, cache_invalidated = load_parse_cache_report(outdir, config)
+        if cache_invalidated:
+            diagnostic(
+                f"note: --incremental is doing a full build; the parse cache was "
+                f"discarded: {cache_invalidated}"
+            )
 
     # Snapshot the previous build's nodes/edges before dump_all overwrites
     # them below -- CHANGELOG.md (written after dump_all, when "overview" is
@@ -185,6 +267,8 @@ def cmd_build(args):
         short_sha, prev_short_sha = resolve_shas(repo_path, outdir)
 
     lock_timeout = getattr(args, "lock_timeout", 60.0)
+    started = time.monotonic()
+    chunk_chars = [0]
     try:
         with BuildLock(outdir, timeout=lock_timeout):
             g = build(
@@ -192,6 +276,7 @@ def cmd_build(args):
                 include=args.include,
                 exclude=exclude_globs,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 max_files=args.max_files,
                 jobs=args.jobs,
                 cache=cache,
@@ -204,10 +289,15 @@ def cmd_build(args):
                 max_memory_mb=getattr(args, "max_memory_mb", 0.0),
                 max_build_seconds=getattr(args, "max_build_seconds", 0.0),
             )
+            if cache_invalidated:
+                g.stats["parse_cache_invalidated"] = cache_invalidated  # type: ignore[assignment]
+            built = time.monotonic()
             chunks = (
                 None
                 if args.no_chunks
-                else iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0))
+                else _counting_text(
+                    iter_chunks(g, max_chunks=getattr(args, "max_chunks", 0)), chunk_chars
+                )
             )
             written, n_chunks = dump_all(g, chunks, outdir, formats, args.viz_nodes)
     except LockTimeoutError as exc:
@@ -226,10 +316,117 @@ def cmd_build(args):
     report = {"out": str(outdir), "written": written, "stats": dict(g.stats), "chunks": n_chunks}
     if g.incremental is not None:
         report["incremental"] = g.incremental
+    report["performance"] = _build_performance(
+        g, outdir, written, built - started, time.monotonic() - built, chunk_chars[0]
+    )
+    if getattr(args, "neo4j_uri", None):
+        report["neo4j"] = _push_neo4j(args, outdir)
     _emit(json.dumps(report, indent=2))
+    if getattr(args, "watch", False):
+        _watch_and_rebuild(args, repo_path, outdir, config)
+
+
+def _push_neo4j(args, outdir: Path) -> dict:
+    from .neo4j import PushError, push
+
+    try:
+        applied = push(artifact_path(outdir, "graph.cypher"), args.neo4j_uri, args.neo4j_database)
+    except (PushError, ValueError, OSError) as exc:
+        raise SystemExit(f"error: {exc}") from None
+    return {"statements": applied, "database": args.neo4j_database}
+
+
+def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
+    """After the first build, rebuild incrementally on every settled change (#392)."""
+    from .parse import DEFAULT_SKIP_DIRS
+    from .watch import poll_interval, snapshot, watch
+
+    skip = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip.discard("vendor")
+
+    def take():
+        return snapshot(repo_path, skip, outdir)
+
+    interval = poll_interval(len(take()), args.watch_interval)
+    diagnostic(
+        f"watching {repo_path} every {interval:g}s; rebuilding {args.watch_quiet:g}s after "
+        "the last change (Ctrl-C to stop)"
+    )
+    again = argparse.Namespace(**{**vars(args), "watch": False, "incremental": True})
+    try:
+        watch(take, lambda: cmd_build(again), interval=interval, quiet=args.watch_quiet)
+    except KeyboardInterrupt:
+        diagnostic("stopped watching")
+
+
+def _token_counter(spec):
+    from .tokenizers import get_token_counter
+
+    try:
+        return get_token_counter(spec)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+
+
+def _counting_text(chunks, total: list[int]):
+    """Pass chunks through, adding up their text length into total[0]."""
+    for c in chunks:
+        total[0] += len(c.get("text") or "")
+        yield c
+
+
+def _build_performance(g, outdir, written, build_s, write_s, chunk_chars) -> dict:
+    """Timings and sizes for one build, for regression gates (#456, #304).
+
+    Reported here rather than in stats.json, which must stay byte-identical
+    between a full and an incremental build of the same tree.
+    """
+    out_bytes = 0
+    for rel in written:
+        try:
+            out_bytes += (Path(outdir) / rel).stat().st_size
+        except OSError:
+            pass
+    source = sum(n.get("size") or 0 for n in g.nodes.values() if n.get("type") == "file")
+    return {
+        "build_seconds": round(build_s, 3),
+        "write_seconds": round(write_s, 3),
+        "peak_rss_mb": _peak_rss_mb(),
+        "source_bytes": source,
+        "output_bytes": out_bytes,
+        # Chunk text over source: overlap and per-part headers repeat lines,
+        # so this is how much bigger chunks.jsonl's text is than the code (P5).
+        "chunk_text_ratio": round(chunk_chars / source, 3) if source else None,
+    }
+
+
+def _peak_rss_mb() -> float | None:
+    """Peak resident set of this process and its parse workers, or None (Windows).
+
+    The `sys.platform` test is what mypy narrows on; `try/except ImportError`
+    is not a platform guard it understands, so typeshed's win32-guarded
+    `getrusage` made `make typecheck` and the `mypy-strict` pre-commit hook red
+    on every Windows checkout -- invisible in CI, which typechecks on Linux
+    only (#484). The import guard stays for a platform that has the module but
+    not the call.
+    """
+    if sys.platform == "win32":
+        return None
+    try:
+        import resource
+    except ImportError:
+        return None
+    peak = max(
+        resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss,
+    )
+    # ru_maxrss is KiB on Linux and bytes on macOS.
+    return round(peak / (1 << 20 if sys.platform == "darwin" else 1 << 10), 1)
 
 
 def cmd_github(args):
+    _require_history_for_authors(args)
     from .fetch import index_github
     from .parse import BuildConfig
 
@@ -257,8 +454,8 @@ def cmd_github(args):
 
         emit("secrets_inclusion_enabled", level="warning")
         if sys.stderr.isatty():
-            sys.stderr.write(
-                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts\n"
+            diagnostic(
+                "warning: --include-secrets is enabled; sensitive credentials may be indexed into artifacts"
             )
 
     config = BuildConfig(
@@ -266,6 +463,7 @@ def cmd_github(args):
         extra_exclude_dirs=args.extra_exclude_dirs or [],
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
+        reference_edges=getattr(args, "reference_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -278,6 +476,7 @@ def cmd_github(args):
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
         parse_policy=getattr(args, "parse_policy", "best-effort"),
+        parse_timeout=getattr(args, "parse_timeout", PARSE_TIMEOUT_S),
     )
     lock_timeout = getattr(args, "lock_timeout", 60.0)
     try:
@@ -288,6 +487,7 @@ def cmd_github(args):
                 ref=args.ref,
                 depth=args.depth,
                 git_history=args.git_history,
+                git_authors=args.git_authors,
                 formats=args.formats,
                 include=args.include,
                 exclude=exclude_globs,
@@ -374,105 +574,25 @@ def _resolve_vectors(idx, args, out=None):
     return idx.vectors, embedder
 
 
-def cmd_embed(args):
-    """Embed an index's chunks, reusing every vector whose text is unchanged."""
-    if getattr(args, "verify_rag", False):
-        return cmd_verify_rag(args)
-    from .embed import (
-        build_vectors,
-        default_embedder,
-        model_id_of,
-        text_hash,
-        write_vectors,
-    )
-    from .export import register_written
-    from .query import read_jsonl
+def _resolve_reranker(args):
+    """The cross-encoder for `--rerank`, or None (#381).
 
-    out = Path(args.out)
-    chunks = read_jsonl(_require_index(out, "chunks.jsonl"))
-    try:
-        embedder = default_embedder(args.model)
-    except RuntimeError as exc:
-        raise SystemExit(str(exc)) from None
-    model_id = model_id_of(embedder)
-
-    npy = make_path(out, "vectors.npy")
-    chunk_ids = [c["id"] for c in chunks if c.get("id")]
-    hashes = {c["id"]: text_hash(c) for c in chunks if c.get("id")}
-    reuse = {}
-    if not args.force:
-        reuse = _reusable_vectors(npy, model_id, hashes)
-    vectors = build_vectors(chunks, embedder, batch=args.batch, reuse=reuse)
-    widths = {len(v) for v in vectors.values()}
-    if len(widths) > 1:
-        # Same model id, different width: the stored vectors cannot be trusted
-        # alongside the new ones, so drop every one of them and re-embed.
-        reuse = {}
-        vectors = build_vectors(chunks, embedder, batch=args.batch)
-        widths = {len(v) for v in vectors.values()}
-    dim = widths.pop() if widths else 0
-
-    # Read build_id from manifest so vectors.meta.json records which build they
-    # correspond to; verify_artifacts and doctor use this to detect staleness.
-    build_id: str | None = None
-    try:
-        _mpath = artifact_path(out, "manifest.json")
-        if _mpath.exists():
-            _mdata = json.loads(_mpath.read_text(encoding="utf8", errors="replace"))
-            if isinstance(_mdata, dict):
-                build_id = _mdata.get("build_id") or None
-    except (OSError, ValueError):
-        pass
-
-    n = write_vectors(
-        npy,
-        vectors,
-        model_id,
-        dim,
-        chunk_ids,
-        [hashes[cid] for cid in chunk_ids],
-        build_id=build_id,
-    )
-    register_written(out, [artifact_rel("vectors.npy"), artifact_rel("vectors.meta.json")])
-    reused = len(set(reuse) & set(vectors))
-    _emit(
-        json.dumps(
-            {
-                "out": str(out),
-                "vectors": n,
-                "reused": reused,
-                "embedded": n - reused,
-                "model": model_id,
-                "dim": dim,
-            },
-            indent=2,
-        )
-    )
-
-
-def _reusable_vectors(npy: Path, model_id: str, hashes: dict) -> dict:
-    """Stored vectors whose chunk id *and* chunk text are both unchanged.
-
-    A chunk's vector depends on its own text and nothing else, so this is
-    correct by construction — unlike reusing anything that depends on the
-    graph, whose call confidences are global.
+    Unlike `--vectors`, a reranker that cannot load is not an error: the
+    first-stage order is still a correct answer, so the query proceeds on it
+    and the reason goes to stderr as one `rag_rerank_disabled` line.
     """
-    from .embed import load_vectors
+    if not getattr(args, "rerank", False):
+        return None
+    from .rerank import DEFAULT_RERANK_MODEL, default_reranker
 
-    if not npy.exists():
-        return {}
+    model = getattr(args, "rerank_model", None) or DEFAULT_RERANK_MODEL
     try:
-        previous, meta = load_vectors(npy)
-    except (OSError, ValueError, KeyError, ImportError):
-        return {}
-    if not previous or meta.get("model_id") != model_id:
-        return {}
-    stored = dict(zip(meta.get("chunk_ids") or [], meta.get("text_hashes") or []))
-    return {
-        cid: vec
-        for cid, vec in previous.items()
-        if cid in hashes and stored.get(cid) == hashes[cid]
-    }
+        return default_reranker(model)
+    except RuntimeError as exc:
+        from .events import emit
+
+        emit("rag_rerank_disabled", level="warning", reason=str(exc))
+        return None
 
 
 def _validate_auto_build_out(out, repo_root) -> None:
@@ -504,9 +624,9 @@ def _validate_auto_build_out(out, repo_root) -> None:
 def _warn_exclude_secrets_deprecated(args) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
-        sys.stderr.write(
+        diagnostic(
             "warning: --exclude-secrets is deprecated and has no effect; secret-looking "
-            "files are excluded by default (pass --include-secrets to include them)\n"
+            "files are excluded by default (pass --include-secrets to include them)"
         )
 
 
@@ -555,6 +675,22 @@ def cmd_query(args):
     _warn_retired_retrieval_flags(args)
     from .query import Index, format_pack
 
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        res = federated.retrieve(
+            indexes,
+            args.query,
+            args.budget,
+            k=args.k,
+            hops=args.hops,
+            min_confidence=getattr(args, "min_conf", None),
+            exclude_secrets=not getattr(args, "include_secrets", False),
+            rerank=_resolve_reranker(args),
+        )
+        _emit(json.dumps(res, indent=2) if args.format == "json" or args.json else format_pack(res))
+        return 0
+
     out = Path(args.out)
     # Index reads all three, and `build --formats overview` writes chunks.jsonl
     # without the graph files -- checking only chunks turned that combination
@@ -580,6 +716,7 @@ def cmd_query(args):
         # caller opts in *now*: an index built with --include-secrets must not
         # hand them to every later plain query.
         exclude_secrets=not getattr(args, "include_secrets", False),
+        rerank=_resolve_reranker(args),
     )
     if getattr(args, "format", "text") == "json" or args.json:
         _emit(json.dumps(res, indent=2))
@@ -604,16 +741,21 @@ def _rag_index_dir(args) -> Path:
     if artifact_path(tpath, "manifest.json").exists():
         return tpath  # already an index: use it as it is, do not rebuild
     if tpath.is_dir():
+        from .config import build_options
         from .parse import BuildConfig
 
-        cfg = BuildConfig(
-            include_secrets=getattr(args, "include_secrets", False),
-            secret_policy=getattr(args, "secret_policy", "redact-match"),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
-            output_dir=str(out),
+        # rag's own secret flags win over the repo's config file, which fills
+        # in the rest of what `repo2graph build` there would have used.
+        bargs, applied = _with_repo_config(args, tpath)
+        config_kw, build_kw = build_options(applied.values)
+        config_kw.update(
+            include_secrets=getattr(bargs, "include_secrets", False),
+            secret_policy=getattr(bargs, "secret_policy", "redact-match"),
+            extra_secret_keywords=getattr(bargs, "extra_secret_keywords", None) or [],
+            extra_secret_dirs=getattr(bargs, "extra_secret_dirs", None) or [],
         )
-        g = build(tpath, config=cfg)
+        cfg = BuildConfig(output_dir=str(out), **config_kw)
+        g = build(tpath, config=cfg, **build_kw)
         # `build` validates its own `-o` (cli.py:130); this auto-build path did
         # not, so an implicit build could stage an index over any directory the caller
         # named -- and `dump_all`'s directory swap renames the target aside and
@@ -628,118 +770,60 @@ def _rag_index_dir(args) -> Path:
         parse_spec(target)
     except ValueError:
         raise SystemExit(f"cannot resolve target {target!r}: {RAG_TARGET_HELP}") from None
+    # `src/app` is a valid owner/repo spelling too. A target written as a path,
+    # or whose first component exists here, is a mistyped local path: stop
+    # rather than send a clone to github.com with the user's token.
+    if "://" not in target and not target.startswith("git@"):
+        head = target.split("/", 1)[0]
+        if target.startswith((".", "/", "~", "\\")) or "\\" in target or Path(head).exists():
+            raise SystemExit(
+                f"{target!r} is not a directory or an index here; refusing to treat it "
+                "as a GitHub repository. For a remote, use https://github.com/owner/repo."
+            )
+    diagnostic(f"note: {target!r} is not a local path; fetching it from GitHub")
     index_github(target, out, formats="jsonl,overview")
     return out
 
 
-def verify_rag(idx, out, embed_model=None) -> tuple[dict, str | None]:
-    """Self-test the dense-retrieval path against one index.
+def _federated(args):
+    """The --index set, or None; refuses combinations that do not federate (#396)."""
+    dirs = getattr(args, "indexes", None)
+    if not dirs:
+        return None
+    if getattr(args, "vectors", None):
+        raise SystemExit("error: --vectors searches one index's embeddings; drop it with --index")
+    if getattr(args, "target", None):
+        raise SystemExit("error: give either a target or --index, not both")
+    from .federated import open_indexes
 
-    Answers the four questions that distinguish "dense retrieval is working"
-    from "dense retrieval silently is not": are there vectors at all, which
-    model and width were they built with, does the active embedder agree, and
-    does every chunk actually have one.
-
-    Args:
-        idx: An open `Index`.
-        out: The index directory, for error messages.
-        embed_model: Model id to check against, or None for the built-in
-            default. Never defaulted to the index's own `model_id` -- comparing
-            a value with itself is what makes a mismatch guard unfalsifiable.
-
-    Returns:
-        `(report, error)`. `error` is None when the path is sound, otherwise a
-        sentence naming what is broken and how to fix it.
-    """
-    report = {
-        "index": str(out),
-        "vectors_present": bool(idx.vectors),
-        "chunks": len(idx.chunks),
-        "model_id": None,
-        "dim": None,
-        "vectorised_chunks": len(idx.vectors or {}),
-        "unvectorised_chunks": len(idx.chunks) - len(idx.vectors or {}),
-        "embedder_model_id": None,
-        "embedder_dim": None,
-        # Known without loading a model: false/true, never null, so a script
-        # can branch on it even when the index has no vectors yet.
-        "rag_extra_installed": _rag_extra_installed(),
-    }
-    if not idx.vectors:
-        return report, (
-            f"no vectors in the index at {out}: dense retrieval is not "
-            f"available. Run `repo2graph embed -o {out}` to build them."
-        )
-    meta = idx.vector_meta or {}
-    report["model_id"] = meta.get("model_id")
-    report["dim"] = meta.get("dim")
-
-    # Chunk coverage: fuse_ok cannot see this, and it is the failure that makes
-    # fusion abandon itself at query time with everything else looking healthy.
-    missing = cast(int, report["unvectorised_chunks"])
-
-    from .embed import default_embedder
-
-    try:
-        embedder = default_embedder(embed_model)
-        report["rag_extra_installed"] = True
-    except RuntimeError as exc:
-        report["rag_extra_installed"] = False
-        return report, str(exc)
-    from .embed import dim_of, model_id_of
-
-    report["embedder_model_id"] = model_id_of(embedder)
-    try:
-        report["embedder_dim"] = dim_of(embedder)
-    except Exception:  # noqa: BLE001 - resilience boundary: external embedder inspection failure
-        report["embedder_dim"] = None
-    ok, reason = idx.fuse_ok(embedder)
-    if not ok:
-        return report, reason
-    if missing > 0:
-        return report, (
-            f"{missing} of {report['chunks']} chunks have no vector: a query "
-            f"whose BM25 shortlist touches one of them falls back to lexical "
-            f"ranking. Re-run `repo2graph embed -o {out}`."
-        )
-    return report, None
-
-
-def _rag_extra_installed() -> bool:
-    import importlib.util
-
-    try:
-        return importlib.util.find_spec("sentence_transformers") is not None
-    except (ImportError, ValueError):
-        return False
-
-
-def cmd_verify_rag(args):
-    """`--verify-rag`: report on the index's dense path, non-zero if broken."""
-    from .query import Index
-
-    out = Path(args.out)
-    _require_index(out, "chunks.jsonl")
-    try:
-        idx = Index(out)
-    except ValueError as exc:
-        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
-    # `embed` spells it --model/--embed-model; the rag surface spells it
-    # --embed-model. Either way it is the *embedding* model, never the LLM.
-    model = getattr(args, "embed_model", None) or getattr(args, "model", None)
-    report, error = verify_rag(idx, out, model)
-    report["ok"] = error is None
-    report["error"] = error
-    _emit(json.dumps(report, indent=2))
-    if error:
-        raise SystemExit(1)
-    return 0
+    return open_indexes(dirs)
 
 
 def cmd_rag(args):
     """Pack an agent-ready, citation-carrying context for one question."""
     _warn_retired_retrieval_flags(args)
     from .query import Index
+
+    if (indexes := _federated(args)) is not None:
+        from . import federated
+
+        return _rag_output(
+            args,
+            federated.pack_context(
+                indexes,
+                args.query,
+                k=args.k,
+                hops=args.hops,
+                budget_chars=args.budget,
+                budget_tokens=getattr(args, "budget_tokens", None),
+                count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+                token_margin=getattr(args, "token_margin", 0.0) or 0.0,
+                min_confidence=args.min_conf,
+                expand_graph=not args.no_expand,
+                exclude_secrets=not getattr(args, "include_secrets", False),
+                rerank=_resolve_reranker(args),
+            ),
+        )
 
     out = _rag_index_dir(args)
     _require_index(out, "chunks.jsonl")
@@ -769,333 +853,26 @@ def cmd_rag(args):
         budget_tokens=getattr(args, "budget_tokens", None),
         extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
         extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
+        expansion=getattr(args, "expansion", None),
+        edge_types=getattr(args, "edge_types", None) or None,
+        count_tokens=_token_counter(getattr(args, "tokenizer", None)),
+        token_margin=getattr(args, "token_margin", 0.0) or 0.0,
+        rerank=_resolve_reranker(args),
     )
+    return _rag_output(args, pack)
+
+
+def _rag_output(args, pack):
     if args.answer:
         from .answer import stream_answer
 
-        stream_answer(pack, model=args.model, provider=args.provider)
-        return 0
+        text = stream_answer(pack, model=args.model, provider=args.provider)
+        # 3: an answer was printed but a size or time bound cut it short.
+        return 0 if getattr(text, "complete", True) else 3
     if args.format == "json":
         _emit(json.dumps(pack, indent=2))
     else:
         _emit(pack["markdown"])
-
-
-def cmd_map(args):
-    """Redraw graph.html from an index that is already on disk."""
-    from .viz import LoadedGraph, write_html
-
-    out = Path(args.out)
-    _require_index(out, "nodes.jsonl")
-    _require_index(out, "edges.jsonl")
-    html = make_path(out, "graph.html")
-    data = write_html(LoadedGraph(out), html, args.viz_nodes)
-    register_written(out, [artifact_rel("graph.html")])
-    _emit(
-        json.dumps(
-            {
-                "html": str(html),
-                "nodes": len(data["nodes"]),
-                "edges": len(data["edges"]),
-                "of": data["totals"],
-            },
-            indent=2,
-        )
-    )
-
-
-def format_stats_summary(data: dict) -> str:
-    lines = [
-        "repo2graph Index Quality & Coverage Summary",
-        "===========================================",
-        f"Files Discovered:        {data.get('files', 0)}",
-        f"Files Parsed:            {data.get('parsed', 0)}",
-        f"Parse Errors:            {data.get('parse_errors', 0)} (in {data.get('files_with_parse_errors', 0)} files)",
-        "",
-        "Graph Structure:",
-        f"  Nodes:                 {data.get('nodes', 0)}",
-        f"  Edges:                 {data.get('edges', 0)}",
-        "",
-        "Call Resolution Quality:",
-        f"  Scoped / Tiered:       {data.get('calls_scoped', 0)}",
-        f"  Unique Global:         {data.get('calls_unique_global', 0)}",
-        f"  Ambiguous:             {data.get('calls_ambiguous', data.get('ambiguous_calls', 0))}",
-        f"  External / Unresolved: {data.get('calls_external', 0)}",
-        f"  Untyped Receiver:      {data.get('calls_untyped_receiver', 0)}",
-        "",
-        "Imports & Bases:",
-        f"  Imports Resolved:      {data.get('imports_resolved', 0)}",
-        f"  Imports External:      {data.get('imports_unresolved', 0)}",
-        f"  Unresolved Bases:      {data.get('unresolved_bases', 0)}",
-        "",
-        "Exclusions:",
-        f"  Dotfiles/Dirs:         {data.get('skipped_dotfile', 0)}",
-        f"  Vendor Dirs:           {data.get('skipped_vendor', 0)}",
-        f"  Secrets:               {data.get('skipped_secret', 0)}",
-        f"  Binary Files:          {data.get('skipped_binary', 0)}",
-        f"  Too Large:             {data.get('skipped_too_large', 0)}",
-        f"  Gitignored:            {data.get('skipped_gitignore', 0)}",
-    ]
-    return "\n".join(lines)
-
-
-def cmd_stats(args):
-    raw = _require_index(Path(args.out), "stats.json").read_text(encoding="utf8")
-    if getattr(args, "json", False) or getattr(args, "format", "json") == "json":
-        _emit(raw)
-    else:
-        try:
-            data = json.loads(raw)
-            _emit(format_stats_summary(data))
-        except (ValueError, TypeError, KeyError):
-            _emit(raw)
-
-
-def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict | None:
-    """The rule discover() applies *first*: never index a repo2graph output dir.
-
-    `explain_path` does not model it, so `explain-path .r2g/agent/nodes.jsonl`
-    answered INCLUDED for a file no build ever indexes. Two shapes, checked in
-    discover()'s order: the `-o` directory this build would write to, and any
-    directory holding a repo2graph `agent/manifest.json` (an earlier build).
-    """
-    from .parse import BuildConfig, _is_index_dir, _output_rel_prefix
-
-    root = repo.resolve()
-    parts = tuple(Path(rel).parts)
-    out_parts = _output_rel_prefix(root, BuildConfig(output_dir=out)) if out else None
-    if out_parts is not None and parts[: len(out_parts)] == out_parts:
-        return {
-            "included": False,
-            "rule": "output_dir",
-            "reason": f"Path is inside the output directory -o {out}; a build never "
-            "indexes its own artifacts",
-            "precedence_step": 2,
-        }
-    for i in range(1, len(parts)):
-        if _is_index_dir(root.joinpath(*parts[:i])):
-            return {
-                "included": False,
-                "rule": "index_dir",
-                "reason": f"Path is inside '{'/'.join(parts[:i])}', a repo2graph index "
-                "(it holds agent/manifest.json); builds never index an index",
-                "precedence_step": 2,
-            }
-    return None
-
-
-def cmd_explain_path(args):
-    from .parse import BuildConfig, explain_path
-
-    repo_path = Path(args.repo)
-    if not repo_path.is_dir():
-        raise SystemExit(f"error: repository directory does not exist: {repo_path}")
-
-    config = BuildConfig(
-        include_vendor=getattr(args, "include_vendor", False),
-        include_secrets=getattr(args, "include_secrets", False),
-        chunk_large_files=getattr(args, "chunk_large_files", False),
-        extra_exclude_dirs=getattr(args, "extra_exclude_dirs", None) or [],
-        extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or [],
-        extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or [],
-    )
-    res = explain_path(
-        repo_path,
-        args.path,
-        config=config,
-        include_globs=args.include or None,
-        exclude_globs=_effective_exclude(args),
-    )
-    if res["rule"] not in ("outside_root", "not_found"):
-        index_hit = _explain_index_dir(repo_path, res["relative_path"], getattr(args, "out", None))
-        if index_hit is not None:
-            res.update(index_hit)
-    if getattr(args, "json", False):
-        _emit(json.dumps(res, indent=2))
-    else:
-        status_str = "INCLUDED" if res["included"] else "EXCLUDED"
-        lines = [
-            f"Path:            {res['path']}",
-            f"Relative Path:   {res['relative_path']}",
-            f"Decision:        {status_str}",
-            f"Precedence Step: {res['precedence_step']}",
-            f"Rule:            {res['rule']}",
-            f"Reason:          {res['reason']}",
-        ]
-        _emit("\n".join(lines))
-    return 0
-
-
-def cmd_bug_report(args) -> int:
-    """Assemble a diagnostic bundle that is safe to paste into a public issue."""
-    from .bugreport import build_report, format_report
-
-    report = build_report(
-        Path(args.out),
-        repo=getattr(args, "repo", None),
-        category=getattr(args, "category", None),
-        include_paths=getattr(args, "include_paths", False),
-    )
-    text = json.dumps(report, indent=2) if getattr(args, "json", False) else format_report(report)
-
-    dest = getattr(args, "write", None)
-    if dest:
-        try:
-            Path(dest).write_text(text + "\n", encoding="utf8", newline="\n")
-        except OSError as exc:
-            raise SystemExit(f"error: could not write {dest}: {exc}") from None
-        _emit(f"wrote {dest}")
-        _emit("Review it before posting -- it is yours to check, not ours to promise.")
-    else:
-        _emit(text)
-    return 0
-
-
-def cmd_index_status(args) -> int:
-    """Report what an index contains and whether it still matches the tree."""
-    from .status import format_status, index_status
-
-    try:
-        report = index_status(Path(args.out), repo=getattr(args, "repo", None))
-    except FileNotFoundError as exc:
-        raise SystemExit(f"error: {exc}") from None
-    except (OSError, ValueError) as exc:
-        raise SystemExit(
-            f"error: could not read the index at {args.out}: {exc}\n"
-            f"       check it with `repo2graph doctor {args.out}`"
-        ) from None
-
-    if getattr(args, "json", False):
-        _emit(json.dumps(report, indent=2))
-    else:
-        _emit(format_status(report))
-
-    # --check makes this a CI gate: "the committed index matches this commit"
-    # is a reviewable property, and a non-zero exit is how a workflow asserts
-    # it. Without the flag a stale index is a fact to report, not a failure.
-    if getattr(args, "check", False) and report["freshness"]["status"] != "current":
-        return 1
-    return 0
-
-
-def cmd_demo(args) -> int:
-    """Index the bundled demo repository and answer the five starter questions."""
-    from .demo import run_demo
-
-    try:
-        run_demo(
-            outdir=getattr(args, "out", None),
-            keep=getattr(args, "keep", False),
-            brief=not getattr(args, "full", False),
-            emit=_emit,
-        )
-    except OSError as exc:
-        # The only failure a first-run user actually hits here: no writable
-        # temp directory, or a --out they cannot create. Say which path and
-        # what to do, rather than a traceback on their first command.
-        raise SystemExit(
-            f"error: the demo could not write its scratch repository: {exc}\n"
-            "       pass a writable directory explicitly: repo2graph demo --out ./r2g-demo"
-        ) from None
-    return 0
-
-
-def cmd_doctor(args):
-    from .doctor import run_doctor
-
-    report = run_doctor(args.path)
-    if getattr(args, "json", False):
-        _emit(json.dumps(report.to_dict(), indent=2))
-    else:
-        _emit(report.format_text())
-    return 0 if report.ok else 1
-
-
-def cmd_completion(args) -> int:
-    """Print shell completion script or setup instructions."""
-    shell = getattr(args, "shell", "bash")
-    if shell == "bash":
-        _emit(
-            "# Bash completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            'eval "$(register-python-argcomplete repo2graph)"\n'
-        )
-    elif shell == "zsh":
-        _emit(
-            "# Zsh completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            "autoload -U bashcompinit && bashcompinit\n"
-            'eval "$(register-python-argcomplete repo2graph)"\n'
-        )
-    elif shell == "fish":
-        _emit(
-            "# Fish completion for repo2graph\n"
-            '# Prerequisite: pip install "repo2graph[completion]"\n'
-            "register-python-argcomplete --shell fish repo2graph | source\n"
-        )
-    return 0
-
-
-def cmd_explain(args) -> int:
-    """Explain edges, nodes, or retrieval results."""
-    from .explain import (
-        explain_edge,
-        explain_node,
-        explain_retrieval,
-        format_explain_edge,
-        format_explain_node,
-        format_explain_retrieval,
-    )
-
-    outdir = Path(getattr(args, "out", ".r2g"))
-    subcmd = getattr(args, "explain_cmd", None)
-    is_json = getattr(args, "json", False)
-
-    if subcmd == "edge":
-        res = explain_edge(outdir, args.src, args.dst)
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_edge(res))
-        return 0 if res.get("found") else 1
-    elif subcmd == "node":
-        res = explain_node(outdir, args.node_id)
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_node(res))
-        return 0 if res.get("found") else 1
-    elif subcmd == "retrieval":
-        k = getattr(args, "k", 8)
-        hops = getattr(args, "hops", 1)
-        conf = getattr(args, "min_confidence", None)
-        res = explain_retrieval(
-            outdir,
-            args.query,
-            k=k,
-            hops=hops,
-            min_confidence=conf,
-            # The same query-time default as rag/query: a trace must not name
-            # a `.env` that the retrieval it explains would never return.
-            exclude_secrets=not getattr(args, "include_secrets", False),
-            extra_secret_keywords=getattr(args, "extra_secret_keywords", None) or None,
-            extra_secret_dirs=getattr(args, "extra_secret_dirs", None) or None,
-        )
-        _emit(json.dumps(res, indent=2) if is_json else format_explain_retrieval(res))
-        return 0
-    else:
-        print(f"repo2graph: error: unknown explain command '{subcmd}'", file=sys.stderr)
-        return 1
-
-
-def _git_ref_exists(repo: Path, ref: str) -> bool:
-    """True when `ref` resolves to a commit in `repo` (bytes, bounded; see CONTRIBUTING.md)."""
-    import subprocess
-
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return True  # cannot tell: do not claim it is missing
-    return proc.returncode == 0
 
 
 def _nonneg(value: str) -> int:
@@ -1154,6 +931,18 @@ def _unit_float(value: str) -> float:
     return f
 
 
+def _nonneg_float(value: str) -> float:
+    """argparse type: a finite float >= 0. Same reasoning as `_unit_float`:
+    `elapsed > nan` is always False, so a nan budget silently disables it."""
+    try:
+        f = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {value!r}") from None
+    if not math.isfinite(f) or f < 0:
+        raise argparse.ArgumentTypeError(f"expected a finite number >= 0, got {value!r}")
+    return f
+
+
 def _add_vector_flags(parser) -> None:
     """--vectors / --no-vectors / --embed-model, for `query` and `rag`.
 
@@ -1183,7 +972,24 @@ def _add_vector_flags(parser) -> None:
         dest="embed_model",
         default=None,
         help="sentence-transformers model used to embed the query for "
-        f"--vectors; must match the index (default: {EMBED_DEFAULT_MODEL})",
+        f"--vectors; must match the index, @<commit> pin included (default: {EMBED_DEFAULT_MODEL})",
+    )
+
+
+def _add_rerank_flags(parser) -> None:
+    """--rerank / --rerank-model, for `query` and `rag` (#381)."""
+    parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="re-order the top candidates with a local cross-encoder before the budget is "
+        "spent (needs the `rag` extra; if it cannot load, the query runs unchanged and says so)",
+    )
+    parser.add_argument(
+        "--rerank-model",
+        dest="rerank_model",
+        default=None,
+        help=f"sentence-transformers CrossEncoder for --rerank, @<commit> to pin "
+        f"(default: {RERANK_DEFAULT_MODEL})",
     )
 
 
@@ -1221,6 +1027,22 @@ def _utf8_stdio() -> None:
 
 
 def main(argv=None):
+    # Handlers that live in their own modules (#315); imported here, not at
+    # module scope, because they build on this module's helpers.
+    from .cli_embed import cmd_embed
+    from .cli_inspect import (
+        cmd_bug_report,
+        cmd_completion,
+        cmd_demo,
+        cmd_diff,
+        cmd_doctor,
+        cmd_explain,
+        cmd_explain_path,
+        cmd_index_status,
+        cmd_map,
+        cmd_stats,
+    )
+
     if argv is None:
         # Only as the real entry point: in-process callers (tests, embedders)
         # own their streams.
@@ -1279,6 +1101,18 @@ def main(argv=None):
         "--git-history", type=_nonneg, default=0, help="add CO_CHANGE edges from the last N commits"
     )
     common.add_argument(
+        "--git-authors",
+        action="store_true",
+        help="with --git-history, record on each file node who changed it in those commits "
+        "(author display names, never emails; default: off)",
+    )
+    common.add_argument(
+        "--reference-edges",
+        action="store_true",
+        help="also record READS/WRITES of module-level variables and class fields, and "
+        "REFERENCES to types named in annotations (Python, JS/TS; default: off)",
+    )
+    common.add_argument(
         "--cochange-min",
         type=_nonneg,
         default=3,
@@ -1318,13 +1152,13 @@ def main(argv=None):
     )
     common.add_argument(
         "--max-memory-mb",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum estimated RAM usage in MB before triggering limit policy (0 = no limit)",
     )
     common.add_argument(
         "--max-build-seconds",
-        type=float,
+        type=_nonneg_float,
         default=0.0,
         help="maximum wall-clock build time in seconds before triggering limit policy (0 = no limit)",
     )
@@ -1361,7 +1195,11 @@ def main(argv=None):
         default="redact-match",
         help="content-aware secret scanning policy for chunks (default: redact-match)",
     )
-    common.add_argument(
+
+    # Flags that decide which paths get indexed. Shared with `explain-path`, so
+    # it answers from the same rule set `build` applies, not a subset of it.
+    path_rules = argparse.ArgumentParser(add_help=False)
+    path_rules.add_argument(
         "--secret-keyword",
         action="append",
         default=[],
@@ -1369,7 +1207,7 @@ def main(argv=None):
         metavar="KEYWORD",
         help="additional keyword to exclude as secret file/path (repeatable)",
     )
-    common.add_argument(
+    path_rules.add_argument(
         "--secret-dir",
         action="append",
         default=[],
@@ -1377,8 +1215,78 @@ def main(argv=None):
         metavar="DIR",
         help="additional directory name to exclude as secret path (repeatable)",
     )
+    path_rules.add_argument(
+        "--max-file-mb",
+        type=_max_file_mb,
+        default=1.5,
+        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
+    )
+    path_rules.add_argument(
+        "--include-vendor",
+        action="store_true",
+        default=False,
+        help="index files in vendor directories (default: off)",
+    )
+    path_rules.add_argument(
+        "--exclude-dir",
+        action="append",
+        default=[],
+        dest="extra_exclude_dirs",
+        metavar="NAME",
+        help="additional directory name to exclude (repeatable)",
+    )
+    path_rules.add_argument(
+        "--chunk-large-files",
+        action="store_true",
+        default=False,
+        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+    )
 
-    b = sub.add_parser("build", parents=[common], help="parse a repo into a graph + RAG chunks")
+    # Flags for the two commands that write an index from source. Defined once:
+    # `build` and `github` carried eight identical copies of each (#47).
+    build_out = argparse.ArgumentParser(add_help=False, parents=[path_rules])
+    build_out.add_argument(
+        "--allow-symlink-out",
+        action="store_true",
+        default=False,
+        dest="allow_symlink_out",
+        help="allow -o to point through a symlink (default: off)",
+    )
+    build_out.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help="allow overwriting a non-repo2graph output directory (default: off)",
+    )
+    build_out.add_argument(
+        "--lock-timeout",
+        type=_nonneg_float,
+        default=60.0,
+        dest="lock_timeout",
+        metavar="SECONDS",
+        help="seconds to wait for the build lock before failing (default: 60)",
+    )
+    build_out.add_argument(
+        "--parse-policy",
+        choices=("best-effort", "warn", "strict"),
+        default="best-effort",
+        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
+    )
+    build_out.add_argument(
+        "--parse-timeout",
+        type=_nonneg_float,
+        default=PARSE_TIMEOUT_S,
+        metavar="SECONDS",
+        help=(
+            f"wall-clock budget per file's parse (default: {PARSE_TIMEOUT_S:g}); a file over it "
+            "keeps its file node, gets no symbols and is counted as skipped_parse_timeout "
+            "(0 = no budget)"
+        ),
+    )
+
+    b = sub.add_parser(
+        "build", parents=[common, build_out], help="parse a repo into a graph + RAG chunks"
+    )
     b.add_argument("repo")
     b.add_argument("--no-chunks", action="store_true")
     b.add_argument(
@@ -1388,30 +1296,44 @@ def main(argv=None):
         help="maximum number of candidates to keep for ambiguous calls",
     )
     b.add_argument(
-        "--max-file-mb",
-        type=_max_file_mb,
-        default=1.5,
-        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
+        "--neo4j-uri",
+        default=None,
+        metavar="URL",
+        help="after building, push graph.cypher to this Neo4j HTTP endpoint "
+        "(e.g. http://localhost:7474); credentials from NEO4J_USER / NEO4J_PASSWORD",
     )
     b.add_argument(
-        "--include-vendor",
-        action="store_true",
-        default=False,
-        help="index files in vendor directories (default: off)",
-    )
-    b.add_argument(
-        "--exclude-dir",
-        action="append",
-        default=[],
-        dest="extra_exclude_dirs",
+        "--neo4j-database",
+        default="neo4j",
         metavar="NAME",
-        help="additional directory name to exclude (repeatable)",
+        help="database to push into with --neo4j-uri (default: neo4j)",
     )
     b.add_argument(
-        "--chunk-large-files",
+        "--watch",
         action="store_true",
-        default=False,
-        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
+        help="after building, keep watching the tree and rebuild incrementally on each change",
+    )
+    b.add_argument(
+        "--watch-interval",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds between polls (default: 1; raised automatically on large trees)",
+    )
+    b.add_argument(
+        "--watch-quiet",
+        type=_nonneg_float,
+        default=1.0,
+        metavar="SECONDS",
+        help="seconds the tree must be still before a rebuild, so a burst of saves "
+        "costs one rebuild (default: 1)",
+    )
+    b.add_argument(
+        "--scip",
+        default=None,
+        metavar="INDEX",
+        help="read this SCIP index (e.g. from scip-python) for exact CALLS and INHERITS "
+        "targets in the files it covers; other files stay name-resolved (default: off)",
     )
     b.add_argument(
         "--incremental",
@@ -1422,39 +1344,12 @@ def main(argv=None):
         "renames; rerun without it after upgrading repo2graph "
         "or changing a language grammar",
     )
-    b.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    b.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    b.add_argument(
-        "--lock-timeout",
-        type=float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    b.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
-    )
     b.set_defaults(func=cmd_build)
 
     gh = sub.add_parser(
         "github",
         aliases=["gh"],
-        parents=[common],
+        parents=[common, build_out],
         help="clone a GitHub repo (owner/repo or URL) and index it",
     )
     gh.add_argument("repo", help="owner/repo, https://github.com/owner/repo or git@... remote")
@@ -1478,67 +1373,36 @@ def main(argv=None):
         default=5,
         help="maximum number of candidates to keep for ambiguous calls",
     )
-    gh.add_argument(
-        "--max-file-mb",
-        type=_max_file_mb,
-        default=1.5,
-        help="max file size in MB before skipping or chunking (default: 1.5, min: 0.1)",
-    )
-    gh.add_argument(
-        "--include-vendor",
-        action="store_true",
-        default=False,
-        help="index files in vendor directories (default: off)",
-    )
-    gh.add_argument(
-        "--exclude-dir",
-        action="append",
-        default=[],
-        dest="extra_exclude_dirs",
-        metavar="NAME",
-        help="additional directory name to exclude (repeatable)",
-    )
-    gh.add_argument(
-        "--chunk-large-files",
-        action="store_true",
-        default=False,
-        help="chunk and parse files exceeding max-file-mb instead of skipping them (default: off)",
-    )
-    gh.add_argument(
-        "--allow-symlink-out",
-        action="store_true",
-        default=False,
-        dest="allow_symlink_out",
-        help="allow -o to point through a symlink (default: off)",
-    )
-    gh.add_argument(
-        "--force",
-        action="store_true",
-        default=False,
-        help="allow overwriting a non-repo2graph output directory (default: off)",
-    )
-    gh.add_argument(
-        "--lock-timeout",
-        type=float,
-        default=60.0,
-        dest="lock_timeout",
-        metavar="SECONDS",
-        help="seconds to wait for the build lock before failing (default: 60)",
-    )
-    gh.add_argument(
-        "--parse-policy",
-        choices=("best-effort", "warn", "strict"),
-        default="best-effort",
-        help="how to handle tree-sitter parser failures: best-effort (default), warn, strict",
-    )
     gh.set_defaults(func=cmd_github)
 
     q = sub.add_parser("query", help="graph-aware retrieval over a built index")
     q.add_argument("query")
     q.add_argument("-o", "--out", default=".r2g")
+    q.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
+    )
     q.add_argument("-k", type=_nonneg, default=8)
     q.add_argument("--hops", type=_nonneg, default=1)
-    q.add_argument("--budget", type=_nonneg, default=24000)
+    q.add_argument(
+        "--budget",
+        type=_nonneg,
+        default=24000,
+        help="characters of chunk text to retrieve (0 = unlimited). Caps source "
+        "text only, not rendered output",
+    )
+    q.add_argument(
+        "--retrieve-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
+    )
     q.add_argument(
         "--min-conf",
         type=_unit_float,
@@ -1582,6 +1446,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(q)
+    _add_rerank_flags(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
@@ -1599,13 +1464,42 @@ def main(argv=None):
         "--budget",
         type=_nonneg,
         default=24000,
-        help="character budget for the whole pack, map and headers included",
+        help="character budget for the whole pack, map and headers included (0 = unlimited)",
+    )
+    r.add_argument(
+        "--context-budget-chars",
+        dest="budget",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget that names its stage and unit",
     )
     r.add_argument(
         "--budget-tokens",
         type=_nonneg,
         default=None,
-        help="token budget for the whole pack; replaces --budget when given",
+        help="estimated token budget for the whole pack; replaces --budget when given",
+    )
+    r.add_argument(
+        "--tokenizer",
+        default=None,
+        metavar="NAME",
+        help="how --budget-tokens counts: heuristic (default, 4 chars/token), conservative "
+        "(3 chars/token) or tiktoken[:ENCODING] (exact for that encoding; needs tiktoken)",
+    )
+    r.add_argument(
+        "--token-margin",
+        type=_unit_float,
+        default=0.0,
+        metavar="FRACTION",
+        help="fill the pack to --budget-tokens / (1 + FRACTION), headroom for a counter "
+        "that under-counts (default: 0)",
+    )
+    r.add_argument(
+        "--context-budget-tokens",
+        dest="budget_tokens",
+        type=_nonneg,
+        default=argparse.SUPPRESS,
+        help="alias of --budget-tokens that names its stage and unit",
     )
     r.add_argument(
         "--min-conf",
@@ -1620,7 +1514,31 @@ def main(argv=None):
         default=argparse.SUPPRESS,
         help="alias of --min-conf",
     )
+    r.add_argument(
+        "--index",
+        action="append",
+        default=[],
+        dest="indexes",
+        metavar="DIR",
+        help="search this index too; repeat to search several at once, each result naming "
+        "its repository (replaces -o)",
+    )
     r.add_argument("--no-expand", action="store_true", help="lexical seeds only")
+    r.add_argument(
+        "--expansion",
+        choices=("rag-default", "navigation", "impact-analysis", "strict"),
+        default=None,
+        help="which edges graph expansion follows (default: rag-default)",
+    )
+    r.add_argument(
+        "--edge-type",
+        action="append",
+        default=[],
+        dest="edge_types",
+        metavar="TYPE",
+        help="follow only this edge type (CALLS, IMPORTS, INHERITS, DEFINES, CO_CHANGE, TESTS); "
+        "repeatable, overrides the preset's types",
+    )
     r.add_argument("--format", choices=("markdown", "json"), default="markdown")
     r.add_argument(
         "--answer",
@@ -1691,6 +1609,7 @@ def main(argv=None):
         help="retired no-op: measured worse than the default in every configuration (see docs/cli.md); kept so existing commands still parse",
     )
     _add_vector_flags(r)
+    _add_rerank_flags(r)
     r.set_defaults(func=cmd_rag)
 
     e = sub.add_parser("embed", help="embed an index's chunks for dense retrieval")
@@ -1703,7 +1622,8 @@ def main(argv=None):
         "--embed-model",
         dest="model",
         default=None,
-        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL})",
+        help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL}); "
+        "append @<commit> to pin a Hugging Face revision, e.g. MODEL@1a2b3c",
     )
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument(
@@ -1746,7 +1666,25 @@ def main(argv=None):
     )
     s.set_defaults(func=cmd_stats)
 
-    ep = sub.add_parser("explain-path", help="explain why a file is included or excluded")
+    df = sub.add_parser(
+        "diff", help="what changed structurally between two builds (two index directories)"
+    )
+    df.add_argument("from_dir", metavar="FROM", help="the older index directory")
+    df.add_argument("to_dir", metavar="TO", help="the newer index directory")
+    df.add_argument("--format", choices=("text", "json"), default="text")
+    df.add_argument(
+        "--include-confidence",
+        action="store_true",
+        help="also list edges whose only change is confidence (counted either way)",
+    )
+    df.add_argument(
+        "--limit", type=_posint, default=50, help="lines per section in text output (default: 50)"
+    )
+    df.set_defaults(func=cmd_diff)
+
+    ep = sub.add_parser(
+        "explain-path", parents=[path_rules], help="explain why a file is included or excluded"
+    )
     ep.add_argument("path", help="file path to evaluate")
     ep.add_argument(
         "-r", "--repo", default=".", help="repository root (default: current directory)"
@@ -1767,7 +1705,6 @@ def main(argv=None):
         default=".r2g",
         help="the build's output directory, never indexed (default: .r2g, as build)",
     )
-    ep.add_argument("--include-vendor", action="store_true", default=False)
     ep.add_argument("--include-secrets", action="store_true", default=False)
     ep.add_argument("--json", action="store_true", help="output explanation as JSON")
     ep.set_defaults(func=cmd_explain_path)
@@ -1949,6 +1886,11 @@ def main(argv=None):
 
     try:
         args = p.parse_args(argv)
+        # The commands that read the repo's config file need to know which
+        # flags were typed, so a file value never overrides one (#391).
+        config_aware = {"build": b, "rag": r, "explain-path": ep}
+        if getattr(args, "cmd", None) in config_aware:
+            args.explicit_flags = _explicit_dests(p, config_aware[args.cmd], argv)
         if getattr(args, "debug", False):
             os.environ["REPO2GRAPH_DEBUG"] = "1"
         if not hasattr(args, "func"):
@@ -1964,8 +1906,36 @@ def main(argv=None):
             pass
         return 0
     except _GraphLimitExceeded as exc:
-        print(f"repo2graph: error: {exc}", file=sys.stderr)
+        diagnostic(f"repo2graph: error: {exc}")
         return 1
+
+
+# Moved out by responsibility (#315); still importable from here.
+_MOVED = {
+    "cli_embed": ("cmd_embed", "cmd_verify_rag", "verify_rag"),
+    "cli_inspect": (
+        "cmd_map",
+        "format_stats_summary",
+        "cmd_stats",
+        "cmd_diff",
+        "cmd_explain_path",
+        "cmd_bug_report",
+        "cmd_index_status",
+        "cmd_demo",
+        "cmd_doctor",
+        "cmd_completion",
+        "cmd_explain",
+    ),
+}
+
+
+def __getattr__(name: str) -> object:
+    for module, names in _MOVED.items():
+        if name in names:
+            import importlib
+
+            return getattr(importlib.import_module(f"{__package__}.{module}"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":

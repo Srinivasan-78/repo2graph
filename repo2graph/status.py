@@ -266,7 +266,8 @@ def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
             "comparing against defaults, so any --exclude may show as added files"
         )
     try:
-        from .parse import BuildConfig, discover
+        from .discovery import discover
+        from .parse import BuildConfig
 
         filter_dict = filters or {}
         max_bytes = int(filter_dict.get("max_file_bytes") or 0)
@@ -388,9 +389,12 @@ _SKIP_LABELS: tuple[tuple[str, str], ...] = (
     ("skipped_binary", "binary"),
     ("skipped_too_large", "over the size ceiling"),
     ("skipped_secret", "secret/credential paths"),
+    ("skipped_secret_dir_source", "of which source files under secret-named directories"),
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case collisions"),
     ("skipped_unreadable", "unreadable/inaccessible files"),
+    ("skipped_undecodable_path", "non-UTF-8 filenames"),
+    ("skipped_unsafe_path", "filenames with control or hidden characters"),
 )
 
 

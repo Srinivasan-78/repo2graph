@@ -101,7 +101,8 @@ def test_rag_markdown_is_byte_identical_to_baseline(mini_index, capsys):
 
 
 def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
-    """Verify JSON form gains exactly tokens_used and tokens_budget without changing other fields."""
+    """Verify JSON form only gains known additive keys without changing other fields:
+    the two token keys, then the #282/#290 budget-reporting fields."""
     text = _capture(capsys, ["rag", MINI_QUERY, "-o", str(mini_index), "--format", "json"])
     payload = json.loads(text)
     if REGEN:
@@ -109,7 +110,16 @@ def test_rag_json_differs_only_by_the_two_token_keys(mini_index, capsys):
         pytest.skip("regenerating goldens")
     baseline = golden_json("rag_json.json")
     added = set(payload) - set(baseline)
-    assert added == {"tokens_used", "tokens_budget"}, added
+    assert added == {
+        "tokens_used",
+        "tokens_budget",
+        "source_text_chars",
+        "rendered_context_chars",
+        "budget_exhausted",
+        "omitted_chunk_count",
+        "token_count_method",
+        "token_safety_margin",
+    }, added
     assert not set(baseline) - set(payload), set(baseline) - set(payload)
     for key in baseline:
         assert payload[key] == baseline[key], key
@@ -910,9 +920,9 @@ def test_examples_workflow_routes_inputs_through_env():
     assert '"$INPUT_REPO"' in run_part
 
 
-def test_generate_examples_split_rule(tmp_path):
-    """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
-    import gzip
+def _load_generate_examples():
+    """`scripts/generate_examples.py` is a standalone script, not a package
+    module, so tests load it by path."""
     import importlib.util
 
     script_path = REPO_ROOT / "scripts" / "generate_examples.py"
@@ -920,7 +930,95 @@ def test_generate_examples_split_rule(tmp_path):
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _read_jsonl_maybe_gz = mod._read_jsonl_maybe_gz
+    return mod
+
+
+def _fake_example(repo_dir: Path, overview: str) -> dict:
+    """The minimum `validate_example` needs: one node, one self-edge, and an
+    `overview.md` whose text is what the leak check will read. Returns the
+    matching metadata."""
+    import gzip
+
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    with gzip.open(repo_dir / "nodes.jsonl.gz", "wt", encoding="utf8") as fh:
+        fh.write(json.dumps({"id": "n1"}) + "\n")
+    with gzip.open(repo_dir / "edges.jsonl.gz", "wt", encoding="utf8") as fh:
+        fh.write(json.dumps({"src": "n1", "dst": "n1"}) + "\n")
+    (repo_dir / "overview.md").write_text(overview, encoding="utf8")
+    return {"nodes": 1, "edges": 1}
+
+
+@pytest.mark.parametrize(
+    ("text", "leaks"),
+    [
+        # Real repository content that merely ends in, or brackets, the prefix.
+        # These two strings are why Rails and Spring Framework stayed out of
+        # the gallery (#462): `examples.yml` runs the generator in a container
+        # where `~` is `/root`, and a bare substring check flagged their own
+        # docstrings as this machine's home directory.
+        ("config lives at /my/rails/root/config/application.rb", False),
+        ("the XML fixture closes with </root>.", False),
+        ("installed under /rootkit/bin", False),
+        # Genuine leaks of the build machine's home directory.
+        ("built from /root/scratch/clone/django", True),
+        ("workdir: /root", True),
+        ('{"dir": "/root"}', True),
+    ],
+)
+def test_generate_examples_leak_check_matches_at_path_boundaries(text, leaks):
+    """#462: the scratch/home-path check matches at path boundaries, so a short
+    generic home such as a container's `/root` does not flag a repository's own
+    path-handling source -- while a real leak still fails the build."""
+    assert _load_generate_examples()._leaks_path(text, "/root") is leaks
+
+
+def test_generate_examples_validator_admits_content_ending_in_the_home_path(tmp_path, monkeypatch):
+    """The boundary rule end to end, through `validate_example` itself: the
+    same artifact passes or fails on whether `/root` names a path in it."""
+    mod = _load_generate_examples()
+    workdir = tmp_path / "scratch"
+    # Patched on `os.path` itself, not on the module's namespace: the script
+    # has reached `expanduser` both ways, and this test is the regression
+    # anchor, so it must fail on the old code for the behaviour rather than
+    # for an attribute that moved.
+    monkeypatch.setattr(os.path, "expanduser", lambda _p: "/root")
+
+    repo_dir = tmp_path / "rails"
+    meta = _fake_example(repo_dir, "see /my/rails/root/config and </root>\n")
+    assert mod.validate_example(repo_dir, meta, workdir) == []
+
+    (repo_dir / "overview.md").write_text("cloned into /root/scratch/rails\n", encoding="utf8")
+    problems = mod.validate_example(repo_dir, meta, workdir)
+    assert len(problems) == 1, problems
+    assert "overview.md" in problems[0] and "'/root'" in problems[0]
+
+
+def test_generate_examples_validator_sees_a_json_escaped_scratch_path(tmp_path, monkeypatch):
+    """A committed artifact is JSON, so a Windows scratch path reaches it
+    backslash-escaped and the literal form never appears in the file at all."""
+    mod = _load_generate_examples()
+    workdir = Path("C:\\work\\r2g-scratch")
+    monkeypatch.setattr(os.path, "expanduser", lambda _p: "~")
+
+    repo_dir = tmp_path / "vscode"
+    meta = _fake_example(repo_dir, "no leak here\n")
+    flow = repo_dir / "flows" / "q1.json"
+    flow.parent.mkdir()
+    flow.write_text(
+        json.dumps({"path": "C:\\work\\r2g-scratch\\clone\\src\\x.ts"}), encoding="utf8"
+    )
+    assert "C:\\\\work" in flow.read_text(encoding="utf8")  # escaped on disk
+
+    problems = mod.validate_example(repo_dir, meta, workdir)
+    assert len(problems) == 1, problems
+    assert "flows" in problems[0] and "q1.json" in problems[0]
+
+
+def test_generate_examples_split_rule(tmp_path):
+    """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
+    import gzip
+
+    _read_jsonl_maybe_gz = _load_generate_examples()._read_jsonl_maybe_gz
 
     # A JSON record containing embedded U+2028 (line separator) in string
     record = '{"id": "chunk-1", "text": "hello\u2028world"}'
@@ -1182,7 +1280,8 @@ def _subprocess_spawn_calls(path: Path):
         kwnames = {kw.arg for kw in node.keywords}
         # `subprocess.run(**kwargs)` would carry stdin invisibly; None means a
         # `**` unpacking, so treat it as unverifiable-but-not-a-violation.
-        ok = "stdin" in kwnames or None in kwnames
+        # `input=` replaces stdin with a pipe we write and close, so it counts.
+        ok = "stdin" in kwnames or "input" in kwnames or None in kwnames
         found.append((node.lineno, f"subprocess.{func.attr}", ok))
     return found
 
@@ -1200,6 +1299,55 @@ def test_every_subprocess_spawn_in_the_package_closes_stdin():
     # A sweep that found nothing would pass vacuously; the package has had at
     # least a dozen spawn sites since fetch.py landed.
     assert total >= 10, total
+    assert offenders == [], offenders
+
+
+def _git_spawn_calls(path: Path):
+    """(lineno, hardened, env-cleaned) for every subprocess spawn of a literal git argv."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf8"), filename=str(path))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("run", "Popen", "call"):
+            continue
+        if not isinstance(func.value, ast.Name) or func.value.id != "subprocess":
+            continue
+        argv = node.args[0]
+        if not isinstance(argv, ast.List) or not argv.elts:
+            continue
+        head = argv.elts[0]
+        if not (isinstance(head, ast.Constant) and head.value == "git"):
+            continue
+        rest = [e.value for e in argv.elts[1:] if isinstance(e, ast.Constant)]
+        if rest == ["--version"] and len(argv.elts) == 2:
+            continue  # reads no repository, so no repository config either
+        hardened = any(
+            isinstance(e, ast.Starred)
+            and isinstance(e.value, ast.Name)
+            and e.value.id == "GIT_HARDENING_ARGS"
+            for e in argv.elts
+        )
+        found.append((node.lineno, hardened, "env" in {kw.arg for kw in node.keywords}))
+    return found
+
+
+def test_every_git_spawn_in_the_package_is_hardened():
+    """#455: git honours the target repository's own .git/config, so a
+    `core.fsmonitor` there runs on `ls-files`/`check-ignore`. Every git argv
+    must carry GIT_HARDENING_ARGS and an explicit (cleaned) env."""
+    package = REPO_ROOT / "repo2graph"
+    offenders = []
+    total = 0
+    for path in sorted(package.rglob("*.py")):
+        for lineno, hardened, has_env in _git_spawn_calls(path):
+            total += 1
+            if not (hardened and has_env):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert total >= 5, total
     assert offenders == [], offenders
 
 
@@ -1226,3 +1374,18 @@ def test_no_agent_loop_residue_in_tests():
                 if pat.search(line):
                     offenders.append(f"{path.name}:{lineno} [{desc}]: {line.strip()}")
     assert offenders == [], "Found agent-loop residue in tests:\n" + "\n".join(offenders)
+
+
+def test_human_messages_go_through_one_helper():
+    """#461 #43: warnings were written four ways (print, stderr.write, logging,
+    emit). Sentences for a person now go through `events.diagnostic`; structured
+    records through `events.emit`. Only events.py touches stderr directly."""
+    pattern = re.compile(r"sys\.stderr\.write\(|file=sys\.stderr|\blogging\.(warning|info|error)\(")
+    offenders = []
+    for path in sorted((REPO_ROOT / "repo2graph").rglob("*.py")):
+        if path.name == "events.py":
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf8").splitlines(), 1):
+            if pattern.search(line) and not line.lstrip().startswith("#"):
+                offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
+    assert offenders == [], offenders

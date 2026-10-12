@@ -96,6 +96,14 @@ write_html(LoadedGraph(Path(".r2g")), Path(".r2g/human/graph.html"), max_nodes=8
 budget-bounded packing out of the box. It is the same object the CLI, the Action
 and the [MCP server](mcp.md) all call.
 
+> **Secret-path filtering is off by default here, and on everywhere else.**
+> `Index.retrieve()` and `Index.pack_context()` default to
+> `exclude_secrets=False` for backwards compatibility, while `repo2graph query`,
+> `repo2graph rag` and every MCP tool pass `exclude_secrets=True`. Code that
+> hands a pack to a model or a person should pass `exclude_secrets=True`
+> explicitly, or `.env`, `*.pem` and other credential-shaped paths that made it
+> into the index can be returned.
+
 ```python
 from repo2graph.query import Index, format_pack, read_jsonl
 
@@ -111,7 +119,7 @@ pack = idx.pack_context(
     budget_chars=24000,  # bounds the WHOLE markdown; 0 means unbounded
     min_confidence=1.0,  # drop ambiguous CALLS edges (CALLS only)
     expand_graph=True,  # False = lexical seeds only
-    exclude_secrets=False,  # True drops dotfiles/.env/.pem/... from the pack
+    exclude_secrets=True,  # default False; True drops .env/.pem/... as the CLI does
 )
 print(pack["markdown"], pack["used_chars"], pack["truncated"])
 
@@ -137,6 +145,43 @@ That third pattern is the one to reach for if you already have a vector database
 Keep each chunk's `node_id` when you store it; that is the handle that lets you
 jump back onto the map after a search, and turn a flat list of hits into hits plus
 the code around them.
+
+### Graph storage
+
+`Index` reads the graph through `idx.store`, a `repo2graph.store.GraphStore`: `node(id)`,
+`has(id)`, `neighbours(id)` (`(other, edge_type, "out"|"in", edge)` tuples), `iter_nodes()`,
+`iter_edges()`. The default keeps it in memory. For a graph you would rather not hold
+resident, `SqliteGraphStore` (standard-library `sqlite3`, opened read-only) answers the same
+calls in the same order from disk:
+
+```python
+from repo2graph.store import SqliteGraphStore
+
+store = SqliteGraphStore.from_index(".r2g", "graph.sqlite")  # streams the JSONL in once
+idx = Index(".r2g", store=store)
+```
+
+It is a prototype: the chunks and the BM25 index still load into memory, and the older
+`idx.nodes` / `idx.edges` / `idx.adj` attributes load the whole graph back if you touch them.
+
+### Reranking with a cross-encoder
+
+`retrieve()` and `pack_context()` take `rerank=`: anything with a `model_id` and a
+`score(query, texts) -> list[float]` method. It re-orders the top 50 first-stage
+candidates before any budget is spent, and in `pack_context` it replaces the built-in
+answerability heuristic. The score values stay on the first-stage scale, so the budget
+and `is_lexical_weak` behave exactly as without it. A reranker that raises, or returns
+the wrong number of scores or a non-finite one, leaves the order unchanged and emits
+one `rag_rerank_disabled` line on stderr.
+
+```python
+from repo2graph.rerank import default_reranker
+
+reranker = default_reranker()  # cross-encoder/ms-marco-MiniLM-L-6-v2; needs the `rag` extra
+pack = idx.pack_context("how does session auth work?", exclude_secrets=True, rerank=reranker)
+```
+
+`default_reranker("org/model@<commit>")` pins a Hugging Face revision, as `embed` does.
 
 ## Loading it into Neo4j
 

@@ -204,7 +204,7 @@ def evaluate_language(
     elif lang in ("java", "csharp", "rust", "kotlin", "swift", "scala", "php", "ruby"):
         parsing_score += 40
         parsing_notes.append("Reliable AST parsing, minimal syntax desync")
-    elif lang in ("bash", "lua"):
+    elif lang in ("bash", "lua", "objc", "hcl"):
         parsing_score += 35
         parsing_notes.append("Basic syntax parsing, limited dialect coverage")
 

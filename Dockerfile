@@ -48,12 +48,12 @@ USER 10000:10000
 
 # The documented run mounts a host checkout at /repo and runs as 10000:10000,
 # so /repo is owned by whoever owns it on the host and git refuses it with
-# "detected dubious ownership". Declared through GIT_CONFIG_* rather than
-# `git config --global`, because the documented run is also --read-only: there
-# is no writable HOME for a config file to land in. Scoped to this image, whose
-# only job is to read the one repository mounted into it.
-ENV GIT_CONFIG_COUNT=1 \
-    GIT_CONFIG_KEY_0=safe.directory \
-    GIT_CONFIG_VALUE_0=*
+# "detected dubious ownership". Trusted for /repo only, and in the system
+# config written at build time: the documented run is --read-only, so there is
+# no writable HOME, and repo2graph strips GIT_CONFIG_* from every git it
+# spawns so an ambient value cannot redirect which repository is read.
+USER root
+RUN git config --system --add safe.directory /repo
+USER 10000:10000
 
 CMD ["repo2graph", "--help"]

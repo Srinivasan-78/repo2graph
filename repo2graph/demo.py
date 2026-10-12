@@ -32,7 +32,7 @@ from typing import Any, Callable
 # floor. A file whose body is entirely `def`s and imports gets a node but no
 # chunk, and a node with no chunk can be neither a seed nor a retrievable
 # neighbour -- so each fixture module below carries a module-level constant or
-# docstring. See CONTRIBUTING.md, "A file with little residue emits no file-level
+# docstring. See .github/CONTRIBUTING.md, "A file with little residue emits no file-level
 # chunk".
 
 _ROUTES_PY = '''\
@@ -452,12 +452,30 @@ STARTER_QUESTIONS: tuple[StarterQuestion, ...] = (
 def materialize(dest: Path) -> Path:
     """Write the bundled demo repository into `dest` and return it.
 
-    `dest` is created if needed. Existing files with the same names are
-    overwritten; nothing else in `dest` is touched, so pointing this at a
-    directory that already holds an index re-materialises the sources without
-    discarding the index.
+    `dest` is created if needed. A file already holding the demo's own bytes is
+    rewritten in place, so re-running into the same directory works and keeps
+    its index; any *other* file at one of the demo's paths is the user's, and
+    the whole call is refused before anything is written.
+
+    Raises:
+        FileExistsError: When a demo path already holds different content.
     """
     dest = Path(dest)
+    clashes = []
+    for rel, body in DEMO_FILES.items():
+        target = dest / rel
+        try:
+            if target.read_bytes() != body.encode("utf8"):
+                clashes.append(rel)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            clashes.append(rel)
+    if clashes:
+        raise FileExistsError(
+            f"{dest} already has files the demo would overwrite: {', '.join(sorted(clashes))}"
+            " -- pick an empty directory"
+        )
     for rel, body in DEMO_FILES.items():
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -475,7 +493,7 @@ def build_demo_index(repo: Path, outdir: Path) -> dict[str, Any]:
     from .parse import BuildConfig
 
     g = build(repo, config=BuildConfig(), jobs=1)
-    written, n_chunks = dump_all(g, iter_chunks(g), outdir, {"jsonl", "overview", "html"}, 0)
+    written, n_chunks = dump_all(g, iter_chunks(g), outdir, {"jsonl", "overview", "html"})
     stats = dict(g.stats)
     stats["chunks"] = n_chunks
     stats["written"] = written
@@ -493,7 +511,7 @@ def _brief(pack: dict[str, Any]) -> str:
 
     `split("\\n")` rather than `splitlines()`: chunk text is verbatim source,
     and a U+2028 in it is not a line break to anything that produced it.
-    See CONTRIBUTING.md.
+    See .github/CONTRIBUTING.md.
     """
     chunks = pack.get("chunks") or []
     if not chunks:
@@ -576,7 +594,7 @@ def run_demo(
             is removed on the way out unless `keep` is set.
         keep: Leave the materialised repo and its index on disk, and print
             the follow-up commands that work against it.
-        brief: Truncate each answer to `BRIEF_LINES` lines. False prints the
+        brief: Truncate each answer to `BRIEF_BODY_LINES` lines. False prints the
             whole cited pack for every question.
         emit: Where to write. The CLI passes its encoding-safe writer; the
             default `print` is for library callers and tests.

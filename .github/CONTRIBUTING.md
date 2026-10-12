@@ -127,7 +127,7 @@ labelled is under [Issue triage](#issue-triage).
 
 ## Real-world examples and benchmarks
 
-`examples/` holds five public repositories analyzed at a pinned commit each, and `benchmarks/`
+`examples/` holds eleven public repositories analyzed at a pinned commit each, and `benchmarks/`
 holds the machine-readable results those examples' numbers come from — see
 [docs/architecture.md](../docs/architecture.md) for the full pipeline and
 [benchmarks/README.md](../benchmarks/README.md) for what each results file measures. Two things worth knowing before touching either directory:
@@ -291,9 +291,20 @@ Subprocess calls that invoke `git` must never pass `text=True` or rely on the de
 - Capture raw subprocess bytes and decode explicitly with `.decode("utf8", "surrogateescape")` or `errors="replace"`.
 - Always specify an explicit `timeout=` parameter on subprocess invocations.
 
+### 2a. Platform-Guarded Standard Library Calls Need a `sys.platform` Test
+typeshed guards much of the standard library on `sys.platform`, and a `try: import x / except ImportError` is not a guard mypy can narrow. `cli._peak_rss_mb` reached for the win32-guarded `resource.getrusage` behind exactly that, which typechecked on Linux and failed with four errors on every Windows checkout — including in the `mypy-strict` pre-commit hook, so a Windows contributor could not commit a clean tree (#484).
+- Test `sys.platform == "win32"` (or `!=`) before the call, and keep the import guard for the runtime.
+- CI runs `mypy --platform linux`, `--platform darwin` and `--platform win32` on one runner, so a regression fails there even though `make typecheck` locally only checks your own platform.
+
+### 2b. `EACCES`/`EPERM` Are Transient on Windows, Permanent on POSIX
+A permission error does not clear by itself on POSIX, so treating one as unrecoverable is correct there. On Windows the same errno is also what a *sharing violation* raises (`WinError` 5 and 32) while OneDrive, an antivirus scanner or the search indexer briefly holds a file open — which it stops doing a moment later. Code that fails fast on `EACCES` therefore turns a self-clearing hiccup into a hard failure, and usually reports the wrong cause.
+- Retry `EACCES`/`EPERM` on Windows; fail fast on them only on POSIX. `EROFS`, `ENOSPC`, `ENOENT` and `ENOTDIR` are unrecoverable on both.
+- Two places already do this and are the patterns to copy: `export._rename` retries the rename, and `lock.BuildLock.acquire` keeps `EACCES`/`EPERM` in its retry loop on Windows and reports them only once `--lock-timeout` is spent.
+- A unit test for this must be skipped off-Windows (`sys.platform != "win32"`), because the behaviour under test is the platform branch itself.
+
 ### 3. Deterministic Discovery Order
 The order in which files are discovered dictates the emitted order of nodes, edges, and chunks across `nodes.jsonl`, `edges.jsonl`, and `chunks.jsonl`.
-- `parse.discover()` must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
+- `discovery.discover()` (re-exported as `parse.discover`) must return paths in a stable, deterministic sort order keyed by `Path.as_posix()` rather than filesystem-dependent directory order.
 - Discovery applies `DEFAULT_SKIP_DIRS` consistently across both git-tracked files and fallback directory scans.
 
 ### 4. Retrieval and Context Packing Budget Models
@@ -988,7 +999,13 @@ therefore publishes nothing.** There is one route, and it is the one below.
      tag tracks. That table is also what `scripts/check_version.py` verifies and what
      `publish.yml` asks for its `--files` list, so a surface cannot be known to the bump
      and not the check.
-   - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`.
+   - Promotes `[Unreleased]` in `CHANGELOG.md` to `[<version>] — <date>`, and writes the
+     heading's matching link definition at the foot of the file
+     (`[<version>]: .../compare/v<previous>...v<version>`), re-basing `[Unreleased]` onto
+     the new tag. A `## [x.y.z]` heading is a markdown *reference* link, so a heading
+     without its definition renders as literal text; the two are written in the same step
+     for that reason. The previous version is read from the existing definitions, so it
+     works offline and in a shallow checkout, and a version already defined is left alone.
    - Commits and pushes the version bump to `main` and creates Git tag `v<version>`.
    - Runs tests, builds wheels/sdist, and publishes to PyPI via Trusted Publishing.
    - Waits for PyPI CDN and publishes `server.json` to the MCP Registry.
@@ -1084,18 +1101,13 @@ for, so picking one up starts from a decision rather than a blank page.
 ### Deferred engineering items
 
 Found during earlier security and architecture reviews and deliberately deferred. Every row here was
-re-checked against the code on 2026-09-30; a row that had shipped was deleted rather than annotated,
+re-checked against the code on 2026-10-11; a row that had shipped was deleted rather than annotated,
 because a backlog that lists finished work stops being read. Still verify before you start — this is
 a record of past state, like any other document.
 
 | Item | Size | Why deferred |
 |---|---|---|
-| **No per-file tree-sitter parse timeout** | M | `MAX_BYTES` bounds file size, not parse time. `tree_sitter.Parser.set_timeout_micros` support varies across grammar bindings in `tree-sitter-language-pack`; a wrong per-language timeout risks truncated parses on legitimately large generated files, with no fixture to prove the value is well-calibrated. |
-| **Secret-path denylist (`security.py` `SECRET_KEYWORDS`/`SECRET_DIR_NAMES`, re-exported from `query.py`) is not user-configurable** | S | Solid and independent of `.gitignore`, but hardcoded — an org with nonstandard secret-file naming can't extend it without a code change. Needs a CLI flag / config file design, not a quick patch. |
-| **No enforced cap on total graph nodes/edges/files** | M | `graph.py`'s `max_files` is opt-in and defaults unbounded. `Graph.nodes`/`edges` are fully in-memory with no size guard, unlike the already-streamed chunk emission path. |
 | **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: exploiting it requires local code execution on the same host, and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. |
-| **No benchmark above 6,000 files** | L | The largest measured tree is VS Code at 6,000 files (`benchmarks/results.json`, and each `examples/<id>/README.md`). Nothing has been run at 50k/100k+, so the scaling curve past that point is unmeasured rather than known. |
-| **A real `sentence-transformers` smoke test, opt-in and network-gated** | S | Every embedder in the suite is `StubEmbedder`. `default_embedder()` is tested only for its *failure* message, so nothing proves the real wrapper's `model_id`/`dim` agree with what `vectors.meta.json` records — the exact pair `fuse_ok` compares. |
 
 Issues routing the work deferred during earlier stabilization passes:
 

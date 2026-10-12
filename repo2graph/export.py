@@ -7,6 +7,7 @@ import random
 import re
 import shutil
 import threading
+import time
 import uuid as _uuid_mod
 import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
@@ -19,13 +20,15 @@ from typing import IO, TYPE_CHECKING, Any
 # edgemeta is stdlib-only (typing), so importing it here does not pull the
 # tree-sitter stack into a query-only install -- the constraint the graph
 # import below is deferred for.
-from .edgemeta import EDGE_SCHEMA_VERSION, counts_as_call
+from .edgemeta import EDGE_SCHEMA_VERSION, METHOD_SCIP, counts_as_call
+from .security import escape_hidden_unicode
 from .viz import (
     EDGE_TYPES,
     MAX_NODES,
     NODE_COLORS,
     NODE_TYPES,
     OTHER_COLOR,
+    REFERENCE_EDGE_TYPES,
     node_label,
     write_html,
 )
@@ -68,6 +71,11 @@ def atomic_write(path: Path, mode: str = "w", **open_kw: Any) -> Iterator[IO[Any
     try:
         with open(tmp, mode, **open_kw) as fh:
             yield fh
+            # Flushed to disk before the rename makes it visible: otherwise a
+            # power loss can leave the new name pointing at an empty file, which
+            # then passes every "does the index exist" check.
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -158,7 +166,7 @@ def write_jsonl(path: Path, rows: Iterable[Any]) -> int:
     n = 0
     with atomic_write(path, "w", encoding="utf8", errors="surrogateescape", newline="\n") as fh:
         for r in rows:
-            line = (
+            line = escape_hidden_unicode(
                 json.dumps(r, ensure_ascii=False, default=str)
                 .replace("\u2028", "\\u2028")
                 .replace("\u2029", "\\u2029")
@@ -643,9 +651,12 @@ _SKIP_STAT_LABELS = (
     ("skipped_dotfile", "dotfiles"),
     ("skipped_gitignore", ".gitignore entries"),
     ("skipped_secret", "secret / credential files"),
+    ("skipped_secret_dir_source", "of which source files under secret-named directories"),
     ("skipped_lfs", "Git LFS pointer files"),
     ("skipped_case_collision", "case-colliding files"),
     ("skipped_unreadable", "unreadable files"),
+    ("skipped_undecodable_path", "non-UTF-8 filenames"),
+    ("skipped_unsafe_path", "filenames with control or hidden characters"),
 )
 
 
@@ -768,7 +779,7 @@ def write_overview_human(g: "Graph", path: Path, top: int = 25) -> None:
 # NODE_TYPES / EDGE_TYPES (issue #349): one definition, in viz.py -- see the
 # comment there for why that's the direction that avoids a circular import --
 # imported above so both this module's manifest.json and viz.py's own legend
-# panel describe the same six node types and seven edge types the same way.
+# panel describe the same six node types and eight edge types the same way.
 
 # Every edge carries these, whatever its type -- see repo2graph/edgemeta.py
 # and docs/architecture.md. Written into manifest.json so a consumer reading
@@ -778,7 +789,8 @@ EDGE_FIELDS = {
     "method": (
         "how the relationship was extracted: tree-sitter/<lang> (read from a parse tree), "
         "name-resolver (a parsed name matched against this repo's definitions -- the only "
-        "method whose confidence is routinely below 1), filesystem, or git-log"
+        "method whose confidence is routinely below 1), filesystem, git-log, or call-graph "
+        "(derived from a path of CALLS edges; TESTS only)"
     ),
     "confidence": (
         "P(dst is the correct target | the relationship at `evidence` exists), 0..1. "
@@ -798,7 +810,17 @@ EDGE_FIELDS = {
         "called on a receiver of unknown type; confidence is capped at 0.2"
     ),
     "count": "how many times this relationship occurs; `evidence` cites the first",
+    "hops": (
+        "TESTS only: how many CALLS edges the best path from the test to dst spans; "
+        "`evidence` cites the call in the test where that path starts"
+    ),
 }
+# Appended to EDGE_FIELDS["method"] only when the graph has `build --scip`
+# edges (#380), so a default build's manifest is unchanged.
+SCIP_METHOD_NOTE = (
+    "; scip (build --scip only: the target a SCIP index names for that call site or base, "
+    "confidence 1.0, resolution_kind scip)"
+)
 
 ID_GRAMMAR = {
     "repo": "repo:<name>",
@@ -888,6 +910,7 @@ APPROXIMATIONS = [
     "Call resolution is name-based; ambiguous names fan out to up to {n} edges at 1/n confidence.",
     "Dynamic dispatch, reflection and generated code are invisible to a parser.",
     "Absence of an edge is not proof of absence of a call.",
+    "A TESTS edge means a test reaches the symbol through CALLS edges, not that it asserts on it.",
 ]
 
 DYNAMIC_CALLS_NOTE = (
@@ -938,6 +961,14 @@ def write_manifest(
         (n for n in g.nodes.values() if n.get("entrypoint")),
         key=lambda n: (-n.get("reach", 0), n["path"], n["qualname"]),
     )
+    present = {e.get("type") for e in getattr(g, "edges", ())}
+    edge_types = {
+        **EDGE_TYPES,
+        **{k: v for k, v in REFERENCE_EDGE_TYPES.items() if k in present},
+    }
+    edge_fields = EDGE_FIELDS
+    if any(e.get("method") == METHOD_SCIP for e in getattr(g, "edges", ())):
+        edge_fields = {**EDGE_FIELDS, "method": EDGE_FIELDS["method"] + SCIP_METHOD_NOTE}
     cfg = getattr(g, "config", None)
     if cfg and getattr(cfg, "include_secrets", False):
         secret_filter_policy = "include-secrets"
@@ -998,8 +1029,8 @@ def write_manifest(
             for name in sorted({w.split("/", 1)[1] for w in written} & set(FILE_NOTES))
         },
         "node_types": NODE_TYPES,
-        "edge_types": EDGE_TYPES,
-        "edge_fields": EDGE_FIELDS,
+        "edge_types": edge_types,
+        "edge_fields": edge_fields,
         "edge_schema_version": EDGE_SCHEMA_VERSION,
         "id_grammar": ID_GRAMMAR,
         "chunk_fields": [
@@ -1022,6 +1053,7 @@ def write_manifest(
             "base_edges",
             "text",
         ],
+        "chunk_optional_fields": ["split"],
         "counts": dict(g.stats),
         "quality_metrics": {
             "files_discovered": g.stats.get("files", 0),
@@ -1061,7 +1093,7 @@ def write_manifest(
             "confidence_semantics": {k: _fanout(v, mcc) for k, v in CONFIDENCE_SEMANTICS.items()},
             # Same EDGE_TYPES dict manifest.json's top-level "edge_types" key
             # already carries -- one authored copy, not a second one to drift.
-            "edge_type_meanings": EDGE_TYPES,
+            "edge_type_meanings": edge_types,
             # Same labels write_overview_human's "## What was skipped" section
             # counts against (_SKIP_STAT_LABELS) -- what's excluded by policy,
             # not just what this particular build happened to skip.
@@ -1090,6 +1122,7 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
     for e in g.edges:
         if e["type"] in ("IMPORTS", "CALLS"):
             indeg[e["dst"]] += 1
+    testable = g.stats.get("testable_symbols", 0)
     hubs = sorted(
         (n for n in g.nodes.values() if n["type"] in ("file", "symbol") and indeg[n["id"]]),
         key=lambda n: -indeg[n["id"]],
@@ -1122,6 +1155,12 @@ def _stats_extra(g: "Graph") -> dict[str, Any]:
         # no other way to tell, and an index that cannot answer that is worse
         # than one that was never bounded.
         "limits_hit": dict(getattr(g, "limits_hit", {}) or {}),
+        # Share of non-test functions and methods with at least one incoming
+        # TESTS edge -- reachability from a test, which is an upper bound on
+        # coverage, never a measure of it.
+        "tested_symbol_fraction": (
+            round(g.stats.get("tested_symbols", 0) / testable, 3) if testable else 0.0
+        ),
     }
     sha = _git_short_sha(g.root)
     if sha:
@@ -1242,8 +1281,8 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         g: The Graph just built; its `parse_cache` is the payload.
         path: Destination for `parse.cache.json`.
     """
-    from .graph import PARSE_CACHE_FORMAT
-    from .parse import grammar_fingerprint
+    from .parsecache import PARSE_CACHE_FORMAT
+    from .parse import grammar_fingerprint, parse_cache_identity
 
     payload = {
         "format": STATE_FORMAT,
@@ -1252,13 +1291,21 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         # the same bytes parse to without changing PARSE_CACHE_FORMAT. See
         # `parse.grammar_fingerprint`.
         "grammars": grammar_fingerprint(),
+        # The rest of the key: language tables and the parse options that
+        # change what a cached entry holds (#302).
+        "identity": parse_cache_identity(getattr(g, "config", None)),
         "files": dict(getattr(g, "parse_cache", {}) or {}),
     }
     with atomic_write(path, "w", encoding="utf8", newline="\n") as fh:
         fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
-def load_parse_cache(outdir: Path) -> dict[str, Any]:
+def load_parse_cache(outdir: Path, config: Any = None) -> dict[str, Any]:
+    """`load_parse_cache_report` without the reason."""
+    return load_parse_cache_report(outdir, config)[0]
+
+
+def load_parse_cache_report(outdir: Path, config: Any = None) -> tuple[dict[str, Any], str | None]:
     """Read a previous build's parse cache out of an index directory.
 
     Every failure mode -- no index, no cache file, unreadable, malformed JSON,
@@ -1279,36 +1326,92 @@ def load_parse_cache(outdir: Path) -> dict[str, Any]:
 
     Args:
         outdir: The index directory (the one holding `agent/`).
+        config: The `BuildConfig` of the build about to run. Its parse options
+            are part of the key; None means the defaults.
 
     Returns:
-        `{relpath: entry}`, or an empty dict when no usable cache is present.
+        `({relpath: entry}, reason)`. The dict is empty when no usable cache is
+        present; `reason` then says why a cache that *was* there was discarded
+        (None when there was simply no cache).
     """
-    from .graph import PARSE_CACHE_FORMAT
+    from .parsecache import PARSE_CACHE_FORMAT
     from .integrity import is_foreign_index
-    from .parse import grammar_fingerprint
+    from .parse import grammar_fingerprint, parse_cache_identity
 
     out = Path(outdir)
+    cache_path = path(out, "parse.cache.json")
+    # Checked first: a first build has no local.json either, and is not foreign.
+    if not cache_path.exists():
+        return {}, None
     if is_foreign_index(out):
-        return {}
+        return {}, "the index was built on another machine"
 
     try:
-        cache_path = path(out, "parse.cache.json")
         if cache_path.is_symlink():
-            return {}
+            return {}, "parse.cache.json is a symlink"
         try:
             if not cache_path.resolve().is_relative_to(out.resolve()):
-                return {}
+                return {}, "parse.cache.json resolves outside the index"
         except OSError:
-            return {}
+            return {}, "parse.cache.json could not be resolved"
         data = json.loads(cache_path.read_text(encoding="utf8"))
-    except (OSError, ValueError, KeyError):
-        return {}
-    if not isinstance(data, dict) or data.get("cache_format") != PARSE_CACHE_FORMAT:
-        return {}
+    except (OSError, ValueError, KeyError) as exc:
+        return {}, f"parse.cache.json is unreadable ({type(exc).__name__})"
+    if not isinstance(data, dict):
+        return {}, "parse.cache.json is malformed"
+    if data.get("cache_format") != PARSE_CACHE_FORMAT:
+        return {}, f"cache format {data.get('cache_format')} -> {PARSE_CACHE_FORMAT}"
     if data.get("grammars") != grammar_fingerprint():
-        return {}
+        return {}, f"grammars {data.get('grammars')} -> {grammar_fingerprint()}"
+    recorded = data.get("identity")
+    current = parse_cache_identity(config)
+    if not isinstance(recorded, dict):
+        return {}, "cache predates the parse-option key"
+    changed = [k for k in sorted(current) if recorded.get(k) != current[k]]
+    if changed:
+        return {}, "; ".join(f"{k} {recorded.get(k)} -> {current[k]}" for k in changed)
     files = data.get("files")
-    return files if isinstance(files, dict) else {}
+    return (files, None) if isinstance(files, dict) else ({}, "parse.cache.json has no files")
+
+
+def _fsync_dir(path: Path) -> None:
+    """Persist a directory's entries (POSIX). Windows cannot open a directory
+    for fsync, and NTFS journals renames itself, so there it is a no-op."""
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+_WINDOWS = os.name == "nt"
+#: Delays between rename attempts on Windows; ~3 s in all.
+_RENAME_RETRY_DELAYS = (0.1, 0.2, 0.4, 0.8, 1.6)
+
+
+def _rename(src: Path, dst: Path) -> None:
+    """`src.rename(dst)`, retried on Windows while something holds a file open.
+
+    OneDrive, antivirus scanners and editors briefly open files in a fresh
+    index; NTFS then refuses the rename with a sharing violation (WinError 5 or
+    32) that clears on its own. Elsewhere, and once the retries are spent, the
+    error is raised as it was.
+    """
+    for delay in (*_RENAME_RETRY_DELAYS, None):
+        try:
+            src.rename(dst)
+            return
+        except PermissionError:
+            if not _WINDOWS or delay is None:
+                raise
+            time.sleep(delay)
 
 
 def _atomic_dir_swap(staging: Path, target: Path) -> None:
@@ -1318,20 +1421,23 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
     a rename dance: target -> backup, staging -> target, then remove backup.
     If the staging rename fails, we restore the backup.
     """
+    for d in (staging, *(p for p in staging.rglob("*") if p.is_dir())):
+        _fsync_dir(d)
     if not target.exists():
-        staging.rename(target)
+        _rename(staging, target)
+        _fsync_dir(target.parent)
         return
 
     backup = target.parent / f".{target.name}.backup.{os.getpid()}"
     # Ensure no stale backup from a prior crash
     if backup.exists():
         shutil.rmtree(backup, ignore_errors=True)
-    target.rename(backup)
+    _rename(target, backup)
     try:
-        staging.rename(target)
+        _rename(staging, target)
     except OSError as swap_exc:
         try:
-            backup.rename(target)
+            _rename(backup, target)
         except OSError as restore_exc:
             # Both halves failed, so the previous index is no longer at
             # `target` and could not be put back. Swallowing this left an
@@ -1343,6 +1449,7 @@ def _atomic_dir_swap(staging: Path, target: Path) -> None:
                 f"(swap: {swap_exc}; restore: {restore_exc})"
             ) from swap_exc
         raise
+    _fsync_dir(target.parent)
     shutil.rmtree(backup, ignore_errors=True)
 
 

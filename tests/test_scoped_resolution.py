@@ -394,6 +394,33 @@ def test_explain_path_precedence_rules(tmp_path: Path):
     assert res_inc["rule"] == "not_included"
 
 
+def test_explain_path_models_the_path_shape_rules_discover_applies(tmp_path: Path):
+    """`explain-path` must not answer INCLUDED for a file no build will index.
+
+    `discover()` drops a path that is not encodable UTF-8 and one holding a
+    control, line-separator or hidden character. `explain_path` modelled
+    neither, so a zero-width space in a filename -- legal on NTFS and ext4 --
+    got `INCLUDED`, `precedence_step: 10`, while every build silently skipped
+    it. The two walk the same rules or the explainer is lying.
+    """
+    from repo2graph.discovery import discover
+
+    hidden = "we​irdzwsp.py"  # U+200B ZERO WIDTH SPACE
+    (tmp_path / hidden).write_text("x = 1\n", encoding="utf8")
+    (tmp_path / "plain.py").write_text("x = 1\n", encoding="utf8")
+
+    found = {Path(f[1] if isinstance(f, tuple) else f).name for f in discover(tmp_path)}
+    assert found == {"plain.py"}, found
+
+    res = explain_path(tmp_path, tmp_path / hidden)
+    assert res["included"] is False
+    assert res["rule"] == "unsafe_path"
+    assert res["precedence_step"] == 1
+
+    # The ordinary file beside it is untouched by the new rule.
+    assert explain_path(tmp_path, tmp_path / "plain.py")["included"] is True
+
+
 def test_cli_explain_path_command(tmp_path: Path, capsys):
     """CLI explain-path command outputs decision in human-readable and json formats."""
     (tmp_path / "test.py").write_text("x = 1\n", encoding="utf8")
@@ -774,8 +801,11 @@ def test_strict_parse_error_is_not_retried_serially(tmp_path: Path, monkeypatch)
         def __exit__(self, *exc):
             return False
 
-        def map(self, fn, items, chunksize=1):
+        def submit(self, fn, *args):
             raise ParseError("f0.py: 3 syntax error(s) under --parse-policy strict")
+
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", StrictFailurePool)
 

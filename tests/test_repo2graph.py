@@ -338,6 +338,13 @@ def test_resolve_import_go_uses_module_path():
     assert resolve_import("github.com/other/pkg", "cmd/app/main.go", "go", files, ctx) is None
 
 
+def test_resolve_import_go_without_module_matches_the_first_dir_by_tail():
+    files = {"a/store/doc.md", "b/store/s.go", "c/store/t.go", "cmd/main.go"}
+    ctx = path_index(files)
+    assert resolve_import("x.com/any/store", "cmd/main.go", "go", files, ctx) == "b/store/s.go"
+    assert resolve_import("x.com/any/missing", "cmd/main.go", "go", files, ctx) is None
+
+
 # ---------- graph ----------
 
 
@@ -653,6 +660,11 @@ def test_build_writes_all_artifacts(tmp_path, sample_repo, capsys):
     report = json.loads(capsys.readouterr().out)
     assert report["chunks"] > 0
     assert json.loads((artifact_path(out, "stats.json")).read_text())["files"] > 0
+    perf = report["performance"]
+    assert perf["build_seconds"] >= 0 and perf["write_seconds"] >= 0
+    assert perf["output_bytes"] > 0 and perf["source_bytes"] > 0
+    assert perf["chunk_text_ratio"] > 0
+    assert perf["peak_rss_mb"] is None or perf["peak_rss_mb"] > 0
 
 
 def test_output_is_split_into_human_and_agent_sections(tmp_path, sample_repo, capsys):
@@ -1354,7 +1366,7 @@ def test_add_cochange_splits_git_log_on_newline_only(monkeypatch):
     sep = "\u2028"  # U+2028 LINE SEPARATOR, as a source escape not a raw code point
     a, b = f"pkg/a{sep}x.py", "pkg/b.py"
     log = "".join(f"{h}\n{a}\n{b}\n\n" for h in ("H1", "H2", "H3"))
-    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
+    monkeypatch.setattr("repo2graph.cochange.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 10, {a, b}, min_pairs=3)
@@ -1505,11 +1517,11 @@ def test_parse_all_falls_back_when_the_pool_breaks(tmp_path, monkeypatch):
         def __init__(self, *a, **k):
             pass
 
-        def __enter__(self):
+        def submit(self, *a, **k):
             raise BrokenProcessPool("boom")
 
-        def __exit__(self, *a):
-            return False
+        def shutdown(self, wait=True, cancel_futures=False):
+            pass
 
     monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", _BoomPool)
     got = parse_all(files, jobs=4)
@@ -2256,7 +2268,7 @@ def test_cochange_commits_skipped_counter(monkeypatch):
     # 26 files in one commit
     files = [f"f{i}.py" for i in range(26)]
     log = "H1\n" + "\n".join(files) + "\n\n"
-    monkeypatch.setattr("repo2graph.graph.subprocess.Popen", fake_git_popen(log.encode("utf8")))
+    monkeypatch.setattr("repo2graph.cochange.subprocess.Popen", fake_git_popen(log.encode("utf8")))
 
     g = Graph(Path("."), "root")
     add_cochange(g, Path("."), 1, set(files))
@@ -2616,21 +2628,19 @@ def test_build_has_no_dangling_edges(sample_graph):
 
 
 def test_dangling_edge_prune_drops_edges_to_unreadable_files(tmp_path, monkeypatch):
-    from pathlib import Path as _P
     import repo2graph.graph as graphmod
 
     (tmp_path / "a.py").write_text("from b import thing\nthing()\n", encoding="utf-8")
     (tmp_path / "b.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
 
-    real_read_bytes = _P.read_bytes
+    real_safe_read = graphmod._safe_read_bytes
 
-    def flaky_read_bytes(self):
-        if self.name == "b.py":
+    def flaky_read_bytes(path):
+        if path.name == "b.py":
             raise OSError("simulated unreadable file")
-        return real_read_bytes(self)
+        return real_safe_read(path)
 
-    monkeypatch.setattr(graphmod.Path, "read_bytes", flaky_read_bytes, raising=False)
-    monkeypatch.setattr(_P, "read_bytes", flaky_read_bytes, raising=False)
+    monkeypatch.setattr(graphmod, "_safe_read_bytes", flaky_read_bytes)
     g = build(tmp_path, jobs=1)
     ids = set(g.nodes)
     assert "file:b.py" not in ids
@@ -2731,11 +2741,11 @@ def test_add_cochange_caps_the_history_window(monkeypatch):
     path in it; it must be clamped before the command is built."""
     from collections import Counter
 
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import MAX_COCHANGE_COMMITS, Graph, add_cochange
 
     seen: list = []
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"", 1, seen))
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(b"", 1, seen))
     g = Graph(Path("."), "x")
     g.stats = Counter()
     add_cochange(g, Path("."), 10**9, set())
@@ -2748,13 +2758,13 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
     bytes a single pathological commit's file list can still emit. A run that
     returns a giant stdout must be truncated before it is decoded/processed,
     and the truncation recorded."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import MAX_COCHANGE_BYTES, Graph, add_cochange
 
     huge = b"H1\n" + b"\n".join(f"f{i}.py".encode() for i in range(3)) + b"\n\n"
     huge += b"pad " * (MAX_COCHANGE_BYTES // 4 + 1024)  # push stdout past the cap
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(huge))
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(huge))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", "f2.py"})
     # The stat is the number of bytes read, which is the cap: the
@@ -2763,10 +2773,12 @@ def test_add_cochange_caps_output_bytes_independent_of_commit_count(monkeypatch)
 
 
 def test_add_cochange_no_stat_when_output_is_within_the_byte_cap(monkeypatch):
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(b"H1\nf0.py\nf1.py\n\n" * 3))
+    monkeypatch.setattr(
+        cochange_mod.subprocess, "Popen", fake_git_popen(b"H1\nf0.py\nf1.py\n\n" * 3)
+    )
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py"})
     assert "cochange_output_capped" not in g.stats
@@ -2777,15 +2789,15 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
     commit block. If that commit originally touched > 25 files (a noise commit),
     truncating it must not leave a surviving slice (<= 25 files) that emits
     spurious CO_CHANGE pairs."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
     c1 = b"H1\nf0.py\nf1.py\n\n"
     noise_files = [f"noise{i}.py" for i in range(30)]
     c2 = b"H2\n" + b"\n".join(f.encode() for f in noise_files) + b"\n\n"
     cap = len(c1) + 40
-    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
+    monkeypatch.setattr(cochange_mod, "MAX_COCHANGE_BYTES", cap)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 
@@ -2797,15 +2809,15 @@ def test_add_cochange_byte_cap_drops_trailing_partial_commit(monkeypatch):
 
 def test_add_cochange_byte_cap_drops_trailing_partial_commit_crlf(monkeypatch):
     """Ensure the cochange byte cap correctly handles Windows CRLF output (\r\n\r\n)."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
     from repo2graph.graph import Graph, add_cochange
 
     c1 = b"H1\r\nf0.py\r\nf1.py\r\n\r\n"
     noise_files = [f"noise{i}.py" for i in range(30)]
     c2 = b"H2\r\n" + b"\r\n".join(f.encode() for f in noise_files) + b"\r\n\r\n"
     cap = len(c1) + 40
-    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
-    monkeypatch.setattr(graphmod.subprocess, "Popen", fake_git_popen(c1 + c2))
+    monkeypatch.setattr(cochange_mod, "MAX_COCHANGE_BYTES", cap)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", fake_git_popen(c1 + c2))
     g = Graph(Path("."), "x")
     add_cochange(g, Path("."), 1, {"f0.py", "f1.py", *noise_files}, min_pairs=1)
 
@@ -3702,3 +3714,48 @@ def test_cmd_completion(capsys):
     assert main(["completion", "fish"]) == 0
     out = capsys.readouterr().out
     assert "register-python-argcomplete --shell fish repo2graph" in out
+
+
+@pytest.mark.parametrize("flag", ["--max-memory-mb", "--max-build-seconds", "--lock-timeout"])
+@pytest.mark.parametrize("bad", ["nan", "inf", "-1"])
+def test_float_budgets_reject_nan_inf_and_negative(tmp_path, flag, bad, capsys):
+    """#49: `elapsed > nan` is always False, so a nan budget silently disables it."""
+    with pytest.raises(SystemExit) as exc:
+        main(["build", str(tmp_path), flag, bad])
+    assert exc.value.code == 2
+    assert "finite number" in capsys.readouterr().err
+
+
+def test_chunked_file_imports_are_sorted_regardless_of_hash_seed(tmp_path):
+    """#40: `list(set(...))` made a chunked file's import order depend on
+    PYTHONHASHSEED, against the byte-identical-output guarantee."""
+    from repo2graph.graph import _chunk_and_parse
+    from repo2graph.parse import BuildConfig
+
+    src = "".join(f"import mod_{n}\n" for n in "qwertyuiopasdfghjklzxcvbnm")
+    f = tmp_path / "a.py"
+    f.write_text(src, encoding="utf8")
+    cfg = BuildConfig(max_file_bytes=64, chunk_large_files=True)
+    _, _, (_, _, pf, _) = _chunk_and_parse("a.py", f, "python", cfg, len(src))
+    assert pf.imports and pf.imports == sorted(pf.imports)
+
+
+def test_build_and_github_share_their_index_writing_flags(capsys):
+    """#461 #47: the eight flags were copied into both parsers; they now come
+    from one parent, so the two commands cannot drift apart."""
+    shared = (
+        "--max-file-mb",
+        "--include-vendor",
+        "--exclude-dir",
+        "--chunk-large-files",
+        "--allow-symlink-out",
+        "--force",
+        "--lock-timeout",
+        "--parse-policy",
+    )
+    for cmd in ("build", "github"):
+        with pytest.raises(SystemExit):
+            main([cmd, "--help"])
+        out = capsys.readouterr().out
+        for flag in shared:
+            assert flag in out, (cmd, flag)

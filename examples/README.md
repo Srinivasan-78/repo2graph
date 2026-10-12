@@ -1,44 +1,97 @@
 # Real-world repository examples
 
-Five public repositories, each analyzed by `repo2graph` at a pinned commit, with the exact
+Thirteen public repositories, each analyzed by `repo2graph` at a pinned commit, with the exact
 reproduction command for every one. This is evidence, not a demo: every number below came from an
 actual run recorded in [`../benchmarks/results.json`](../benchmarks/results.json), never typed in
 by hand.
 
 Each example records the repo2graph version that produced it, next to the upstream commit it
 indexed. A pinned commit fixes the *source* but not the *analyser*, and call resolution does change
-between versions — these five were last regenerated together, so they are directly comparable with
-each other and with `results.json`.
+between versions. The gallery was generated in two batches, and figures are directly comparable
+only within one:
+
+- **The original five** — Django, Kubernetes, TensorFlow, VS Code and Linux — were regenerated
+  together on 2026-10-06 by repo2graph 2.2.0.
+- **Six added on 2026-10-11** — React, FastAPI, Gin, ripgrep, Guava and Jekyll — were generated
+  from the `develop` branch at `23bf953`: version string 3.0.0, plus the changes listed under
+  `[Unreleased]` in [`../CHANGELOG.md`](../CHANGELOG.md). Those changes include `TESTS` edges,
+  which the 2.2.0 batch does not have, so edge totals in particular do not compare across the two
+  batches — on Gin, `TESTS` is 9,187 of 19,552 edges. Their pages also carry three rows the older
+  pages lack: files with parse errors, symbols of every kind, and methods.
+- **Two added on 2026-10-12** — Rails and Spring Framework — were generated from `develop` at
+  `ef1242bf`, three commits past that batch. Same version string and same `TESTS`-edge era, so they
+  compare to the six far better than to the 2.2.0 five, but not exactly: #480 changed the parse
+  budget in between, which can move what a large file contributes.
+
+`python scripts/generate_examples.py --all` regenerates all thirteen with one version, which is what
+makes them one batch again.
 
 The registry that drives generation is [`repositories.yaml`](repositories.yaml); the generator is
 [`../scripts/generate_examples.py`](../scripts/generate_examples.py). See
 [`../docs/architecture.md`](../docs/architecture.md) for how the pipeline works and
 [`ATTRIBUTIONS.md`](ATTRIBUTIONS.md) for what is and is not committed from each repository.
 
-## The five repositories
+## The thirteen repositories
 
-| Repository | Language(s) | Scope | Files | Nodes | Edges | Example |
-|---|---|---|---:|---:|---:|---|
-| [Django](https://github.com/django/django) | Python | full repository | 5,630 | 56,074 | 301,017 | [examples/django](django/) |
-| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,085 | 15,174 | 117,066 | [examples/kubernetes](kubernetes/) |
-| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 24,730 | 145,790 | [examples/tensorflow](tensorflow/) |
-| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 114,070 | 664,312 | [examples/vscode](vscode/) |
-| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 185,496 | 310,854 | [examples/linux](linux/) |
+| Repository | Language(s) | Scope | Files | Nodes | Edges | repo2graph | Example |
+|---|---|---|---:|---:|---:|---|---|
+| [Django](https://github.com/django/django) | Python | full repository | 5,630 | 56,074 | 301,017 | 2.2.0 | [examples/django](django/) |
+| [Kubernetes](https://github.com/kubernetes/kubernetes) | Go | scoped (controllers, scheduler, API server endpoints) | 1,085 | 15,174 | 117,066 | 2.2.0 | [examples/kubernetes](kubernetes/) |
+| [TensorFlow](https://github.com/tensorflow/tensorflow) | Python, C++ | scoped (Python/C++ framework boundary) | 1,022 | 24,730 | 145,790 | 2.2.0 | [examples/tensorflow](tensorflow/) |
+| [VS Code](https://github.com/microsoft/vscode) | TypeScript | scoped (`src/vs/`, capped at 6,000 files) | 6,000 | 114,070 | 664,312 | 2.2.0 | [examples/vscode](vscode/) |
+| [Linux kernel](https://github.com/torvalds/linux) | C | scoped (`kernel/`, `fs/ext4/`, `drivers/net/.../e1000/`, `include/linux/`) | 3,660 | 185,496 | 310,854 | 2.2.0 | [examples/linux](linux/) |
+| [React](https://github.com/facebook/react) | JavaScript (Flow) | scoped (core runtime packages, no `__tests__/`) | 396 | 3,468 | 8,093 | 3.0.0+ | [examples/react](react/) |
+| [FastAPI](https://github.com/fastapi/fastapi) | Python | full repository, with git history | 2,994 | 10,384 | 46,738 | 3.0.0+ | [examples/fastapi](fastapi/) |
+| [Gin](https://github.com/gin-gonic/gin) | Go | full repository, with git history | 128 | 2,106 | 19,552 | 3.0.0+ | [examples/gin](gin/) |
+| [ripgrep](https://github.com/BurntSushi/ripgrep) | Rust | full repository, with git history | 229 | 4,857 | 20,381 | 3.0.0+ | [examples/ripgrep](ripgrep/) |
+| [Guava](https://github.com/google/guava) | Java | scoped (`guava/src/`, the JRE library's production source) | 611 | 16,268 | 80,339 | 3.0.0+ | [examples/guava](guava/) |
+| [Jekyll](https://github.com/jekyll/jekyll) | Ruby | full repository, with git history | 771 | 2,888 | 10,403 | 3.0.0+ | [examples/jekyll](jekyll/) |
+| [Rails](https://github.com/rails/rails) | Ruby | scoped (`actionpack`, `activerecord`, `activesupport`, `railties` — `lib/` only) | 1,276 | 18,774 | 99,912 | 3.0.0+ | [examples/rails](rails/) |
+| [Spring Framework](https://github.com/spring-projects/spring-framework) | Java | scoped (bean container and web stack, production source) | 2,121 | 27,469 | 136,027 | 3.0.0+ | [examples/spring-framework](spring-framework/) |
+
+`3.0.0+` is the second batch above: `develop` at `23bf953`, not the 3.0.0 release.
 
 "Full repository" means no `--include`/`--exclude` narrowing — every file `repo2graph` would index
-on a plain `repo2graph build`. "Scoped" means only the listed subtrees were cloned and indexed; see
-each repository's own README.md, "Why this scope," for the reasoning, and
-[what it can't do](../README.md#what-it-cant-do) for why the other four are not indexed
-whole. Django is the pipeline's full-repository baseline precisely because it is the one repository
-in this set small enough for that comparison to mean something.
+on a plain `repo2graph build`. The five full-repository entries — Django, FastAPI, Gin, ripgrep and
+Jekyll — are cloned 300 commits deep and mine the last 200 for `CO_CHANGE` edges. "Scoped" means
+only the listed subtrees were cloned and indexed, from a one-commit clone with no history and
+therefore no `CO_CHANGE` edges; see each repository's own README.md, "Why this scope," for the
+reasoning.
 
-## Why these five
+## Read React's page before quoting it
 
-Chosen for architectural variety, not popularity: a large single-language monorepo (Kubernetes), a
-genuinely multi-language repository where Python calls into C++ (TensorFlow), a mature single-
-language framework (Django), a large single-language application (VS Code), and an extreme-scale,
-maximally heterogeneous C codebase (Linux) — see each `why:` field in
-[`repositories.yaml`](repositories.yaml) for the specific reasoning.
+React's source is JavaScript with Flow type annotations, and repo2graph parses `.js` with the plain
+JavaScript grammar, which has no Flow support. At the pinned commit, 241 of the 386 parsed files
+report parse errors. A hand count on two reconciler files shows what that costs: of 234 top-level
+`function` declarations in `ReactFiberWorkLoop.js` and `ReactFiberHooks.js`, 101 were indexed as
+functions (94 of 125, and 7 of 109) — `renderWithHooks`, the entry point for rendering a function
+component, is not among them. The React graph is a lower bound on the code's real structure.
+It is in the gallery because a Flow codebase is a common case and this is the honest picture of it
+today — not as a showcase.
+
+## Why these thirteen
+
+The first five were chosen for architectural variety, not popularity: a large single-language
+monorepo (Kubernetes), a genuinely multi-language repository where Python calls into C++
+(TensorFlow), a mature single-language framework (Django), a large single-language application (VS
+Code), and an extreme-scale, maximally heterogeneous C codebase (Linux).
+
+The next six add recognisability and the languages the first five did not cover: JavaScript
+(React), Rust (ripgrep), Java (Guava) and Ruby (Jekyll), plus two small repositories indexed whole
+with git history (FastAPI and Gin), so the gallery shows `CO_CHANGE` edges and not only scoped
+slices. FastAPI is also one of the four repositories in the
+[retrieval benchmark](../benchmarks/real/README.md), and ripgrep is the tool that benchmark's grep
+baseline runs. See each `why:` field in [`repositories.yaml`](repositories.yaml) for the specific
+reasoning.
+
+The last two are the big frameworks of their languages, and each is in the gallery for a limit it
+makes visible rather than for its size. Rails builds much of its own API at load time — `included
+do` blocks, `delegate`, `define_method`, Active Record's `method_missing` — so a name-based call
+graph finds no call site for a large part of what application code invokes. Spring shows the other
+half of the same problem: dependency injection means the container picks the implementation at
+runtime from annotations and component scans, so the graph maps the framework's machinery while the
+wiring that machinery exists to perform is not in the source to find. Both are honest pictures, and
+both are the kind of repository someone evaluating this tool is most likely to point it at.
 
 ## What is in each `examples/<id>/`
 
@@ -70,7 +123,7 @@ no network access from that point on), runs the example queries, validates the r
 `examples/<id>/`. See [docs/architecture.md](../docs/architecture.md) for the full pipeline and
 [../README.md](../README.md) for the methodology and how staleness is handled.
 
-Because every one of the five repositories moves upstream, re-running `--all` today will index a
+Because every one of these repositories moves upstream, re-running `--all` today will index a
 newer commit and produce different numbers than the table above — that is expected, and is exactly
 why every example records the commit it was built from, under "Revision" in its own `README.md`,
 rather than a branch name.
@@ -81,6 +134,7 @@ Add an entry to [`repositories.yaml`](repositories.yaml) — repository URL, ref
 (`full` or `scoped` with `include`/`exclude`/`max_files`), language focus, category, a `why:`
 paragraph, and 3-5 architecture-relevant example queries — then run
 `python scripts/generate_examples.py --repo <id>` and commit the `README.md` and `overview.md` it
-writes, leaving the graph artifacts uncommitted as above. No new Python code is needed for a
-well-behaved repository; the framework is data-driven by design (see
-[examples/repositories.yaml](repositories.yaml)).
+writes, leaving the graph artifacts uncommitted as above. Add a row to the table here with the
+numbers from `../benchmarks/results.json`; `tests/test_doc_consistency.py` fails if the two
+disagree. No new Python code is needed for a well-behaved repository; the framework is data-driven
+by design (see [examples/repositories.yaml](repositories.yaml)).

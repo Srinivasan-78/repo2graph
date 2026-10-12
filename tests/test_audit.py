@@ -581,3 +581,29 @@ def test_emit_fails_closed_when_the_sanitiser_raises(monkeypatch):
     record = events.emit("probe", stream=out, token="ghp_" + "x" * 36)
     assert "ghp_" not in out.getvalue()
     assert record["token"] == "[unsanitised value dropped]"
+
+
+def test_mcp_server_audits_errors_only_by_default(monkeypatch, tmp_path):
+    """#453 S15: `all` puts every query's text on stderr, which MCP clients keep
+    in their own logs; recording successful calls is now opt-in."""
+    import importlib
+
+    import repo2graph.mcp as mcp_pkg
+    from repo2graph import audit as audit_mod
+
+    server = importlib.import_module("repo2graph.mcp.server")
+
+    seen = {}
+    real = audit_mod.AuditConfig
+
+    def spy(**kw):
+        seen.update(kw)
+        return real(**kw)
+
+    monkeypatch.setattr(audit_mod, "AuditConfig", spy)
+    monkeypatch.setattr(mcp_pkg, "serve", lambda *a, **k: 0, raising=False)
+    monkeypatch.setattr(server, "_require_sdk", lambda: None)
+    repo = tmp_path / "r"
+    (repo / ".git").mkdir(parents=True)
+    server.main([str(repo), "--no-auto-build"])
+    assert seen["level"] == "errors"

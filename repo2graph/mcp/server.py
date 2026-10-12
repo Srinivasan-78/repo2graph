@@ -13,10 +13,13 @@ from .. import __version__
 from ..audit import timer as audit_timer
 from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
 from .guardrails import INDEX_DIRNAME
+from .pagination import PagedText
 from .tools import (
+    SERVER_INSTRUCTIONS,
     TOOL_DESCRIPTIONS,
     TOOL_SCHEMAS,
     ToolError,
+    _staleness_note,
     dispatch,
     open_index,
     open_index_or_task,
@@ -71,8 +74,6 @@ def _require_sdk() -> Any:
         import mcp
     except ImportError:
         raise SystemExit(MISSING_SDK) from None
-    if mcp is None:
-        raise SystemExit(MISSING_SDK)
     try:
         from mcp.server import Server as _Server  # noqa: F401
     except ImportError as exc:
@@ -231,7 +232,69 @@ def _dispatch_tool(
     )
     if pending is not None:
         return pending
-    return dispatch(index, name, args, cache=cache, tasks=tasks)
+    text = dispatch(index, name, args, cache=cache, tasks=tasks)
+    # repo_map already leads with this note. Every other tool that cites line
+    # numbers or reports edges is just as wrong on a stale index -- "no callers"
+    # reads as fact -- so it carries the same warning.
+    if (
+        index is not None
+        and name in _STALENESS_NOTED_TOOLS
+        and isinstance(text, str)
+        and not isinstance(text, ToolError)
+    ):
+        note = _staleness_note(index)
+        if note:
+            # `note + text` is a plain str; keep a page's cursor for _meta.nextCursor.
+            cursor = getattr(text, "next_cursor", None)
+            text = note + text
+            if cursor:
+                text = PagedText(text)
+                text.next_cursor = cursor
+    return text
+
+
+_STALENESS_NOTED_TOOLS = frozenset(
+    {
+        "repo_search",
+        "repo_neighbours",
+        "repo_find_symbol",
+        "repo_read",
+        "repo_path_between",
+        "repo_blast_radius",
+    }
+)
+
+
+def run_resource_read(
+    index_dir: str | Path,
+    uri: str,
+    audit: Any = None,
+    *,
+    allow_foreign_index: bool = False,
+) -> tuple[str, str]:
+    """Read one MCP resource from an existing index, audited like a tool call (#388).
+
+    Raises:
+        ValueError: An unknown URI, or no index to read it from yet.
+    """
+    from .resources import read_resource
+
+    args = {"uri": uri}
+    with audit_timer() as elapsed:
+        try:
+            try:
+                index = open_index(index_dir, allow_foreign_index=allow_foreign_index)
+            except SystemExit as exc:
+                raise ValueError(
+                    f"no index to read yet ({exc}); a tool call builds one when the server "
+                    "was given a repository"
+                ) from None
+            text, mime = read_resource(index, uri)
+        except ValueError as exc:
+            _audit(audit, "resources/read", args, elapsed, error=exc)
+            raise
+    _audit(audit, "resources/read", args, elapsed, text=text)
+    return text, mime
 
 
 def _audit(
@@ -319,19 +382,84 @@ def serve(
 
     async def _call_tool_2x(ctx: Any, params: Any) -> Any:
         text = await _call_tool_handler(ctx, params)
-        return mcp.types.CallToolResult(
-            content=[TextContent(type="text", text=text)],
-            isError=isinstance(text, ToolError),
+        content = [TextContent(type="text", text=text)]
+        is_error = isinstance(text, ToolError)
+        next_cursor = getattr(text, "next_cursor", None)
+        if next_cursor:
+            # The cursor is also the text's last line, so a client that drops
+            # `_meta` loses nothing; an SDK without `_meta` just goes without it.
+            try:
+                return mcp.types.CallToolResult(
+                    content=content, isError=is_error, _meta={"nextCursor": next_cursor}
+                )
+            except TypeError:
+                pass
+        return mcp.types.CallToolResult(content=content, isError=is_error)
+
+    from .resources import get_prompt, list_prompts, list_resources
+
+    async def _list_resources(ctx: Any, params: Any) -> Any:
+        return mcp.types.ListResourcesResult(
+            resources=[mcp.types.Resource(**r) for r in list_resources(index_dir)]
         )
 
-    try:
-        mcp_server = server_cls(
-            server.name,
-            version=server.version,
-            on_list_tools=_list_tools_2x,
-            on_call_tool=_call_tool_2x,
+    async def _read_resource(ctx: Any, params: Any) -> Any:
+        uri = str(params.uri)
+        text, mime = run_resource_read(
+            index_dir, uri, audit=audit, allow_foreign_index=allow_foreign_index
         )
-    except TypeError:
+        return mcp.types.ReadResourceResult(
+            contents=[mcp.types.TextResourceContents(uri=uri, mime_type=mime, text=text)]
+        )
+
+    async def _list_prompts(ctx: Any, params: Any) -> Any:
+        return mcp.types.ListPromptsResult(
+            prompts=[
+                mcp.types.Prompt(
+                    name=p["name"],
+                    description=p["description"],
+                    arguments=[mcp.types.PromptArgument(**a) for a in p["arguments"]],
+                )
+                for p in list_prompts()
+            ]
+        )
+
+    async def _get_prompt(ctx: Any, params: Any) -> Any:
+        description, message = get_prompt(params.name, params.arguments)
+        return mcp.types.GetPromptResult(
+            description=description,
+            messages=[
+                mcp.types.PromptMessage(role="user", content=TextContent(type="text", text=message))
+            ],
+        )
+
+    tool_handlers = {"on_list_tools": _list_tools_2x, "on_call_tool": _call_tool_2x}
+    extra_handlers = {
+        "on_list_resources": _list_resources,
+        "on_read_resource": _read_resource,
+        "on_list_prompts": _list_prompts,
+        "on_get_prompt": _get_prompt,
+    }
+    # Newest registration first. An SDK without the resource and prompt hooks
+    # still gets the tools; only one with no keyword handlers at all falls back
+    # to a bare server.
+    # `instructions` is tried before the same handler set without it: it is the
+    # one place a server-wide output convention can be stated once instead of
+    # once per tool. Every JSON reply can be led by `_note: ..._` paragraphs,
+    # and TOOL_DESCRIPTIONS cannot absorb that sentence four times -- they are
+    # capped at 800 chars each because they ship on every session.
+    mcp_server: Any = None
+    attempts: list[dict[str, Any]] = []
+    for handlers in ({**tool_handlers, **extra_handlers}, tool_handlers):
+        attempts.append({**handlers, "instructions": SERVER_INSTRUCTIONS})
+        attempts.append(dict(handlers))
+    for kwargs in attempts:
+        try:
+            mcp_server = server_cls(server.name, version=server.version, **kwargs)
+            break
+        except TypeError:
+            continue
+    else:
         mcp_server = server_cls(server.name, version=server.version)
 
     async def _run() -> None:
@@ -424,6 +552,24 @@ def _assert_inferable_repo_root(path: Path) -> None:
         )
 
 
+#: Longest `--staleness-ttl` accepted. A stale-index warning held for longer
+#: than this stops being a warning about the tree as it is now.
+MAX_STALENESS_TTL = 300.0
+
+
+def _staleness_ttl(text: str) -> float:
+    """argparse type for `--staleness-ttl`: finite seconds in [0, MAX_STALENESS_TTL]."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number of seconds: {text!r}") from None
+    if not (0.0 <= value <= MAX_STALENESS_TTL):
+        raise argparse.ArgumentTypeError(
+            f"must be between 0 and {MAX_STALENESS_TTL:g} seconds, got {text!r}"
+        )
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entrypoint for repo2graph-mcp."""
     p = argparse.ArgumentParser(
@@ -473,6 +619,31 @@ def main(argv: list[str] | None = None) -> int:
         help=f"seconds a cached result is served before it is "
         f"recomputed (default: {DEFAULT_TTL:g})",
     )
+    p.add_argument(
+        "--staleness-ttl",
+        type=_staleness_ttl,
+        default=0.0,
+        metavar="SECONDS",
+        help="reuse the working-tree staleness check behind each result's "
+        "stale-index note for this long, instead of re-scanning the tree on "
+        "every tool call; for clients such as editors that call on every "
+        f"cursor move (default: 0, check every call; max {MAX_STALENESS_TTL:g})",
+    )
+    p.add_argument(
+        "--secret-keyword",
+        action="append",
+        default=[],
+        dest="extra_secret_keywords",
+        help="additional keyword marking a file/path as secret, as `repo2graph build` "
+        "takes it; applied to auto-builds and to every pack (repeatable)",
+    )
+    p.add_argument(
+        "--secret-dir",
+        action="append",
+        default=[],
+        dest="extra_secret_dirs",
+        help="additional directory name to treat as secret (repeatable)",
+    )
     log = p.add_argument_group("audit logging")
     log.add_argument(
         "--audit-log",
@@ -483,8 +654,11 @@ def main(argv: list[str] | None = None) -> int:
     log.add_argument(
         "--audit-log-level",
         choices=("none", "errors", "all"),
-        default="all",
-        help="which tool calls produce an audit record (default: all)",
+        # `all` records every query's text and up to 512 chars of arguments,
+        # on stderr that MCP clients often keep in their own logs. Recording
+        # successful calls is an opt-in for operators who want that trail.
+        default="errors",
+        help="which tool calls produce an audit record (default: errors)",
     )
     log.add_argument(
         "--audit-log-fsync",
@@ -493,6 +667,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
+    from .indexes import SECRET_RULES
+    from .nodes import STALENESS_TTL
+
+    SECRET_RULES["keywords"] = list(args.extra_secret_keywords)
+    SECRET_RULES["dirs"] = list(args.extra_secret_dirs)
+    STALENESS_TTL["seconds"] = args.staleness_ttl
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
     build_from = None if args.no_auto_build else repo
 

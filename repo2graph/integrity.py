@@ -44,6 +44,27 @@ class IntegrityReport:
         return self.status == "valid"
 
 
+_WINDOWS = os.name == "nt"
+
+
+def _is_link_like(path: Path) -> bool:
+    """A symlink, or on Windows any reparse point (junctions included).
+
+    `Path.is_symlink()` is False for an NTFS junction, which redirects a
+    directory exactly as a symlink does, so it alone lets a junction bypass
+    every guard that relies on it.
+    """
+    if path.is_symlink():
+        return True
+    if not _WINDOWS:
+        return False
+    try:
+        attrs = getattr(path.lstat(), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attrs & 0x400)  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
 def validate_outdir(
     outdir: str | Path,
     repo_root: str | Path | None = None,
@@ -68,7 +89,7 @@ def validate_outdir(
     # 4. Symlink check -- must run on the *unresolved* path. Path.resolve()
     # dereferences symlinks (including the final path component), so checking
     # is_symlink() after resolve() can never fire; check before resolving.
-    if raw.is_symlink() and not allow_symlink:
+    if _is_link_like(raw) and not allow_symlink:
         raise ValueError(
             f"Output path is a symlink: {raw}. Pass --allow-symlink-out to explicitly allow writing through symlinks."
         )
@@ -134,6 +155,9 @@ MAX_METADATA_BYTES = 256 * 1024 * 1024
 MAX_VECTORS_BYTES = 512 * 1024 * 1024
 
 
+_READ_BLOCK = 1 << 20
+
+
 def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
     """Read `path` whole, refusing anything over `limit` bytes.
 
@@ -143,6 +167,12 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
     still capped at `limit + 1` so a file that grows underneath us is caught by
     the length check rather than by trusting the stat.
 
+    Read in blocks, never as one `read(limit + 1)`: CPython allocates that
+    whole buffer before reading, so every 2 KB `vectors.meta.json` cost a 256 MB
+    allocation and every `vectors.npy` 512 MB. Linux overcommit hid it; on
+    Windows it is real commit charge, and a few of these at once in parallel
+    test workers exhausted the runner with `MemoryError`.
+
     Raises:
         ValueError: When the file is larger than `limit`.
     """
@@ -150,7 +180,15 @@ def read_bounded(path: Path | str, limit: int, *, what: str = "file") -> bytes:
         size = os.fstat(fh.fileno()).st_size
         if size > limit:
             raise ValueError(f"{path}: {what} is {size} bytes, over the {limit}-byte limit")
-        raw = fh.read(limit + 1)
+        blocks: list[bytes] = []
+        remaining = limit + 1
+        while remaining > 0:
+            block = fh.read(min(remaining, _READ_BLOCK))
+            if not block:
+                break
+            blocks.append(block)
+            remaining -= len(block)
+        raw = b"".join(blocks)
     if len(raw) > limit:
         raise ValueError(f"{path}: {what} grew past the {limit}-byte limit while being read")
     return raw
@@ -694,10 +732,10 @@ def is_foreign_index(outdir: str | Path) -> bool:
     """
     out = Path(outdir)
     local_path = out / "local.json"
-    if local_path.is_symlink() or not local_path.is_file():
+    if _is_link_like(local_path) or not local_path.is_file():
         return True
     manifest_path = out / "agent" / "manifest.json"
-    if manifest_path.is_symlink() or not manifest_path.is_file():
+    if _is_link_like(manifest_path) or not manifest_path.is_file():
         return True
     try:
         with open(local_path, "r", encoding="utf8") as fh:

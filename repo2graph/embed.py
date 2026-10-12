@@ -114,6 +114,10 @@ def _npy_read(path: Path) -> tuple[list[list[float]], int]:
     ):
         raise ValueError(f"{path}: expected a 2-D shape, got {shape!r}")
     nrows, cols = shape
+    # A zero-width row needs zero payload bytes, so the truncation check below
+    # cannot bound `nrows` and a 128-byte header could demand a trillion rows.
+    if nrows and not cols:
+        raise ValueError(f"{path}: zero-width rows in shape {shape!r}")
     body_at = start + hlen
     if len(raw) - body_at < nrows * cols * _FLOAT_BYTES:
         raise ValueError(f"{path}: truncated .npy payload")
@@ -316,10 +320,25 @@ def default_embedder(name: str | None = None) -> _SentenceTransformerEmbedder:
     must import on a bare install, and only this function needs the extra.
     """
     model_id = name or DEFAULT_MODEL
+    repo_id, revision = split_model_spec(model_id)
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError:
         raise RuntimeError(
             'embedding needs the optional `rag` extra: pip install "repo2graph[rag]"'
         ) from None
-    return _SentenceTransformerEmbedder(SentenceTransformer(model_id), model_id)
+    kwargs = {"revision": revision} if revision else {}
+    return _SentenceTransformerEmbedder(SentenceTransformer(repo_id, **kwargs), model_id)
+
+
+def split_model_spec(spec: str) -> tuple[str, str | None]:
+    """`"org/model@<commit>"` -> `("org/model", "<commit>")`; no `@` -> no revision.
+
+    A revision pins the download to one Hugging Face commit (#452). It stays
+    part of the model id recorded in `vectors.meta.json`, so the query side's
+    model check refuses any other revision of the same model.
+    """
+    repo_id, sep, revision = spec.rpartition("@")
+    if not sep or not repo_id or not revision or "/" in revision:
+        return spec, None
+    return repo_id, revision

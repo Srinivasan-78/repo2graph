@@ -353,3 +353,64 @@ class TestSingleCharIdentifiers:
         # since none of the fixture's free text or other names is one letter.
         assert single_char_terms == {"t"}
         assert not tokenize("T")  # confirms "t" could only have come from name indexing
+
+
+def test_pack_reports_both_budgets_and_how_tokens_were_counted(mini_index):
+    """#282/#290: a caller must be able to tell the selected source text from
+    the rendered context, see what was dropped, and know the token count is an
+    estimate rather than a tokenizer's answer."""
+    from conftest import MINI_QUERY
+    from repo2graph.query import Index
+
+    idx = Index(mini_index)
+    full = idx.pack_context(MINI_QUERY, budget_chars=0)
+    tight = idx.pack_context(MINI_QUERY, budget_chars=1200)
+    for pack in (full, tight):
+        assert pack["rendered_context_chars"] == len(pack["markdown"])
+        assert pack["rendered_context_chars"] > pack["source_text_chars"] > 0
+        assert pack["token_count_method"] == "heuristic"
+    assert not full["budget_exhausted"] and full["omitted_chunk_count"] == 0
+    assert tight["budget_exhausted"] and tight["omitted_chunk_count"] > 0
+
+    def exact(text):
+        return len(text.split())
+
+    exact.token_count_method = "exact:whitespace"
+    assert (
+        idx.pack_context(MINI_QUERY, count_tokens=exact)["token_count_method"] == "exact:whitespace"
+    )
+
+
+@pytest.mark.parametrize(
+    "query, expected",
+    [
+        ("how does URL resolution reach a view", []),
+        ("I want the T helper", ["T"]),
+        ("what calls a", ["a"]),
+        ("where is a(x) defined", ["a", "x"]),
+        ("explain `a` here", ["a"]),
+        ("A view", []),
+        ("x and y", ["x", "y"]),
+    ],
+)
+def test_a_and_i_as_english_words_are_not_identifiers(query, expected):
+    """#382: "reach a view" ranked every class named `A` first on Django."""
+    from repo2graph.query import _single_char_idents
+
+    assert _single_char_idents(query) == expected
+
+
+def test_an_article_does_not_pull_in_a_symbol_named_a(tmp_path):
+    from repo2graph.query import Index
+
+    repo = tmp_path / "src"
+    repo.mkdir()
+    (repo / "letters.py").write_text("class A:\n    pass\n", encoding="utf8")
+    (repo / "urls.py").write_text(
+        "def resolve(path):\n    return view_for(path)\n\n\ndef view_for(path):\n    return path\n",
+        encoding="utf8",
+    )
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    names = [h.get("name") for h in Index(out).retrieve("how does resolve reach a view", k=3)]
+    assert "A" not in names and "resolve" in names, names

@@ -13,6 +13,7 @@ literal `(node_id, ...)` assertions hand-derived from the `mini_repo` fixture
 rather than a value the code under test also computed.
 """
 
+import importlib
 import json
 
 from conftest import SYM_AUDIT, SYM_ROUTE, build_mini_index
@@ -143,7 +144,7 @@ def _flood_symbol_index(idx, mcp, n):
             "start_line": 1,
             "end_line": 2,
         }
-    mcp._AUX_CACHE.pop(idx, None)
+    importlib.import_module("repo2graph.mcp.retrieval")._AUX_CACHE.pop(idx, None)
 
 
 def test_find_symbol_limit_ceiling_actually_binds_under_flood(mini_index):

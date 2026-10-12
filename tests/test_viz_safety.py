@@ -270,6 +270,7 @@ def test_search_focus_and_legend_ui_are_present(tmp_path):
         "CALLS_EXTERNAL",
         "INHERITS",
         "CO_CHANGE",
+        "TESTS",
     ):
         assert edge_type in html
 
@@ -281,3 +282,30 @@ def test_content_security_policy_is_present(tmp_path):
         "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:\">"
         in html
     )
+
+
+def test_a_node_fragment_seeds_the_page_without_becoming_markup():
+    """#400: `graph.html#node=<id>` opens the detail view selected on that node.
+
+    The VS Code extension's "Reveal in graph" opens the page this way. The
+    fragment is whatever link the page was opened with, so it is treated like
+    the repo name above: decoded defensively, bounded, compared by exact id,
+    and only ever shown through text APIs. Source-level, for the reason the
+    pointer-capture tests give.
+    """
+    seed = re.search(r"function seedFromHash\(\) \{.*?\n\}", TEMPLATE, re.S)
+    assert seed, "no seedFromHash()"
+    body = seed.group(0)
+    assert "location.hash" in body
+    # A malformed escape (`%E0%A4%A`) throws in decodeURIComponent; it must be
+    # an ignored seed, not an exception that stops the page drawing.
+    assert re.search(r"try \{ id = decodeURIComponent\(m\[1\]\); \} catch", body)
+    assert "MAX_SEED_CHARS" in body
+
+    apply = re.search(r"function applySeed\(\) \{.*?\n\}", TEMPLATE, re.S)
+    assert apply and "x.id === id" in apply.group(0), "the seed must match one id exactly"
+    assert 'window.addEventListener("hashchange"' in TEMPLATE
+    assert "show(applySeed()" in TEMPLATE
+
+    for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval("):
+        assert sink not in TEMPLATE, f"{sink} would turn page text into markup"

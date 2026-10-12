@@ -30,7 +30,7 @@ except ModuleNotFoundError:
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from version_surfaces import ROOT, bumped_paths, rewrite  # noqa: E402
+from version_surfaces import ROOT, bumped_paths, rewrite
 
 __all__ = ["bumped_paths"]  # re-exported for `--files`; see .github/CONTRIBUTING.md
 
@@ -223,7 +223,42 @@ def bump_changelog(new_ver: str) -> None:
             f"### Changed\n\n- Release version {new_ver}.\n\n" + content
         )
 
-    path.write_text(new_content, encoding="utf8", newline="\n")
+    path.write_text(bump_changelog_links(new_content, new_ver), encoding="utf8", newline="\n")
+
+
+# `## [1.5.1]` is a markdown *reference* link: without a matching
+# `[1.5.1]: <url>` definition at the foot of the file it renders as the literal
+# text `[1.5.1]`, not a link. `bump_changelog` above writes only the heading, so
+# every release since v1.5.0 added a heading whose definition nobody wrote --
+# nine dead references by v3.0.0, and an `[Unreleased]` diff still based at
+# v1.5.0. Emitting the definition in the same step as the heading is what keeps
+# the two from drifting again.
+_LINK_DEF_RE = re.compile(r"^\[(Unreleased|\d+\.\d+\.\d+)\]: \S+$", re.MULTILINE)
+
+
+def bump_changelog_links(content: str, new_ver: str) -> str:
+    """Add `new_ver`'s compare link and re-base `[Unreleased]` onto it.
+
+    The previous release is read from the existing definitions rather than from
+    the tag list, so this stays correct offline and in a shallow checkout.
+    """
+    defs = _LINK_DEF_RE.findall(content)
+    if "Unreleased" not in defs or new_ver in defs:
+        return content
+    base = "https://github.com/Srinivasan-78/repo2graph/compare"
+    prev = next((d for d in defs if d != "Unreleased"), None)
+    lines = [f"[Unreleased]: {base}/v{new_ver}...HEAD"]
+    if prev:
+        lines.append(f"[{new_ver}]: {base}/v{prev}...v{new_ver}")
+    else:
+        lines.append(
+            f"[{new_ver}]: https://github.com/Srinivasan-78/repo2graph/releases/tag/v{new_ver}"
+        )
+    return _LINK_DEF_RE.sub(
+        lambda m: "\n".join(lines) if m.group(1) == "Unreleased" else m.group(0),
+        content,
+        count=1,
+    )
 
 
 def sync_lockfile() -> None:

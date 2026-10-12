@@ -64,6 +64,30 @@ TOOL_TITLES = {
     "repo_build_status": "Build Task Status",
 }
 
+# Sent once at initialize, so a convention that holds for every tool is stated
+# here rather than four times in TOOL_DESCRIPTIONS, which are capped at 800
+# chars each because they ship on every session.
+#
+# The reply-shape sentence is the load-bearing one. `docs/mcp.md` documents
+# that notes lead a reply, JSON replies included -- but a client's model reads
+# the server's own metadata and never the repository's docs, so a bare
+# `JSON.parse` of a reply breaks the first time an argument is defaulted or the
+# index goes stale. The bundled VS Code client has always split the notes off
+# first (`toolText.splitNotes`); this is what lets any other client do the same.
+SERVER_INSTRUCTIONS = (
+    "repo2graph answers questions about one indexed repository: a code graph plus "
+    "retrieval over it. Start with repo_map for layout, repo_search for open-ended "
+    "questions, and repo_find_symbol when you already know a name; feed the node_ids "
+    "they return to repo_neighbours, repo_read, repo_path_between and repo_blast_radius. "
+    "Every tool is read-only and deterministic, and secret files are excluded. "
+    "Replies may be led by one or more `_note: ..._` paragraphs -- an argument the server "
+    "defaulted, or a warning that the index is stale relative to the working tree. They "
+    "come before the body in both the markdown and the JSON formats, so parse the JSON "
+    "that follows the last such paragraph rather than the whole reply, and surface a "
+    "staleness note to the user instead of dropping it: it means cited line numbers may "
+    "no longer match the source."
+)
+
 TOOL_DESCRIPTIONS = {
     "repo_map": (
         "Retrieve a high-level structural map of the repository: languages, hub files, "
@@ -82,31 +106,36 @@ TOOL_DESCRIPTIONS = {
         "or finding error strings. When NOT to use: do not use when you already have a "
         "symbol node_id and want callers/callees (use repo_neighbours); do not use for broad "
         "repo layout (use repo_map). Output: markdown citation blocks `[cite: path:start-end]` "
-        "bounded by budget_tokens."
+        'bounded by budget_tokens. To page, pass cursor="" then each `next_cursor:` token '
+        "from the reply's last line."
     ),
     "repo_neighbours": (
         "Traverse code graph relationships from a known symbol or file node_id (callers, "
         "callees, base classes, definitions). Read-only, deterministic traversal, no side effects. "
         "When to use: use with a specific node_id (e.g. from repo_search citations) to inspect "
-        "callers (CALLS in), callees (CALLS out), inheritance, or definitions. When NOT to use: "
+        "callers (CALLS in), callees (CALLS out), inheritance, definitions, or the tests that "
+        "reach a symbol through calls (TESTS in). When NOT to use: "
         "do not use for text search across code (use repo_search) or repo overview (use repo_map). "
-        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`."
+        "Output: markdown list formatted as `- <EDGE_TYPE> <in|out>: <name> (<path:line>) [<node_id>]`"
+        ', or with format="json" the same rows as JSON plus co-changed files. '
+        'To page past limit, pass cursor="" then each `next_cursor:` token from the reply\'s last line.'
     ),
     "repo_find_symbol": (
-        "Look up a symbol or file's node_id by name, for feeding into repo_neighbours, "
+        "Look up a symbol or file's node_id by name, or by `path` and `line` (the symbols "
+        "enclosing that line, innermost first, then the file), for feeding into repo_neighbours, "
         "repo_read, repo_path_between or repo_blast_radius. Read-only, deterministic, zero "
-        "side effects, secret files (.env) excluded. Matches an exact name first, then "
-        "case-insensitively, then the last segment of a qualname; an ambiguous name returns "
-        "every candidate with its path so you disambiguate rather than the server guessing. "
-        "When to use: you already know a name (from a traceback, a grep, a review comment) "
-        "and want its node_id with no repo_search round trip. When NOT to use: do not use for "
+        "side effects, secret files (.env) excluded. A name matches exactly first, then "
+        "case-insensitively, then as a qualname's last segment; an ambiguous name returns "
+        "every candidate, with its path. "
+        "When to use: you know a name (from a traceback, a grep, a review comment) or a file "
+        "position and want its node_id with no repo_search round trip. When NOT to use: not for "
         "open-ended text search (use repo_search) or for repo layout (use repo_map). "
         "Output: JSON array of {node_id, name, qualname, kind, path, start_line, end_line, lang}."
     ),
     "repo_read": (
         "Read a widened window of source text around a citation, from the indexed chunks "
-        "rather than the filesystem -- works over HTTP, from a different machine, with no "
-        "shared filesystem, because chunks have already passed secret-path exclusion and "
+        "rather than the filesystem -- works with no shared filesystem between client and "
+        "server, because chunks have already passed secret-path exclusion and "
         "redaction. Read-only, deterministic, zero side effects. When to use: use after "
         "repo_search or repo_neighbours to see more lines around a `[cite: path:start-end]` "
         "citation, with optional `context` lines each side. When NOT to use: do not use for a "
@@ -153,6 +182,13 @@ TOOL_DESCRIPTIONS = {
 
 BUILD_CAPABLE_TOOLS = frozenset(TOOL_DESCRIPTIONS) - {"repo_build_status"}
 
+# Paging is opt-in (#389): omitting `cursor` returns exactly the unpaged answer.
+_CURSOR_DESCRIPTION = (
+    'Opt-in paging. Omit for one unpaged answer. Pass "" for the first page of {page}; '
+    "while more remain the reply ends with a `next_cursor: <token>` line (also "
+    "_meta.nextCursor). Pass that token back, other arguments unchanged, for the next page."
+)
+
 TOOL_SCHEMAS = {
     "repo_map": {"type": "object", "properties": {}},
     "repo_search": {
@@ -185,6 +221,10 @@ TOOL_SCHEMAS = {
                     f"Maximum token ceiling for returned markdown pack (default {MCP_BUDGET_TOKENS}, "
                     f"max {MCP_MAX_BUDGET_TOKENS}; zero or negative uses the default)."
                 ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="k seed results"),
             },
             # `neighbours` and `max_neighbours` were advertised here and are
             # gone deliberately. Citation mode measured worse than the default
@@ -219,6 +259,26 @@ TOOL_SCHEMAS = {
                     f"min 1, max {MCP_MAX_NEIGHBOURS})."
                 ),
             },
+            "min_confidence": {
+                "type": "number",
+                "description": (
+                    "Drop CALLS and TESTS edges below this confidence, 0..1 (default 0.0: "
+                    "keep everything, marking ambiguous edges). 1.0 keeps only unambiguous ones."
+                ),
+            },
+            "cursor": {
+                "type": "string",
+                "description": _CURSOR_DESCRIPTION.format(page="limit rows"),
+            },
+            "format": {
+                "type": "string",
+                "enum": ["markdown", "json"],
+                "description": (
+                    "Output format (default markdown). json returns {node, neighbours, cochange, "
+                    "truncated}: each neighbour row with its edge, direction, path and lines, and "
+                    "the files co-edited with the node's file -- for programs such as editors."
+                ),
+            },
         },
         "required": ["node_id"],
     },
@@ -227,7 +287,24 @@ TOOL_SCHEMAS = {
         "properties": {
             "name": {
                 "type": "string",
-                "description": "Symbol or file name to look up (e.g. 'validate_token').",
+                "description": (
+                    "Symbol or file name to look up (e.g. 'validate_token'). May be omitted "
+                    "when `path` and `line` are given."
+                ),
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "Optional exact repo-relative file path (e.g. 'pkg/mod.py'): only nodes "
+                    "in that file."
+                ),
+            },
+            "line": {
+                "type": "integer",
+                "description": (
+                    "Optional 1-based line in `path` (min 1): only the symbols whose span "
+                    "contains it, innermost first, then the file node."
+                ),
             },
             "kind": {
                 "type": "string",
@@ -247,7 +324,9 @@ TOOL_SCHEMAS = {
                 ),
             },
         },
-        "required": ["name"],
+        # `name` or `path` + `line` (#400): either one is a complete question, so
+        # neither is required by the schema; the handler refuses a call with neither.
+        "required": [],
     },
     "repo_read": {
         "type": "object",

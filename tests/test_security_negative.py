@@ -19,7 +19,8 @@ import pytest
 from repo2graph.security import _is_secret_path
 from repo2graph.integrity import validate_outdir
 from repo2graph.lock import BuildLock, LockTimeoutError, _is_pid_alive
-from repo2graph.mcp import _clamp, MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS
+from repo2graph.mcp import MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS
+from repo2graph.mcp.guardrails import _clamp
 
 
 # ==============================================================================

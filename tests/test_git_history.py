@@ -227,3 +227,95 @@ def test_cli_cochange_min_flag(tmp_path: Path):
     assert len(co_edges) == 1
     assert co_edges[0]["cochange_count"] == 2
     assert co_edges[0]["min_pairs"] == 2
+
+
+def _commit(repo: Path, name: str, email: str, files: dict[str, str], msg: str) -> None:
+    import os
+
+    for rel, text in files.items():
+        (repo / rel).write_text(text, encoding="utf8")
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)
+    subprocess.run(["git", "commit", "-qm", msg], cwd=repo, env=env, check=True)
+
+
+def _authored_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--initial-branch=main"], cwd=repo, check=True)
+    _commit(repo, "Ada Lovelace", "ada@example.com", {"a.py": "A = 1\n", "b.py": "B = 1\n"}, "one")
+    _commit(repo, "Ada Lovelace", "ada@example.com", {"a.py": "A = 2\n"}, "two")
+    _commit(repo, "Zoë", "zoe@example.com", {"a.py": "A = 3\n", "b.py": "B = 2\n"}, "three")
+    return repo
+
+
+def test_git_authors_records_names_never_emails(tmp_path: Path):
+    """#394: who changed each file, from the walk --git-history already makes."""
+    from repo2graph.graph import build
+
+    g = build(_authored_repo(tmp_path), git_history=10, git_authors=True)
+    assert g.nodes["file:a.py"]["authors"] == [
+        {"name": "Ada Lovelace", "commits": 2},
+        {"name": "Zoë", "commits": 1},
+    ]
+    assert g.nodes["file:b.py"]["authors"] == [
+        {"name": "Ada Lovelace", "commits": 1},
+        {"name": "Zoë", "commits": 1},
+    ]
+    assert "@" not in repr([n.get("authors") for n in g.nodes.values()])
+
+
+def test_without_git_authors_nothing_changes(tmp_path: Path):
+    from repo2graph.graph import build
+
+    g = build(_authored_repo(tmp_path), git_history=10)
+    assert not any("authors" in n for n in g.nodes.values())
+    assert "files_with_authors" not in g.stats
+
+
+def test_git_authors_needs_git_history(tmp_path: Path):
+    import pytest
+
+    from repo2graph.cli import main
+
+    with pytest.raises(SystemExit, match="--git-history"):
+        main(["build", str(_authored_repo(tmp_path)), "-o", str(tmp_path / "o"), "--git-authors"])
+
+
+def test_git_history_from_the_config_file_satisfies_git_authors(tmp_path: Path):
+    """The check ran before `_with_repo_config`, so it could not see a
+    `git-history` the repo's own config file supplied -- and rejected a build
+    whose history *was* configured."""
+    import json
+
+    from repo2graph.cli import main
+
+    repo = _authored_repo(tmp_path)
+    (repo / ".repo2graph.toml").write_text("git-history = 10\n", encoding="utf8")
+    out = tmp_path / "o"
+    assert main(["build", str(repo), "-o", str(out), "--git-authors"]) == 0
+    nodes = [
+        json.loads(line)
+        for line in (out / "agent" / "nodes.jsonl").read_text(encoding="utf8").splitlines()
+    ]
+    assert any("authors" in n for n in nodes)
+
+
+def test_git_authors_from_the_config_file_still_needs_a_history(tmp_path: Path):
+    """The mirror of the above: `git-authors = true` in the config with no
+    history anywhere used to be accepted silently and record no authors at
+    all, because the walk that collects them never ran."""
+    import pytest
+
+    from repo2graph.cli import main
+
+    repo = _authored_repo(tmp_path)
+    (repo / ".repo2graph.toml").write_text("git-authors = true\n", encoding="utf8")
+    with pytest.raises(SystemExit, match="--git-history"):
+        main(["build", str(repo), "-o", str(tmp_path / "o")])

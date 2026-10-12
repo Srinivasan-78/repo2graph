@@ -50,6 +50,7 @@ from .retrieval import (
 )
 from .schemas import (
     BUILD_CAPABLE_TOOLS,
+    SERVER_INSTRUCTIONS,
     TOOL_ANNOTATIONS,
     TOOL_ANNOTATIONS_AUTO_BUILD,
     TOOL_DESCRIPTIONS,
@@ -79,6 +80,7 @@ __all__ = [
     "BUDGET_DEFAULTED",
     "BUILD_CAPABLE_TOOLS",
     "EMPTY_RESULT",
+    "SERVER_INSTRUCTIONS",
     "TOOL_ANNOTATIONS",
     "TOOL_ANNOTATIONS_AUTO_BUILD",
     "TOOL_DESCRIPTIONS",
@@ -191,8 +193,14 @@ def dispatch(
     if name not in TOOL_DESCRIPTIONS:
         return ToolError(f"unknown tool: {name!r}. Available: {', '.join(TOOL_DESCRIPTIONS)}.")
 
+    # A paging call (#389) passes `cursor` through only when the caller sent
+    # one, so an unpaged call reaches its handler exactly as it always did.
+    # Pages are not cached: each carries a freshly issued, expiring cursor, and
+    # a cached page would hand back one minted before the last rebuild.
+    paging = {"cursor": args["cursor"]} if args.get("cursor") is not None else {}
+
     key = None
-    if cache is not None and name in CACHEABLE_TOOLS:
+    if cache is not None and name in CACHEABLE_TOOLS and not paging:
         key = make_key(name, args)
         hit = cache.get(key)
         if hit is not None:
@@ -229,6 +237,7 @@ def dispatch(
             k=args.get("k", 8),
             hops=args.get("hops", 1),
             budget_tokens=args.get("budget_tokens"),
+            **paging,
             # `neighbours` and `max_neighbours` are no longer forwarded, and no
             # longer advertised in TOOL_SCHEMAS["repo_search"] either. They were
             # once unreachable here by accident, which was a bug; they are
@@ -239,19 +248,28 @@ def dispatch(
             # arbitrary one.
         )
     elif name == "repo_neighbours":
+        # `format` (#400) is passed only when sent, like `cursor`, so a call
+        # without it reaches the handler exactly as it always did.
+        fmt = {"format": args["format"]} if args.get("format") is not None else {}
         result = _neighbours(
             index,
             str(args.get("node_id") or ""),
             hops=args.get("hops", 1),
             limit=args.get("limit", MCP_NEIGHBOUR_LIMIT),
+            min_confidence=args.get("min_confidence", 0.0),
+            **paging,
+            **fmt,
         )
     elif name == "repo_find_symbol":
+        # Likewise `path` and `line` (#400): only when the client set them.
+        position = {k: args[k] for k in ("path", "line") if args.get(k) is not None}
         result = _find(
             index,
             str(args.get("name") or ""),
             kind=str(args.get("kind") or ""),
             path_prefix=str(args.get("path_prefix") or ""),
             limit=args.get("limit", MCP_FIND_LIMIT),
+            **position,
         )
     elif name == "repo_read":
         result = tool_repo_read(

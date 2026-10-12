@@ -1,0 +1,79 @@
+name: VS Code extension
+
+# Builds and tests editors/vscode (#400). Its tests start the real
+# repo2graph-mcp from this checkout, so a change to the MCP surface it calls
+# runs them too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "editors/vscode/**"
+      - "repo2graph/**"
+      - ".github/workflows/vscode.yml"
+  pull_request:
+    paths:
+      - "editors/vscode/**"
+      - "repo2graph/**"
+      - ".github/workflows/vscode.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    # Windows is in the matrix for the same reason the Python suite runs it:
+    # `src/test/fixture.ts` already branches on `process.platform` for
+    # `Scripts` vs `bin` and the `.exe` suffix, so the platform difference is
+    # real and only this job can see it. It was ubuntu-only, and a test that
+    # spelled out a POSIX `file:///` URL for `pathToFileURL` -- which resolves
+    # a drive-relative path against the current drive on Windows -- was red on
+    # every Windows checkout and green here.
+    name: Compile & test (Node, real repo2graph-mcp)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install uv
+        run: pip install "uv==0.12.15"
+
+      - name: Install repo2graph with the MCP extra (locked)
+        shell: bash
+        run: |
+          uv export --locked --no-emit-project --extra mcp -o requirements-ci.txt
+          pip install --require-hashes -r requirements-ci.txt
+          pip install -e . --no-deps
+
+      # The runner's own Node is enough: the extension has no runtime
+      # dependencies, and --ignore-scripts keeps the dev ones from running
+      # install hooks.
+      - name: Install, compile and test the extension
+        working-directory: editors/vscode
+        # Git Bash on the Windows runner, so the one `run:` block below stays
+        # a single script instead of a pwsh fork of it.
+        shell: bash
+        run: |
+          node --version
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run compile
+          # `sysconfig`, not `dirname $(command -v ...)`: under Git Bash on the
+          # Windows runner the latter yields an MSYS path (`/c/hostedtoolcache/...`)
+          # that `fixture.ts` would hand to Node's `path.join`, which cannot
+          # resolve it. `scripts` is the native directory on both platforms.
+          REPO2GRAPH_BIN="$(python -c 'import sysconfig; print(sysconfig.get_path("scripts"))')" npm test

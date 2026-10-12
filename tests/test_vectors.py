@@ -847,6 +847,25 @@ def test_real_sentence_transformers_smoke_test(mini_index):
 # --------------------------------------------------------------------------
 
 
+def test_read_bounded_does_not_allocate_its_limit(tmp_path):
+    """A small file under a 512 MB ceiling must not cost a 512 MB buffer: on
+    Windows that is real commit charge, and parallel test workers ran the runner
+    out of memory with it."""
+    import tracemalloc
+
+    from repo2graph.integrity import MAX_VECTORS_BYTES, read_bounded
+
+    f = tmp_path / "small.bin"
+    f.write_bytes(b"x" * 3_000_000)
+    tracemalloc.start()
+    try:
+        assert len(read_bounded(f, MAX_VECTORS_BYTES)) == 3_000_000
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 32 * 1024 * 1024, peak
+
+
 def test_read_bounded_refuses_a_file_over_the_limit(tmp_path):
     from repo2graph.integrity import read_bounded
 
@@ -916,3 +935,76 @@ def test_a_normal_vectors_pair_still_round_trips_under_the_real_limits(tmp_path)
 
     assert sorted(vectors) == ["a", "b"]
     assert meta["dim"] == 2
+
+
+def test_zero_width_rows_are_rejected_before_the_row_loop(tmp_path):
+    """#474: with cols == 0 the payload-size check needs zero bytes, so a
+    128-byte header claiming a trillion rows would pass it and spin the loop."""
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(10**12, 0))
+    with pytest.raises(ValueError, match="zero-width"):
+        embed._npy_read(target)
+
+
+def test_empty_matrix_still_reads(tmp_path):
+    from repo2graph import embed
+
+    target = tmp_path / VEC_NPY
+    target.write_bytes(embed._npy_header(0, 0))
+    assert embed._npy_read(target) == ([], 0)
+
+
+def test_a_dropped_vector_set_says_why(mini_index, use_stub_embedder, capsys):
+    """#456 P1: an oversized or corrupt vectors.npy used to vanish silently and
+    ranking fell back to BM25 with nothing reporting it."""
+    run_embed(mini_index, capsys)
+    npy, _ = vec_paths(mini_index)
+    npy.write_bytes(b"\x93NUMPY garbage")
+    idx = Index(mini_index)
+    assert idx.vectors is None
+    assert "could not be loaded" in (idx.vectors_unavailable or "")
+    ok, msg = idx.fuse_ok(StubEmbedder())
+    assert not ok and "could not be loaded" in msg
+
+
+# #452: an embedding model can be pinned to one Hugging Face commit.
+@pytest.mark.parametrize(
+    "spec, expected",
+    [
+        (
+            "sentence-transformers/all-MiniLM-L6-v2",
+            ("sentence-transformers/all-MiniLM-L6-v2", None),
+        ),
+        ("org/model@1a2b3c4d", ("org/model", "1a2b3c4d")),
+        ("org/model@", ("org/model@", None)),
+        ("/models/a@b/local", ("/models/a@b/local", None)),
+    ],
+)
+def test_split_model_spec(spec, expected):
+    from repo2graph.embed import split_model_spec
+
+    assert split_model_spec(spec) == expected
+
+
+def test_a_pinned_revision_reaches_sentence_transformers(monkeypatch):
+    import sys
+    import types
+
+    from repo2graph.embed import default_embedder
+
+    seen = {}
+
+    class FakeST:
+        def __init__(self, name, **kwargs):
+            seen["name"], seen["kwargs"] = name, kwargs
+
+    monkeypatch.setitem(
+        sys.modules, "sentence_transformers", types.SimpleNamespace(SentenceTransformer=FakeST)
+    )
+    emb = default_embedder("org/model@1a2b3c4d")
+    assert seen == {"name": "org/model", "kwargs": {"revision": "1a2b3c4d"}}
+    assert emb.model_id == "org/model@1a2b3c4d"
+    default_embedder("org/model")
+    assert seen == {"name": "org/model", "kwargs": {}}

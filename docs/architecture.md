@@ -47,7 +47,7 @@ is a bug in the change, not a missing feature.
 
 The stages, in order:
 
-1. **Discover** (`parse.discover`) — enumerate candidate files from `git ls-files`, falling back to
+1. **Discover** (`discovery.discover`, re-exported as `parse.discover`) — enumerate candidate files from `git ls-files`, falling back to
    a directory walk. Applies `DEFAULT_SKIP_DIRS`, the size ceiling, and the exclusion layers below.
 2. **Parse** (`parse.py`) — run the tree-sitter grammar for each file's language, extract symbol
    definitions and import statements.
@@ -86,21 +86,117 @@ A symbol node's id is `sym:<path>::<qualname>`. When two definitions in one file
 | `CALLS_EXTERNAL` | symbol -> external, a name that resolved to nothing in-repo |
 | `INHERITS` | symbol -> base class or interface |
 | `CO_CHANGE` | file <-> file, edited together in 3+ of the commits read by `--git-history` |
+| `TESTS` | test symbol -> non-test symbol it reaches through at most 2 `CALLS` hops |
+
+`TESTS` means **tests that reach this symbol via calls**, not tests that assert on it: nothing
+reads an assertion. A test symbol is any symbol defined in a file `testpaths.is_test_path`
+claims (`tests/`, `test/`, `__tests__/`, `spec/`, `test_*.py`, `*_test.py`, `*_test.go`,
+`*.test.ts`, `*.spec.ts`, `*Test.java`, `*_spec.rb`, ...), helpers and fixtures included.
+`graph.add_tests_edges` walks `CALLS` out of each one up to `TESTS_MAX_HOPS` (2), through test
+helpers and production code alike, and adds one edge per non-test symbol reached, never
+test -> test. `confidence` is the product of the `CALLS` confidences along the best path (so two
+0.5 guesses in a row read as 0.25, not 0.5), `evidence` is the call in the test where that path
+starts, and `hops` is its length. `CALLS` edges that are not evidence of a call
+(`untyped_receiver`, `shadowed_builtin`) are not walked. `stats.json` reports `edge:TESTS`,
+`testable_symbols` / `tested_symbols` (non-test functions and methods, and how many have an
+incoming `TESTS` edge) and their ratio `tested_symbol_fraction` -- an upper bound on what the
+suite exercises, never a coverage figure. Retrieval does not follow `TESTS` by default; pass
+`edge_types` to `pack_context` to opt in. `repo_neighbours` lists a symbol's `TESTS` edges.
+
+### Reference edges (`--reference-edges`, off by default)
+
+`build --reference-edges` adds three edge types, for Python and JS/TS only (#397):
+
+| Edge | Meaning |
+| --- | --- |
+| `READS` | function/method -> a module-level variable or constant, or a class field (`self.x`, `this.x`), it reads |
+| `WRITES` | function/method -> one it assigns: a module-level name (in Python only under `global`; in JS/TS any assignment to a name not declared in the function) or a class field |
+| `REFERENCES` | function/method/class -> a class, interface, type or enum named in a type annotation |
+
+It also makes the targets symbols: module-level assignments become `variable` or `constant`
+(all-caps names) nodes, and class-level ones `field` nodes. Without the flag none of this
+exists and every artifact is byte-identical to a build that never had it.
+
+Precision is preferred to recall, and the limits are plain:
+
+- A name binds only to a symbol defined at the top level of the same file, or one the file
+  imports by that name (`from settings import TIMEOUT`, `RETRIES as R`). There is no
+  repository-wide fallback, so these edges are not ambiguous the way `CALLS` can be; a name
+  that does not bind is counted in `reference_edges_unresolved` and dropped.
+- `self.x` binds only to a field **declared in the class body**. An attribute first assigned in
+  `__init__` has no node to point at, so it is unresolved, as is a field inherited from a base.
+- `module.NAME` (attribute access on an imported module), locals, parameters and closures over
+  an enclosing function's locals make no edge. A local that shadows a module-level name is a
+  local, so it makes no `READS`.
+- Python string annotations (`"Foo"`) are not read.
+
+Volume, measured: on this repository `--reference-edges` adds 26% nodes and 8% edges; on
+Django 28% nodes, 8.5% edges and 13.5% output, for 7,688 `READS`, 219 `WRITES` and 9
+`REFERENCES` (Django annotates almost nothing). `stats.json` reports
+`reference_edges_reads`, `_writes`, `_references` and `_unresolved` when it is on.
+
+### Exact resolution from SCIP (`--scip`, off by default)
+
+`CALLS` and `INHERITS` are name-resolved (the tiers in `graph.build`). `build --scip index.scip`
+(#380) reads a [SCIP](https://github.com/sourcegraph/scip) index, the protobuf a compiler-grade
+indexer writes (`scip-python`, `scip-typescript`, `scip-java`, ...), and uses it wherever it has an
+answer. `scip.py` owns all of it; `graph.build` calls into it at three points.
+
+- **Reading.** A hand-rolled protobuf wire-format reader for the few `scip.proto` messages used
+  (no protobuf dependency, like `embed.py`'s `.npy` reader). The file is untrusted: size capped at
+  256 MiB before it is read, varints at most 10 bytes, every length checked against what is left,
+  group wire types refused, nesting fixed by the schema with no recursion, and occurrence,
+  document and string counts bounded. Malformed input raises `ScipError`; the build then warns
+  (a stderr line plus a `scip_index_rejected` event), records `scip_error` in `stats.json`, and
+  keeps every heuristic edge. Both range encodings are read (the deprecated packed `range` and the
+  typed `single_line_range`/`multi_line_range`, which wins when both are set).
+- **Identity.** A SCIP symbol maps to a node through its *definition site*, not by translating its
+  moniker: the `Definition` occurrence in document `path` on line `L` whose last descriptor is
+  named `n` is the repo2graph symbol of `path` that starts on line `L` and is named `n`
+  (parameters and type parameters never map; a `local N` symbol is named by its `display_name`).
+  A SCIP symbol that lands on two nodes (a conditional redefinition) is left unmapped.
+- **Merge.** Only for files whose document is in the index. For each call site of `callee`, the
+  reference occurrences on the call's line whose last descriptor is `callee`'s name decide it
+  (several same-named calls on one line pair up by column). A mapped symbol is a `CALLS` edge at
+  confidence 1.0 with `method` and `resolution_kind` `scip`; a symbol no indexed file defines is a
+  `CALLS_EXTERNAL` edge, also `scip`; anything else -- no occurrence, a parameter, an attribute,
+  a symbol that did not map -- leaves that site to the tiers, with the heuristic edge's `count`
+  reduced to the sites left. A class's base resolves through its `is_implementation`
+  relationships, else the base's occurrence in the class header; a base defined outside the index
+  gets no `INHERITS` edge, as an unresolved base never did. A file absent from the index is not
+  touched.
+
+The pass runs after parsing over the parsed symbols and the index, so full and `--incremental`
+builds stay byte-identical (the parse cache holds parse results only; `scip_index` is not part of
+its identity). Without the flag nothing is read, and every artifact is byte-identical to a build
+that never had the feature; `manifest.json` describes the `scip` method only when such edges exist.
+`stats.json` reports `scip_documents`, `scip_files_covered`, `scip_files_uncovered`,
+`scip_symbols_mapped`, `scip_call_sites_resolved` (of which `scip_call_sites_external`),
+`scip_call_sites_heuristic` (sites in covered files left to the tiers),
+`scip_call_sites_uncovered`, `scip_calls_ambiguous` (ambiguous fan-outs still emitted from covered
+files), `scip_bases_resolved` and `scip_bases_heuristic` -- all of them, and only, with `--scip`.
+
+The index is never auto-detected: a repository shipping an `index.scip` does not change how it is
+resolved unless the user passes `--scip` or the repository's own config sets `scip`, whose path
+must resolve inside the repository. Even a crafted index can only pick among definitions whose
+names already sit on the cited line. A stale index degrades to name resolution wherever a name
+moved off its recorded line; regenerate it with the code.
 
 ### Edge metadata
 
 Every edge goes through `Graph.add_edge()`, which normalises three fields:
 
 - **`method`** — how the edge was derived (for example `same_file`, `import_resolved`,
-  `receiver_typed`, `name_only`). It records the evidence class, not a quality score.
-- **`confidence`** — a float on `CALLS` edges only, reflecting how much the resolution narrowed the
-  candidate set. It deliberately does **not** encode "how likely is this call at runtime": a
+  `receiver_typed`, `name_only`, or `call-graph` for `TESTS`, which is derived from `CALLS`
+  edges rather than read from source). It records the evidence class, not a quality score.
+- **`confidence`** — a float on `CALLS` edges (and `TESTS`, which inherits it), reflecting how
+  much the resolution narrowed the candidate set. It deliberately does **not** encode "how likely is this call at runtime": a
   dynamically dispatched call that resolved to exactly one candidate scores high.
 - **`evidence`** — the source line the reader is shown. Structural edges (`CONTAINS`) and
   historical ones (`CO_CHANGE`) legitimately carry `evidence: null`; never synthesise a line for a
   relation that has no syntactic site.
 
-The confidence threshold gate applies to `CALLS` edges only. `DEFINES`, `IMPORTS` and `INHERITS`
+The confidence threshold gate applies to `CALLS` and `TESTS` edges only. `DEFINES`, `IMPORTS` and `INHERITS`
 carry no confidence and must not be dropped by a confidence filter.
 
 ### Artifacts
@@ -129,7 +225,7 @@ index; the GitHub Action drops it from both the upload and the branch push.
 ### Determinism
 
 The discovery order dictates the emitted order of every record in `nodes.jsonl`, `edges.jsonl` and
-`chunks.jsonl`. `parse.discover()` therefore sorts by `Path.as_posix()` rather than returning
+`chunks.jsonl`. `discovery.discover()` therefore sorts by `Path.as_posix()` rather than returning
 filesystem order, and applies `DEFAULT_SKIP_DIRS` identically on both the git-tracked and
 directory-walk paths. Two builds of the same commit on different machines produce byte-identical
 artifacts.
@@ -149,6 +245,25 @@ rather than going quietly stale:
 | Every exclusion glob matches its own representative paths | `test_every_exclusion_glob_matches_its_representative_paths` |
 | A fresh clone, whose mtimes all moved, does not read as stale | `test_freshness_ignores_a_touched_but_unchanged_file` |
 | A build does not index its own output directory | `test_freshness_does_not_count_the_index_as_added_source` |
+
+### Parse budget
+
+A file's parse can be far costlier than its size suggests: `x = a<b<a<b<...;` as C++ is quadratic
+in tree-sitter's time and memory, and 300 KB of it exhausted 13.8 GB. tree-sitter cannot be
+interrupted from Python, so `parsepool.py` runs parses that can be expensive in worker processes and
+kills a worker whose file runs over `--parse-timeout` (10 s by default; the slowest real file across
+the five benchmark corpora took 0.74 s). On Linux a worker's address space is capped too, so a
+runaway allocation crashes only that worker, and the parent re-runs the files in flight one at a time
+to pin the crash on the file that caused it. Either way the file keeps its node, contributes no
+symbols, is counted (`skipped_parse_timeout`, `skipped_parse_crash`) and is never cached. A parallel
+build supervises every file; a serial one parses files up to 16 KB in-process, where a parse over
+budget is discarded after the fact rather than interrupted. Workers start from a forkserver on
+POSIX, never by forking the (often multi-threaded) build process, and a pool that makes no
+progress for 120 s (no worker starting up, starting or finishing a file) is abandoned for an in-process parse rather than waited on.
+
+The budget is the one input to the graph that is not a function of the tree: a file that runs over
+it on a slow machine and under it on a fast one indexes differently. It is set an order of magnitude
+above any real file so that this never happens outside an adversarial input.
 
 ### Provenance recorded in the manifest
 
@@ -240,11 +355,12 @@ user.
 
 ## 4. Language support
 
-Seventeen languages get symbol-level treatment; every other file is still indexed as text.
+Nineteen languages get symbol-level treatment, plus the code embedded in Vue and Svelte components
+and Jupyter notebooks (below); every other file is still indexed as text.
 Coverage is not uniform across them, and the differences are large enough that "supported"
 on its own would mislead.
 
-The scorecard below is computed from this project's own test corpus. **Only two of the seventeen
+The scorecard below is computed from this project's own test corpus. **Only two of the nineteen
 are additionally measured on third-party repositories** — Python and TypeScript, in
 [`benchmarks/real/`](../benchmarks/real/README.md) — and the gap between those two kinds of
 evidence is not small. Both parse defects found in the 2026-10 retrieval round
@@ -257,10 +373,10 @@ language has been exercised against real code".
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
-| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
+| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 3 funcs |
 | **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 5 funcs |
 | **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 9 funcs |
-| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 3 funcs |
+| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 5 funcs |
 | **java** | Tier 2 | **67 (C+)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 30 (F) | 20 (F) | 1 funcs |
 | **kotlin** | Tier 2 | **64 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 30 (F) | 0 (F) | 4 funcs |
 | **php** | Tier 3 | **72 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 30 (F) | 0 (F) | 5 funcs |
@@ -268,10 +384,12 @@ language has been exercised against real code".
 | **csharp** | Tier 3 | **64 (C)** | 90 (A-) | 60 (C) | 65 (C+) | 90 (A-) | 30 (F) | 0 (F) | 3 funcs |
 | **ruby** | Tier 3 | **62 (C)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 30 (F) | 0 (F) | 3 funcs |
 | **c** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 1 funcs |
-| **cpp** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 10 funcs |
+| **cpp** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 16 funcs |
+| **objc** | Tier 4 | **61 (C)** | 85 (B+) | 85 (B+) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 2 funcs |
 | **scala** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 0 funcs |
 | **swift** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 4 funcs |
 | **bash** | Tier 4 | **51 (D)** | 85 (B+) | 35 (F) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 3 funcs |
+| **hcl** | Tier 4 | **40 (F)** | 85 (B+) | 10 (F) | 55 (D) | 50 (D) | 0 (F) | 0 (F) | 3 funcs |
 | **lua** | Tier 4 | **35 (F)** | 85 (B+) | 35 (F) | 55 (D) | 0 (F) | 0 (F) | 0 (F) | 2 funcs |
 <!-- END GENERATED: language-scorecard -->
 
@@ -305,6 +423,26 @@ weakest part of an otherwise strong entry — the narrowest gap to close. C and 
 not on this list: the macro problem is upstream of anything repo2graph can fix without a
 preprocessor.
 
+**Files whose language the extension does not settle.** `parse.refine_lang` decides, from the
+bytes already read, before anything is parsed. Line numbers are always the file's own, so a
+citation opens on the right line.
+
+| Extension | Parsed as |
+| --- | --- |
+| `.h` | Objective-C with `@interface`/`@protocol`, C++ with any C++ signal, else C (#377) |
+| `.m` | Objective-C with `@interface`, `@implementation`, `@protocol` or `#import`; otherwise MATLAB, which is indexed as text |
+| `.mm` | Objective-C (the Objective-C++ in it parses with errors, best-effort) |
+| `.vue`, `.svelte` | The `<script>` blocks, as TypeScript when any has `lang="ts"`, else JavaScript. The template is blank lines to the parser, so bindings like `@click="save"` make no edge |
+| `.ipynb` | The code cells, as Python, at the JSON lines they occupy. Magics and `!` shell lines are dropped; a chunk names its cell (`# notebook cell 3`) and its text is the code, not the JSON or the outputs. A minified notebook (not one source line per JSON line) yields no symbols |
+
+**HCL / Terraform** (`.tf`, `.hcl`): every top-level block with a label is a symbol named by its
+Terraform address — `aws_s3_bucket.logs` (kind `resource`), `data.aws_iam_policy_document.read`,
+`var.env`, `module.vpc`, `output.bucket_arn`, `provider.aws`, and `local.<name>` for each
+attribute of a `locals` block. A reference from one block to another (`aws_s3_bucket.logs.arn`,
+`var.env`, `module.vpc.id`) is a `CALLS` edge, which is Terraform's own dependency graph; a
+local module's `source = "./modules/vpc"` is an `IMPORTS` edge to that directory's `main.tf`.
+Built-in functions (`merge`, `cidrsubnet`) are external calls.
+
 ---
 
 ## 5. Module reference
@@ -315,57 +453,78 @@ Sizes are a rough guide to where the complexity is, not a target.
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `graph.py` | 2,333 | Node and edge construction; call, import and inheritance resolution including the scoped-resolution tiers; `CO_CHANGE` from git history; entrypoint marking. |
-| `parse.py` | 2,114 | File discovery (`discover`, `_git_files`, `_walk_files`, `explain_path`), the language table (`LANG_CFG`, `EXT_LANG`), tree-sitter invocation, symbol and import extraction, `_callee_name`. |
-| `export.py` | 1,446 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
-| `query.py` | 1,620 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
-| `viz.py` | 894 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
-| `chunks.py` | 397 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
+| `graph.py` | 1,886 | Node and edge construction; call and inheritance resolution including the scoped-resolution tiers; the parse pass (`parse_all`, `parse_incremental`, chunked reads). |
+| `imports.py` | 437 | Import resolution: an import statement's text to the in-repo file it names, per language. |
+| `parsecache.py` | 169 | The incremental parse cache: one file's parse result to JSON and back (`PARSE_CACHE_FORMAT`). |
+| `derived.py` | 233 | What is derived from the resolved graph: `READS`/`WRITES`/`REFERENCES`, entrypoint marking, `TESTS`. |
+| `cochange.py` | 239 | `CO_CHANGE` (and `--git-authors`) from a bounded, timed read of `git log`. |
+| `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
+| `discovery.py` | 727 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
+| `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
+| `export.py` | 1,621 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
+| `query.py` | 2,058 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
+| `store.py` | 178 | `GraphStore`: the one interface traversal and retrieval read the graph through (node by id, a node's incident edges, nodes and edges in file order). `MemoryGraphStore` is the default; `SqliteGraphStore` is a stdlib-only on-disk prototype. Order is part of the contract. |
+| `viz.py` | 1,295 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
+| `testpaths.py` | 59 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
+| `chunks.py` | 494 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
+| `rerank.py` | 105 | `--rerank`: opt-in cross-encoder reordering of the first-stage candidates, before any budget is spent. A leaf. |
+| `tokenizers.py` | 67 | The token counters `--tokenizer` selects, each carrying the `token_count_method` it reports. A leaf. |
+| `federated.py` | 178 | `--index` more than once: per-index retrieval merged by reciprocal rank under one budget. |
 
 ### Surfaces
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `cli.py` | 1,924 | Argument parsing and every subcommand. The widest module by fan-out. |
-| `mcp/` | 2,387 | The MCP server, split by concern — see below. |
-| `answer.py` | 609 | `rag --answer` only — the one network path in the package. |
+| `cli.py` | 1,942 | Argument parsing and the build, github, query and rag commands. The widest module by fan-out. |
+| `cli_inspect.py` | 341 | Commands that inspect an index or explain a result: map, stats, diff, explain-path, explain, index-status, bug-report, doctor, demo, completion. |
+| `cli_embed.py` | 225 | `embed` and `--verify-rag`. |
+| `mcp/` | 3,406 | The MCP server, split by concern — see below. |
+| `answer.py` | 762 | `rag --answer` only — the one network path in the package. |
 | `explain.py` | 363 | `explain edge` / `node` / `retrieval`. |
 
 ### `mcp/` package
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `traversal.py` | 373 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
-| `schemas.py` | 374 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
-| `server.py` | 479 | Server lifecycle, stdio connection, SDK version gate. |
-| `retrieval.py` | 367 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
-| `tools.py` | 286 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
-| `indexes.py` | 131 | Index open/reopen, per-directory locking, auto-build. |
-| `guardrails.py` | 114 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
-| `nodes.py` | 96 | Node labelling and staleness helpers both retrieval and traversal need. |
+| `traversal.py` | 375 | `repo_path_between`, `repo_blast_radius`, and the doubly bounded graph walks behind them. |
+| `schemas.py` | 453 | Tool annotations, titles, descriptions and JSON schemas. Declaration only. |
+| `server.py` | 711 | Server lifecycle, stdio connection, SDK version gate. |
+| `retrieval.py` | 718 | `repo_map`, `repo_search`, `repo_neighbours`, `repo_find_symbol`, `repo_read`. |
+| `tools.py` | 304 | `dispatch()`, the cache and build-status tools, and the re-export surface. |
+| `indexes.py` | 185 | Index open/reopen, per-directory locking, auto-build. |
+| `guardrails.py` | 103 | Budget clamping, argument ceilings (`MCP_MAX_*`), path scrubbing. |
+| `nodes.py` | 164 | Node labelling and staleness helpers both retrieval and traversal need. |
+| `pagination.py` | 157 | Signed, self-contained continuation cursors for paged tool results. A leaf. |
+| `resources.py` | 133 | MCP resources and prompts: the index's own documents, beside the tools. |
 
 ### Support
 
 | Module | Lines | Owns |
 |---|---:|---|
-| `security.py` | 933 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
-| `demo.py` | 669 | The bundled demo repository and its five starter questions. |
-| `status.py` | 601 | `repo2graph index-status` and the shared freshness computation. |
-| `integrity.py` | 575 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
-| `bugreport.py` | 397 | The redacted diagnostic bundle. |
-| `doctor.py` | 382 | Environment and artifact diagnostics. |
-| `fetch.py` | 374 | `repo2graph github` — clone, build, clean up. |
-| `exclusions.py` | 311 | The named exclusion groups and their glob/reason tables. |
-| `embed.py` | 307 | Vectors, and a stdlib-only `.npy` reader/writer. |
-| `lock.py` | 299 | Build locking and stale-lock recovery. A leaf. |
-| `audit.py` | 288 | Audit log sink. |
-| `schema.py` | 273 | The record shapes the artifacts promise. |
-| `tasks.py` | 263 | Background `--async-build` state. |
-| `changelog.py` | 239 | The per-push structural graph diff in `human/CHANGELOG.md`. |
+| `security.py` | 1,181 | Credential path classification (`_is_secret_path`), content scanning and redaction, event/URL/header sanitisation. A leaf. |
+| `demo.py` | 687 | The bundled demo repository and its five starter questions. |
+| `status.py` | 644 | `repo2graph index-status` and the shared freshness computation. |
+| `integrity.py` | 752 | Output path hardening, artifact checksums, provenance, index verification (`valid` / `corrupt` / `stale` / `incompatible` / `partial`). |
+| `bugreport.py` | 403 | The redacted diagnostic bundle. |
+| `doctor.py` | 466 | Environment and artifact diagnostics. |
+| `fetch.py` | 443 | `repo2graph github` — clone, build, clean up. |
+| `exclusions.py` | 239 | The named exclusion groups and their glob/reason tables. |
+| `embed.py` | 344 | Vectors, and a stdlib-only `.npy` reader/writer. |
+| `scip.py` | 850 | `build --scip`: a bounded protobuf reader for SCIP indexes, symbol-to-node mapping, and the exact-edge merge. |
+| `lock.py` | 345 | Build locking and stale-lock recovery. A leaf. |
+| `audit.py` | 291 | Audit log sink. |
+| `schema.py` | 315 | The record shapes the artifacts promise. |
+| `tasks.py` | 260 | Background `--async-build` state. |
+| `changelog.py` | 230 | The per-push structural graph diff in `human/CHANGELOG.md`. |
 | `cache.py` | 223 | The MCP result cache. A leaf. |
-| `events.py` | 160 | Structured event sink. |
-| `edgemeta.py` | 158 | Edge citation formatting. |
+| `events.py` | 190 | Structured event sink. |
+| `edgemeta.py` | 171 | Edge citation formatting. |
 | `limits.py` | 141 | Shared numeric ceilings. |
+| `parsepool.py` | 306 | Supervised parse workers: the per-file parse budget, the Linux worker memory cap, and pinning a crash on the file that caused it. A leaf. |
+| `config.py` | 247 | `[tool.repo2graph]` and `.repo2graph.toml`: the build options a repository can set for itself, validated, and where each one came from. A leaf. |
+| `graphdiff.py` | 273 | The structural diff between two builds, behind `repo2graph diff` and the per-build changelog. A leaf. |
+| `watch.py` | 110 | `build --watch`: the polling snapshot and the quiet period before a rebuild. |
+| `neo4j.py` | 131 | `build --neo4j-uri`: pushing `graph.cypher` to Neo4j's transactional endpoint in batches. A leaf. |
 
 **If you add a module, make it a leaf.** `security.py`, `cache.py` and `lock.py` import nothing
 from the package, which is why they are the easiest modules here to change safely.

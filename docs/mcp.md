@@ -185,13 +185,16 @@ runtime argument — see [`server.json`](../server.json).
 | `--async-build` | off | Build a missing index on a background thread and return a `task_id` immediately instead of blocking the first tool call. Poll it with `repo_build_status`. |
 | `--cache-size` | `256` | Cached tool results before the least recently used is evicted. `0` disables the cache. |
 | `--cache-ttl` | `60` | Seconds a cached result is served before it is recomputed. |
+| `--staleness-ttl` | `0` | Seconds the working-tree check behind the stale-index note is reused, instead of re-scanning the tree on every tool call (max 300). That scan costs tens of milliseconds per call on a mid-sized repository; an editor that calls on every cursor move (#400) sets this. `0` checks every call. A rebuilt index is checked afresh regardless. |
+| `--secret-keyword` | none | Extra keyword marking a file or path as secret, as `repo2graph build --secret-keyword` takes it. Applied to auto-builds and to every pack. Repeatable. |
+| `--secret-dir` | none | Extra directory name treated as secret. Repeatable. |
 
 **Audit logging**
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
-| `--audit-log-level` | `all` | `none`, `errors` or `all` — which tool calls produce a record. |
+| `--audit-log-level` | `errors` | `none`, `errors` or `all` — which tool calls produce a record. `all` also records every query's text. |
 | `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
 
 ## Tools
@@ -199,9 +202,9 @@ runtime argument — see [`server.json`](../server.json).
 | Tool | Arguments | What comes back |
 |---|---|---|
 | `repo_map` | none | Languages, hub files and top entry points, prefixed with a staleness note (#383) if the working tree has changed since the index was built. Stable across calls, so it caches. Read this first. |
-| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. |
-| `repo_neighbours` | `node_id`, optional `hops`, `limit` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction. |
-| `repo_find_symbol` | `name`, optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s): JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
+| `repo_search` | `query`, optional `k`, `hops`, `budget_tokens`, `cursor` | Seed chunks plus their graph neighbours, each block headed `[cite: path:start-end]`. Pass `cursor` to page through further seeds ([Pagination](#pagination-389)). |
+| `repo_neighbours` | `node_id`, optional `hops`, `limit`, `min_confidence`, `cursor`, `format` | One graph hop from a node: callers, callees, base classes and the defining file, with edge direction, then the node's own `TESTS` edges (the tests that reach it through calls). `min_confidence` drops `CALLS`/`TESTS` edges below it; `1.0` keeps only unambiguous ones. Pass `cursor` to page past `limit` ([Pagination](#pagination-389)). `format: "json"` returns the same rows as JSON ([below](#repo_neighbours-json-output-400)). |
+| `repo_find_symbol` | `name`, or `path` and `line`; optional `kind`, `path_prefix`, `limit` | Name -> `node_id`(s), or the symbols enclosing a file position: JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`. |
 | `repo_read` | `path`, optional `start_line`, `end_line`, `context` | A widened `[cite: path:start-end]` citation window, read from the index rather than the filesystem. |
 | `repo_path_between` | `from_id`, `to_id`, optional `max_hops`, `edge_types`, `max_paths` | Bounded, bidirectional path(s) between two node_ids, with per-edge and minimum confidence. |
 | `repo_blast_radius` | `node_id`, optional `max_hops`, `include_cochange`, `limit` | Reverse reachability from a node_id: callers, subclasses, importers and co-changed files, by hop distance. |
@@ -218,6 +221,28 @@ the one answer guaranteed to be out of date.
 > tool has since been removed, but `repo_blast_radius` keeps its name: it
 > answers a graph question ("what depends on this symbol") rather than a diff
 > question, and renaming it now would break every client that already calls it.
+
+### Notes lead a reply, in every format
+
+Two kinds of `_note: ..._` paragraph can come before a reply's body: one for
+an argument the server coerced or defaulted ([Argument bounds](#argument-bounds)),
+and one warning that the index is stale relative to the working tree. The
+stale-index note is added to `repo_search`, `repo_neighbours`,
+`repo_find_symbol`, `repo_read`, `repo_path_between` and `repo_blast_radius`;
+`repo_map` carries its own.
+
+They precede the body in the JSON formats exactly as they do in markdown, so a
+client that calls `JSON.parse` on a whole reply fails the first time either
+note appears. Parse the JSON that follows the last `_note:` paragraph instead.
+The bundled VS Code extension does this in `toolText.splitNotes`.
+
+Because that convention holds for every tool, the server states it once in the
+`instructions` field of the `initialize` result rather than in each tool's
+description — tool descriptions ship on every session and are kept under 800
+characters each. A client that reads `instructions` has what it needs to parse
+replies without reading this page. `SERVER_INSTRUCTIONS` in
+`repo2graph/mcp/schemas.py` is the text; an SDK that does not accept the
+keyword simply goes without it, as with `_meta`.
 
 ### Tool annotations are honest about auto-build (#292)
 
@@ -256,6 +281,7 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | `budget_tokens` | `repo_search` | 6 000 | 1 (≤ 0 → default) | 12 000 |
 | `limit` | `repo_neighbours` | 20 | 1 | 50 |
 | `limit` | `repo_find_symbol` | 20 | 1 | 50 |
+| `line` | `repo_find_symbol` | — | 1 (below is an error) | — |
 | `limit` | `repo_blast_radius` | 40 | 1 | 50 |
 | `context` | `repo_read` | 0 | 0 | 500 lines |
 | output (chars) | `repo_read` | — | — | 20 000 |
@@ -268,6 +294,8 @@ negative as "not a budget anyone means": it takes the **default** with a note.
 | `node_id` (length) | `repo_neighbours`, `repo_path_between`, `repo_blast_radius` | — | — | 2 000 chars |
 | `path` (length) | `repo_read` | — | — | 2 000 chars |
 | `task_id` (length) | `repo_build_status` | — | — | 200 chars |
+| rows reachable by paging | `repo_neighbours` | — | — | 1 000 |
+| seed candidates reachable by paging | `repo_search` | — | — | 600 ranked chunks |
 
 `repo_neighbours`, `repo_find_symbol`'s results, `repo_path_between` and
 `repo_blast_radius` all take/return ids in the same shape the rest of the
@@ -293,6 +321,51 @@ real (possibly short) answer. This holds on the stdio server and on the HTTP
 transport. An empty result is never
 used to mean "error".
 
+### Pagination (#389)
+
+`repo_search` and `repo_neighbours` take an optional string `cursor`. Paging is
+**opt-in**: a call without `cursor` (or with `cursor: null`) returns exactly
+what it always has, byte for byte, and never a continuation.
+
+- **Start** with `cursor: ""`. That is the first page.
+- **Continue** while the reply's last line is `next_cursor: <token>` — a blank
+  line, then that literal prefix and an opaque token with no spaces. Call the
+  same tool again with `cursor: "<token>"` and the same `query`/`node_id` and
+  `hops`. The token is also returned as `_meta.nextCursor` on the
+  `CallToolResult`, for clients that read structured metadata.
+- **Stop** when a page has no `next_cursor:` line: that was the last page.
+
+What a page is:
+
+| Tool | One page | Free to change between pages |
+| --- | --- | --- |
+| `repo_neighbours` | The next `limit` rows (max 50) of one deterministic walk. Pages are disjoint and together list every neighbour, up to 1 000. The header says which rows it holds: `neighbours of X (rows 51-60):`. | `limit` |
+| `repo_search` | The next `k` seeds (max 50) of a fixed 600-candidate ranking, with their graph neighbours, cut at the first seed that does not fit the budget — that seed opens the next page rather than being dropped. The repo map is only on the first page. A later page never repeats an earlier page's seeds. | `k`, `budget_tokens` |
+
+Every page is held to the same ceilings as an unpaged reply: `limit` ≤ 50
+rows, `k` ≤ 50, and at most `budget_tokens` (itself ≤ 12 000) tokens with the
+`next_cursor:` line included. Paging adds pages; it never makes one bigger.
+
+Two deliberate differences from the unpaged answer: an unpaged
+`repo_neighbours` samples at most six edges per node per hop (so a symbol with
+60 callers shows six of them), while paging walks every edge so later pages
+can reach the rest; and an unpaged `repo_search` may pack a later, smaller
+seed after skipping one that did not fit, while a page stops at that seed.
+
+The token is self-contained and signed (HMAC under a key drawn when the server
+starts), so the server keeps no paging state at all. It is refused, with a
+`isError: true` reply saying what to do, when it:
+
+- comes from an earlier build of the index — `index was rebuilt; re-run the
+  query without cursor`;
+- was altered, is not a cursor at all, or came from another server process
+  (cursors do not survive a restart);
+- belongs to a different tool, `query`/`node_id` or `hops`;
+- is older than 10 minutes.
+
+Re-run the call with `cursor: ""` to start over. Paged replies are not served
+from the result cache, since each carries a freshly issued token.
+
 ### `repo_find_symbol`
 
 **Purpose:** Look up a symbol or file's `node_id` by name -- the lookup an agent
@@ -304,10 +377,22 @@ before it can call `repo_neighbours`, `repo_read`, `repo_path_between` or
 
 | Parameter | Type | Meaning |
 |---|---|---|
-| `name` | string (required) | Symbol or file name to look up (e.g. `"validate_token"`). |
+| `name` | string | Symbol or file name to look up (e.g. `"validate_token"`). Required unless `path` and `line` are given. |
 | `kind` | string (optional) | Exact node `kind` filter (e.g. `"function"`, `"class"`, `"method"`). |
 | `path_prefix` | string (optional) | Only node ids whose path starts with this prefix. |
+| `path` | string (optional) | Only nodes in exactly this repo-relative file (a leading `./` and `\` separators are normalised). |
+| `line` | integer (optional) | With `path`: only the nodes whose span contains this 1-based line. |
 | `limit` | integer (optional) | Maximum candidates returned (default 20, clamped 1-50). |
+
+**Lookup by position (#400).** `path` + `line` answers "which symbol is the
+cursor in": every symbol in that file whose `start_line`-`end_line` span
+contains the line, **innermost first** (a method before its class), then the
+file node itself, which contains every line -- so a line outside every symbol
+returns just the file. `name` may then be omitted; given, it narrows the
+enclosing set. A `line` below 1 or not a number, or a `line` without `path`,
+is an `isError` result; a file that is not indexed (or is secret-excluded)
+returns `[]`. This is what the [VS Code extension](../editors/vscode/README.md)
+calls on every cursor move.
 
 **Matching order** (the same precedence `_boost_identifiers` uses for BM25
 identifier boosting): an exact name match first; if none, a case-insensitive
@@ -318,6 +403,25 @@ caller disambiguates rather than the server guessing. A name matching nothing
 returns `[]`, not an error. Secret-excluded paths never appear.
 
 **Output:** JSON array of `{node_id, name, qualname, kind, path, start_line, end_line, lang}`.
+
+### `repo_neighbours` JSON output (#400)
+
+`format: "json"` (default `"markdown"`) returns the rows the markdown lists, in
+the same order, as one object -- for a program, such as an editor, that has to
+jump to each neighbour rather than read about it:
+
+| Field | Meaning |
+|---|---|
+| `node` | The node asked about: `{node_id, type, name, qualname, kind, path, start_line, end_line, lang}`. |
+| `neighbours` | One object per row: `edge` (`CALLS`, `DEFINES`, ...), `direction` (`in`/`out`), the neighbour's own fields as in `node`, `via` (the node the edge was followed from), `at` (where the edge is written, `path:line`, or `null`), `confidence`, `candidate_count` and `count` (each `null` when the edge has none). |
+| `cochange` | Files historically edited with the node's file, `{node_id, path, count}`, most frequent first, at most `limit`. A symbol has no `CO_CHANGE` edge of its own -- history is per file -- so this is how a symbol's caller gets it in the same call. |
+| `truncated` | `true` when `limit` cut the listing. |
+| `next_cursor` | Paged calls only: the token for the next page, or `null` on the last. It is a field rather than the trailing `next_cursor:` line, which would stop the reply parsing as JSON; `_meta.nextCursor` carries it too. |
+
+Notes the server adds (an argument it defaulted, the stale-index warning)
+still lead the reply as `_note: ..._` paragraphs before the JSON, as they do
+for every JSON tool — see [Notes lead a reply](#notes-lead-a-reply-in-every-format).
+Secret-excluded nodes never appear.
 
 ### `repo_read`
 
@@ -510,6 +614,25 @@ returns the same JSON shape (`status: "unknown"` and an `error` sentence) with
    }
    ```
 
+## Resources and prompts
+
+Besides tools, the server offers the index's stable documents as **resources**,
+so a client can attach them once instead of paying for them in every tool result:
+
+| URI | Type | What it is |
+| --- | --- | --- |
+| `repo2graph://map` | `text/markdown` | The repository map, the same text `repo_map` returns |
+| `repo2graph://stats` | `application/json` | `stats.json`: graph shape and quality counters |
+| `repo2graph://manifest` | `application/json` | `manifest.json`: schema version, build id, what each artifact holds |
+
+None of them carries source text. A resource read is written to the audit log
+like a tool call (`resources/read`). Reading before an auto-built index exists
+is an error that says so; a tool call starts the build.
+
+**Prompts** name the tools for four common questions, for clients that offer
+prompts to the user: `explain-symbol` (`symbol`), `trace-flow` (`source`,
+`target`), `what-breaks` (`symbol`) and `orient`.
+
 ## Three promises the server keeps that the CLI leaves to you
 
 - **Secrets are excluded, always.** A tool an agent calls unattended never returns
@@ -530,11 +653,14 @@ extra: without it the CLI, the Action and the Python API are all unaffected.
 
 ### What it does not promise: freshness
 
-A long-running server does not watch the filesystem. `repo_map` compares the
-index against the working tree (per-file sha256 from `index.state.json`,
-same signal `repo2graph index-status`/`doctor` use) and prepends a `_note:`
-line when they have diverged -- but that check only *runs* when `repo_map` is
-called, and answers from a stale graph are still served in the meantime: a
+A long-running server does not watch the filesystem. It compares the index
+against the working tree (per-file sha256 from `index.state.json`, same signal
+`repo2graph index-status`/`doctor` use) and prepends a `_note:` line when they
+have diverged -- `repo_map` and the six tools listed under
+[Notes lead a reply](#notes-lead-a-reply-in-every-format) -- but that check
+only *runs* when one of them is called, and `--staleness-ttl` can reuse its
+answer for up to 300 seconds. Answers from a stale graph are still served in
+the meantime: a
 `[cite: path:start-end]` citation from a stale index names real lines that
 may hold different code. Treat a staleness note as "rebuild before trusting
 citations," and `repo2graph index-status -o <out>` for the full diff of what
@@ -669,21 +795,21 @@ Every tool returns a string. There is no per-result `path` field to parse — th
 citation is in the text, in a stable form:
 
 ```
-- CALLS in: `check_index_freshness` (repo2graph/doctor.py:1051) [sym:repo2graph/doctor.py::check_index_freshness]  -- at repo2graph/doctor.py:1075
+- CALLS in: `check_git` (repo2graph/doctor.py:202) [sym:repo2graph/doctor.py::check_git]  -- at repo2graph/doctor.py:206
 ```
 
 Three things in that line, and the distinction matters:
 
-- `(repo2graph/doctor.py:1051)` — where the **neighbour** is defined.
+- `(repo2graph/doctor.py:202)` — where the **neighbour** is defined.
 - `[sym:...]` — the node id, which is the argument for the next
   `repo_neighbours` call.
-- `-- at repo2graph/doctor.py:1075` — where the **call is written**. For "what
+- `-- at repo2graph/doctor.py:206` — where the **call is written**. For "what
   calls this", this is the line you actually want to open.
 
 An edge repo2graph is unsure of says so:
 
 ```
-- CALLS out: `ResultCache.get` (repo2graph/cache.py:128) [sym:...]  -- at repo2graph/status.py:124, AMBIGUOUS 0.5 of 3 candidates
+- CALLS out: `ResultCache.get` (repo2graph/cache.py:146) [sym:...]  -- at .github/scripts/summary.py:114, AMBIGUOUS 0.067 of 3 candidates
 ```
 
 That is a `.get()` on a dictionary that matched three methods named `get`.
@@ -735,12 +861,12 @@ reached through a plugin registry.
 
 | Symptom | Likely cause | Check |
 |---|---|---|
-| "server failed to start" | missing `[mcp]` extra, or invalid JSON in the config | `repo2graph doctor .` → MCP Client Configuration |
-| Tools listed but return nothing | the server's path argument does not exist, or is relative | same check; it validates the path |
+| "server failed to start" | missing `[mcp]` extra, or invalid JSON in the config | `repo2graph doctor .` → MCP Server |
+| Tools listed but return nothing | the server's path argument does not exist, or is relative | `repo2graph index-status -o .r2g` names the index the server would open |
 | First call times out | auto-build on a large repo | pre-build, or add `--async-build` |
 | Answers cite code you deleted | stale index | `repo2graph index-status -o .r2g` |
-| Answers are vague and repetitive | generated code dominating retrieval | `repo2graph doctor .` → Generated / Vendored Code prints the `--exclude-group` flags |
-| A whole language returns no symbols | grammar not loading | `repo2graph doctor .` → Parser Coverage |
+| Answers are vague and repetitive | generated code dominating retrieval | rebuild with `--exclude-group generated,vendor`; `--exclude-group help` lists them, and `repo2graph explain-path <path>` says why one file is in or out |
+| A whole language returns no symbols | grammar not loading | `repo2graph doctor .` → Tree-sitter Grammars |
 
 Still stuck? `repo2graph bug-report --category answer-unhelpful` assembles a
 bundle that is safe to paste into a public issue: no file content, no
@@ -749,9 +875,9 @@ you pass `--include-paths`.
 
 #### What not to rely on
 
-- **Completeness of callers.** Call resolution is name-based. Across the five
-  benchmark repositories, 4.6%–21.3% of `CALLS` edges are ambiguous
-  ([limitations](architecture.md)). No edge does not prove no call.
+- **Completeness of callers.** Call resolution is name-based. Across the thirteen
+  gallery repositories in [`examples/`](../examples/README.md), 10%–25% of `CALLS`
+  edges are ambiguous ([limitations](architecture.md)). No edge does not prove no call.
 - **Freshness.** The index is a snapshot and nothing watches the filesystem.
   The server rebuilds when the index is missing, not when it is stale.
 - **Generated code being marked.** It is indexed exactly like hand-written

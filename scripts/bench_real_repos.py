@@ -27,6 +27,10 @@ definitions that answer it:
 * ``repo2graph-vec-bm25``
                       -- vectors with graph expansion off, to separate what the
                          vectors add from what the graph adds.
+* ``repo2graph-rerank``
+                      -- the default call with the top 50 candidates re-ordered by
+                         a cross-encoder before the budget is spent. Requires
+                         ``--rerank`` (#381).
 * ``ripgrep``         -- ``rg`` for the question's words, then read +/-15 lines
                          around the best-scoring hits until the budget is spent.
                          This is the grep-then-read loop a coding agent runs,
@@ -264,6 +268,12 @@ def main(argv: list[str] | None = None) -> int:
         "downloads nothing if the sentence-transformers model is already cached.",
     )
     ap.add_argument(
+        "--rerank",
+        action="store_true",
+        help="also measure the default call with the cross-encoder reranker (#381): the "
+        "repo2graph-rerank row. Needs the `rag` extra and the model (~90 MB) downloadable.",
+    )
+    ap.add_argument(
         "--repos",
         type=Path,
         default=BENCH / "repos.json",
@@ -281,6 +291,11 @@ def main(argv: list[str] | None = None) -> int:
         from repo2graph.embed import default_embedder
 
         embedder = default_embedder()
+    reranker = None
+    if args.rerank:
+        from repo2graph.rerank import default_reranker
+
+        reranker = default_reranker()  # fails loudly: a benchmark must not fall back
 
     repos = {r["name"]: r for r in json.loads(args.repos.read_text(encoding="utf8"))["repos"]}
     tasks = json.loads(args.tasks.read_text(encoding="utf8"))["tasks"]
@@ -394,6 +409,13 @@ def main(argv: list[str] | None = None) -> int:
                     embedder=embedder,
                     conditional_expansion=True,
                 )
+            reranked = (
+                idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, rerank=reranker
+                )
+                if reranker is not None
+                else None
+            )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
@@ -425,6 +447,17 @@ def main(argv: list[str] | None = None) -> int:
                         ),
                     ]
                     if vec is not None and vec_bm25 is not None
+                    else []
+                ),
+                *(
+                    [
+                        (
+                            "repo2graph-rerank",
+                            covered_lines_r2g(reranked, root),
+                            reranked["tokens_used"],
+                        )
+                    ]
+                    if reranked is not None
                     else []
                 ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
@@ -508,6 +541,13 @@ def main(argv: list[str] | None = None) -> int:
                     embedder=embedder,
                     conditional_expansion=True,
                 )
+            reranked = (
+                idx.pack_context(
+                    t["query"], budget_tokens=budget, exclude_secrets=True, rerank=reranker
+                )
+                if reranker is not None
+                else None
+            )
             rg_text, rg_lines = ripgrep(rg, root, t["query"], repo["language"], budget)
             for method, lines, used in (
                 ("repo2graph", covered_lines_r2g(full, root), full["tokens_used"]),
@@ -541,6 +581,17 @@ def main(argv: list[str] | None = None) -> int:
                     if vec is not None and vec_bm25 is not None
                     else []
                 ),
+                *(
+                    [
+                        (
+                            "repo2graph-rerank",
+                            covered_lines_r2g(reranked, root),
+                            reranked["tokens_used"],
+                        )
+                    ]
+                    if reranked is not None
+                    else []
+                ),
                 ("ripgrep", rg_lines, count_tokens(rg_text)),
             ):
                 hit = found(t["evidence"], lines)
@@ -570,6 +621,7 @@ def main(argv: list[str] | None = None) -> int:
             "repo2graph-vec-bm25",
             "repo2graph-vec-cite",
             "repo2graph-vec-cond",
+            "repo2graph-rerank",
             "ripgrep",
         ):
             sel = [r for r in rows if r["budget"] == budget and r["method"] == method]
@@ -604,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 "repo2graph-vec-bm25",
                 "repo2graph-vec-cite",
                 "repo2graph-vec-cond",
+                "repo2graph-rerank",
                 "ripgrep",
             ):
                 sel = [

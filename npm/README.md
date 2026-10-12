@@ -77,12 +77,12 @@ on that number (the resolution order above always reaches for whatever `uvx`/`pi
 current), so the version match is a release-process discipline rather than something the script
 checks.
 
-Publishing is a manual `npm publish --provenance` from this directory today (`publishConfig` in
-`package.json` already requests provenance attestations, matching the `attestations: true` this
-repository's PyPI publish step already sets — see
-[`.github/CONTRIBUTING.md`](../.github/CONTRIBUTING.md)); wiring it into the same `publish.yml` run
-that ships the PyPI release is tracked as follow-up work rather than done in this change, so
-that a bad npm publish cannot block or partially complete the PyPI release it is meant to pair with.
+`publish.yml` publishes it from the same tag as the PyPI release, with `npm publish --provenance`
+(matching the `attestations: true` on the PyPI step), after the PyPI job succeeds and checking
+first that `package.json`'s version is the release's. It runs beside the GitHub Release rather
+than before it, so a failed npm publish can neither block nor half-complete the PyPI release it
+pairs with. It needs an `NPM_TOKEN` secret in the `npm` environment; without one the job warns
+and skips.
 
 ## Local development
 

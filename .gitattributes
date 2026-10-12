@@ -5,3 +5,5 @@
 *.jpg binary
 *.jpeg binary
 *.gif binary
+# SCIP indexes are protobuf: a line-ending rewrite would corrupt them (#380).
+*.scip binary

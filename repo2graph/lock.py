@@ -6,6 +6,7 @@ stale lock detection, and clean recovery.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
@@ -64,6 +65,30 @@ class LockTimeoutError(TimeoutError):
     """Raised when an index build lock cannot be acquired within the timeout."""
 
 
+class LockUnavailableError(LockTimeoutError):
+    """The lock file cannot be created at all (read-only mount, no permission).
+
+    A subclass so every existing `except LockTimeoutError` still reports it.
+    """
+
+
+_UNWRITABLE_ERRNOS = frozenset(
+    {errno.EROFS, errno.EACCES, errno.EPERM, errno.ENOSPC, errno.ENOENT, errno.ENOTDIR}
+)
+
+# EACCES/EPERM are only *permanently* unwritable on POSIX, where a permission
+# error does not clear by itself. On Windows the same errno is what a transient
+# sharing violation raises -- OneDrive, antivirus scanners and the search
+# indexer briefly open files in a fresh index, and NTFS answers WinError 5/32
+# until they let go. `export._rename` already retries exactly that. Failing fast
+# on them here would turn a self-clearing hiccup into a build failure blaming a
+# read-only parent, which is the opposite of the truth; so on Windows they stay
+# in the retry loop and are only reported if the whole timeout is spent on them.
+_RETRY_WHILE_HELD = (
+    frozenset({errno.EACCES, errno.EPERM}) if platform.system() == "Windows" else frozenset()
+)
+
+
 class BuildLock:
     """Cross-platform advisory file lock for index builds."""
 
@@ -86,6 +111,10 @@ class BuildLock:
         """Acquire the build lock, retrying until timeout."""
         self.lock_file.parent.mkdir(parents=True, exist_ok=True)
         start_time = time.monotonic()
+        # The last open() failure that was unwritable-but-retryable, so a
+        # timeout spent entirely on one reports that rather than blaming a
+        # holder whose metadata was never readable either.
+        held_open_exc: OSError | None = None
 
         while True:
             fh = None
@@ -100,7 +129,18 @@ class BuildLock:
                 # file we locked. Either way this attempt did not win.
                 self._release_os_lock(fh)
                 fh.close()
-            except OSError:
+            except OSError as exc:
+                # Not contention: the lock file cannot be created at all. Retrying
+                # for the whole timeout and then blaming a holder that does not
+                # exist sends the user after the wrong problem.
+                if fh is None and exc.errno in _UNWRITABLE_ERRNOS:
+                    if exc.errno in _RETRY_WHILE_HELD:
+                        held_open_exc = exc
+                    else:
+                        raise LockUnavailableError(
+                            f"cannot create build lock {self.lock_file}: {exc.strerror} "
+                            f"-- is the output directory's parent read-only?"
+                        ) from exc
                 if fh is not None:
                     try:
                         fh.close()
@@ -109,6 +149,12 @@ class BuildLock:
 
             elapsed = time.monotonic() - start_time
             if elapsed >= self.timeout:
+                if held_open_exc is not None:
+                    raise LockUnavailableError(
+                        f"cannot create build lock {self.lock_file} after {self.timeout:.1f}s: "
+                        f"{held_open_exc.strerror} -- another process is holding it open, or the "
+                        f"output directory's parent is read-only"
+                    ) from held_open_exc
                 holder_info = self._read_holder_metadata()
                 raise LockTimeoutError(
                     f"Timed out after {self.timeout:.1f}s waiting for build lock on {self.lock_file}. "

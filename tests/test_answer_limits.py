@@ -164,6 +164,8 @@ def test_many_small_deltas_are_capped_in_total(monkeypatch, capsys):
     limit = answer.MAX_ANSWER_BYTES
     body = ndjson(["z" * 1000] * 9000)
     assert len(body) > limit
+    # The text cap would stop this first; this test is about the byte ceiling.
+    monkeypatch.setattr(answer, "MAX_ANSWER_CHARS", 10 * limit)
 
     only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
     resp = serve(monkeypatch, body)
@@ -191,6 +193,7 @@ def test_the_truncation_note_goes_to_stderr_not_stdout(monkeypatch, capsys):
     the answer on stdout.
     """
     only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
+    monkeypatch.setattr(answer, "MAX_ANSWER_CHARS", 10 * answer.MAX_ANSWER_BYTES)
     serve(monkeypatch, ndjson(["y" * 1000] * 9000))
     sink = io.StringIO()
 
@@ -487,3 +490,56 @@ def test_a_prompt_stream_is_not_reported_as_timed_out(monkeypatch, capsys):
 
     assert resp.now < answer.MAX_ANSWER_SECONDS
     assert "still streaming after" not in capsys.readouterr().err
+
+
+# ------------------------------------------------- #285: the other bounds ----
+
+
+def test_answer_text_is_capped_and_marked_incomplete(monkeypatch, capsys):
+    only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
+    monkeypatch.setattr(answer, "MAX_ANSWER_CHARS", 5000)
+    serve(monkeypatch, ndjson(["w" * 1000] * 50))
+    sink = io.StringIO()
+
+    text = answer.stream_answer(PACK, out=sink)
+
+    assert len(text) == 5000 and text.complete is False
+    assert "characters of text; the answer above is incomplete" in capsys.readouterr().err
+
+
+def test_a_whole_answer_is_complete(monkeypatch, capsys):
+    only_provider(monkeypatch, "OLLAMA_HOST", "http://127.0.0.1:11434")
+    serve(monkeypatch, ndjson(["fine"]))
+    assert answer.stream_answer(PACK, out=io.StringIO()).complete is True
+
+
+def test_a_provider_error_never_echoes_the_api_key(monkeypatch):
+    import urllib.error
+
+    key = "sk-live-" + "k" * 30
+    spec = {"name": "openai", "env": "OPENAI_API_KEY", "value": key}
+    body = io.BytesIO(f'{{"error": "Incorrect API key provided: {key}"}}'.encode())
+    exc = urllib.error.HTTPError("https://api.openai.com/v1/x", 401, "no", {}, body)
+    msg = answer._http_error(spec, exc)
+    assert key not in msg and "HTTP 401" in msg
+
+
+def test_the_connection_is_opened_under_the_connect_timeout(monkeypatch):
+    import http.client
+
+    seen = []
+
+    def fake_connect(self):
+        seen.append(self.timeout)
+        self.sock = None
+
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", fake_connect)
+    conn = answer._HTTPConnection("127.0.0.1", 9, timeout=answer.HTTP_TIMEOUT)
+    conn.connect()
+    assert seen == [answer.CONNECT_TIMEOUT]
+    assert conn.timeout == answer.HTTP_TIMEOUT
+
+
+def test_the_guarded_opener_uses_the_connect_timeout_handlers():
+    kinds = {type(h) for h in answer._OPENER.handlers}
+    assert answer._HTTPHandler in kinds and answer._HTTPSHandler in kinds

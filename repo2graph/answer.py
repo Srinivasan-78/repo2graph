@@ -5,6 +5,8 @@ asks for it, and no provider SDK is used — stdlib `urllib.request` only, so th
 core install stays pure Python. The provider is chosen from the environment.
 """
 
+import http.client
+import ipaddress
 import json
 import os
 import secrets
@@ -16,9 +18,14 @@ import urllib.request
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from .events import diagnostic
 from .limits import render as limitations_block
 
 HTTP_TIMEOUT = 300
+# Seconds to open the connection, TLS handshake and proxy tunnel included
+# (#285). HTTP_TIMEOUT is sized for the gap before a slow model's first token;
+# an endpoint that does not even accept the connection should not get that long.
+CONNECT_TIMEOUT = 30
 ERROR_SNIFF_LINES = 8  # unparsable lines kept, to explain an empty answer
 ERROR_SNIPPET = 400  # chars of a provider error body echoed to the user
 # An answer is a few thousand tokens of prose; a stream past this ceiling is not
@@ -40,6 +47,9 @@ MAX_ANSWER_BYTES = 8 << 20
 # `time.monotonic()`, not the wall clock, so an NTP step or a DST change cannot
 # cut a healthy answer short or extend a stalled one.
 MAX_ANSWER_SECONDS = 600
+# Characters of answer text kept. MAX_TOKENS is only asked of the provider; this
+# is the bound on what is actually streamed out, ~25x a real answer (#285).
+MAX_ANSWER_CHARS = 200_000
 # Size of one read() off the socket. The block read is what bounds the *per-line*
 # axis: iterating the response reads until "\n", so a body that never sends one
 # is buffered whole before any code of ours sees a byte.
@@ -55,11 +65,29 @@ PROVIDER_ENV = tuple(PROVIDER_MAP.values())
 DEFAULT_MODELS = {
     "gemini": "gemini-3.6-flash",
     "openai": "gpt-4o-mini",
-    "anthropic": "claude-haiku-4-5",
+    "anthropic": "claude-haiku-5-5",
     "ollama": "llama3.1",
 }
 ANTHROPIC_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
+
+# Claude models that think by default and accept `thinking: disabled` at their
+# default effort. A short cited answer gains little from thinking, and thinking
+# tokens are spent out of MAX_TOKENS, so on these it is turned off. Other ids are
+# sent unchanged: some reject the field outright (thinking is always on), and
+# older ones do not think unless asked.
+ANTHROPIC_THINKING_OFF = frozenset({"claude-haiku-5-5"})
+
+# Context windows (tokens) of the default models, for the room-for-the-answer
+# check (#290). A model not listed here is not checked -- this is a guard
+# against an unbounded pack, not a capability database.
+CONTEXT_WINDOWS = {
+    "claude-haiku-5-5": 1_000_000,
+    "claude-haiku-4-5": 200_000,
+    "gpt-4o-mini": 128_000,
+}
+#: Extra headroom on the prompt estimate: it is len // 4, not a tokenizer.
+TOKEN_ESTIMATE_MARGIN = 0.25
 
 SYSTEM_PROMPT = (
     "You are a code assistant answering strictly from the repository map and the "
@@ -117,7 +145,11 @@ def pick_provider(
     env: dict[str, str] | os._Environ[str] | Any | None = None,
     provider: str | None = None,
 ) -> dict[str, str] | None:
-    """The configured provider, or first in GEMINI > OPENAI > ANTHROPIC > OLLAMA order."""
+    """The requested provider, or the only configured one.
+
+    `GOOGLE_API_KEY` is accepted as a fallback for `GEMINI_API_KEY`. With two
+    or more providers configured and none requested, this refuses to choose.
+    """
     env = os.environ if env is None else env
     if provider is not None:
         if provider not in PROVIDER_MAP:
@@ -131,21 +163,26 @@ def pick_provider(
         if not value:
             raise SystemExit(f"provider {provider!r} requested but {env_var} is not set")
         return {"name": provider, "env": env_var, "value": value}
-    gemini_key = (env.get("GEMINI_API_KEY") or "").strip()
-    if gemini_key:
-        return {"name": "gemini", "env": "GEMINI_API_KEY", "value": gemini_key}
-    google_key = (env.get("GOOGLE_API_KEY") or "").strip()
-    if google_key:
-        return {"name": "gemini", "env": "GOOGLE_API_KEY", "value": google_key}
+    found: list[dict[str, str]] = []
     for name, var in (
+        ("gemini", "GEMINI_API_KEY"),
+        ("gemini", "GOOGLE_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("ollama", "OLLAMA_HOST"),
     ):
         value = (env.get(var) or "").strip()
-        if value:
-            return {"name": name, "env": var, "value": value}
-    return None
+        if value and name not in {f["name"] for f in found}:
+            found.append({"name": name, "env": var, "value": value})
+    # Which company receives the user's source must be a choice, not whichever
+    # credential happens to be exported in this shell.
+    if len(found) > 1:
+        names = ", ".join(f"{f['name']} ({f['env']})" for f in found)
+        raise SystemExit(
+            f"several LLM providers are configured: {names}. "
+            "Pick one with --provider; repo2graph will not guess where to send your code."
+        )
+    return found[0] if found else None
 
 
 def build_prompt(pack: dict[str, Any] | None, *, nonce: str | None = None) -> tuple[str, str]:
@@ -208,6 +245,7 @@ def _request(
                 "max_tokens": MAX_TOKENS,
                 "system": system,
                 "messages": [{"role": "user", "content": user}],
+                **({"thinking": {"type": "disabled"}} if model in ANTHROPIC_THINKING_OFF else {}),
             },
         )
     if name == "gemini":
@@ -254,7 +292,21 @@ def _ollama_base(value: str) -> str:
     parts = urllib.parse.urlsplit(base)
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
+    if parts.scheme == "http" and not _is_loopback(parts.hostname or ""):
+        diagnostic(
+            f"warning: OLLAMA_HOST={value!r} is plain HTTP to a non-loopback host; "
+            "your code and the answer cross the network unencrypted"
+        )
     return base
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _delta(name: str, raw: bytes) -> str:
@@ -441,6 +493,12 @@ def _http_error(spec: dict[str, str], exc: Any) -> str:
         detail = exc.read().decode("utf8", "replace").strip()[:ERROR_SNIPPET]
     except (OSError, ValueError, AttributeError):
         pass
+    # Some providers quote the rejected key back in the error body.
+    if spec["env"] != "OLLAMA_HOST" and spec.get("value"):
+        detail = detail.replace(spec["value"], "[REDACTED:api_key]")
+    from .security import redact_content
+
+    detail = redact_content(detail)[0]
     head = f"{spec['name']} returned HTTP {getattr(exc, 'code', '?')}"
     return f"{head}: {detail}" if detail else head
 
@@ -546,9 +604,62 @@ class _SameOriginRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+class _ConnectTimeout:
+    """Open the socket under CONNECT_TIMEOUT, then read under the request's own timeout."""
+
+    timeout: Any
+    sock: Any
+
+    def connect(self) -> None:
+        read_timeout = self.timeout
+        self.timeout = CONNECT_TIMEOUT
+        try:
+            super().connect()  # type: ignore[misc]
+        finally:
+            self.timeout = read_timeout
+        if isinstance(read_timeout, (int, float)) and self.sock is not None:
+            self.sock.settimeout(read_timeout)
+
+
+class _HTTPConnection(_ConnectTimeout, http.client.HTTPConnection):
+    pass
+
+
+class _HTTPSConnection(_ConnectTimeout, http.client.HTTPSConnection):
+    pass
+
+
+class _HTTPHandler(urllib.request.HTTPHandler):
+    def do_open(self, http_class: Any, req: Any, **kw: Any) -> Any:
+        return super().do_open(_HTTPConnection, req, **kw)
+
+
+class _HTTPSHandler(urllib.request.HTTPSHandler):
+    def do_open(self, http_class: Any, req: Any, **kw: Any) -> Any:
+        return super().do_open(_HTTPSConnection, req, **kw)
+
+
 # Module-level so a test can swap it; `urlopen` would rebuild the default
 # opener, and with it the permissive redirect handler replaced above.
-_OPENER = urllib.request.build_opener(_SameOriginRedirect)
+_OPENER = urllib.request.build_opener(_SameOriginRedirect, _HTTPHandler, _HTTPSHandler)
+
+
+def _check_room_for_answer(model: str, system: str, user: str) -> None:
+    """Refuse a prompt that leaves no room for MAX_TOKENS of answer (#290).
+
+    The prompt size is the 4-chars-per-token estimate plus a margin, because it
+    is an estimate. Only models in CONTEXT_WINDOWS are checked.
+    """
+    window = CONTEXT_WINDOWS.get(model)
+    if window is None:
+        return
+    estimate = int((len(system) + len(user)) / 4 * (1 + TOKEN_ESTIMATE_MARGIN))
+    if estimate + MAX_TOKENS > window:
+        raise SystemExit(
+            f"the pack is about {estimate:,} tokens (estimated); with {MAX_TOKENS:,} "
+            f"reserved for the answer it does not fit {model}'s {window:,}-token "
+            "context. Lower --budget / --budget-tokens."
+        )
 
 
 def stream_answer(
@@ -567,6 +678,7 @@ def stream_answer(
             + f" or {PROVIDER_ENV[-1]}"
         )
     system, user = build_prompt(pack)
+    _check_room_for_answer(model or DEFAULT_MODELS[spec["name"]], system, user)
     url, headers, payload = _request(spec, model, system, user)
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf8"), headers=headers, method="POST"
@@ -574,6 +686,8 @@ def stream_answer(
     _disclose(str(spec["name"]), str(spec["env"]), url, len(user))
     write = _writer(out)
     parts: list[str] = []
+    n_chars = 0
+    too_long = False
     raw_tail: list[bytes] = []
     lines: _BoundedLines | None = None
     # _OPENER is looked up on the module at call time, so a test can swap it.
@@ -583,11 +697,17 @@ def stream_answer(
             for raw in lines:
                 piece = _delta(spec["name"], raw)
                 if piece:
+                    if n_chars + len(piece) > MAX_ANSWER_CHARS:
+                        piece = piece[: MAX_ANSWER_CHARS - n_chars]
+                        too_long = True
+                    n_chars += len(piece)
                     parts.append(piece)
                     try:
                         write(piece)
                     except (OSError, ValueError) as exc:
                         raise _WriterError(exc) from exc
+                    if too_long:
+                        break
                 elif len(raw_tail) < ERROR_SNIFF_LINES:
                     raw_tail.append(raw)
     except _WriterError as werr:
@@ -597,6 +717,8 @@ def stream_answer(
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise SystemExit(f"{spec['name']} request failed: {exc}") from None
     except KeyboardInterrupt:
+        if parts:
+            _note_incomplete("interrupted; the answer above is incomplete")
         raise SystemExit(130)
     # Before the empty-answer check: a stream that hit the ceiling without ever
     # carrying decodable text is two separate facts, and both are worth saying.
@@ -604,6 +726,11 @@ def stream_answer(
         _note_truncated(str(spec["name"]), MAX_ANSWER_BYTES)
     if lines is not None and lines.timed_out:
         _note_timed_out(str(spec["name"]), MAX_ANSWER_SECONDS)
+    if too_long:
+        _note_incomplete(
+            f"answer cut off -- {spec['name']} sent more than {MAX_ANSWER_CHARS:,} "
+            "characters of text; the answer above is incomplete"
+        )
     if not parts:
         raise SystemExit(_empty_answer(spec, raw_tail))
     try:
@@ -617,4 +744,19 @@ def stream_answer(
         write("\n")
     except (OSError, ValueError):
         pass
-    return "".join(parts)
+    answer = AnswerText("".join(parts))
+    answer.complete = not (too_long or (lines is not None and (lines.truncated or lines.timed_out)))
+    return answer
+
+
+class AnswerText(str):
+    """The streamed answer; `complete` is False when a bound cut it short."""
+
+    complete: bool = True
+
+
+def _note_incomplete(message: str) -> None:
+    from .events import write_safe
+
+    write_safe(sys.stderr, f"repo2graph: {message}")
+    _flush(sys.stderr)

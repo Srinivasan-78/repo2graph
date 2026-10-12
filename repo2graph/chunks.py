@@ -20,6 +20,11 @@ def _process_chunk_content(
     text: str, nid: str, path: str, policy: str, g: Any
 ) -> tuple[str | None, int]:
     """Apply secret scanning and redaction policy to chunk text."""
+    from .security import count_hidden_unicode
+
+    hidden = count_hidden_unicode(text)
+    if hidden and hasattr(g, "stats"):
+        g.stats["hidden_unicode_chars"] += hidden
     if policy == "exclude-file":
         from .security import scan_content_secrets
 
@@ -137,6 +142,17 @@ def _split_spans(text: str, max_chars: int = MAX_CHARS) -> list[tuple[str, int, 
             buf.append(lines[i])
             size += len(lines[i])
             i += 1
+        if i < len(lines):
+            # Prefer to end the part at a logical block boundary -- the last
+            # blank line in the final quarter of the window -- over cutting
+            # wherever the ceiling fell, so a part does not end one line into
+            # the next statement group (#287).
+            floor = start + max(1, (i - start) * 3 // 4)
+            for j in range(i - 1, floor - 1, -1):
+                if not lines[j].strip():
+                    i = j + 1
+                    buf = lines[start:i]
+                    break
         out.append(("".join(buf), owner[start], owner[i - 1]))
         if i < len(lines):
             i = max(start + 1, i - OVERLAP_LINES)
@@ -211,6 +227,12 @@ def iter_chunks(
         if path not in src_cache:
             try:
                 raw = (g.root / path).read_bytes()
+                if path.lower().endswith(".ipynb"):
+                    # The code cells at their own lines, not the JSON around
+                    # them (#398): outputs can be megabytes of base64 images.
+                    from .parse import notebook_code
+
+                    raw = notebook_code(raw)
                 src_cache[path] = _decode_source(raw)
             except OSError:
                 src_cache[path] = ""
@@ -270,6 +292,18 @@ def iter_chunks(
             f"# file: {n['path']}",
             f"# {n['kind']}: {n['qualname']}  (lines {n['start_line']}-{n['end_line']}, {n['lang']})",
         ]
+        if n["path"].lower().endswith(".ipynb"):
+            # A notebook is read by cell, not by line of JSON (#398).
+            cell = next(
+                (
+                    ln
+                    for ln in reversed(lines[: n["start_line"]])
+                    if ln.startswith("# cell ") and ln[7:].isdigit()
+                ),
+                None,
+            )
+            if cell:
+                header.append(f"# notebook {cell[2:]}")
         if n.get("entrypoint"):
             header.append("# entry point: nothing in this repo calls it — a flow starts here")
         if bases:
@@ -345,6 +379,13 @@ def iter_chunks(
                 "callee_edges": callee_edges,
                 "base_edges": base_edges,
                 "text": "\n".join(part_header) + "\n" + part,
+                # Only on a symbol too large for one chunk, so `explain` and a
+                # reader can tell part 2 of 3 from a whole definition (#287).
+                **(
+                    {"split": {"part": i + 1, "of": len(body_spans), "by": "size"}}
+                    if len(body_spans) > 1
+                    else {}
+                ),
             }
         pending[n["path"]] -= 1
         if pending[n["path"]] <= 0:

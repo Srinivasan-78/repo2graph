@@ -152,6 +152,7 @@ def test_node_and_edge_types_cover_the_documented_schema():
         "CALLS_EXTERNAL",
         "INHERITS",
         "CO_CHANGE",
+        "TESTS",
     }
 
 

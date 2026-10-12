@@ -15,6 +15,118 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Added
 
+- **Rails and Spring Framework in the gallery, bringing it to thirteen (#462).** Each is in for a
+  limit it makes visible rather than for its size. Rails builds much of its own API at load time
+  (`included do`, `delegate`, `define_method`, Active Record's `method_missing`), so a name-based
+  call graph finds no call site for a large part of what application code invokes; Spring is the
+  other half of that problem, where dependency injection leaves the container to pick the
+  implementation at runtime from annotations and component scans. Both are scoped to the subtrees a
+  request passes through — `actionpack`/`activerecord`/`activesupport`/`railties` `lib/` for Rails
+  (1,276 files, 18,774 nodes, 99,912 edges), the bean container and web stack for Spring (2,121
+  files, 27,469 nodes, 136,027 edges). Both were blocked until now by the leak check fixed below.
+- **`--rerank` on `rag` and `query`, and `rerank=` on `Index.pack_context`/`retrieve`
+  (#381):** a local cross-encoder (`cross-encoder/ms-marco-MiniLM-L-6-v2` by default,
+  `--rerank-model` to change or `@<commit>` to pin) re-orders the top 50 candidates before any
+  budget is spent, breaking the near-ties BM25 leaves. Only the order changes — score values and
+  budget accounting do not. Opt-in; if the `rag` extra is missing or the model fails, the output
+  is byte-identical to a run without it and one `rag_rerank_disabled` line on stderr says why.
+  `scripts/bench_real_repos.py --rerank` adds the `repo2graph-rerank` row to measure it.
+- **`build --scip <index.scip>` (#380):** opt-in exact `CALLS` and `INHERITS` from a SCIP index
+  (e.g. `scip-python index`). In files the index covers, each call site and base it names gets a
+  confidence-1.0 edge with `method`/`resolution_kind` `scip` (or `CALLS_EXTERNAL` for a symbol no
+  indexed file defines); other sites and uncovered files keep their name-resolved edges.
+  `stats.json` reports coverage (`scip_files_covered`, `scip_call_sites_resolved`,
+  `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). The index is read by a bounded,
+  dependency-free protobuf reader; a malformed or oversized one is a warning and heuristic edges,
+  never a failed build. Never auto-detected; also `scip = "<path inside the repo>"` in the config
+  file. Without it every artifact is byte-identical, and full and `--incremental` builds with it
+  are byte-identical too.
+- **VS Code extension (#400):** `editors/vscode/` shows the neighbourhood of the symbol at the
+  cursor -- callers, callees, base classes, defining file, tests and co-changed files -- and
+  follows the cursor; each row opens its file and line. Commands: Reveal in Graph, Show Impact,
+  Index Status (with rebuild), Go to Co-changed Files, Build Index. It drives one warm
+  `repo2graph-mcp` over stdio rather than reimplementing anything; with no index it offers to
+  build one. Its language, node and edge tables are generated from the Python ones
+  (`scripts/generate_vscode_tables.py`) and checked by the test suite. A preview, built from
+  source. Fixes #400.
+- **`repo_find_symbol` by position (#400):** `path` + `line` returns the symbols enclosing that
+  line, innermost first, then the file; `name` is no longer required when they are given.
+- **`repo_neighbours` `format: "json"` (#400):** the same rows as an object with each
+  neighbour's path and lines, edge evidence and confidence, plus the co-changed files of the
+  node's file; a paged reply carries `next_cursor` as a field.
+- **`repo2graph-mcp --staleness-ttl SECONDS` (#400):** reuses the working-tree check behind the
+  stale-index note for that long instead of re-scanning on every call (default `0`, unchanged).
+- **`graph.html#node=<id>` (#400):** the map opens in its detail view selected on that node, and
+  says so when the node is not among those drawn.
+- **Objective-C, HCL/Terraform, Vue, Svelte and Jupyter notebooks (#398):** `.m`/`.mm` (and
+  `.h` headers with `@interface`/`@protocol`) parse as Objective-C, with `[receiver message:]`
+  sends resolved like calls; a `.m` file with no Objective-C signal is MATLAB and stays text.
+  `.tf`/`.hcl` blocks become symbols named by their Terraform address (`aws_s3_bucket.logs`,
+  `var.env`, `module.vpc`, `local.tags`), references between blocks are `CALLS`, and a local
+  module's `source` is an `IMPORTS` edge. The `<script>` blocks of `.vue`/`.svelte` components
+  parse as TypeScript or JavaScript, and a notebook's code cells as Python, at the file's own
+  line numbers; a notebook chunk carries the code, not the JSON or outputs, and names its cell.
+- **`build --reference-edges` (#397):** opt-in `READS`, `WRITES` and `REFERENCES` edges for
+  Python and JS/TS: which module-level variables and class fields a function reads and writes,
+  and which types its annotations name. Exact bindings only (same file, or imported by name);
+  nothing is guessed, and an unbound name is counted in `reference_edges_unresolved`. Off by
+  default, with every default artifact byte-identical. Also `reference-edges = true` in the
+  config file.
+- **`repo2graph diff OLD NEW` (#395):** symbols added, removed and renamed (a moved file's
+  symbols are paired by body, not reported as delete + add), edges added and removed, and each
+  symbol whose callers changed; edges whose only change is confidence are counted, not listed
+  (`--include-confidence` lists them). `--format text|json`.
+- **`build --watch` (#392):** builds once, then rebuilds with `--incremental` after each
+  settled change (`--watch-quiet`, default 1 s). Standard-library polling; an interrupted
+  rebuild leaves the previous index and no lock.
+- **`--git-authors` (#394):** with `--git-history`, each file node records who changed it in
+  those commits: at most five `{name, commits}`, display names after `.mailmap`, never emails.
+- **MCP resources and prompts (#388):** `repo2graph://map`, `://stats` and `://manifest`
+  resources, audited like tool calls; prompts `explain-symbol`, `trace-flow`, `what-breaks`
+  and `orient`. An SDK without the resource hooks keeps its tools.
+- **`build --neo4j-uri` (#401):** pushes `graph.cypher` over Neo4j's HTTP API in batches,
+  standard library only. Credentials come from `NEO4J_USER`/`NEO4J_PASSWORD`, never argv; the
+  host is named on stderr first; a partial push says how far it got, and pushing again is safe.
+- **`query`/`rag --index A --index B` (#396):** one question over several indexes, merged by
+  rank under one budget, each result naming its repository (`[cite: billing:invoice.py:1-2]`).
+  A missing index is skipped with a warning. Cross-repository edges are not attempted.
+- **`rag --tokenizer` and `--token-margin` (#290):** `heuristic` (default), `conservative` or
+  `tiktoken[:ENCODING]`, named in the pack's `token_count_method`; a margin fills to
+  `budget / (1 + margin)`, reported as `token_safety_margin`.
+- **Embedding model revisions (#452):** `--model`/`--embed-model ORG/MODEL@<commit>` pins the
+  download to a revision, and the query side refuses any other.
+- **Build performance gate (#304, #88):** `scripts/perf_bench.py` measures build, write,
+  incremental, peak RSS, output size, index load, query and MCP latency on six synthetic
+  repositories, gated against `benchmarks/perf/baseline.json` by `.github/workflows/perf.yml`.
+  `benchmarks/perf/README.md` records a 50,000-file build and where its time goes. `build`'s
+  JSON report gains a `performance` block (it stays out of `stats.json`).
+- **The npm launcher is published from the release tag (#399),** after PyPI, with provenance;
+  a failed npm publish cannot block the PyPI release.
+- **Property tests (#316)** for import parsing in every language, every MCP tool on arbitrary
+  arguments, token-bounded packs, `read_jsonl` and cursor decoding.
+- **`TESTS` edges linking tests to the symbols they exercise (#393):**
+  every symbol defined in a test file gets a `TESTS` edge to each non-test symbol it reaches
+  through at most two `CALLS` hops (test helpers included), with `method: call-graph`, the
+  product of the path's `CALLS` confidences, the starting call site as `evidence`, and `hops`.
+  It means "reaches via calls", not "asserts on". `stats.json` gains `edge:TESTS`,
+  `testable_symbols`, `tested_symbols` and `tested_symbol_fraction`; `repo_neighbours` lists a
+  symbol's tests and takes `min_confidence`; `pack_context(edge_types=[...])` can opt in to
+  following `TESTS`, which default retrieval does not. `is_test_path` moved to
+  `repo2graph.testpaths` (still importable from `repo2graph.query`) and now also recognises
+  `*Test.java`, `*Tests.java`, `*Test.kt`, `*_spec.rb` and `*_test.rb`.
+- **Config file (#391):** build options can live in `[tool.repo2graph]` in the
+  repo's `pyproject.toml` or in `.repo2graph.toml`, read by `build`, the
+  `rag <source-dir>` auto-build and the MCP auto-build. A command-line flag
+  still wins, and `explain-path` names the file when one of its settings
+  decided a path. No config file, no change.
+- **Cursor pagination for `repo_neighbours` and `repo_search` (#389):**
+  An optional `cursor` argument opts into paging (`cursor: ""` for the first page). While more
+  remains, a page ends with a `next_cursor: <token>` line and carries the same token as
+  `_meta.nextCursor`. Every page keeps the per-call clamps and the 12 000-token ceiling, so
+  neighbour 51+ of a symbol is now reachable. Cursors are self-contained and HMAC-signed (no
+  server state), expire after 10 minutes, and are refused with an actionable error once the index
+  is rebuilt. Calls without `cursor` are byte-identical to before. See docs/mcp.md, "Pagination".
+
 - **Configurable resource limits and limit policies (#299):**
   Added `--max-chunks`, `--max-nodes`, `--max-total-bytes`, `--max-memory-mb`, and `--max-build-seconds`
   alongside existing `--max-files`, `--max-bytes`, and `--max-edges`. Added `--limit-policy fail|truncate|warn`.
@@ -26,9 +138,208 @@ makes keeping it current a release-blocking step rather than a good intention.
   with explicit classified exceptions (`OSError`, `ValueError`, `TypeError`, `subprocess.SubprocessError`, `ImportError`).
   Added `REPO2GRAPH_DEBUG=1` environment variable and `--debug` CLI flag to re-raise internal errors across resilience
   boundaries, and enabled ruff `BLE001` checking in CI linting.
+- **Gallery grows from five repositories to eleven (#462):** React, FastAPI, Gin, ripgrep, Guava
+  and Jekyll join `examples/`, each at a pinned commit with its reproduction command — the
+  gallery's first JavaScript, Rust, Java and Ruby entries. React's page records what Flow type
+  annotations cost the JavaScript parser (241 of 386 parsed files report parse errors). Generated
+  example pages now also list files with parse errors, symbols of every kind and methods, so a
+  Java library no longer reads as having "0 functions".
+- **`docs/comparison.md` covers Sourcetrail and the dependency-graph tools (#462):** what
+  Sourcetrail did, what repo2graph does instead and what Sourcetrail did better (its interactive
+  desktop UI; `graph.html` is a static map), and how Madge, dependency-cruiser and CodeSee differ —
+  they graph module imports, repo2graph graphs calls, imports, inheritance and co-change for an
+  agent under a token ceiling. Linked from `README.md`.
+
+### Changed
+
+- **`docs/architecture.md` §5 names every module, and a test keeps it that way (#486).** Nine were
+  absent — `config.py`, `federated.py`, `graphdiff.py`, `neo4j.py`, `pagination.py`, `rerank.py`,
+  `resources.py`, `tokenizers.py`, `watch.py`, every one added in #477–#481 and eight of them
+  appearing nowhere in the file — and 33 of 48 line counts were wrong, `mcp/` by 1,019 and
+  `query.py` by 438, which is no longer the "rough guide" the table calls itself. Counts corrected,
+  rows added, and `tests/test_doc_consistency.py` now fails when a module has no row. Completeness
+  is what is gated and not the counts: a test on the exact numbers would make every PR that touches
+  a module edit the doc too.
+- **Graph storage behind an interface (#306).** Traversal, retrieval, `explain` and every MCP
+  tool read the graph through `Index.store` (`repo2graph.store.GraphStore`) instead of its
+  dicts and lists. The in-memory store is the default and output is unchanged.
+  `SqliteGraphStore` is a standard-library prototype that answers from disk; a test runs the
+  same traversals over both and requires byte-identical results, ordering included.
+- **`graph.py`, `parse.py` and `cli.py` split by responsibility (#315).** Moves only, no
+  behaviour change: import resolution (`imports.py`), the parse cache (`parsecache.py`), derived
+  edges and entrypoints (`derived.py`), co-change (`cochange.py`), file discovery and
+  `explain_path` (`discovery.py`), reference capture (`refcapture.py`), and the inspect and embed
+  commands (`cli_inspect.py`, `cli_embed.py`). Every new module is strict-typed. Existing
+  `from repo2graph.graph/parse/cli import X` imports keep working.
+
+- **`graph.html` on large repositories (#305):** past `--viz-nodes` the page says it is
+  sampled, in a banner on the page, and opens on a Directories view counting every node in at
+  most 60 directory groups, with drill-down into the detail view and a language filter. The
+  embedded data is capped at 12 MB; past that the detail view is halved and the page says so.
+- **Faster builds on large repositories (#456):** the secret scan runs its key-based rules only
+  from lines carrying a credential keyword and skips vendor patterns whose literal prefix is
+  absent (11.0 s to 2.4 s on this repository, findings identical); same-file, imported and
+  same-directory call resolution is indexed instead of scanned (19.1 s to 2.6 s at 4,000 files
+  sharing names). Output is byte-identical.
+- **`rag --answer` (#285):** connecting has its own 30 s bound; answer text is capped at
+  200,000 characters; an answer cut short by any bound or Ctrl-C says so and exits 3; a
+  provider's error body is echoed with secrets redacted.
+- **`explain-path` takes `build`'s path flags (#461)** (`--exclude-dir`, `--max-file-mb`,
+  `--chunk-large-files`, `--secret-keyword`, `--secret-dir`), so it no longer reports a path
+  as included that `build` skips.
 
 ### Fixed
 
+- **`--git-authors` now sees a `git-history` the repo's config file supplied (#391, #394).** The
+  check ran before `_with_repo_config`, so it read the raw command line and not the merged
+  settings: a repo with `git-history = 10` in `.repo2graph.toml` had `build --git-authors`
+  rejected outright, and the mirror case — `git-authors = true` in the config with no history
+  anywhere — was accepted silently and recorded no authors at all, because the walk that
+  collects them never ran. Both are the case the check exists to catch.
+- **A Windows sharing violation no longer fails a build with a message about a read-only
+  directory.** Adding `LockUnavailableError` put `EACCES`/`EPERM` in the fast-fail set, but those
+  are only permanently unwritable on POSIX: on Windows the same errno is what OneDrive, antivirus
+  scanners and the search indexer raise while they briefly hold a new index's files open, and it
+  clears on its own — `export._rename` already retries exactly that. They stay in the retry loop
+  on Windows now, and are only reported, with an accurate message, if the whole `--lock-timeout`
+  is spent on them. `EROFS`/`ENOSPC`/`ENOENT`/`ENOTDIR` still fail fast.
+- **`explain-path` no longer answers `INCLUDED` for a file no build will index.** `discover()`
+  gained two drop rules — a path that is not encodable UTF-8, and one holding a control,
+  line-separator or hidden character — and `explain_path` modelled neither, so a zero-width space
+  in a filename (legal on NTFS and ext4) got `INCLUDED`, `precedence_step: 10`, while every build
+  silently skipped it. Both rules are now explained, as `undecodable_path` and `unsafe_path`.
+- **The MCP server states its reply-shape convention in the initialize handshake.** Notes lead a
+  reply as `_note: ..._` paragraphs in both formats, JSON included — `docs/mcp.md` documents it
+  and the bundled VS Code client splits them off, but a third-party client's model reads the
+  server's own metadata and never the repo's docs, so a bare `JSON.parse` broke the first time an
+  argument was defaulted or the index went stale. It is `instructions` rather than four more
+  sentences in `TOOL_DESCRIPTIONS`, which are capped at 800 characters each because they ship on
+  every session.
+- **The VS Code extension's test suite now runs on Windows, and the one assertion that could not
+  pass there is fixed.** `src/test/fixture.ts` has always branched on `process.platform` for
+  `Scripts` vs `bin` and the `.exe` suffix, so the platform difference was real — but the workflow
+  ran `ubuntu-latest` only, so nothing exercised it. `core.test.ts` spelled out
+  `file:///i/human/graph.html` as the expected output of `pathToFileURL`, which on Windows resolves
+  a drive-relative path against the current drive and returns `file:///C:/i/human/graph.html`: red
+  on every Windows checkout, green in CI. The assertion now derives the origin and checks what it
+  was actually about, the fragment encoding, and `vscode.yml` gains a `windows-latest` cell. The
+  server directory is passed as `sysconfig.get_path("scripts")` rather than
+  `dirname $(command -v …)`, because Git Bash's answer is an MSYS path (`/c/hostedtoolcache/…`)
+  that Node's `path.join` cannot resolve.
+- **Nine `## [version]` headings in this file rendered as literal text instead of links.**
+  `## [3.0.0]` is a markdown *reference* link and needs a matching `[3.0.0]: <url>` definition at
+  the foot of the file. `scripts/bump_version.py`'s `bump_changelog` wrote the heading and nothing
+  wrote the definition, so every release from 1.5.1 on added a dead reference, and `[Unreleased]`
+  still diffed from v1.5.0 — three majors behind. The definitions are restored, `bump_changelog`
+  now emits each release's definition and re-bases `[Unreleased]` in the same step that writes the
+  heading, and `tests/test_version_surfaces.py` reads the foot of the file so a future gap fails a
+  test instead of shipping.
+- **The Windows CI cells stop failing on the runner, and what is left is diagnosed.** Five of the
+  twelve runs before this change were red, every one on a Windows cell and not one on a finding
+  about the code. Three were the suite's own fault and are fixed: two wall-clock assertions that
+  #480 and #481 missed now assert what they meant — a hung item is *abandoned*, proved by the gap
+  between a 300 s item and a 120 s bound, not by a 30 s bound that a runner spending 50 s starting
+  worker processes cannot meet — and `test_cpp_parse`'s ReDoS linearity check moves to CPU time,
+  matching the three in `test_secrets_hardening` that #481 converted for the same reason. The
+  Windows cells also now run two xdist workers instead of four and without pytest-cov, which
+  together took them from 6–10 minutes to about 5m35s; `[tool.coverage.run]` sets
+  `concurrency = multiprocessing`, so every process the suite spawns was starting a tracer of its
+  own, and coverage is a property of the suite rather than of the OS — `fail_under = 80` is still
+  enforced on the eight Linux and macOS cells, and the only cell that ever reported the number is
+  Ubuntu 3.13. The `timeout-minutes` ceiling goes to 35, after a cell that had finished in 5m37s
+  reached 93% of the same suite in 20 minutes on a runner about 4x slower and was cancelled.
+
+  **The cause was `cpp`, not the runner.** Windows cells kept failing on an
+  allocation or a spawn rather than on behaviour — `WinError 1455`,
+  `0xC000012D` (`STATUS_COMMITMENT_LIMIT`), `MemoryError`,
+  `RuntimeError: can't start new thread` — on a different test each run.
+  Sampling total commit every five seconds during a run named it:
+  `cc1=32656MB` against a 33,665 MB limit, while every Python process sat at
+  ~120 MB. That is the 40-deep doubling macro bomb in `tests/test_cpp_parse.py`
+  expanding inside the real preprocessor. `_run_cpp` bounded the output it read
+  and the wall clock, which is not the same as bounding what `cpp` allocates to
+  produce that output — expansion happens before anything is printed, so the
+  output guard never saw it. `parse.CPP_MEMORY_MB` (1 GB) now caps the child
+  through a Windows Job Object, which covers the `cc1` that `cpp` spawns and is
+  the mechanism `parsepool._cap_memory` was missing when it noted that "Windows
+  has no rlimits". Measured with a stand-in child: capped, it is refused at
+  192 MB of a 256 MB cap; uncapped, the same child reaches 6,336 MB.
+
+  This is also a real limit on untrusted input, not only a CI problem:
+  repo2graph runs the system preprocessor over repository source it did not
+  write, and a hostile file could take the host's memory with it on any
+  platform. Profiling the test suite first was a detour, and the numbers are
+  worth keeping: peak commit of any single pytest process is 167 MB and a whole
+  run moves system commit by 356 MB, so the suite was never the consumer.
+
+- **A federated pack no longer overruns its token budget (#482).** `federated._fit` read a budget
+  of `0` as "no ceiling" — the caller's sentinel, as in `Index.pack_context` — but `0` was also
+  what `budget - len(header)` came to once the `# Context from N repositories: ...` header outgrew
+  the budget, so every merged chunk came back. Measured at 2,522 tokens against a stated 100, with
+  `truncated` reporting `False`. The remainder is now a number and `None` alone means unbounded;
+  the header is cut to fit rather than counted and never bounded (it lists as many names as there
+  is room for, then `and N more`, then the count alone); `--token-margin`, which reached each
+  index's own pack but never the fit over the merged list, now bounds the merged pack too; and the
+  result carries every `PackResult` key, six of which — `token_count_method`,
+  `token_safety_margin`, `budget_exhausted`, `omitted_chunk_count`, `source_text_chars`,
+  `rendered_context_chars` — were absent from a federated `rag --json` altogether, so a consumer
+  could not read how `tokens_used` had been counted. A budget that already fits the header is
+  byte-identical to before.
+- **`build --watch` watches the set a build indexes (#483).** `watch.snapshot` walked the tree
+  itself and skipped every dotfile, so an edit to `.pre-commit-config.yaml` — or any of the other
+  dotfiles discovery does index — never triggered a rebuild, while the walk honoured no
+  `.gitignore` and so followed files no build can see: on this repository it watched 747 files to
+  the build's 386, 305 of them under `.hypothesis`, which every `pytest` run rewrites, so running
+  the suite under `--watch` rebuilt continuously. It now enumerates through
+  `discovery.candidate_files`, the same `git ls-files -co --exclude-standard` (walk fallback) a
+  build uses. Discovery's content-level exclusions are deliberately not repeated: they only narrow
+  the set, so a needless rebuild is the failure direction rather than a missed one.
+- **`make typecheck` and the `mypy-strict` pre-commit hook pass on Windows (#484).**
+  `cli._peak_rss_mb` reached for the win32-guarded `resource.getrusage` behind a
+  `try/except ImportError`, which mypy cannot narrow, so four `attr-defined` errors failed every
+  Windows checkout — and `ci.yml` typechecked on `ubuntu-latest` only, so nothing noticed. A
+  `sys.platform` test narrows it, and CI now runs `mypy --platform linux`, `mypy --platform
+  darwin` and `mypy --platform win32` on the one runner, which reproduces the failure without a
+  second job.
+- **Four rows of `docs/mcp.md`'s MCP troubleshooting table pointed at `doctor` sections that do
+  not exist (#485).** `56f71d37` slimmed `doctor` down to environment, git and grammar probes;
+  the table went on sending readers to "MCP Client Configuration", "Generated / Vendored Code"
+  and "Parser Coverage". Each is the remedy for a named symptom, so following one got nothing.
+  The rows now name checks `doctor` prints, or the command that actually fixes the symptom, and
+  `tests/test_doc_consistency.py` fails if a doc names a check `doctor` does not have. The sample
+  `repo_neighbours` output in the same file cited `repo2graph/doctor.py:1051` in a 466-line file;
+  it is regenerated from a real run.
+- **`generate_examples.validate_example`'s scratch/home-path check matches at a path boundary
+  (#462).** The check searched each committed artifact for the build machine's workdir and `~` as
+  bare substrings. Under `examples.yml`, where `~` is a container's `/root`, that flagged
+  repositories' own content: Rails' docstrings say `/my/rails/root/config`, Spring's fixtures say
+  `</root>`, and both were reported as this machine's home directory leaking into the gallery,
+  which is what kept the two out of `examples/`. A candidate now counts only where it starts a
+  path — not preceded by a path character, and followed by a separator, a closing delimiter or
+  nothing — so `/rootkit/bin` and `</root>` pass while `/root/scratch/clone` still fails the
+  build. The same pass closes the opposite hole: the artifacts are JSON, so a Windows scratch path
+  reaches them backslash-escaped and the literal form the check looked for never appeared in the
+  file, which the escaped form is now searched for too.
+- **Reading a small index file no longer allocates its whole size ceiling.** `read_bounded` asked
+  for `limit + 1` bytes in one `read()`, and CPython allocates that buffer before reading: every
+  2 KB `vectors.meta.json` cost 256 MB and every `vectors.npy` 512 MB (the SCIP reader did the same
+  with 256 MB). Linux overcommit hid it; on Windows it is real commit charge, and parallel test
+  workers ran CI runners out of memory. Reads now go in 1 MB blocks.
+- **A question's opening words no longer pick its answer (#382).** "how does", "where is",
+  "what are" and the like are dropped from the ranking query; the rest of the question is scored
+  as before. On Django, "does" matched `test_html_does_not_mask_exceptions` and put an unrelated
+  `url` at rank 1 of "how does URL resolution reach a view"; that question now returns the same
+  top five as "URL resolution view". Only the frame goes — a general stopword list was measured
+  and lost answers, because words inside a question can be the evidence.
+- **A size limit with no `--limit-policy` cut silently (#318):** files, bytes and edges past
+  a limit were dropped without the documented warning. It now warns.
+- **The article "a" no longer matches one-letter identifiers (#382):** "how does URL
+  resolution reach a view" ranked five classes named `A` first on Django.
+- **Ansible Vault payloads were left in clear (#453):** only the header line was redacted. Vault
+  tokens, Azure SAS strings and webhook URLs gained positive and near-miss tests, and source
+  files skipped only for sitting under a secret-named directory are now counted
+  (`skipped_secret_dir_source`) and announced.
+- **`SECURITY.md` named one network exception (#452);** it now lists all of them.
 - **Silent wrong/empty results and edge cases (#448):**
   Addressed silent failure and edge case audit findings (W10-W24).
   - W10: Handled BOM-encoded UTF-16 and UTF-32 source files by decoding them to UTF-8 for AST parsing rather than skipping them as binary files.
@@ -116,6 +427,38 @@ makes keeping it current a release-blocking step rather than a good intention.
   inside the release. It now reads the literal out of `repo2graph/__init__.py`, and a new guard in
   `tests/test_version_surfaces.py` walks every test's AST for assertions that spell out the
   current version, so the next one fails on its own PR instead.
+
+### Security
+
+- **A per-file parse budget that can stop a parse (#81, closes the #79 audit backlog).** A
+  300 KB C++ file of `x = a<b<a<b<...;` — well under the 1.5 MB size cap — made tree-sitter
+  grow quadratically in time and memory (32 KB: 1 s and 640 MB; 300 KB: OOM-killed at 13.8 GB),
+  so one hostile file could take down the machine building the index. tree-sitter cannot be
+  interrupted from Python (no timeout in py-tree-sitter 0.25+, `progress_callback` ignored for
+  bytes and crashing with a reader, the GIL held throughout), so parses that can be expensive now
+  run in supervised workers: the parent kills a worker whose file runs over `--parse-timeout`
+  (default 10 s; the slowest of 18,608 files across the five benchmark corpora took 0.74 s), and on
+  Linux each worker's address space is capped, so a runaway allocation kills only that worker.
+  Such a file keeps its file node, gets no symbols, is counted as `skipped_parse_timeout` or
+  `skipped_parse_crash` and named on stderr, and is never cached, so the next build retries it.
+  Serial builds parse small files in-process as before and send files over 16 KB to a worker.
+
+### Removed
+
+- `repo2graph.mcp.IMPACT_FORMATS`, `fetch.GITHUB_SPEC` and `mcp.guardrails._scrub_paths`, all
+  unused (#318). `IMPACT_FORMATS` was left over from the removed impact tool.
+- `exclusions.classify()`, and the `dir_parts`/`suffixes`/`filenames` fields of `ExclusionGroup`
+  that nothing else read (#485). Its one caller was `doctor`'s "Generated / Vendored Code" check,
+  removed with the rest of that slim-down in `56f71d37`; what remained was a second, weaker answer
+  to a question `discovery.explain_path` (behind `repo2graph explain-path`) answers with full
+  precedence. `GROUPS`, `globs_for` and `describe` — everything `--exclude-group` uses — are
+  unchanged, and `--exclude-group` output is byte-identical.
+- Eight `# noqa` directives naming a rule that no longer fires at that line (3 `F401`, 3 `E402`,
+  one `F841`, one `BLE001`). A dead suppression hides whether its rule would fire, so a later edit
+  that did trip it would be silently excused. `RUF100` is deliberately **not** added to the ruff
+  `select` list: it also reports directives for rules this project does not select, and deleting
+  those `# noqa: S105` / `SIM115` / `N802` markers would break anyone running a wider sweep such as
+  `ruff check --select S`.
 
 ## [3.0.0] — 2026-10-06
 
@@ -2169,7 +2512,16 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.2.0...v3.0.0
+[2.2.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.1.0...v2.2.0
+[2.1.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.0.0...v2.1.0
+[2.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.6.0...v2.0.0
+[1.6.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.4...v1.6.0
+[1.5.4]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.3...v1.5.4
+[1.5.3]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/Srinivasan-78/repo2graph/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/Srinivasan-78/repo2graph/compare/v1.2.0...v1.3.0

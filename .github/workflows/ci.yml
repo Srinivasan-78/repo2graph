@@ -63,9 +63,26 @@ jobs:
         id: format
         run: ruff format --check .
 
-      - name: Type Check (Mypy)
+      # Once per supported platform, on this one runner. typeshed guards a
+      # good deal of the standard library on `sys.platform`, so a single
+      # native run checks only the stubs the runner's own platform selects:
+      # `resource.getrusage` is win32-guarded, and `cli._peak_rss_mb` called
+      # it behind a `try/except ImportError` that mypy cannot narrow, so
+      # `make typecheck` and the `mypy-strict` pre-commit hook were red on
+      # every Windows checkout while this step stayed green (#484).
+      #
+      # `--platform` resolves those guards as the named platform would without
+      # a second runner, so the cost is two extra mypy passes over a warm
+      # cache rather than two more jobs. The test matrix already covers
+      # windows and macos at runtime; this covers them at type level.
+      - name: Type Check (Mypy, every supported platform)
         id: typecheck
-        run: mypy repo2graph
+        run: |
+          for platform in linux darwin win32; do
+            echo "::group::mypy --platform $platform"
+            mypy --platform "$platform" repo2graph
+            echo "::endgroup::"
+          done
 
       - name: Version Surfaces Consistency Check
         id: version_check
@@ -98,7 +115,7 @@ jobs:
             printf '| :--- | :---: | :--- |\n'
             printf '| **Code Linting** | %s | Ruff (inline PR annotations enabled) |\n' "$(status "$LINT")"
             printf '| **Code Formatting** | %s | Ruff Formatter |\n' "$(status "$FORMAT")"
-            printf '| **Strict Type Checking** | %s | Mypy |\n' "$(status "$TYPECHECK")"
+            printf '| **Strict Type Checking** | %s | Mypy (`--platform` linux, darwin, win32) |\n' "$(status "$TYPECHECK")"
             printf '| **Version Surfaces Integrity** | %s | `scripts/check_version.py` |\n' "$(status "$VERSION_CHECK")"
             printf '| **Workflow Summary Integrity** | %s | `scripts/check_workflow_summaries.py` |\n' "$(status "$SUMMARY_CHECK")"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -108,7 +125,13 @@ jobs:
     # The scheduled run exists for `drift` alone; this job is what gates a PR.
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Headroom for a slow runner, not for a slow suite. A Windows cell that
+    # finished in 5m37s on one run reached 93% of the same suite in 20 minutes
+    # on the next and was cancelled at the ceiling -- same commit, same
+    # configuration, a runner roughly 4x slower. A timeout is a ceiling rather
+    # than a cost, so it should sit above the worst runner rather than just
+    # above the usual one; this is ~3x the slowest honest run (10m2s).
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -139,8 +162,73 @@ jobs:
       # Windows images). Coverage still combines correctly because
       # [tool.coverage.run] sets parallel = true, which the multiprocessing
       # build path already needed.
+      #
+      # Windows caps that at 2. Four xdist workers there each run tests that
+      # spawn their own coverage-traced multiprocessing pools, plus `node` and
+      # `git` children, on a 4-vCPU image with a small pagefile -- so the
+      # runner is oversubscribed several times over and what breaks is never
+      # the code under test. Five of the twelve CI runs before this change
+      # were red, every one of them on a Windows cell and every one of them on
+      # a resource symptom: three elapsed-time assertions, one count that
+      # depends on a timeout, and `WinError 1455` (the commit limit) raised
+      # while spawning `node` in test_npm_launcher. A 40% red rate with no
+      # real finding behind it is worse than a slower Windows cell, because it
+      # teaches everyone to re-run the job rather than read it.
+      #
+      # `PYTEST_XDIST_AUTO_NUM_WORKERS` is how xdist takes this without
+      # changing the command: it overrides what `-n auto` resolves to, and an
+      # empty value (every non-Windows cell) leaves `auto` alone.
+      #
+      # Windows also runs without `--cov`, which is the other half of the same
+      # problem and the larger half. `[tool.coverage.run]` sets
+      # `concurrency = multiprocessing`, so every process the suite spawns --
+      # parse pools, the MCP stdio probe, `node`, `git` -- starts a tracer of
+      # its own and writes its own data file. Measured on a Windows box,
+      # `tests/test_mcp.py tests/test_mcp_tools.py` take 17s without `--cov`
+      # and 26s with it; on a 4-vCPU runner that multiplier is what turned a
+      # 180s subprocess timeout and a worker's startup into failures. Capping
+      # the workers alone was not enough: 3.11 and 3.12 went green, 3.10 still
+      # lost a worker mid-test and 3.13 still timed out spawning the probe.
+      #
+      # Nothing is given up by doing this. Coverage is a property of the test
+      # suite, not of the operating system, and the `fail_under = 80` floor is
+      # still enforced on the eight Linux and macOS cells; the one cell that
+      # reports coverage anywhere (the step summary below) is Ubuntu 3.13.
+      # Together these took Windows from four red cells to one, and each cell
+      # from 6-10 minutes to around 5m35s.
+      #
+      # These two were found while chasing Windows cells that failed on
+      # allocation rather than on behaviour -- `WinError 1455`,
+      # `0xC000012D STATUS_COMMITMENT_LIMIT`, `MemoryError`,
+      # `RuntimeError: can't start new thread`, a different test each run. The
+      # cause turned out not to be the runner being small or the suite being
+      # greedy: sampling total commit every 5s during a run named it outright,
+      #
+      #   35,518 MB committed, limit 33,665 MB
+      #   cc1=32656MB  MsMpEng=249  python=122  python=119
+      #
+      # a single `cc1` holding 32.6 GB while every Python process sat at ~120
+      # MB. That is `tests/test_cpp_parse.py`'s macro bomb expanding inside the
+      # real preprocessor, which `_run_cpp` bounded for output and wall clock
+      # but not for memory; `parse.CPP_MEMORY_MB` now caps it. Profiling the
+      # suite itself first was a detour worth recording: peak commit of any
+      # single pytest process is 167 MB and the whole run moves system commit
+      # by 356 MB, so the suite was never the consumer.
+
       - name: Run Test Suite & Branch Coverage
+        if: matrix.os != 'windows-latest'
         run: pytest -q -n auto --cov=repo2graph --cov-report=term-missing
+
+      - name: Run Test Suite (Windows, uninstrumented)
+        if: matrix.os == 'windows-latest'
+        env:
+          # Two, after measuring one. A single worker was tried for exactly the
+          # reason above and did not clear the wall either -- it failed the same
+          # two-of-four cells while adding three minutes to each (8m40s against
+          # 5m35s), so there is no evidence for paying that. See the note above
+          # the non-Windows step for what is actually left.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
+        run: pytest -q -n auto
 
       - name: Append Test Coverage to Step Summary
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'

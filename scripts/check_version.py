@@ -31,7 +31,7 @@ except ModuleNotFoundError:
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-from version_surfaces import ROOT, findings  # noqa: E402
+from version_surfaces import ROOT, findings
 
 
 def main() -> int:

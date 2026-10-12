@@ -68,6 +68,8 @@ LANGUAGE_TOKENS = {
     "scala": r"\bScala\b",
     "bash": r"\bBash\b",
     "lua": r"\bLua\b",
+    "objc": r"\bObjective-C\b",
+    "hcl": r"\bHCL\b",
 }
 
 
@@ -332,6 +334,66 @@ def test_cli_doc_names_every_doctor_check_that_exists():
         )
 
 
+def test_architecture_module_reference_names_every_module():
+    """§5's tables are the map CONTRIBUTING sends contributors to; a module
+    missing from it makes that map wrong about the architecture, not merely
+    imprecise about size.
+
+    Nine were absent -- `config.py`, `federated.py`, `graphdiff.py`,
+    `neo4j.py`, `pagination.py`, `rerank.py`, `resources.py`, `tokenizers.py`
+    and `watch.py`, every one added in #477-#481, eight of them appearing
+    nowhere in the file at all (#486).
+
+    Completeness is what is gated, not the `Lines` column: a test on the exact
+    counts would make every PR that touches a module edit the doc too, and the
+    table's own preamble calls the sizes "a rough guide ... not a target".
+    """
+    doc = ARCHITECTURE_PATH.read_text(encoding="utf-8")
+    pkg = REPO_ROOT / "repo2graph"
+    modules = {
+        p.name
+        for p in list(pkg.glob("*.py")) + list((pkg / "mcp").glob("*.py"))
+        if p.name not in ("__init__.py", "__main__.py")
+    }
+    assert len(modules) > 40, modules
+    rows = set(re.findall(r"^\| `([\w.]+\.py)` \|", doc, re.M))
+    missing = sorted(modules - rows)
+    assert not missing, (
+        f"docs/architecture.md §5 has no row for: {', '.join(missing)}. "
+        "Add one naming what the module owns."
+    )
+
+
+def test_no_doc_sends_a_reader_to_a_doctor_check_that_does_not_exist():
+    """The other direction, which the test above cannot see.
+
+    `test_cli_doc_names_every_doctor_check_that_exists` asserts every real
+    check is mentioned somewhere; it says nothing about a doc naming a check
+    that is gone. `56f71d37` ("slim doctor down to core environment, git, and
+    grammar probes") dropped ~1,500 lines of checks, and four rows of
+    docs/mcp.md's troubleshooting table went on telling readers to run
+    `repo2graph doctor .` and look for "MCP Client Configuration", "Generated /
+    Vendored Code" and "Parser Coverage" -- none of which doctor has printed
+    since. Every one of them is the remedy for a named symptom, so the reader
+    following it gets nothing and no test noticed (#485).
+    """
+    from repo2graph.doctor import run_doctor
+
+    names = {c.name for c in run_doctor(REPO_ROOT).checks}
+    assert names, "doctor ran no checks"
+    referenced: dict[str, set[str]] = {}
+    for doc in sorted(REPO_ROOT.glob("docs/*.md")) + [README_PATH]:
+        for section in re.findall(
+            r"doctor[^|\n]*?(?:→|->)\s*([A-Za-z][\w /.-]*\w)", doc.read_text(encoding="utf-8")
+        ):
+            referenced.setdefault(section.strip(), set()).add(doc.name)
+    assert referenced, "no doc names a doctor check; the pattern above stopped matching"
+    unknown = {s: sorted(d) for s, d in referenced.items() if s not in names}
+    assert not unknown, (
+        f"docs point at doctor checks that do not exist: {unknown}. doctor prints: {sorted(names)}"
+    )
+
+
 def test_the_shipped_doc_set_is_the_documented_one():
     """`docs/` is five reference pages, and adding a sixth is a decision.
 
@@ -514,6 +576,7 @@ _CLI_COMMANDS = (
     "embed",
     "map",
     "stats",
+    "diff",
     "explain-path",
     "doctor",
     "bug-report",
@@ -628,3 +691,15 @@ def test_examples_table_matches_the_recorded_run():
         + "\n  ".join(mismatches)
         + "\nRe-read the numbers off results.json after regenerating."
     )
+
+
+def test_security_md_names_exactly_the_servers_tools():
+    """#456 DOC1: SECURITY.md said "ten tools" and listed a repo_impact that was
+    removed, so the unconditional-secret-exclusion claim named a ghost."""
+    import re
+
+    from repo2graph.mcp.schemas import TOOL_DESCRIPTIONS
+
+    text = (REPO_ROOT / ".github" / "SECURITY.md").read_text(encoding="utf8")
+    named = set(re.findall(r"`(repo_[a-z_]+)`", text))
+    assert named <= set(TOOL_DESCRIPTIONS), named - set(TOOL_DESCRIPTIONS)

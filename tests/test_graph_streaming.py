@@ -148,7 +148,7 @@ sentinel.write_text("finished")
 
 def _fake_git(tmp_path: Path, args: list[str], monkeypatch):
     """Point graph's Popen at a python child, and hand back the started process."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
 
     script = tmp_path / "fake_git.py"
     script.write_text(_FAKE_GIT, encoding="utf8")
@@ -161,7 +161,7 @@ def _fake_git(tmp_path: Path, args: list[str], monkeypatch):
         started.append(proc)
         return proc
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", popen)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", popen)
     return started
 
 
@@ -169,10 +169,10 @@ def test_the_byte_cap_stops_the_read_and_the_child_is_reaped(tmp_path, monkeypat
     """The cap has to bind *during* the read. A child with far more to say than
     the cap allows must be cut off mid-write, killed and waited for -- not read
     to EOF and trimmed afterwards, which is what capture_output=True did."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
 
     cap = 64 * 1024
-    monkeypatch.setattr(graphmod, "MAX_COCHANGE_BYTES", cap)
+    monkeypatch.setattr(cochange_mod, "MAX_COCHANGE_BYTES", cap)
     sentinel = tmp_path / "child_finished"
     started = _fake_git(tmp_path, [str(8 * 1024 * 1024), str(sentinel)], monkeypatch)
 
@@ -192,9 +192,9 @@ def test_a_timeout_is_still_a_silent_return(tmp_path, monkeypatch):
     """`subprocess.run(timeout=...)` raised TimeoutExpired into a bare `return`;
     the streamed read enforces the same deadline itself and must behave the
     same way -- no exception, no edges, and no surviving child."""
-    import repo2graph.graph as graphmod
+    import repo2graph.cochange as cochange_mod
 
-    monkeypatch.setattr(graphmod, "COCHANGE_TIMEOUT", 0.5)
+    monkeypatch.setattr(cochange_mod, "COCHANGE_TIMEOUT", 0.5)
     script = tmp_path / "hanging_git.py"
     script.write_text("import time\ntime.sleep(120)\n", encoding="utf8")
     real_popen = subprocess.Popen
@@ -205,7 +205,7 @@ def test_a_timeout_is_still_a_silent_return(tmp_path, monkeypatch):
         started.append(proc)
         return proc
 
-    monkeypatch.setattr(graphmod.subprocess, "Popen", popen)
+    monkeypatch.setattr(cochange_mod.subprocess, "Popen", popen)
 
     g = Graph(tmp_path, "x")
     add_cochange(g, tmp_path, 1, {"a.py", "b.py"}, min_pairs=1)
