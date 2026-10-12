@@ -15,7 +15,7 @@ __all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
 # quoted __version__ literal in this file (tests/test_compat.py asserts
 # exactly that) -- _resolve_version() below never assigns a second one, only
 # the result of a function call.
-__version__ = "3.0.0"
+__version__ = "4.0.0"
 
 
 def _parse_toml(content: str) -> tuple[bool, dict[str, Any] | None]:

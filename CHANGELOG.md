@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [4.0.0] — 2026-10-12
+
 ### Added
 
 - **Rails and Spring Framework in the gallery, bringing it to thirteen (#462).** Each is in for a
@@ -2524,7 +2526,8 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.0.0...v2.1.0
