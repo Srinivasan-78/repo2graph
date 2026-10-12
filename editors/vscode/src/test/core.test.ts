@@ -4,6 +4,7 @@ import * as assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { EDGE_TYPES, EXT_LANG, LANGUAGES, NODE_TYPES } from "../core/generated";
 import { groupSections, type NeighbourRow, SECTION_LABELS, SymbolNavigator } from "../core/neighbourhood";
 import { graphUrl, languageOf, repoRelative, resolveAgainst, revealPage, serverExecutable } from "../core/paths";
@@ -185,12 +186,22 @@ test("the server sits beside a CLI given as a path", () => {
 });
 
 test("reveal links seed graph.html by node id, escaped for the page", () => {
-  const url = graphUrl("/i/human/graph.html", "sym:a b.py::f&<g>");
-  assert.equal(url, "file:///i/human/graph.html#node=sym%3Aa%20b.py%3A%3Af%26%3Cg%3E");
-  const page = revealPage("/i/human/graph.html", 'sym:x.py::"><script>alert(1)</script>');
+  // `graphUrl` goes through `pathToFileURL`, which is deliberately
+  // platform-bound: on Windows a drive-relative path like `/i/human/graph.html`
+  // resolves against the current drive and comes back as `file:///C:/i/...`.
+  // The behaviour under test is the fragment encoding, so the origin half is
+  // derived rather than spelled out -- hardcoding the POSIX form made this the
+  // one test in the suite that could not pass on a Windows checkout, and the
+  // extension's CI job is ubuntu-only, so nothing caught it.
+  const graphHtml = path.resolve("/i/human/graph.html");
+  const origin = pathToFileURL(graphHtml).href;
+  const url = graphUrl(graphHtml, "sym:a b.py::f&<g>");
+  assert.equal(url, `${origin}#node=sym%3Aa%20b.py%3A%3Af%26%3Cg%3E`);
+  const page = revealPage(graphHtml, 'sym:x.py::"><script>alert(1)</script>');
   assert.doesNotMatch(page, /<script/i);
   assert.match(page, /default-src 'none'/);
-  assert.match(page, /http-equiv="refresh" content="0;url=file:\/\/\/i\/human\/graph\.html#node=/);
+  assert.ok(page.includes(`http-equiv="refresh" content="0;url=${origin}#node=`));
+  assert.ok(origin.startsWith("file:///") && origin.endsWith("/i/human/graph.html"));
 });
 
 // -------------------------------------------------------------------- render
