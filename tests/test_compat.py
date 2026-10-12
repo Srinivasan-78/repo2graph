@@ -920,9 +920,9 @@ def test_examples_workflow_routes_inputs_through_env():
     assert '"$INPUT_REPO"' in run_part
 
 
-def test_generate_examples_split_rule(tmp_path):
-    """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
-    import gzip
+def _load_generate_examples():
+    """`scripts/generate_examples.py` is a standalone script, not a package
+    module, so tests load it by path."""
     import importlib.util
 
     script_path = REPO_ROOT / "scripts" / "generate_examples.py"
@@ -930,7 +930,95 @@ def test_generate_examples_split_rule(tmp_path):
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    _read_jsonl_maybe_gz = mod._read_jsonl_maybe_gz
+    return mod
+
+
+def _fake_example(repo_dir: Path, overview: str) -> dict:
+    """The minimum `validate_example` needs: one node, one self-edge, and an
+    `overview.md` whose text is what the leak check will read. Returns the
+    matching metadata."""
+    import gzip
+
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    with gzip.open(repo_dir / "nodes.jsonl.gz", "wt", encoding="utf8") as fh:
+        fh.write(json.dumps({"id": "n1"}) + "\n")
+    with gzip.open(repo_dir / "edges.jsonl.gz", "wt", encoding="utf8") as fh:
+        fh.write(json.dumps({"src": "n1", "dst": "n1"}) + "\n")
+    (repo_dir / "overview.md").write_text(overview, encoding="utf8")
+    return {"nodes": 1, "edges": 1}
+
+
+@pytest.mark.parametrize(
+    ("text", "leaks"),
+    [
+        # Real repository content that merely ends in, or brackets, the prefix.
+        # These two strings are why Rails and Spring Framework stayed out of
+        # the gallery (#462): `examples.yml` runs the generator in a container
+        # where `~` is `/root`, and a bare substring check flagged their own
+        # docstrings as this machine's home directory.
+        ("config lives at /my/rails/root/config/application.rb", False),
+        ("the XML fixture closes with </root>.", False),
+        ("installed under /rootkit/bin", False),
+        # Genuine leaks of the build machine's home directory.
+        ("built from /root/scratch/clone/django", True),
+        ("workdir: /root", True),
+        ('{"dir": "/root"}', True),
+    ],
+)
+def test_generate_examples_leak_check_matches_at_path_boundaries(text, leaks):
+    """#462: the scratch/home-path check matches at path boundaries, so a short
+    generic home such as a container's `/root` does not flag a repository's own
+    path-handling source -- while a real leak still fails the build."""
+    assert _load_generate_examples()._leaks_path(text, "/root") is leaks
+
+
+def test_generate_examples_validator_admits_content_ending_in_the_home_path(tmp_path, monkeypatch):
+    """The boundary rule end to end, through `validate_example` itself: the
+    same artifact passes or fails on whether `/root` names a path in it."""
+    mod = _load_generate_examples()
+    workdir = tmp_path / "scratch"
+    # Patched on `os.path` itself, not on the module's namespace: the script
+    # has reached `expanduser` both ways, and this test is the regression
+    # anchor, so it must fail on the old code for the behaviour rather than
+    # for an attribute that moved.
+    monkeypatch.setattr(os.path, "expanduser", lambda _p: "/root")
+
+    repo_dir = tmp_path / "rails"
+    meta = _fake_example(repo_dir, "see /my/rails/root/config and </root>\n")
+    assert mod.validate_example(repo_dir, meta, workdir) == []
+
+    (repo_dir / "overview.md").write_text("cloned into /root/scratch/rails\n", encoding="utf8")
+    problems = mod.validate_example(repo_dir, meta, workdir)
+    assert len(problems) == 1, problems
+    assert "overview.md" in problems[0] and "'/root'" in problems[0]
+
+
+def test_generate_examples_validator_sees_a_json_escaped_scratch_path(tmp_path, monkeypatch):
+    """A committed artifact is JSON, so a Windows scratch path reaches it
+    backslash-escaped and the literal form never appears in the file at all."""
+    mod = _load_generate_examples()
+    workdir = Path("C:\\work\\r2g-scratch")
+    monkeypatch.setattr(os.path, "expanduser", lambda _p: "~")
+
+    repo_dir = tmp_path / "vscode"
+    meta = _fake_example(repo_dir, "no leak here\n")
+    flow = repo_dir / "flows" / "q1.json"
+    flow.parent.mkdir()
+    flow.write_text(
+        json.dumps({"path": "C:\\work\\r2g-scratch\\clone\\src\\x.ts"}), encoding="utf8"
+    )
+    assert "C:\\\\work" in flow.read_text(encoding="utf8")  # escaped on disk
+
+    problems = mod.validate_example(repo_dir, meta, workdir)
+    assert len(problems) == 1, problems
+    assert "flows" in problems[0] and "q1.json" in problems[0]
+
+
+def test_generate_examples_split_rule(tmp_path):
+    """Verify generate_examples._read_jsonl_maybe_gz preserves records with embedded line separators like U+2028."""
+    import gzip
+
+    _read_jsonl_maybe_gz = _load_generate_examples()._read_jsonl_maybe_gz
 
     # A JSON record containing embedded U+2028 (line separator) in string
     record = '{"id": "chunk-1", "text": "hello\u2028world"}'

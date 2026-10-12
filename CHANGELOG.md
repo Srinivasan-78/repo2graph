@@ -218,6 +218,17 @@ makes keeping it current a release-blocking step rather than a good intention.
   `tests/test_doc_consistency.py` fails if a doc names a check `doctor` does not have. The sample
   `repo_neighbours` output in the same file cited `repo2graph/doctor.py:1051` in a 466-line file;
   it is regenerated from a real run.
+- **`generate_examples.validate_example`'s scratch/home-path check matches at a path boundary
+  (#462).** The check searched each committed artifact for the build machine's workdir and `~` as
+  bare substrings. Under `examples.yml`, where `~` is a container's `/root`, that flagged
+  repositories' own content: Rails' docstrings say `/my/rails/root/config`, Spring's fixtures say
+  `</root>`, and both were reported as this machine's home directory leaking into the gallery,
+  which is what kept the two out of `examples/`. A candidate now counts only where it starts a
+  path — not preceded by a path character, and followed by a separator, a closing delimiter or
+  nothing — so `/rootkit/bin` and `</root>` pass while `/root/scratch/clone` still fails the
+  build. The same pass closes the opposite hole: the artifacts are JSON, so a Windows scratch path
+  reaches them backslash-escaped and the literal form the check looked for never appeared in the
+  file, which the escaped form is now searched for too.
 - **Reading a small index file no longer allocates its whole size ceiling.** `read_bounded` asked
   for `limit + 1` bytes in one `read()`, and CPython allocates that buffer before reading: every
   2 KB `vectors.meta.json` cost 256 MB and every `vectors.npy` 512 MB (the SCIP reader did the same
