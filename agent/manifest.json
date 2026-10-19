@@ -1,13 +1,14 @@
 {
   "format": "repo2graph/1",
-  "build_id": "1cf7c275-6aac-411d-b708-1f256740579c",
+  "build_id": "69d316ba-47bc-454c-b5fd-b9e090ec3437",
   "tool_version": "4.0.0",
   "schema_version": 1,
-  "created_at": "2026-10-12T20:24:29.504911+00:00",
+  "created_at": "2026-10-19T09:36:44.531035+00:00",
   "source_revision": {
     "commit": "48afbeba61797f3b853c4151cd77208f52fdb49c",
     "short_commit": "48afbeb",
     "branch": "main",
+    "tag": "v4.0.0-0-g48afbeb",
     "dirty": false,
     "base_branch": "main",
     "remote_url": "https://github.com/Srinivasan-78/repo2graph"
