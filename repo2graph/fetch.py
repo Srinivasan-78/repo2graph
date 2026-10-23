@@ -413,7 +413,7 @@ def index_github(
         g.name = f"{owner}/{repo}"
         # The clone is deleted below, so there is no local tree for
         # index-status/doctor to compare against: record the remote instead.
-        setattr(g, "source_remote", f"github:{owner}/{repo}@{sha}")  # not a Graph field
+        g.source_remote = f"github:{owner}/{repo}@{sha}"
         chunks = (
             None if no_chunks else iter_chunks(g, max_chunks=max_chunks)
         )  # a generator, streamed to disk by dump_all

@@ -625,7 +625,7 @@ def test_mcp_neighbours_cites_the_call_site_not_just_the_definition(indexed):
     from repo2graph.mcp import dispatch
     from repo2graph.query import Index
 
-    src, out, _edges = indexed
+    _src, out, _edges = indexed
     text = dispatch(
         Index(out), "repo_neighbours", {"node_id": "sym:app/routes.py::helper", "limit": 10}
     )

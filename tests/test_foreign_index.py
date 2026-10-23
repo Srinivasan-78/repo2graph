@@ -67,7 +67,7 @@ def test_foreign_index_detected_when_marker_tampered(sample_repo: tuple[Path, Pa
 
 
 def test_mcp_refuses_foreign_index_by_default(sample_repo: tuple[Path, Path]) -> None:
-    repo, out = sample_repo
+    _repo, out = sample_repo
     # Make index foreign by removing local.json
     (out / LOCAL_FILE).unlink()
     assert is_foreign_index(out)

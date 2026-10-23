@@ -49,7 +49,7 @@ def _straddling_source() -> bytes:
     head = b"def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n\n\n"
     pad = _LIMIT - 1 - len(head) - len(b"# ")
     assert pad > 0, "head no longer fits before the boundary"
-    src = head + b"# " + b"x" * pad + "é".encode("utf8")
+    src = head + b"# " + b"x" * pad + "é".encode()
     src += b"\n\n\ndef gamma():\n    return 3\n"
     # The point of the fixture, pinned: the character sits on the boundary.
     assert src[_LIMIT - 1] == 0xC3

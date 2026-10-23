@@ -16,7 +16,6 @@ from ..export import path as artifact_path
 from ..query import Index
 from .guardrails import AUTO_BUILD_FORMATS
 
-
 _INDEXES: dict[str, Index] = {}
 _INDEX_MTIMES: dict[str, float] = {}
 _INDEX_LOCKS_GUARD = threading.Lock()
@@ -60,12 +59,12 @@ AUTO_BUILD_GITIGNORE = (
 def _build_index(repo: Path, out: Path) -> None:
     """Index `repo` into `out`, in-process, silent on stdout."""
     from ..chunks import iter_chunks
-    from ..export import dump_all
+    from ..config import build_options
+    from ..config import load as load_repo_config
+    from ..export import _LOCAL_GITIGNORE, atomic_write, dump_all
     from ..graph import build
-    from ..export import _LOCAL_GITIGNORE, atomic_write
     from ..integrity import validate_outdir
     from ..lock import BuildLock
-    from ..config import build_options, load as load_repo_config
     from ..parse import BuildConfig
 
     # `build -o` is hardened by `validate_outdir`; this auto-build reached the

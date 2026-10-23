@@ -16,12 +16,14 @@ cwd, so a pathless MCP config indexed whatever directory the client launched in
 -- a home folder, a desktop, or a OneDrive root.
 """
 
+import errno
+import os
 from pathlib import Path
 
 import pytest
-from repo2graph.cli import main
-
 from conftest import write_simple_repo
+
+from repo2graph.cli import main
 
 
 def _mcp():
@@ -130,7 +132,7 @@ def test_pathless_mcp_accepts_a_cwd_that_is_a_project_root(tmp_path, monkeypatch
 def test_pathless_mcp_accepts_any_project_marker(tmp_path, monkeypatch, marker):
     monkeypatch.chdir(tmp_path)
     (tmp_path / marker).write_text("", encoding="utf8")
-    out, repo = _mcp().resolve_paths()
+    _out, repo = _mcp().resolve_paths()
     assert repo is not None
 
 
@@ -152,5 +154,100 @@ def test_an_explicit_out_is_still_trusted(tmp_path):
 
 
 def test_an_explicit_repo_is_still_trusted(tmp_path):
-    out, repo = _mcp().resolve_paths(repo=str(tmp_path))
+    _out, repo = _mcp().resolve_paths(repo=str(tmp_path))
     assert repo == tmp_path
+
+
+def test_a_build_survives_a_read_only_parent_of_the_output_directory(tmp_path, monkeypatch):
+    """The documented read-only container run must actually produce an index.
+
+    `.github/SECURITY.md` describes running the image with a read-only rootfs
+    and only `-o /out` mounted writable. Both halves of the write path put
+    their scratch directory *beside* the target -- `BuildLock`'s
+    `.out.r2glock` and `dump_all`'s `.out.staging.<pid>` -- so with `/`
+    read-only the build took the lock failure first and, once that was fixed,
+    died at the staging `mkdir` after doing all of its work. Nothing caught it
+    because the container CI job is newer than the bug.
+
+    Only the sibling staging `mkdir` is blocked, rather than every write under
+    the parent: patching `builtins.open` globally also reaches the parse
+    workers and pytest's own temp handling, which on Windows surfaced as an
+    unrelated `PermissionError`. `BuildLock`'s own fallback is covered
+    directly by `tests/test_store.py`.
+    """
+    real_mkdir = os.mkdir
+
+    def fake_mkdir(path, *args, **kwargs):
+        # Only the *sibling* staging directory, `.out.staging.<pid>.<hex>`.
+        # The in-target fallback is `.staging.<pid>.<hex>` -- matching on
+        # `.staging.` alone blocks that too, and the build has nowhere left.
+        if Path(str(path)).name.startswith(".out.staging."):
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_mkdir(path, *args, **kwargs)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    monkeypatch.setattr(os, "mkdir", fake_mkdir)
+    rc = main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+
+    assert rc == 0
+    assert (out / "agent" / "nodes.jsonl").is_file()
+    assert (out / "agent" / "chunks.jsonl").is_file()
+    # The in-target staging directory is scratch, not an artifact.
+    assert [q.name for q in out.iterdir() if ".staging" in q.name] == []
+
+
+def test_the_in_target_merge_swaps_agent_last(tmp_path):
+    """`agent/` must be the final rename, so readers never see a half-new index.
+
+    `_merge_staging_into` is the read-only-parent fallback and cannot swap the
+    whole directory in one step -- renaming needs write permission on the parent
+    of both names. Per-entry replacement is the best available, so the *order*
+    carries the guarantee: everything `query`, `rag` and the MCP server read
+    lives under `agent/` (including `manifest.json`, and so the `build_id`), and
+    that subtree arrives in a single rename. A reader therefore sees the
+    previous index, whole, right up to the instant the new one replaces it.
+    """
+    from repo2graph.export import AGENT_DIR, _merge_staging_into
+
+    target = tmp_path / "out"
+    staging = target / ".staging.1.abc"
+    staging.mkdir(parents=True)
+    for name in ("human", AGENT_DIR, "local.json", ".gitignore"):
+        p = staging / name
+        if name.endswith(".json") or name.startswith("."):
+            p.write_text("{}", encoding="utf8")
+        else:
+            p.mkdir()
+            (p / "f.jsonl").write_text("{}\n", encoding="utf8")
+
+    # `_merge_staging_into` goes through `export._rename` (which retries a
+    # Windows sharing violation), not `os.replace` directly.
+    import repo2graph.export as export_mod
+
+    renamed: list[str] = []
+    real_rename = export_mod._rename
+
+    def spy(src, dst):
+        renamed.append(Path(str(dst)).name)
+        return real_rename(src, dst)
+
+    try:
+        export_mod._rename = spy
+        _merge_staging_into(staging, target)
+    finally:
+        export_mod._rename = real_rename
+
+    assert renamed, "nothing was renamed"
+    assert renamed[-1] == AGENT_DIR, renamed
+    # Everything arrived, and the scratch directory is gone.
+    assert sorted(p.name for p in target.iterdir()) == [
+        ".gitignore",
+        AGENT_DIR,
+        "human",
+        "local.json",
+    ]

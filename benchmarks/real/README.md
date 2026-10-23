@@ -263,6 +263,56 @@ trustworthy.
 `agent_eval.py` reads [`repos.json`](repos.json) directly, so the held-out *repository* set cannot
 go through the agent loop without teaching it `--repos`. That is a gap, not a result.
 
+### A real model in the loop (`scripts/llm_agent_eval.py`)
+
+Every number above comes from a **deterministic policy** over the real index --
+search, read the citations, answer. That is the right instrument for measuring
+*retrieval*, because the policy never changes and so every movement in the
+number comes from the index. It is the wrong instrument for the thing this
+project actually ships to an agent: nine tools with overlapping jobs, a token
+ceiling the caller cannot see, paged replies, and arguments it has to choose.
+A fixed policy cannot be misled by a tool description, cannot page, and cannot
+waste a turn on the wrong tool. A model can.
+
+`scripts/llm_agent_eval.py` closes that gap: it hands a real LLM the real
+`mcp/schemas.py` tool definitions, routes its tool calls through the real
+`mcp/tools.dispatch` against a real index, and scores the transcript against
+the same pinned evidence spans the tables above use.
+
+```bash
+export ANTHROPIC_API_KEY=...        # or OPENAI_API_KEY
+python scripts/llm_agent_eval.py \
+  --tasks benchmarks/real/tasks_holdout_structural.json \
+  --out benchmarks/real/llm_agent_results.json
+
+python scripts/llm_agent_eval.py --dry-run --index-root . --index-out /tmp/idx
+```
+
+**No result is published here yet, and that is deliberate.** A run costs
+provider tokens and is not reproducible — two runs of one model on one task set
+disagree — so a number lifted from a single run would be exactly the kind of
+best-looking figure the rest of this page exists to avoid. Report it with the
+model id, the task file and the token cost beside it, from several runs, or do
+not report it. The script emits all of those in its JSON for that reason.
+
+It is **not** a CI gate and must not become one: a test that fails because a
+model had an off day teaches people to re-run tests rather than read them. The
+suite covers the harness through `--dry-run`, which exercises the loop, the
+dispatch, the scoring and the report with a scripted model and no network
+(`tests/test_llm_agent_eval.py`), including the check that the scorer is not
+vacuous — a solvable task must score solved and an unsolvable one must not.
+
+What it measures that nothing else does, once you have run it: how often a
+model reaches the pinned evidence at all, how many turns and tool calls it
+spends doing so, how often it exhausts `--max-turns`, and which tools it
+reaches for. The last of those is the one most likely to change a tool
+description.
+
+Only `anthropic` and `openai` have tool-calling paths here. `rag --answer`'s
+other providers are completion-only in `answer.py`, and this script does not
+reimplement them; a Gemini or Ollama run needs that path written first.
+
+
 ## Why repo2graph loses on the lexical set
 
 Read off the packs for the losing questions, not guessed. Eight defects were diagnosed. Six were

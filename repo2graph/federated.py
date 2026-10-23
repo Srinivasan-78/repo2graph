@@ -14,8 +14,9 @@ still answer. No graph is merged and no id changes, so nothing is rebuilt.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .events import diagnostic
 from .query import Index, Record, _cite_block, count_tokens

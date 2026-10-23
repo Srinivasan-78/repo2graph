@@ -135,6 +135,84 @@ Django 28% nodes, 8.5% edges and 13.5% output, for 7,688 `READS`, 219 `WRITES` a
 `REFERENCES` (Django annotates almost nothing). `stats.json` reports
 `reference_edges_reads`, `_writes`, `_references` and `_unresolved` when it is on.
 
+### Framework edges (`--framework-edges`, off by default)
+
+`build --framework-edges` adds three edge types and one node type, for Python
+and JS/TS only:
+
+| Edge | Meaning |
+| --- | --- |
+| `ROUTES_TO` | `route` -> the handler symbol whose decorator declares it; exact, confidence 1.0 |
+| `INJECTS` | function/method -> a dependency it declares (FastAPI `Depends`, `Security`) |
+| `MODELS` | model class -> a related model class, from an ORM relation field |
+
+| Node | Meaning |
+| --- | --- |
+| `route` | an HTTP endpoint, id `route:<METHOD> <path>`, with the mount prefix already joined on |
+
+**Why a route node exists at all.** Nothing in a repository *calls* a request
+handler -- the framework does, at runtime -- so before this a handler was an
+entrypoint with no incoming edge and nothing in the graph named the endpoint it
+serves. Two of the five questions the README opens with ("where is
+authentication enforced?", "trace a request from route to persistence") start
+at an endpoint, and `ROUTES_TO` is the edge that makes them answerable. One
+`route` node per method-and-path, shared by every handler declaring it: two
+handlers on one path is a real thing, and both edges are emitted rather than
+one silently winning.
+
+**Only decorator-declared routing is read.** FastAPI, Flask, Starlette, Sanic
+and NestJS put the route on the definition, so the handler is the decorated
+symbol and the edge is syntactic rather than inferred. Express, Hono and Koa
+register with a *call* -- `app.get("/x", handler)` -- where the handler is an
+argument, often an inline arrow with no symbol to point at, and the
+registration can sit behind a loop or a helper; Django's `urlpatterns` has the
+same shape. Those need call-argument dataflow, not a decorator read, so they
+get **no edge**, and `stats.json` does not pretend otherwise. A missing route
+edge never means "no route", exactly as a missing `CALLS` edge never means
+"no call".
+
+The resolution rules differ per edge, deliberately:
+
+- **`ROUTES_TO`** resolves nothing. The handler is the symbol the decorator is
+  attached to, so confidence is 1.0 and `resolution_kind` is `decorator`. The
+  path is recorded exactly as written -- `{uid}`, `<int:uid>` and `:id` are
+  three frameworks' syntax for one idea, and normalising them would stop the
+  edge's evidence matching the line it cites. A class-level mount decorator
+  (`@Controller('users')`, `@Blueprint`, `@APIRouter`) prefixes the routes its
+  methods declare, so NestJS's `@Controller('users')` plus `@Get(':id')` is
+  one route, `GET /users/:id`.
+- **`INJECTS`** binds a name the way reference edges do: a symbol at the top
+  level of the same file, or one the file imports by that name. There is no
+  repository-wide fallback, so an unbound dependency is counted in
+  `framework_edges_unresolved` and dropped. Only a plain callable name is
+  taken: `Depends(get_db)` resolves, `Depends(Factory().build)` does not,
+  because what is named there is an expression rather than a symbol.
+- **`MODELS`** is the one framework edge with a repository-wide fallback,
+  because Django's string form (`ForeignKey("Author")`) exists precisely to
+  name a model in another app. A name that binds in-file or by import resolves
+  there; otherwise every model class with that name is a candidate, priced at
+  `1/n` and marked `ambiguous`, never picked. `"self"` is Django's
+  self-reference and becomes an honest self-edge. Several fields relating one
+  class to the same model (`author` and `editor` both `ForeignKey(Author)`)
+  are **one** edge carrying `count` and every declaring `field` -- edges are
+  identified by their endpoints, so this is the same choice `CALLS` makes for
+  repeated calls of one name.
+
+`stats.json` reports `framework_edges_routes`, `_injects`, `_models` and
+`_unresolved` when the flag is on, and nothing when it is off. Retrieval
+follows these edges by default once they exist (`ROUTES_TO` inwards, from a
+handler to its endpoint; `INJECTS` outwards; `MODELS` both ways) -- a default
+build has none, so this cannot change what an unflagged index returns. Without
+the flag nothing is captured and every artifact is byte-identical to a build
+that never had the feature, including `parse.cache.json`; flipping the flag
+invalidates the parse cache, which records `framework_edges` in its identity.
+
+**Java and Kotlin annotations are not covered yet** (`@GetMapping`,
+`@Autowired`). They are the obvious next entry, and they are not a table entry
+away: Spring picks the implementation out of its container at runtime and an
+`@Autowired` field names an interface, so the edge wants its own design rather
+than a name added to `HTTP_METHODS`.
+
 ### Exact resolution from SCIP (`--scip`, off by default)
 
 `CALLS` and `INHERITS` are name-resolved (the tiers in `graph.build`). `build --scip index.scip`
@@ -325,10 +403,28 @@ wrong in a way nothing detects: stale confidences and stale entrypoint flags flo
 edges from its cached symbols is what makes a repo-wide confidence shift land correctly on an
 unchanged caller.
 
-The cost model is what makes exactness free rather than a compromise: parsing dominates a build and
-resolution is O(edges) and negligible, so recomputing all of it buys correctness for no measurable
-time. Every file is still *read* — the content hash is the bytes, and there is no cheaper way to know
-a file is unchanged — and reading is the small half.
+The cost model is what makes exactness cheap rather than a compromise, and it is **scale-dependent
+in a way this section used to get wrong**. It claimed "parsing dominates a build and resolution is
+O(edges) and negligible". That holds on the small and medium fixtures, and
+[`benchmarks/perf/README.md`](../benchmarks/perf/README.md#50000-files-88) refutes it at 50,000
+files, where the same build divides as:
+
+| stage | wall |
+|---|---:|
+| parse (4 workers) | 3.4 s |
+| discovery, call resolution, graph assembly | 26.6 s |
+| write (chunk text + every artifact) | 46.9 s |
+
+Parsing is 4% of an 81 s build, not the dominant half, and an unchanged `--incremental` rebuild
+takes **98.2 s — slower than the 81 s full build it is meant to shortcut**, because it pays to load
+and check the parse cache and then re-runs resolution and writing in full anyway.
+
+So the honest statement is narrower than the old one. Re-resolution is cheap *relative to writing*
+at every size measured, which is what makes whole-graph re-resolution the right trade against the
+stale-confidence bug described above — a partial merge would buy back at most the 26.6 s that
+resolution costs, and none of the 46.9 s that dominates. Every file is still *read* — the content
+hash is the bytes, and there is no cheaper way to know a file is unchanged. At 50,000 files reading
+is no longer "the small half" either; it is folded into the discovery-and-assembly row.
 
 The acceptance test is whole-artifact byte equality against a full rebuild across an add, a modify,
 a delete and a no-op (`tests/test_incremental.py`). That is also why the hit/miss tallies live on
@@ -338,9 +434,13 @@ the comparison, weakening the very test that makes the feature trustworthy.
 
 Deliberately not implemented: partial confidence recalculation over "affected symbol namespaces", and
 a reverse-edge index for a partial reach BFS. Both compute the same answer as the full re-resolution
-above, cost more code and more ways to be subtly wrong, and save time that is already close to zero.
-If resolution ever becomes the bottleneck on a very large repo, that is when to revisit them, with a
-profile in hand.
+above, cost more code and more ways to be subtly wrong, and — now that there is a profile — chase the
+smaller of the two costs. The profile says the incremental work worth doing is **incremental
+writing**: rewriting only the records whose files changed, rather than re-serialising 696 MB of
+`chunks.jsonl` on every rebuild. That is what would make `--incremental` faster than a full build at
+50,000 files instead of slower, and it is a change to `export.py`, not to resolution. Until then
+`--incremental` is for its correctness guarantee (byte-identical output), not for speed, and the
+perf README says so.
 
 ### Staleness
 
@@ -372,25 +472,25 @@ language has been exercised against real code".
 <!-- BEGIN GENERATED: language-scorecard -->
 | Language | Tier | Overall | Parsing | Symbols | Calls | Imports | Tests Link | Framework | Repo Tests |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **tsx** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 1 funcs |
-| **typescript** | Tier 1 | **82 (B)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 3 funcs |
-| **javascript** | Tier 1 | **78 (B)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 5 funcs |
-| **python** | Tier 1 | **73 (B-)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 30 (F) | 20 (F) | 9 funcs |
-| **go** | Tier 2 | **68 (C+)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 50 (D) | 0 (F) | 5 funcs |
-| **java** | Tier 2 | **67 (C+)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 30 (F) | 20 (F) | 1 funcs |
-| **kotlin** | Tier 2 | **64 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 30 (F) | 0 (F) | 4 funcs |
-| **php** | Tier 3 | **72 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 30 (F) | 0 (F) | 5 funcs |
-| **rust** | Tier 3 | **67 (C+)** | 90 (A-) | 75 (B-) | 55 (D) | 100 (A) | 30 (F) | 0 (F) | 1 funcs |
-| **csharp** | Tier 3 | **64 (C)** | 90 (A-) | 60 (C) | 65 (C+) | 90 (A-) | 30 (F) | 0 (F) | 3 funcs |
-| **ruby** | Tier 3 | **62 (C)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 30 (F) | 0 (F) | 3 funcs |
-| **c** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 1 funcs |
-| **cpp** | Tier 3 | **54 (D)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 16 funcs |
-| **objc** | Tier 4 | **61 (C)** | 85 (B+) | 85 (B+) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 2 funcs |
-| **scala** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 0 funcs |
-| **swift** | Tier 4 | **61 (C)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 0 (F) | 0 (F) | 4 funcs |
-| **bash** | Tier 4 | **51 (D)** | 85 (B+) | 35 (F) | 55 (D) | 80 (B) | 0 (F) | 0 (F) | 3 funcs |
-| **hcl** | Tier 4 | **40 (F)** | 85 (B+) | 10 (F) | 55 (D) | 50 (D) | 0 (F) | 0 (F) | 3 funcs |
-| **lua** | Tier 4 | **35 (F)** | 85 (B+) | 35 (F) | 55 (D) | 0 (F) | 0 (F) | 0 (F) | 2 funcs |
+| **tsx** | Tier 1 | **94 (A)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 1 funcs |
+| **typescript** | Tier 1 | **94 (A)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 3 funcs |
+| **javascript** | Tier 1 | **90 (A-)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 5 funcs |
+| **python** | Tier 1 | **85 (B+)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 10 funcs |
+| **java** | Tier 2 | **73 (B-)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 92 (A-) | 20 (F) | 1 funcs |
+| **go** | Tier 2 | **72 (B-)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 86 (B+) | 0 (F) | 5 funcs |
+| **kotlin** | Tier 2 | **70 (B-)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 86 (B+) | 0 (F) | 4 funcs |
+| **php** | Tier 3 | **75 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 64 (C) | 0 (F) | 5 funcs |
+| **rust** | Tier 3 | **70 (B-)** | 90 (A-) | 75 (B-) | 55 (D) | 100 (A) | 56 (D) | 0 (F) | 1 funcs |
+| **ruby** | Tier 3 | **68 (C+)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 94 (A) | 0 (F) | 3 funcs |
+| **csharp** | Tier 3 | **67 (C+)** | 90 (A-) | 60 (C) | 65 (C+) | 90 (A-) | 60 (C) | 0 (F) | 3 funcs |
+| **c** | Tier 3 | **60 (C)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 56 (D) | 0 (F) | 1 funcs |
+| **cpp** | Tier 3 | **60 (C)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 56 (D) | 0 (F) | 16 funcs |
+| **objc** | Tier 4 | **67 (C+)** | 85 (B+) | 85 (B+) | 55 (D) | 80 (B) | 56 (D) | 0 (F) | 2 funcs |
+| **scala** | Tier 4 | **67 (C+)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 56 (D) | 0 (F) | 0 funcs |
+| **swift** | Tier 4 | **67 (C+)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 56 (D) | 0 (F) | 4 funcs |
+| **bash** | Tier 4 | **57 (D)** | 85 (B+) | 35 (F) | 55 (D) | 80 (B) | 56 (D) | 0 (F) | 3 funcs |
+| **hcl** | Tier 4 | **46 (F)** | 85 (B+) | 10 (F) | 55 (D) | 50 (D) | 56 (D) | 0 (F) | 3 funcs |
+| **lua** | Tier 4 | **41 (F)** | 85 (B+) | 35 (F) | 55 (D) | 0 (F) | 56 (D) | 0 (F) | 2 funcs |
 <!-- END GENERATED: language-scorecard -->
 
 Regenerate with `python scripts/generate_language_scorecard.py`;
@@ -410,10 +510,24 @@ pipeline is equipped to extract, not how often an answer about that language is 
 measured retrieval quality see [benchmarks/real/README.md](../benchmarks/real/README.md), which
 covers Python and TypeScript only.
 
-Two dimensions score low for every language because the feature does not exist yet rather than
-because any one grammar is weak: repo2graph emits no `TESTS` edges (test-to-implementation
-linking is inferred from `IMPORTS`), and no framework-specific edge types — no `ROUTES_TO`,
-`INJECTS`, `MODELS` or `CONFIGURES`. Those two caps are why no language reaches an A overall.
+`Framework` is the dimension that still caps most of this table, but it is no longer a flat zero.
+`build --framework-edges` extracts `ROUTES_TO`, `INJECTS` and `MODELS` for Python and JS/TS, which
+is what takes TypeScript and TSX to an A overall — the first rows here to reach one. The remaining
+cap is real rather than bookkeeping: only *decorator*-declared routing is read, so Express, Hono
+and Django's `urlpatterns` contribute nothing, `CONFIGURES` does not exist at all, and Java and
+Kotlin annotations (`@GetMapping`, `@Autowired`) are not covered — which is most of why Java sits
+at 20 and Go at 0. See *Framework edges* above for what each edge does and does not promise.
+
+**`Tests Link` was scored as a missing feature until it was checked.** `TESTS` edges have shipped
+since the edge table in §2 above was written (`derived.add_tests_edges`), but the generator
+asserted "TESTS edge type not yet implemented" and gave every language 30 or 50, costing all
+nineteen 10% of their weighted total for a feature that was already there. The dimension now
+scores the two things the edge actually depends on: whether `testpaths.is_test_path` recognises
+the language's test files — directory conventions count for everything, filename suffixes are
+read back out of the suffix tables — and the language's own `Calls` score, because a `TESTS` edge
+is derived by walking `CALLS` and cannot exist where calls do not resolve. That is why Go and
+Kotlin sit at 86 with strong test-file detection and weak call resolution, while Ruby reaches 94
+on two filename conventions (`_test.rb`, `_spec.rb`) and a `Calls` score of 80.
 
 **Priority order for deep support.** TypeScript/JavaScript and Python first: they are the two
 ecosystems already at Tier 1, the two the retrieval benchmark measures, and the two where
@@ -461,9 +575,10 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
 | `discovery.py` | 727 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
 | `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
+| `frameworks.py` | 366 | `--framework-edges` capture: routes, injected dependencies and ORM relation targets read off a decorated definition. All the framework knowledge lives in its tables. A leaf. |
 | `export.py` | 1,621 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |
 | `query.py` | 2,058 | `Index`: BM25 scoring, RRF fusion, `expand()` graph traversal, `retrieve()`, `pack_context()`. The whole retrieval layer, used identically by CLI, MCP and the Action. |
-| `store.py` | 178 | `GraphStore`: the one interface traversal and retrieval read the graph through (node by id, a node's incident edges, nodes and edges in file order). `MemoryGraphStore` is the default; `SqliteGraphStore` is a stdlib-only on-disk prototype. Order is part of the contract. |
+| `store.py` | 460 | `GraphStore`: the one interface traversal and retrieval read the graph through (node by id, a node's incident edges, nodes and edges in file order). `MemoryGraphStore` is the default; `SqliteGraphStore` is a stdlib-only on-disk backend, selected with `query`/`rag --store sqlite` and cached at `<index>/graph.sqlite` (keyed on the index's `build_id`, never on mtime). It also carries a `chunks` table, so `--store sqlite` answers retrieval without holding `chunks.jsonl` resident. `open_graph_store` owns the cache's lifecycle: one builder at a time behind `BuildLock`, a per-process staging name so concurrent materialisation cannot collide, a symlink refusal on both the primary and relocated paths, and a per-uid `0700` fallback under the system temp directory when the index directory is read-only. Order is part of the contract. |
 | `viz.py` | 1,295 | `graph.html`: force-directed layout, the self-contained HTML template, escaping, and the `NODE_TYPES`/`EDGE_TYPES` descriptions `export.py` imports. |
 | `testpaths.py` | 59 | `is_test_path`: which paths are test code, shared by retrieval's test demotion and `TESTS` edges. |
 | `chunks.py` | 494 | Cutting source into retrieval units; the `_lines()` helper every slicer must use. |
@@ -522,7 +637,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `limits.py` | 141 | Shared numeric ceilings. |
 | `parsepool.py` | 306 | Supervised parse workers: the per-file parse budget, the Linux worker memory cap, and pinning a crash on the file that caused it. A leaf. |
 | `config.py` | 247 | `[tool.repo2graph]` and `.repo2graph.toml`: the build options a repository can set for itself, validated, and where each one came from. A leaf. |
-| `graphdiff.py` | 273 | The structural diff between two builds, behind `repo2graph diff` and the per-build changelog. A leaf. |
+| `graphdiff.py` | 639 | The structural diff between two builds, behind `repo2graph diff` and the per-build changelog. Also the semantic PR surface: `get_git_diff_spans` maps a `git diff` to touched line ranges, and `find_affected_tests` walks `CALLS`/`TESTS`/`INHERITS`/`ROUTES_TO` backwards from the touched symbols to the tests covering them. That walk is tuned for recall, not precision — a missed test means CI is green over unexercised code — so it keeps ambiguous (`confidence = 1/n`) edges and reports `truncated` when `max_hops` cut it short, rather than returning a short answer that looks complete. |
 | `watch.py` | 110 | `build --watch`: the polling snapshot and the quiet period before a rebuild. |
 | `neo4j.py` | 131 | `build --neo4j-uri`: pushing `graph.cypher` to Neo4j's transactional endpoint in batches. A leaf. |
 

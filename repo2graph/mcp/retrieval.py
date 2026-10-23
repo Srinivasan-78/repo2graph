@@ -8,6 +8,7 @@ import weakref
 from collections import defaultdict
 from typing import Any
 
+from ..edgemeta import cite as edge_cite
 from ..query import (
     ALL_EDGE_DIRS,
     DEFAULT_EDGE_TYPES,
@@ -40,7 +41,6 @@ from .guardrails import (
     _int,
     _str,
 )
-from ..edgemeta import cite as edge_cite
 from .indexes import SECRET_RULES
 from .nodes import (
     _cochange_pairs,
@@ -306,7 +306,7 @@ def tool_repo_neighbours(
     # calls the symbol directly would surface only as `CALLS in`, and the
     # per-hop cap would hide the rest behind the structural edges listed first.
     if not truncated:
-        for dst, direction, conf in _tests_of(index, node_id, floor):
+        for dst, direction, _conf in _tests_of(index, node_id, floor):
             if index._is_secret_path((index.store.node(dst) or {}).get("path") or ""):
                 continue
             if len(rows) >= limit:

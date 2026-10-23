@@ -137,6 +137,42 @@ def test_chunk_ids_mismatch_falls_back_silently(indexed_repo: tuple[Path, Path])
     assert len(scores) > 0
 
 
+def test_truncated_chunk_ids_falls_back_silently(
+    indexed_repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A short `chunk_ids` beside an intact `count` must be rejected.
+
+    `count` and `chunk_ids` are separate fields in the same untrusted file.
+    Verification checked `count` against the chunk total and then compared the
+    ids with a truncating `zip`, so dropping entries from `chunk_ids` alone
+    left every surviving id matching its chunk and the index was accepted --
+    a BM25 index covering a fraction of the chunks, read as current.
+
+    Unlike its neighbours this asserts the *disk artifact was rejected*, not
+    merely that postings exist afterwards: the fallback recomputes them, so
+    `len(postings) > 0` holds either way and cannot tell accept from reject.
+    """
+    _, out = indexed_repo
+    meta_path = artifact_path(out, "bm25.meta.json")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert len(meta["chunk_ids"]) > 1
+    meta["chunk_ids"] = meta["chunk_ids"][:1]  # `count` left alone
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    rebuilt: list[bool] = []
+    original = Index._build_bm25
+    monkeypatch.setattr(
+        Index,
+        "_build_bm25",
+        lambda self: (rebuilt.append(True), original(self))[1],
+    )
+
+    idx = Index(out)
+    assert rebuilt == [True], "the truncated BM25 metadata was accepted instead of rejected"
+    assert len(idx.postings) > 0
+    assert len(idx.score("add two numbers")) > 0
+
+
 def test_symlinked_bm25_falls_back_silently(
     indexed_repo: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:

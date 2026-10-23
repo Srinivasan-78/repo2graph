@@ -382,7 +382,7 @@ def test_no_doc_sends_a_reader_to_a_doctor_check_that_does_not_exist():
     names = {c.name for c in run_doctor(REPO_ROOT).checks}
     assert names, "doctor ran no checks"
     referenced: dict[str, set[str]] = {}
-    for doc in sorted(REPO_ROOT.glob("docs/*.md")) + [README_PATH]:
+    for doc in [*sorted(REPO_ROOT.glob("docs/*.md")), README_PATH]:
         for section in re.findall(
             r"doctor[^|\n]*?(?:→|->)\s*([A-Za-z][\w /.-]*\w)", doc.read_text(encoding="utf-8")
         ):
@@ -501,6 +501,18 @@ def _cli_doc_section(command: str) -> str:
     return hits[0]
 
 
+#: An ANSI SGR escape, e.g. `\x1b[36m`. Python 3.14's argparse colourises its
+#: own help whenever `_colorize.can_colorize()` says yes, and that honours
+#: `FORCE_COLOR` regardless of whether the stream is a terminal -- which CI sets
+#: (`.github/workflows/ci.yml`, `FORCE_COLOR: 1`). These sequences end in a
+#: letter, so `\x1b[36m--store` puts a `\w` character immediately before the
+#: flag and silently defeats the `(?<![\w-])` lookbehind below. Every flag in a
+#: colourised usage line then went missing, which made this gate and
+#: `test_cli_doc_tables_cover_every_flag_of_the_retrieval_commands` pass
+#: vacuously on 3.14 while reporting brand-new flags as nonexistent.
+_ANSI_SGR = re.compile(r"\x1b\[[0-9;]*m")
+
+
 def _help_long_flags(argv: list[str]) -> set[str]:
     import contextlib
     import io
@@ -513,7 +525,8 @@ def _help_long_flags(argv: list[str]) -> set[str]:
             main([*argv, "--help"])
         except SystemExit:
             pass
-    flags = set(re.findall(r"(?<![\w-])(--[a-zA-Z][\w-]*)", buf.getvalue()))
+    text = _ANSI_SGR.sub("", buf.getvalue())
+    flags = set(re.findall(r"(?<![\w-])(--[a-zA-Z][\w-]*)", text))
     return flags - {"--help"}
 
 

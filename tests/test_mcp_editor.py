@@ -21,8 +21,8 @@ import time
 from pathlib import Path
 
 import pytest
-
 from conftest import FILE_GATEWAY, SYM_AUDIT, SYM_ROUTE
+
 from repo2graph.cli import main as cli_main
 from repo2graph.query import Index
 

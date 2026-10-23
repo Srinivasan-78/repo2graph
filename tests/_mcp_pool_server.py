@@ -24,8 +24,7 @@ def main():
         def __init__(self, *args, **kwargs):
             with open(marker, "a", encoding="utf8") as fh:
                 fh.write(
-                    "max_workers=%r initializer=%s\n"
-                    % (
+                    "max_workers={!r} initializer={}\n".format(
                         kwargs.get("max_workers"),
                         getattr(kwargs.get("initializer"), "__name__", None),
                     )

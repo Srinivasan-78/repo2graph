@@ -33,8 +33,36 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import repo2graph.derived as derived_mod  # noqa: E402
 import repo2graph.graph as graph_mod  # noqa: E402
 import repo2graph.parse as parse_mod  # noqa: E402
+import repo2graph.testpaths as testpaths  # noqa: E402
+from repo2graph.frameworks import FRAMEWORK_LANGS  # noqa: E402
+
+
+def _test_suffixes_for(lang: str) -> set[str]:
+    """Which of `testpaths`' filename suffixes belong to `lang`.
+
+    Read out of the suffix tables rather than listed here, so a suffix added
+    to `testpaths.py` moves this score without touching the generator. Each
+    suffix ends in a real extension, so `EXT_LANG` settles which language it
+    is; the cased JVM table (`FooTest.java`) is read the same way.
+    """
+    found: set[str] = set()
+    tables = (
+        testpaths._TEST_BASENAME_SUFFIXES,
+        testpaths._TEST_BASENAME_SUFFIXES_CASED,
+    )
+    for table in tables:
+        for suffix in table:
+            ext = suffix[suffix.rindex(".") :].lower()
+            if parse_mod.EXT_LANG.get(ext) == lang:
+                found.add(suffix)
+    # `test_*.py` / `test.py` / `conftest.py` are prefix-and-exact rules rather
+    # than suffixes, and they are Python's.
+    if lang == "python":
+        found.add("test_*.py")
+    return found
 
 
 @dataclass
@@ -335,44 +363,83 @@ def evaluate_language(
     imports_dim = DimensionScore(imports_score, score_to_grade(imports_score), imports_notes)
 
     # 5. Test-to-Implementation Linking (10%)
+    #
+    # `TESTS` edges ship (`derived.add_tests_edges`, documented in
+    # docs/architecture.md section 2). They are *derived from `CALLS`*: a test
+    # symbol's outgoing calls are walked up to `TESTS_MAX_HOPS` and each
+    # non-test symbol reached gets an edge. So this dimension is the product of
+    # two things that are both introspectable, and neither is a hardcoded list:
+    #
+    #   1. can `testpaths.is_test_path` recognise this language's test files?
+    #   2. can `CALLS` be resolved for it at all -- no calls, no TESTS edges.
+    #
+    # Scoring it as "not implemented" cost every language 10% of its weighted
+    # total for a feature that had already shipped.
     tests_score = 0
     tests_notes = []
-    # Currently, repo2graph does not emit TESTS edges
-    tests_notes.append("TESTS edge type not yet implemented in repo2graph")
 
-    # Language test file detection conventions
-    if lang in (
-        "python",
-        "javascript",
-        "typescript",
-        "tsx",
-        "go",
-        "rust",
-        "java",
-        "ruby",
-        "csharp",
-        "php",
-        "kotlin",
-    ):
+    # Directory conventions are language-agnostic: `tests/`, `test/`,
+    # `__tests__/`, `spec/`, `specs/` and any `test_*` parent component are
+    # matched per path component, for every language.
+    tests_score += 40
+    tests_notes.append(
+        "Directory conventions ("
+        + ", ".join(f"{d}/" for d in sorted(testpaths._TEST_DIR_NAMES))
+        + ") detected for every language"
+    )
+
+    # Filename suffixes are per-language, and which languages have one is a
+    # fact about the suffix tables rather than an opinion -- map each suffix
+    # back through EXT_LANG / the cased JVM table.
+    suffixes = _test_suffixes_for(lang)
+    if suffixes:
         tests_score += 30
+        tests_notes.append(f"Filename conventions recognised: {sorted(suffixes)}")
+    else:
         tests_notes.append(
-            "Standard file naming conventions (test_*, *_test, *Test) can be identified"
+            "No language-specific test filename suffix; only directory conventions apply"
         )
 
-    if lang == "go":
-        tests_score += 20
-        tests_notes.append("go import resolver explicitly segregates *_test.go files")
+    # The edge itself is CALLS-derived, so cap this part by call capability:
+    # a language whose calls do not resolve cannot produce a TESTS edge even
+    # when its test files are identified perfectly.
+    reachable = round(30 * calls_score / 100)
+    tests_score += reachable
+    tests_notes.append(
+        f"TESTS edges walk CALLS up to {derived_mod.TESTS_MAX_HOPS} hops; "
+        f"scaled by call resolution ({calls_score}/100) -> {reachable}/30"
+    )
 
     tests_score = min(100, max(0, tests_score))
     tests_dim = DimensionScore(tests_score, score_to_grade(tests_score), tests_notes)
 
     # 6. Framework-Specific Edges (10%)
+    #
+    # `ROUTES_TO` / `INJECTS` / `MODELS` ship behind `build --framework-edges`
+    # (`frameworks.py`, documented in docs/architecture.md section 2), so the
+    # languages in `FRAMEWORK_LANGS` are no longer scored as having nothing.
+    # Read off that frozenset rather than a list repeated here, so adding a
+    # language to the capture moves this score with it.
+    #
+    # It is capped below full marks on purpose, and the cap is the honest part:
+    # only *decorator*-declared routing is read. Express/Hono/Koa and Django's
+    # `urlpatterns` register routes with a call, and `CONFIGURES` does not
+    # exist at all, so a language with route and DI edges still has real
+    # framework structure this pipeline cannot see.
     framework_score = 0
     framework_notes = []
-    # Currently, repo2graph lacks dedicated framework edge types (ROUTES_TO, INJECTS, MODELS, CONFIGURES)
-    framework_notes.append(
-        "Ecosystem edges (ROUTES_TO, INJECTS, MODELS, CONFIGURES) not yet extracted"
-    )
+    if lang in FRAMEWORK_LANGS:
+        framework_score += 50
+        framework_notes.append(
+            "ROUTES_TO from decorator-declared routes, INJECTS and MODELS (build --framework-edges)"
+        )
+        framework_notes.append(
+            "Not covered: call-registered routes (Express/Hono, Django urlpatterns) and CONFIGURES"
+        )
+    else:
+        framework_notes.append(
+            "No framework capture: ROUTES_TO / INJECTS / MODELS are Python and JS/TS only"
+        )
 
     if lang in ("python", "java", "javascript", "typescript", "tsx"):
         framework_score += 20
@@ -421,12 +488,41 @@ def evaluate_language(
     if calls_score >= 80:
         strengths.append("Robust call resolution with dynamic and decorator capture")
 
-    if tests_score < 50:
-        gaps.append("Zero test-to-implementation graph edges")
-        actions.append(f"Implement test discovery and TESTS edge linking for {lang}")
+    # `TESTS` edges exist for every language; a low score here is a weak
+    # *input* to them, so name whichever input is actually missing rather than
+    # the edge type.
+    if tests_score < 70:
+        if not suffixes:
+            gaps.append(
+                "Test files found only by directory, with no filename convention recognised"
+            )
+            actions.append(f"Add {lang} test filename suffixes to `testpaths.py`")
+        if calls_score < 80:
+            gaps.append("TESTS edges limited by call resolution, not by test discovery")
+            actions.append(f"Improve {lang} call resolution; TESTS edges are derived from CALLS")
+    # Only three of the six dimensions had a gap rule, so a language could
+    # score a D on `Symbols`, `Parsing` or `Imports` and still be reported with
+    # no gaps and no recommended action at all -- which is what happened to
+    # Python (Symbols 55) once the tests and framework dimensions stopped
+    # firing. A scorecard that grades a dimension has to be able to say what to
+    # do about it, or the grade is decoration.
+    if symbols_score < 70:
+        gaps.append(f"Limited symbol extraction ({len(kinds)} kinds declared in LANG_CFG)")
+        actions.append(f"Extend {lang}'s `kind_map` in `parse.LANG_CFG`")
+    if imports_score < 70:
+        gaps.append("Import statements resolve to few in-repo files")
+        actions.append(f"Extend `imports.resolve_import` for {lang}'s module syntax")
+    if parsing_score < 80:
+        gaps.append("Grammar robustness is the weak point, not the extraction rules")
+        actions.append(f"Characterise {lang} parse_errors against real repositories")
     if framework_score < 40:
         gaps.append("Framework routing, DI, and ORM relationships unextracted")
         actions.append(f"Add ecosystem extraction for major {lang} web and ORM frameworks")
+    elif framework_score < 100:
+        gaps.append("Call-registered routes and CONFIGURES are not extracted")
+        actions.append(
+            f"Resolve call-registered routes for {lang} (Express/Hono, Django urlpatterns)"
+        )
     if test_info.get("funcs_count", 0) < 3:
         gaps.append(
             f"Sparse test coverage in repository ({test_info.get('funcs_count', 0)} dedicated unit tests)"

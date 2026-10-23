@@ -197,7 +197,7 @@ def ripgrep(
     cmd = [*rg, "-n", "-i", "-F", "--no-heading", "-t", RG_TYPES[language]]
     for t in terms:
         cmd += ["-e", t]
-    res = subprocess.run(cmd + ["."], cwd=root, capture_output=True)
+    res = subprocess.run([*cmd, "."], cwd=root, capture_output=True)
     hits: dict[str, dict[int, str]] = defaultdict(dict)
     for raw in res.stdout.decode("utf8", "replace").split("\n"):
         m = re.match(r"^(.+?):(\d+):(.*)$", raw)
@@ -473,7 +473,9 @@ def main(argv: list[str] | None = None) -> int:
                         "tokens_used": used,
                         "found": sum(hit),
                         "evidence": len(hit),
-                        "missed": [ev["symbol"] for ev, h in zip(t["evidence"], hit) if not h],
+                        "missed": [
+                            ev["symbol"] for ev, h in zip(t["evidence"], hit, strict=False) if not h
+                        ],
                     }
                 )
 
@@ -605,7 +607,9 @@ def main(argv: list[str] | None = None) -> int:
                         "tokens_used": used,
                         "found": sum(hit),
                         "evidence": len(hit),
-                        "missed": [ev["symbol"] for ev, h in zip(t["evidence"], hit) if not h],
+                        "missed": [
+                            ev["symbol"] for ev, h in zip(t["evidence"], hit, strict=False) if not h
+                        ],
                     }
                 )
 

@@ -21,7 +21,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from conftest import build_mini_index  # type: ignore[import-not-found]
 
 from repo2graph.query import Index, classify_query

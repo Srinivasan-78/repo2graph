@@ -15,6 +15,12 @@ MCP and vector suites build on -- rather than inventing a second fixture repo.
 
 import json
 
+# tests/conftest.py's own vocabulary contract for `mini_repo`/`mini_index`:
+# this phrase hits pkg/gateway.py::route_request lexically. Reusing it rather
+# than inventing a new query term keeps this file honest about what the
+# shared fixture actually contains.
+from conftest import MINI_QUERY
+
 from repo2graph.integrity import verify_artifacts
 from repo2graph.query import Index, read_jsonl
 from repo2graph.schema import (
@@ -23,12 +29,6 @@ from repo2graph.schema import (
     PackResult,
     RetrievalResult,
 )
-
-# tests/conftest.py's own vocabulary contract for `mini_repo`/`mini_index`:
-# this phrase hits pkg/gateway.py::route_request lexically. Reusing it rather
-# than inventing a new query term keeps this file honest about what the
-# shared fixture actually contains.
-from conftest import MINI_QUERY
 
 
 def test_chunk_records_carry_every_required_schema_field(mini_index):

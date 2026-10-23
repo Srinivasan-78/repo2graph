@@ -3,6 +3,7 @@ Strictness Modes, Quality Metrics, Base Subtypes, and Path Precedence (Issues #2
 
 import json
 from pathlib import Path
+
 import pytest
 
 from repo2graph import graph as graph_mod
@@ -16,7 +17,6 @@ from repo2graph.parse import (
     parse_import_details,
     parse_source,
 )
-
 
 # ==============================================================================
 # Issue 11 (#270) & Issue 12 (#271): Scoped Call Resolution & Evidence Metadata

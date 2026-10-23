@@ -1,8 +1,8 @@
 """End-to-end and unit coverage for graph building, chunking and retrieval."""
 
 import io
-import re
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,8 +11,8 @@ import pytest
 
 from repo2graph.chunks import _split, build_chunks
 from repo2graph.cli import main, parse_formats
-from repo2graph.graph import build, import_targets, parse_all, path_index, resolve_import
 from repo2graph.export import path as artifact_path
+from repo2graph.graph import build, import_targets, parse_all, path_index, resolve_import
 from repo2graph.parse import discover, matches_any, parse_source
 from repo2graph.query import Index, tokenize
 from repo2graph.viz import LoadedGraph, node_label, payload, select
@@ -910,6 +910,7 @@ def test_graphml_carries_yfiles_layout(tmp_path, sample_repo):
 def test_graphml_preserves_custom_nodegraphics_edgegraphics_attributes(tmp_path):
     """Verify write_graphml preserves custom attributes named nodegraphics and edgegraphics."""
     import xml.etree.ElementTree as ET
+
     from repo2graph.export import write_graphml
     from repo2graph.graph import Graph
 
@@ -1955,6 +1956,7 @@ def test_git_version_failure_not_cached(monkeypatch):
 def test_clone_redacts_base64_and_token(tmp_path, monkeypatch):
     """Verify clone failure error message redacts both raw token and basic credential."""
     import base64
+
     from repo2graph import fetch
 
     token = "secrettoken123"
@@ -2126,7 +2128,7 @@ def test_sample_repo_graphml_contains_expected_node_labels(tmp_path, sample_repo
 def test_query_constants_and_budget_bounds(tmp_path, sample_repo):
     """Verify BM25 constants are named, char budget
     is checked before appending to prevent overshooting, and expansion is bounded."""
-    from repo2graph.query import BM25_K1, BM25_B, BM25_AVG_LEN, Index
+    from repo2graph.query import BM25_AVG_LEN, BM25_B, BM25_K1, Index
 
     assert BM25_K1 == 1.5
     assert BM25_B == 0.75
@@ -2289,6 +2291,7 @@ def test_write_jsonl_always_uses_lf_newlines(tmp_path):
 def test_graphml_node_and_edge_ids_xml_safe(tmp_path):
     """Verify write_graphml applies _xml_safe to node id and edge endpoints."""
     import xml.etree.ElementTree as ET
+
     from repo2graph.export import write_graphml
     from repo2graph.graph import Graph
 
@@ -2448,12 +2451,12 @@ def test_build_with_viz_nodes_zero_writes_an_empty_map(tmp_path, capsys):
 def test_chunk_caps_and_residual_span(tmp_path):
     """Verify named constants for chunk caps, and real line spans for residuals."""
     from repo2graph.chunks import (
-        MAX_CALLERS,
-        MAX_CALLEES,
-        MAX_EXT_CALLS,
         MAX_BASES,
-        MAX_IMPORTS,
+        MAX_CALLEES,
+        MAX_CALLERS,
         MAX_DEFINES,
+        MAX_EXT_CALLS,
+        MAX_IMPORTS,
     )
 
     for cap in (MAX_CALLERS, MAX_CALLEES, MAX_EXT_CALLS, MAX_BASES, MAX_IMPORTS, MAX_DEFINES):
@@ -2994,6 +2997,7 @@ def test_graph_max_nodes_limit(tmp_path):
 def test_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
     """Verify _safe_read_bytes uses O_NOFOLLOW where supported to avoid symlink TOCTOU races."""
     import os
+
     from repo2graph.graph import _safe_read_bytes
 
     f = tmp_path / "test.txt"
@@ -3635,6 +3639,7 @@ def test_graph_limit_exceeded_cli_returns_clean_exit(tmp_path, capsys):
 def test_safe_open_uses_o_nofollow(tmp_path, monkeypatch):
     """_safe_open uses O_NOFOLLOW where supported, same as _safe_read_bytes."""
     import os
+
     from repo2graph.graph import _safe_open
 
     f = tmp_path / "test.txt"
@@ -3692,7 +3697,7 @@ def test_clone_does_not_checkout_fetch_head_on_failed_fetch(tmp_path, monkeypatc
 
     monkeypatch.setattr(fetch.subprocess, "run", fake_run)
 
-    with pytest.raises(RuntimeError, match="git checkout .* failed"):
+    with pytest.raises(RuntimeError, match=r"git checkout .* failed"):
         fetch.clone("owner/repo", tmp_path, ref="nonexistent-branch")
 
     # Verify FETCH_HEAD checkout was never attempted

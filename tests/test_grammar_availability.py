@@ -17,6 +17,7 @@ counted keys in the `LANG_CFG` dict literal instead of loading anything.
 from pathlib import Path
 
 import pytest
+
 from repo2graph.doctor import check_tree_sitter
 from repo2graph.graph import build
 from repo2graph.parse import BuildConfig, ParseError, parse_source

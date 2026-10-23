@@ -1,6 +1,9 @@
 import json
+
 import pytest
-from repo2graph.export import dump_all, path as artifact_path
+
+from repo2graph.export import dump_all
+from repo2graph.export import path as artifact_path
 from repo2graph.graph import build
 
 

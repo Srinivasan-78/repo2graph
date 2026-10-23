@@ -73,6 +73,7 @@ repo2graph build /path/to/project -o .r2g --git-history 200
 | `--git-history` | `0` | Commits to read for `CO_CHANGE` arrows. Capped at 5000. |
 | `--git-authors` | off | With `--git-history`, record on each file node who changed it in those commits: `authors: [{"name", "commits"}]`, at most five, most commits first. Display names after `.mailmap`, never email addresses. Off by default because the index is often committed or uploaded, and names are personal data. |
 | `--reference-edges` | off | Also record `READS`/`WRITES` of module-level variables and class fields and `REFERENCES` to types named in annotations, for Python and JS/TS. Module- and class-level assignments become `variable`/`constant`/`field` symbols. Precision limits: docs/architecture.md, *Reference edges*. Also `reference-edges = true` in `.repo2graph.toml`. |
+| `--framework-edges` | off | Also record `ROUTES_TO` from each decorator-declared HTTP route to its handler, `INJECTS` for FastAPI `Depends`/`Security`, and `MODELS` between ORM models, for Python and JS/TS. Adds a `route` node per endpoint, named `<METHOD> <path>` with the controller's mount prefix joined on. Decorator-declared routing only (FastAPI, Flask, Starlette, Sanic, NestJS) -- a route registered by a call, like Express `app.get("/x", handler)` or Django `urlpatterns`, gets no edge. Limits: docs/architecture.md, *Framework edges*. Also `framework-edges = true` in `.repo2graph.toml`. |
 | `--scip` | unset | Path to a [SCIP](https://github.com/sourcegraph/scip) index (e.g. from `scip-python index` run at the repository root). For the files it covers, each call site and base class it names gets an exact `CALLS`/`INHERITS` edge (`method`/`resolution_kind` `scip`, confidence 1.0) or a `CALLS_EXTERNAL` edge; call sites it does not name, and files it does not cover, keep their name-resolved edges. `stats.json` then reports coverage (`scip_documents`, `scip_files_covered`, `scip_call_sites_resolved`, `scip_call_sites_heuristic`, `scip_calls_ambiguous`, ...). A missing, oversized (over 256 MiB) or malformed index is a warning plus a `scip_index_rejected` event on stderr and `scip_error` in `stats.json`, never a failed build. Never auto-detected: an `index.scip` shipped in a repository is ignored unless asked for. Also `scip = "index.scip"` in the config file (relative to, and confined to, the repository; `build` only — `rag <source-dir>` and the MCP auto-build never read an index). Regenerate the index when the code changes: a stale one only falls back to name resolution where a name no longer sits on the line it recorded. Details: docs/architecture.md, *Exact resolution from SCIP*. |
 | `--cochange-min` | `3` | Minimum co-edits across git history required to emit a `CO_CHANGE` edge. |
 | `--max-files` | `0` (all) | Stop after N files, for very large projects. |
@@ -241,7 +242,10 @@ decided a path (`Path matches exclude glob 'gen/**' from pyproject.toml
 [tool.repo2graph] exclude`). `github` does not read the cloned repository's
 file. Reading TOML needs Python 3.11+, or the `tomli` package on 3.10; without
 either, a config file is skipped with a one-line note on stderr. With no config
-file, nothing changes.
+file, nothing changes. Embedding options (`--embed-backend`, `--embed-model`) are
+per-invocation retrieval choices for `embed`/`query`/`rag` rather than repository build
+configuration, as dense embedding is an optional post-build step requiring specific
+environment extras (`rag` or `rag-static`).
 
 ## `github` — map a project you do not have locally
 
@@ -286,7 +290,9 @@ functions around each answer come along too.
 | `--conditional-expansion` | off | **Retired no-op.** Measured worse than the default on 40 held-out lexical and 40 held-out structural questions; still parses so existing commands do not break, and emits a `retired_flag_ignored` warning when set. See [benchmarks/real/README.md](../benchmarks/real/README.md). |
 | `--vectors` / `--no-vectors` | off | `--vectors` fuses the index's dense vectors into the ranking (an error if they are missing or the model does not match); `--no-vectors` forces word matching only. Same meaning as on `rag`. |
 | `--embed-model` | the `embed` default | Model used to embed the query for `--vectors`; must match the index. |
+| `--embed-backend` | `sentence-transformers` | Which embedder embeds your question for `--vectors`. Must match the backend the index was embedded with. `static` is a model2vec table — no transformer forward pass, no torch — and needs the `rag-static` extra. The recorded model id is prefixed per backend, so an index embedded with one backend is refused by the other rather than silently fused. |
 | `--rerank` / `--rerank-model` | off / `cross-encoder/ms-marco-MiniLM-L-6-v2` | Re-order the top 50 candidates with a local cross-encoder before they are picked. Same meaning as on `rag`. |
+| `--store` | `memory` | Which graph backend reads `nodes.jsonl` / `edges.jsonl`. `memory` is the default and holds the whole graph resident, as every release has. `sqlite` keeps it on disk in `<index>/graph.sqlite`, built from the index on first use and reused until the index's `build_id` changes, so nothing but SQLite's page cache stays resident -- the half of memory that scales with repository size (252,801 nodes and 602,800 edges on the 50,000-file benchmark). Both backends return the same records in the same order and produce byte-identical output; the database is a local cache, is never published with the index, and can be deleted at any time. Note that chunk *text* is still read into memory either way, so this lowers the ceiling rather than removing it. |
 
 ## `rag` — pack cited context for an LLM
 
@@ -345,8 +351,10 @@ repo2graph rag psf/requests "how are redirects followed"    # download, index, a
 | `--min-conf`, `--min-confidence` | `1.0` | Drop `CALLS` arrows the parser was less than this sure about. |
 | `--vectors` / `--no-vectors` | off | `--vectors` adds meaning-based search on top of the word matching. An error if the index has no vectors, the `rag` extra is missing, or the model does not match. Off unless you ask: turning it on loads a model and downloads ~90 MB the first time. An index that happens to carry vectors is not permission to go and fetch one. |
 | `--embed-model` | the `embed` default | Which sentence-transformers model embeds your question for `--vectors`. Must match the one the index was built with. Not `--model`. |
+| `--embed-backend` | `sentence-transformers` | Which embedder embeds your question for `--vectors`. Must match the backend the index was embedded with. `static` is a model2vec table — no transformer forward pass, no torch — and needs the `rag-static` extra. The recorded model id is prefixed per backend, so an index embedded with one backend is refused by the other rather than silently fused. |
 | `--rerank` | off | Re-order the top 50 candidates with a cross-encoder that reads your question and each chunk together, before the budget is spent; it breaks the near-ties word matching leaves. Runs locally and needs the `rag` extra (the model, ~90 MB, downloads on first use). If it cannot load or fails, you get the answer you would have got without it, plus one `rag_rerank_disabled` line on stderr saying why. |
 | `--rerank-model` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Which sentence-transformers CrossEncoder `--rerank` uses. Append `@<commit>` to pin the revision. |
+| `--store` | `memory` | Which graph backend reads `nodes.jsonl` / `edges.jsonl`. `memory` is the default and holds the whole graph resident, as every release has. `sqlite` keeps it on disk in `<index>/graph.sqlite`, built from the index on first use and reused until the index's `build_id` changes, so nothing but SQLite's page cache stays resident -- the half of memory that scales with repository size (252,801 nodes and 602,800 edges on the 50,000-file benchmark). Both backends return the same records in the same order and produce byte-identical output; the database is a local cache, is never published with the index, and can be deleted at any time. Note that chunk *text* is still read into memory either way, so this lowers the ceiling rather than removing it. |
 | `--no-expand` | off | Text search only, no arrow walking. |
 | `--expansion` | `rag-default` | Which arrows to walk. `navigation`: calls and imports, both ways. `impact-analysis`: callers, importers, subclasses and co-changed files (co-change links files, so use `--hops 2` or more from a function). `strict`: only edges the resolver was certain of, never git history. `rag-default` is the behaviour with no flag. |
 | `--edge-type` | preset's | Walk only this edge type (`CALLS`, `IMPORTS`, `INHERITS`, `DEFINES`, `CO_CHANGE`, `TESTS`). Repeatable; overrides the preset's types. Each neighbour's `why` says which edge admitted it. |
@@ -398,7 +406,8 @@ Word matching misses a piece of code that says the same thing in different words
 `query`/`rag` blend the two rankings from then on.
 
 ```bash
-pip install "repo2graph[rag]"     # sentence-transformers + numpy, optional
+pip install "repo2graph[rag]"         # sentence-transformers + numpy
+pip install "repo2graph[rag-static]"  # model2vec, no torch
 repo2graph embed -o .r2g          # writes agent/vectors.npy + vectors.meta.json
 repo2graph rag "how is a request routed" -o .r2g --vectors
 ```
@@ -407,6 +416,7 @@ repo2graph rag "how is a request routed" -o .r2g --vectors
 | --- | --- | --- |
 | `-o`, `--out` | `.r2g` | Index folder to embed. |
 | `--model`, `--embed-model` | `sentence-transformers/all-MiniLM-L6-v2` | Which model to use. Two spellings for one flag; the Action uses the long one. Append `@<commit>` to pin the Hugging Face revision; the pin is part of the model id stored with the vectors, so the query side names it the same way. |
+| `--embed-backend` | `sentence-transformers` | Which embedder to use. `static` is a model2vec distillation — a token → vector table plus mean pooling — needing `repo2graph[rag-static]` instead of `[rag]`: no torch, ~91 MB all in against several GB on Linux. It is a *different model* (256-dim against MiniLM's 384), not a cheaper way to run the same one, so retrieval quality must be re-measured rather than assumed; the dense result in [benchmarks/real/README.md](../benchmarks/real/README.md) is MiniLM's and does not transfer. |
 | `--batch` | `64` | Texts handed to the model per call. |
 | `--force` | off | Re-embed everything instead of reusing unchanged chunks' vectors. |
 | `--verify-rag` | off | Check the index's vectors, model, dimensions, and chunk coverage to verify that dense retrieval can engage. Reports failures and exits non-zero if the dense path is broken. `rag_extra_installed` is always `true`/`false`, even for an index with no vectors. |
@@ -581,11 +591,14 @@ Default models are best-effort cheap/fast ids (`gemini-3.6-flash`, `gpt-4o-mini`
 of the 2,048-token answer. `--answer` also refuses a pack that leaves no room for
 that answer in a default model's context window.
 
-## `diff` — what changed between two builds
+## `diff` — what changed between two builds or PR blast radius
 
 ```bash
 repo2graph diff OLD_INDEX NEW_INDEX [--format text|json] [--include-confidence] [--limit N]
+repo2graph diff --base-commit COMMIT [--pr-mode] [--affected-tests] [--github-step-summary] [--format text|json]
 ```
+
+### Comparing two index directories
 
 Compares two index directories, for example `.r2g` built on `main` and on a
 branch. It reports symbols added and removed, symbols renamed or moved, edges
@@ -614,6 +627,94 @@ callers changed:
 
 The per-build `human/CHANGELOG.md` and the GitHub Action's job summary come
 from the same comparison, without the rename pairing.
+
+### Semantic PR diffing and CI test selection (#508)
+
+For automated pull request validation in CI pipelines, running every test across the entire codebase is often slow and expensive. `repo2graph diff` provides a semantic PR mode that maps git diff line spans to code symbols and traverses reverse graph dependencies (`CALLS`, `INHERITS`, `ROUTES_TO`, `TESTS`, `IMPORTS`) to compute the blast radius and select the minimal covering set of test files:
+
+```bash
+# Minimal covering set of test files to pass directly to pytest:
+pytest $(repo2graph diff --base-commit origin/main --affected-tests)
+
+# Structured JSON blast radius analysis:
+repo2graph diff --base-commit origin/main --pr-mode --format json
+```
+
+Example JSON output:
+
+```json
+{
+  "modified_symbols": [
+    "auth/jwt.py::verify_token"
+  ],
+  "impacted_callers": [
+    "api/routes.py::get_current_user",
+    "api/endpoints/billing.py::charge_invoice"
+  ],
+  "affected_tests": [
+    "tests/test_auth.py",
+    "tests/test_billing.py"
+  ],
+  "blast_radius_nodes": 14,
+  "risk_score": 0.44,
+  "high_risk": false
+}
+```
+
+#### Diff flags
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `FROM` | none | Older index directory (optional when `--base-commit` is used) |
+| `TO` | none | Newer index directory (optional when `--base-commit` is used) |
+| `--base-commit COMMIT` | none | Git base commit or ref (e.g. `origin/main`, `HEAD~1`) to diff against |
+| `--pr-mode` | off | Enable PR blast-radius and affected-test analysis mode |
+| `--affected-tests` | off | Output the minimal covering set of test files for the diff |
+| `--affected-tests-max-hops N` | `4` | Reverse-call hops to walk. If the walk is still expanding at the limit the result is marked incomplete rather than returned as if it were whole |
+| `--affected-tests-min-confidence F` | `0.0` | Drop `CALLS` edges below this confidence. `0.0` keeps every edge, which is the safe default; raising it narrows the run but can miss a test reached only through an ambiguous call |
+| `--affected-tests-follow-shadowed-builtins` | off | Keep `CALLS` edges into a symbol that shadows a builtin. Off because the call almost always went to the builtin, and following them selects every test that calls e.g. `len()`; turn it on if your code really does define and call its own. Skipped edges are counted in `shadowed_builtin_skipped` and mark the result incomplete, so you can tell when this would have mattered |
+| `--github-step-summary` | off | Append an executive blast-radius card to `$GITHUB_STEP_SUMMARY` |
+| `--format` | `text` | `text` or `json` |
+| `--include-confidence` | off | Also list edges whose only change is confidence |
+| `--limit N` | `50` | Lines per section in text output |
+| `-r`, `--repo PATH` | `.` | Repository root |
+| `-o`, `--out DIR` | `.r2g` | Index directory |
+
+### Before you gate CI on `--affected-tests`
+
+The two error directions are not symmetric. Running a test that did not need to
+run costs seconds; *missing* one means a green run over code nothing exercised,
+which is the failure this is meant to prevent. So the reverse walk keeps
+ambiguous `CALLS` edges — a call to a symbol with `n` definitions in scope is
+recorded at `confidence = 1/n`, and pruning those severs the walk and silently
+drops every test reachable only through them.
+
+The walk is still bounded by `--affected-tests-max-hops`, so the answer can be
+incomplete. **It tells you when it is:** `truncated` is `true` in the JSON,
+`incomplete_reason` says why, the text and step-summary output carry a warning,
+and `--affected-tests` warns on stderr while leaving stdout the bare file list
+you are parsing. Treat `truncated` as "run the full suite" — the subset is a
+speed-up, not a correctness boundary.
+
+**The fixture-injection gap.** A pytest test that reaches your code only through
+*fixture injection* — it declares a `conftest.py` fixture as a parameter and
+never calls it by name — has no call edge to follow, because nothing in the
+source text is a call. The graph cannot record an edge that was never written,
+so such a test cannot be detected. A test that calls a helper in `conftest.py`
+explicitly *is* found (helpers under `tests/` are expanded, not treated as
+leaves); a test that only injects a fixture is not.
+
+What the walk can tell is that it is standing on the mechanism: if it reaches a
+`conftest.py` at all, `truncated` is set and `incomplete_reason` names fixture
+injection, so this failure is loud rather than silent. It is conditioned on
+actually reaching one rather than on the repository containing fixtures, so it
+stays meaningful. The conftest itself is listed in `conftests_reached` and kept
+**out** of `affected_tests` — pytest collects no test from a conftest, so
+handing one to a runner selects nothing, and `affected_tests` stays a list you
+can pipe straight to `pytest`. The underlying limitation is not fixed
+([#513](https://github.com/Srinivasan-78/repo2graph/issues/513)): if your suite
+leans on fixtures for setup, and most do, treat a non-empty `conftests_reached`
+as "run the full suite".
 
 ## `index-status` — is this index current, and what is in it?
 
@@ -919,6 +1020,7 @@ the step.
 | `query-out` | `""` | File to write the pack to. Blank means `<out>/agent/pack.md` (or `pack.json`). |
 | `embed` | `false` | Also embed the chunks for meaning-based search. Installs the `rag` extra and downloads a model, so it is off by default. When `true` the pack is packed with `--vectors`. |
 | `embed-model` | `""` | sentence-transformers model for `embed`. Blank uses the built-in default. Both the embed step and the pack step get this model, so the two always agree. |
+| `embed-backend` | `""` | Dense backend: blank/`sentence-transformers` (the default) or `static`. `static` installs `model2vec` instead of torch — numpy-only inference, ~60 MB of packages and a ~31 MB model rather than several GB — which is usually what you want on a runner. It is a *different* model (256-dim, not 384), so retrieval differs; the embed step and the pack step both receive it, so the backend-prefixed model id always matches rather than being refused. |
 | `artifact-name` | `repo-graph` | Upload the map under this name. Blank uploads nothing. |
 | `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
 | `commit-force` | `false` | Whether to force-push when pushing to `commit-branch`. Force-push is only permitted for dedicated graph branches (branches containing 'graph'). |

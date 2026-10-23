@@ -96,9 +96,11 @@ def cache_entry(
             # Only the chunked reader can lose a slice, and only it sets this.
             "undecodable_slices": getattr(pf, "undecodable_slices", 0),
             "imports": list(pf.imports),
-            # `refs` only when there are some: a default build's cache is unchanged.
+            # `refs` and `frameworks` only when there are some: a default
+            # build's cache is byte-unchanged by either feature existing.
             "symbols": [
-                {k: v for k, v in asdict(s).items() if k != "refs" or v} for s in pf.symbols
+                {k: v for k, v in asdict(s).items() if k not in ("refs", "frameworks") or v}
+                for s in pf.symbols
             ],
             # Without this, entry_read() rebuilds import_details as [] and an
             # incremental cache hit loses every import alias -- an aliased call

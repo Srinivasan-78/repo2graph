@@ -16,7 +16,8 @@ A pack's `token_count_method` names the counter that filled it:
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .query import count_tokens as heuristic
 
@@ -29,7 +30,7 @@ def conservative(text: str) -> int:
     return -(-len(text) // 3) if text else 0
 
 
-conservative.token_count_method = "estimate:conservative-3cpt"  # type: ignore[attr-defined]
+conservative.token_count_method = "estimate:conservative-3cpt"  # type: ignore[attr-defined]  # noqa: S105
 
 
 def _tiktoken(encoding: str) -> Callable[[str], int]:

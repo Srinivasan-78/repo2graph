@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hmac
+import ipaddress
+import os
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, cast
 
 from .. import __version__
 from ..audit import timer as audit_timer
 from ..cache import DEFAULT_MAX_SIZE, DEFAULT_TTL, ResultCache
+from ..events import diagnostic
 from .guardrails import INDEX_DIRNAME
 from .pagination import PagedText
 from .tools import (
@@ -37,6 +41,16 @@ from .tools import (
 
 MISSING_SDK = 'the MCP server needs the optional `mcp` extra: pip install "repo2graph[mcp]"'
 SDK_SPEC = "mcp>=2.0,<3.0"
+
+
+class _ASGIResponse(Protocol):
+    """Structural stand-in for `starlette.responses.Response`, typing-only.
+
+    starlette is loaded with `importlib` in `create_sse_app` below, never
+    imported at module scope: `tests/test_http_surface_removed.py` asserts
+    repo2graph has no static dependency on an HTTP framework, including under
+    `TYPE_CHECKING`.
+    """
 
 
 def _sdk_version(module: Any) -> str:
@@ -327,7 +341,7 @@ def _audit(
         pass
 
 
-def serve(
+def build_mcp_server(
     out: str | Path,
     repo: str | Path | None = None,
     cache: ResultCache | None = None,
@@ -335,17 +349,8 @@ def serve(
     audit: Any = None,
     *,
     allow_foreign_index: bool = False,
-) -> None:
-    """Run stdio MCP server over JSON-RPC.
-
-    Args:
-        out: Index directory to answer from.
-        repo: Repository to auto-build from, or None to require an existing index.
-        cache: Optional result cache.
-        tasks: Optional background build registry.
-        audit: Optional `AuditLogger`; one record per tool call when given.
-        allow_foreign_index: Whether to permit opening an index built elsewhere.
-    """
+) -> Any:
+    """Build and configure the MCP Server instance."""
     mcp = _require_sdk()
     index_dir = Path(out)
     if repo is None:
@@ -355,7 +360,6 @@ def serve(
             raise SystemExit(f"error: {exc}") from None
 
     from mcp.server import Server
-    from mcp.server.stdio import stdio_server
     from mcp.types import TextContent
 
     async def _list_tools_handler(*args: Any, **kwargs: Any) -> list[Any]:
@@ -461,14 +465,203 @@ def serve(
             continue
     else:
         mcp_server = server_cls(server.name, version=server.version)
+    return mcp_server
 
-    async def _run() -> None:
-        async with stdio_server() as (read_stream, write_stream):
-            await mcp_server.run(
-                read_stream, write_stream, mcp_server.create_initialization_options()
-            )
 
-    asyncio.run(_run())
+def _binds_beyond_loopback(host: str) -> bool:
+    """Whether `--host` exposes the index past this machine.
+
+    An empty host and `*` are uvicorn's spellings of "every interface". A name
+    rather than a literal cannot be classified without resolving it, and this
+    runs before the socket is opened, so it is treated as exposed -- the safe
+    direction for a check whose only effect is to demand a token.
+    """
+    if host in ("", "*"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host.lower() != "localhost"
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return not ip.is_loopback
+
+
+def require_sse_auth(host: str, auth_token: str | None) -> None:
+    """Refuse to serve the index to a network without a bearer token.
+
+    `--transport sse` turns a local, single-client stdio tool into a server,
+    and `/sse` and `/messages` hand out the same cited file content the stdio
+    transport does. Binding `0.0.0.0` without `--auth-token` therefore serves
+    the whole index to anything that can route to the port -- and because
+    `create_sse_app` installs its middleware only `if auth_token`, the
+    unauthenticated case was silent rather than refused.
+
+    Loopback stays open with no token: that is the documented container-local
+    and port-forward case, where the socket is already as private as stdin.
+    """
+    if auth_token or not _binds_beyond_loopback(host):
+        return
+    raise SystemExit(
+        f"error: --transport sse with --host {host or '(all interfaces)'} would serve the "
+        "index, including cited file content, to anyone who can reach the port, with no "
+        "authentication.\n"
+        "Pass --auth-token (or set REPO2GRAPH_MCP_AUTH_TOKEN), or bind --host 127.0.0.1 "
+        "and reach it through a port-forward."
+    )
+
+
+def create_sse_app(
+    mcp_server: Any, auth_token: str | None = None, bind_host: str | None = None
+) -> Any:
+    """Create a Starlette ASGI application serving MCP over Server-Sent Events (SSE).
+
+    `bind_host` is only used to decide whether an absent `auth_token` deserves a
+    warning. This function does not open the socket, so it cannot otherwise know
+    whether the app is about to be exposed: pass the host you are going to bind,
+    and loopback stays silent because loopback with no token is the documented
+    container-local and port-forward case. Leave it unset and an absent token
+    warns, since an unknown bind has to be assumed to be a public one.
+    """
+    import importlib
+
+    sse_mod = importlib.import_module("mcp.server.sse")
+    starlette_apps = importlib.import_module("starlette.applications")
+    starlette_resp = importlib.import_module("starlette.responses")
+    starlette_routing = importlib.import_module("starlette.routing")
+
+    SseServerTransport = sse_mod.SseServerTransport
+    Starlette = starlette_apps.Starlette
+    PlainTextResponse = starlette_resp.PlainTextResponse
+    Response = starlette_resp.Response
+    Mount = starlette_routing.Mount
+    Route = starlette_routing.Route
+
+    sse = SseServerTransport("/messages")
+
+    async def handle_sse(request: Any) -> _ASGIResponse:
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            await mcp_server.run(streams[0], streams[1], mcp_server.create_initialization_options())
+        return cast(_ASGIResponse, Response())
+
+    routes = [
+        Route("/sse", endpoint=handle_sse, methods=["GET"]),
+        Mount("/messages", app=sse.handle_post_message),
+        Route("/healthz", endpoint=lambda r: PlainTextResponse("OK"), methods=["GET"]),
+        Route("/readyz", endpoint=lambda r: PlainTextResponse("OK"), methods=["GET"]),
+    ]
+    app = Starlette(routes=routes)
+    if not auth_token and (bind_host is None or _binds_beyond_loopback(bind_host)):
+        # `create_sse_app` is exported from `repo2graph.mcp`, so an embedder can
+        # reach it without going through `serve()` and therefore without
+        # `require_sse_auth`'s refusal. It must not hand back an
+        # unauthenticated index in silence -- but it must also stay quiet for
+        # the documented loopback default, or every ordinary local user is
+        # warned for doing the sanctioned thing.
+        diagnostic(
+            "warning: the SSE app was built with no auth token; every caller that can reach "
+            "its port may read the index, including cited file content. Bind it to loopback "
+            "only, or pass auth_token."
+        )
+    if auth_token:
+
+        class AuthMiddleware:
+            def __init__(self, inner: Any, token: str) -> None:
+                self.inner = inner
+                self.token = token
+
+            async def __call__(self, scope: Any, receive: Any, send: Any) -> Any:
+                if scope["type"] != "http":
+                    return await self.inner(scope, receive, send)
+                path = scope.get("path", "")
+                if path in ("/healthz", "/readyz"):
+                    return await self.inner(scope, receive, send)
+                headers = dict(scope.get("headers", []))
+                raw = headers.get(b"authorization", b"")
+                # Compare *bytes*, never str. `compare_digest` raises TypeError
+                # on a str holding any non-ASCII character, and `latin-1`
+                # decodes every byte 0x80-0xFF into one -- so a single garbage
+                # byte in the header crashed the middleware instead of being
+                # rejected. This wrapper sits outside Starlette's
+                # ServerErrorMiddleware, so nothing turned that into a clean
+                # 500 either: it surfaced as an unhandled ASGI exception, which
+                # an unauthenticated caller could trigger on every request.
+                #
+                # `compare_digest`, not `==`: this is the only credential
+                # gating the SSE surface, and `==` returns as soon as two bytes
+                # differ, leaking the token's matching prefix length to anyone
+                # who can time the 401s.
+                presented = raw[7:].strip() if raw.startswith(b"Bearer ") else b""
+                if not hmac.compare_digest(presented, self.token.encode("utf-8")):
+                    resp = Response(
+                        "Unauthorized",
+                        status_code=401,
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                    return await resp(scope, receive, send)
+                return await self.inner(scope, receive, send)
+
+        return AuthMiddleware(app, token=auth_token)
+    return app
+
+
+def serve(
+    out: str | Path,
+    repo: str | Path | None = None,
+    cache: ResultCache | None = None,
+    tasks: Any = None,
+    audit: Any = None,
+    *,
+    allow_foreign_index: bool = False,
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    auth_token: str | None = None,
+) -> None:
+    """Run MCP server over stdio or SSE.
+
+    Args:
+        out: Index directory to answer from.
+        repo: Repository to auto-build from, or None to require an existing index.
+        cache: Optional result cache.
+        tasks: Optional background build registry.
+        audit: Optional `AuditLogger`; one record per tool call when given.
+        allow_foreign_index: Whether to permit opening an index built elsewhere.
+        transport: Transport protocol ('stdio' or 'sse').
+        host: Host to bind to when transport='sse'.
+        port: Port to bind to when transport='sse'.
+        auth_token: Optional bearer token for SSE endpoints.
+    """
+    mcp_server = build_mcp_server(
+        out,
+        repo,
+        cache=cache,
+        tasks=tasks,
+        audit=audit,
+        allow_foreign_index=allow_foreign_index,
+    )
+
+    if transport == "stdio":
+        from mcp.server.stdio import stdio_server
+
+        async def _run() -> None:
+            async with stdio_server() as (read_stream, write_stream):
+                await mcp_server.run(
+                    read_stream, write_stream, mcp_server.create_initialization_options()
+                )
+
+        asyncio.run(_run())
+    elif transport == "sse":
+        import importlib
+
+        require_sse_auth(host, auth_token)
+        uvicorn = importlib.import_module("uvicorn")
+
+        app = create_sse_app(mcp_server, auth_token=auth_token, bind_host=host)
+        uvicorn.run(app, host=host, port=port)
+    else:
+        raise ValueError(f"unsupported transport: {transport!r}")
 
 
 def resolve_paths(repo: str | None = None, out: str | None = None) -> tuple[Path, Path | None]:
@@ -665,6 +858,29 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="sync each audit record to disk before returning",
     )
+    net = p.add_argument_group("transport & network")
+    net.add_argument(
+        "--transport",
+        choices=("stdio", "sse"),
+        default="stdio",
+        help="transport protocol: stdio (default) or sse (HTTP Server-Sent Events)",
+    )
+    net.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="host to bind the SSE HTTP server to (default: 127.0.0.1)",
+    )
+    net.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="port to bind the SSE HTTP server to (default: 8080)",
+    )
+    net.add_argument(
+        "--auth-token",
+        default=None,
+        help="bearer token required to access SSE endpoints (or set REPO2GRAPH_MCP_AUTH_TOKEN)",
+    )
     args = p.parse_args(argv)
     index_dir, repo = resolve_paths(args.repo, args.out)
     from .indexes import SECRET_RULES
@@ -675,6 +891,7 @@ def main(argv: list[str] | None = None) -> int:
     STALENESS_TTL["seconds"] = args.staleness_ttl
     cache = ResultCache(max_size=args.cache_size, ttl=args.cache_ttl)
     build_from = None if args.no_auto_build else repo
+    auth_token = args.auth_token or os.environ.get("REPO2GRAPH_MCP_AUTH_TOKEN")
 
     from ..audit import AuditConfig, AuditLogger
 
@@ -701,6 +918,10 @@ def main(argv: list[str] | None = None) -> int:
             tasks=tasks,
             audit=audit,
             allow_foreign_index=args.allow_foreign_index,
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            auth_token=auth_token,
         )
     finally:
         audit.close()

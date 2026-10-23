@@ -10,6 +10,7 @@ import ipaddress
 import json
 import os
 import secrets
+import socket
 import sys
 import time
 import urllib.error
@@ -286,18 +287,129 @@ def _ollama_base(value: str) -> str:
     scheme to http and refuse anything that is not http(s), so a stray
     `file://` value cannot turn into an urlopen target.
     """
-    base = (value or "").strip().rstrip("/")
+    # Decide whether a scheme is present *before* trimming trailing slashes.
+    # Stripping first turned a bare `http://` into `http:`, which then looked
+    # schemeless, got a second `http://` glued on, and parsed as the host
+    # "http" -- so a value with no host at all came back as a valid base URL.
+    base = (value or "").strip()
     if "://" not in base:
         base = "http://" + base
-    parts = urllib.parse.urlsplit(base)
+    parts = urllib.parse.urlsplit(base.rstrip("/"))
+    base = base.rstrip("/")
     if parts.scheme not in ("http", "https") or not parts.netloc:
         raise SystemExit(f"OLLAMA_HOST must be an http(s) URL or host:port, got {value!r}")
-    if parts.scheme == "http" and not _is_loopback(parts.hostname or ""):
+    hostname = parts.hostname or ""
+    if not (os.environ.get("REPO2GRAPH_ALLOW_INSECURE_OLLAMA") == "1"):
+        reason = _is_blocked_ssrf_target(hostname)
+        if reason is not None:
+            raise SystemExit(
+                f"error: OLLAMA_HOST target {hostname!r} is forbidden ({reason}). "
+                "Set REPO2GRAPH_ALLOW_INSECURE_OLLAMA=1 if this host is genuinely "
+                "your own Ollama server."
+            )
+    if parts.scheme == "http" and not _is_loopback(hostname):
         diagnostic(
             f"warning: OLLAMA_HOST={value!r} is plain HTTP to a non-loopback host; "
             "your code and the answer cross the network unencrypted"
         )
     return base
+
+
+# Cloud instance-metadata endpoints, which are never a legitimate Ollama host.
+# Most are link-local and would be caught anyway; these are the ones that are
+# not. `fd00:ec2::254` (AWS over IPv6) and `192.0.0.192` (Oracle) are
+# unique-local/private rather than link-local, and `100.100.100.200` (Alibaba)
+# sits in the CGNAT range, which `ipaddress` classifies as neither.
+_METADATA_ADDRESSES = frozenset(
+    ipaddress.ip_address(a)
+    for a in (
+        "169.254.169.254",  # AWS / GCP / Azure / DigitalOcean / OpenStack
+        "169.254.170.2",  # AWS ECS task metadata
+        "fd00:ec2::254",  # AWS IMDS over IPv6
+        "192.0.0.192",  # Oracle Cloud
+        "100.100.100.200",  # Alibaba Cloud
+    )
+)
+
+
+def _blocked_ip_reason(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> str | None:
+    """Why this address is not a legitimate Ollama target, or None if it is.
+
+    Loopback is tested *first* and always allowed: `ollama serve` binds
+    127.0.0.1 by default and the whole point of the backend is to talk to it.
+    That ordering is load-bearing, because `::1` is simultaneously
+    `is_loopback` and `is_reserved` (and `is_private`) -- checking the block
+    predicates first rejected the documented IPv6 local address.
+
+    `is_private` is deliberately *not* a block reason. An Ollama server on the
+    LAN at 10.0.0.5 is a normal, documented deployment -- it is most of why
+    OLLAMA_HOST is configurable at all -- so blocking RFC1918 would break the
+    feature's main non-loopback use in order to harden an operator-supplied
+    env var against the operator. Plain HTTP to a non-loopback host already
+    warns, which is the proportionate response. What is blocked is the set of
+    addresses that are never an Ollama server and only ever a pivot target.
+
+    An IPv4-mapped IPv6 address (`::ffff:169.254.169.254`) is unwrapped, since
+    the mapped form inherits none of the v4 address's own classifications.
+    """
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    if ip.is_loopback:
+        return None
+    if ip in _METADATA_ADDRESSES:
+        return "cloud instance-metadata address"
+    if ip.is_link_local:
+        return "link-local or cloud metadata address"
+    if ip.is_multicast:
+        return "multicast address"
+    if ip.is_unspecified:
+        return "unspecified address (routes to a local service)"
+    if ip.is_reserved:
+        return "reserved address"
+    return None
+
+
+def _is_blocked_ssrf_target(host: str) -> str | None:
+    """The reason `host` is a forbidden Ollama target, or None if it is allowed.
+
+    Resolving the name matters as much as classifying a literal: the previous
+    version called `ip_address(host)` and treated the `ValueError` on any
+    non-literal as "allowed", so `http://rebind.attacker.example` with an A
+    record pointing at 169.254.169.254 walked straight through the guard. Every
+    address the name resolves to is checked, so a name has to be clean on all
+    of its records, not just its first.
+
+    This resolves DNS, which is a network call -- acceptable only because this
+    module is `rag --answer`, the one path README.md and SECURITY.md name as
+    making network calls. Do not reuse this helper on the build or query path.
+
+    A name that does not resolve is allowed through: there is no evidence it is
+    a blocked target, and the connection itself then fails on its own. The
+    residual gap is TOCTOU -- urlopen re-resolves at connect time, so a
+    attacker-controlled zone with a short TTL can still answer differently
+    then. Closing that needs the connection pinned to the vetted address, which
+    urllib cannot express; `_SameOriginRedirect` covers the redirect half.
+    """
+    if host.lower() in ("metadata.google.internal", "metadata"):
+        return "cloud metadata hostname"
+    try:
+        return _blocked_ip_reason(ipaddress.ip_address(host))
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError):
+        return None
+    for info in infos:
+        try:
+            resolved = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        reason = _blocked_ip_reason(resolved)
+        if reason is not None:
+            return f"{reason} (resolves to {resolved})"
+    return None
 
 
 def _is_loopback(host: str) -> bool:
@@ -711,7 +823,11 @@ def stream_answer(
                 elif len(raw_tail) < ERROR_SNIFF_LINES:
                     raw_tail.append(raw)
     except _WriterError as werr:
-        raise werr.exc
+        # `from None`: `_WriterError` is an internal wrapper used only to carry
+        # the writer's own exception out past the streaming loop. Chaining it
+        # would print "During handling of the above exception" about a class
+        # the caller has no way to see or act on; the original is the error.
+        raise werr.exc from None
     except urllib.error.HTTPError as exc:
         raise SystemExit(_http_error(spec, exc)) from None
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -719,7 +835,9 @@ def stream_answer(
     except KeyboardInterrupt:
         if parts:
             _note_incomplete("interrupted; the answer above is incomplete")
-        raise SystemExit(130)
+        # `from None`: 130 is the shell's "interrupted" status, not a report
+        # about an error, and a traceback for a deliberate Ctrl-C is noise.
+        raise SystemExit(130) from None
     # Before the empty-answer check: a stream that hit the ceiling without ever
     # carrying decodable text is two separate facts, and both are worth saying.
     if lines is not None and lines.truncated:

@@ -17,6 +17,7 @@ import importlib
 import json
 
 from conftest import SYM_AUDIT, SYM_ROUTE, build_mini_index
+
 from repo2graph.query import Index
 
 FILE_GATEWAY = "file:pkg/gateway.py"

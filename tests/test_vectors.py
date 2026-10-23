@@ -17,8 +17,8 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from conftest import MINI_QUERY, StubEmbedder, build_mini_index
+
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
 from repo2graph.query import Index, read_jsonl
@@ -313,7 +313,7 @@ def test_vectors_for_unknown_chunk_ids_are_dropped(mini_index, use_stub_embedder
     run_embed(mini_index, capsys)
     _npy, meta_path = vec_paths(mini_index)
     meta = read_meta(mini_index)
-    meta["chunk_ids"] = ["sym:gone.py::vanished"] + meta["chunk_ids"][1:]
+    meta["chunk_ids"] = ["sym:gone.py::vanished", *meta["chunk_ids"][1:]]
     with open(meta_path, "w", encoding="utf8", newline="\n") as fh:
         json.dump(meta, fh)
 
@@ -562,6 +562,7 @@ def test_a_rigged_embedder_changes_the_top_chunk(big_index):
     """Verify the same through the `embedder=` path, with a scripted
     embedder that never looks at the text it is handed."""
     from conftest import ScriptedEmbedder
+
     from repo2graph.query import RRF_CANDIDATES
 
     idx = Index(big_index)

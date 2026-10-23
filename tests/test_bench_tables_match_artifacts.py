@@ -171,7 +171,7 @@ def test_a_marked_table_matches_its_artifact(doc, args, rows):
         for row in body:
             cells = _cells(row)
             budget = int(_plain(cells[0]).split()[0])
-            for method, cell in zip(methods, cells[1:]):
+            for method, cell in zip(methods, cells[1:], strict=False):
                 where = f"{doc.name} [{args['file']}:{args['key']}] {budget}/{method}"
                 _check(cell, _lookup(artifact, budget, method, where), field, kind, where)
         return
@@ -186,7 +186,7 @@ def test_a_marked_table_matches_its_artifact(doc, args, rows):
         method = _plain(cells[1])
         where = f"{doc.name} [{args['file']}:{args['key']}] {budget}/{method}"
         art = _lookup(artifact, budget, method, where)
-        for name, cell in zip(header[2:], cells[2:]):
+        for name, cell in zip(header[2:], cells[2:], strict=False):
             for label, (field, kind) in METRIC_COLUMNS.items():
                 if name.startswith(label):
                     _check(cell, art, field, kind, where)

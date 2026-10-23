@@ -7,8 +7,8 @@ is a length, a key or an equality between two runs of the same code.
 import json
 
 import pytest
-
 from conftest import MINI_QUERY
+
 from repo2graph.cli import main
 from repo2graph.query import Index
 
