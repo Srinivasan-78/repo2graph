@@ -3,11 +3,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .graph import build, Graph
 from .chunks import build_chunks, iter_chunks
+from .graph import Graph, build
 from .viz import write_html
 
-__all__ = ["build", "Graph", "build_chunks", "iter_chunks", "write_html"]
+__all__ = ["Graph", "build", "build_chunks", "iter_chunks", "write_html"]
 
 # Static fallback: kept in sync with pyproject.toml's [project] version by
 # scripts/bump_version.py (see scripts/version_surfaces.py's SURFACES table)

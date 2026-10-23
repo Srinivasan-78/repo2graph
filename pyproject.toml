@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Documentation",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Indexing",
@@ -65,6 +66,15 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["repo2graph*"]
 
+# PEP 561. Without this marker every downstream consumer of the Python API in
+# docs/python-api.md gets `Any` from `import repo2graph`, however strictly the
+# package itself is checked -- a type checker ignores inline annotations in an
+# installed package that does not ship the file. `package-data` is the half
+# that is easy to miss: the marker has to be *in the wheel*, not just in the
+# source tree, which is what `test_version_surfaces.py` now asserts.
+[tool.setuptools.package-data]
+repo2graph = ["py.typed"]
+
 [project.optional-dependencies]
 # pyyaml: tests/test_doc_consistency.py parses action.yml directly. It was
 # only ever present transitively (via pre-commit), so a clean `pip install
@@ -99,6 +109,23 @@ dev = [
 # output. Do not delete it as unused; it is a deliberate consumer-side
 # declaration (and sentence-transformers pulls it in regardless).
 rag = ["sentence-transformers>=3.0", "numpy>=1.24"]
+# The same dense retrieval without torch. `model2vec` is a static-embedding
+# model -- a token -> vector table plus mean pooling, no transformer forward
+# pass -- so inference is numpy and nothing here pulls torch or the NVIDIA
+# CUDA wheels. Measured: ~60 MB of packages and a ~31 MB model, against the
+# several GB `rag` costs on Linux.
+#
+# It is a *different model*, not a cheaper way to run the same one (256-dim
+# against MiniLM's 384), so it must be expected to retrieve differently and
+# the dense result recorded in benchmarks/real/README.md does not transfer.
+# Both extras can be installed together; `--embed-backend` chooses, and the
+# recorded model id is prefixed per backend so an index built with one is
+# refused by the other rather than silently fused.
+#
+# Capped below 1.0 for the reason every cap here exists: a major bump is the
+# untested thing, and this one owns the vector width, which `vectors.meta.json`
+# records and the query side refuses a mismatch on.
+rag-static = ["model2vec>=0.10,<1.0", "numpy>=1.24"]
 # Only `repo2graph-mcp` needs this; the CLI and the Action never import it.
 # 1.x is no longer supported (#407): under mcp 1.30.0 the server hangs on the
 # first `tools/call` on the parallel path
@@ -156,25 +183,111 @@ line-length = 100
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "BLE"]
-ignore = ["E501", "E702", "E731", "E741"]
+# `E`, `F`, `W` and `BLE` were the whole set for a long time, which is style
+# plus blind-except: nothing in CI read the *code* for a bug or a security
+# pattern. `zizmor` audits the workflows and `reuse` audits the licensing, so
+# the source itself was the unscanned surface. The four additions each buy a
+# class of finding rather than a preference:
+#
+#   B   flake8-bugbear  -- real bug classes. `B023` (a closure over a loop
+#                          variable) and `B905` (an unequal-length `zip`
+#                          silently truncating) are both live here.
+#   S   flake8-bandit   -- the security rules. This project redacts secrets,
+#                          hardens output paths and parses untrusted protobuf,
+#                          so "no SAST on the Python source" was the gap least
+#                          consistent with what SECURITY.md promises.
+#   I   isort           -- import order, so a merge does not reorder imports.
+#   UP  pyupgrade       -- syntax the 3.10 floor already allows.
+#   RUF ruff's own      -- includes `RUF100`, which deletes a `noqa` that has
+#                          stopped suppressing anything; several here had.
+#
+# `SIM` is deliberately out: ~60 findings, all preference (`SIM105` wants
+# `contextlib.suppress` for a bare try/except/pass), and none of them is a bug.
+select = ["E", "F", "W", "BLE", "B", "S", "I", "UP", "RUF"]
+ignore = [
+    "E501",
+    "E702",
+    "E731",
+    "E741",
+    # `assert` is the test suite's only assertion mechanism and is used inside
+    # the package for invariants that are programming errors rather than input
+    # errors. S101 flags every one of the ~5,100 of them; enabling it would
+    # mean a blanket per-file-ignore for `tests/`, which is the same decision
+    # with more moving parts.
+    "S101",
+    # Unicode in strings is the subject matter here: `security.py` spells out
+    # confusable and control characters, `test_encoding.py` fixtures contain
+    # U+2028/U+2029 on purpose, and `viz.py` emits typographic punctuation.
+    # RUF001 cannot tell those from a typo.
+    "RUF001",
+    # `BLE001` already governs this exact pattern, and it is *selected*, so a
+    # swallowed exception has to carry a written reason to pass the gate --
+    # which every one of these sites does ("resilience boundary: ..."). S110 is
+    # the same finding without the escape hatch, so enabling both would mean
+    # two suppressions per site and would make the BLE reason the quieter one.
+    "S110",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Subprocess use is the point of these modules, not an oversight: discovery
+# shells out to `git ls-files`, `cochange.py` reads `git log`, `fetch.py`
+# clones, `doctor.py` probes the environment. Every call site passes an
+# argument list (never a string, never `shell=True`), which is the actual
+# S602/S604 risk; S603 fires on the safe form too, and S607 wants absolute
+# paths for `git` and `node`, which would break every PATH-based install.
+# Scoped to the modules that genuinely spawn processes so a *new* subprocess
+# call elsewhere still has to be justified.
+"repo2graph/cochange.py" = ["S603", "S607"]
+"repo2graph/discovery.py" = ["S603", "S607"]
+"repo2graph/doctor.py" = ["S603", "S607"]
+"repo2graph/fetch.py" = ["S603", "S607"]
+"repo2graph/graphdiff.py" = ["S603", "S607"]
+"repo2graph/integrity.py" = ["S603", "S607"]
+"repo2graph/graph.py" = ["S603", "S607"]
+# `_run_cpp` shells out to the C preprocessor for the macro-expansion path.
+"repo2graph/parse.py" = ["S603", "S607"]
+"repo2graph/neo4j.py" = ["S310"]
+"repo2graph/answer.py" = ["S310"]
+# The test suite and the repo's own tooling are not shipped artifacts. They
+# spawn processes, bind throwaway sockets, write temp files and embed
+# credential-shaped literals as fixtures, all of which S flags by design.
+# RUF012 (a mutable class default) and B008 (a call in a default argument) are
+# how several fixtures here are deliberately shaped -- a fake clock built on
+# `itertools.count()`, a stub whose class-level list collects calls.
+"tests/**" = ["S", "B011", "B017", "RUF012", "B008"]
+"scripts/**" = ["S"]
+".github/scripts/**" = ["S"]
+"benchmarks/**" = ["S"]
+# The synthetic corpus is *input to the parser*, not code that runs: it exists
+# to contain the reflection dispatch, string-keyed registries and barrel
+# re-exports that defeat name resolution (benchmarks/corpus/README.md pins them
+# as known failures). Lint findings there are describing the fixture working as
+# intended, and any rule added later would fire on it for the same reason.
+# `ALL` here, rather than a top-level `exclude`, so `ruff format` still covers
+# it -- the files stay formatted, which keeps the line numbers the benchmark
+# baselines cite stable.
+"benchmarks/corpus/**" = ["ALL"]
 
 [tool.mypy]
 python_version = "3.10"
 strict = true
 ignore_missing_imports = true
-# Legacy modules are not annotated yet. They are listed explicitly rather than
-# excluded by a wildcard so that a *new* module is strict-checked by default and
-# has to be added here deliberately to escape it -- the opposite of an allowlist,
-# which would silently let new untyped code in.
+# There is no per-module escape hatch any more. `strict` applies to all 59
+# modules in the package, so a new module is strict-checked with no edit here
+# and there is nothing to add oneself to.
 #
-# This list is the single source of truth for the strict scope: the Makefile
-# target and the pre-commit hook both check the whole package and defer to it,
-# so removing a module here is the one edit that tightens the check everywhere.
+# The last three to be annotated were `cli.py`, `graph.py` and `parse.py` --
+# the three largest, 6,000 lines between them. What came out of it was not
+# just annotations: the exemption had been masking two errors in *other*
+# modules (`fetch.py` set an undeclared `source_remote` on `Graph`, which is a
+# documented `manifest.json` field; `demo.py` assigned a list into what
+# `dict(Counter)` makes a `dict[str, int]`), because an untyped `graph.py`
+# made both unprovable rather than wrong.
 #
-# query.py and export.py are done -- they were taken first because everything
-# else imports them, so their `Any` returns were what made callers unprovable.
-# See .github/CONTRIBUTING.md for the ranked plan.
+# Check it the way CI does -- `mypy --platform linux|darwin|win32 repo2graph`.
+# A single native run checks only the stubs the runner's own platform selects,
+# and one real finding here (`parse.py`'s ctypes `HANDLE` returning `Any`)
+# existed on win32 alone.
 follow_imports = "silent"
 
 # numpy ships stubs that use PEP 695 `type` statements, which mypy refuses to
@@ -191,16 +304,7 @@ module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
 
-[[tool.mypy.overrides]]
-module = [
-    "repo2graph.cli",
-    "repo2graph.graph",
-    "repo2graph.parse",
-]
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-disallow_any_generics = false
-warn_return_any = false
-
-
+#
+# The list is now empty: `cli.py`, `graph.py` and `parse.py` were the last
+# three, and they are annotated. Nothing in the package escapes `strict` any
+# more, so a new module is strict-checked with no further edit here.

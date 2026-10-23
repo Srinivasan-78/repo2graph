@@ -28,16 +28,14 @@ from repo2graph.mcp.server import main as mcp_main
 
 PACKAGE_DIR = Path(importlib.import_module("repo2graph").__file__).resolve().parent
 
-# Pinned verbatim from CHANGELOG.md's `### Removed` entry for 647e76f3. Written
-# out rather than parsed back out of the changelog so that editing the changelog
-# cannot quietly shrink what this file checks.
+# Pinned from CHANGELOG.md's `### Removed` entry for 647e76f3 (excluding --auth-token,
+# which was re-introduced for the SSE network transport in #506).
 REMOVED_FLAGS = (
     "--http-only",
     "--http-host",
     "--http-port",
     "--http-allow-hosts",
     "--well-known-port",
-    "--auth-token",
     "--auth-oidc-issuer",
     "--auth-audience",
     "--auth-jwks-ttl",

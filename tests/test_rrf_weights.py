@@ -18,6 +18,7 @@ Empirical measurement across 35 benchmark tasks on real repos (benchmarks/real/t
 
 from pathlib import Path
 from unittest.mock import Mock
+
 from repo2graph.query import Index
 
 

@@ -14,14 +14,14 @@ Verifies that security checks cannot be bypassed or inverted across:
 
 import os
 from pathlib import Path
+
 import pytest
 
-from repo2graph.security import _is_secret_path
 from repo2graph.integrity import validate_outdir
 from repo2graph.lock import BuildLock, LockTimeoutError, _is_pid_alive
 from repo2graph.mcp import MCP_MAX_HOPS, MCP_MAX_K, MCP_MAX_NEIGHBOURS
 from repo2graph.mcp.guardrails import _clamp
-
+from repo2graph.security import _is_secret_path
 
 # ==============================================================================
 # 2. Path Containment and Output Directory Validation

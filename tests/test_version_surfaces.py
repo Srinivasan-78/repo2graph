@@ -28,7 +28,6 @@ except ModuleNotFoundError:
         tomllib = None  # type: ignore[assignment]
 
 import pytest
-
 from conftest import REPO_ROOT
 
 SCRIPTS = REPO_ROOT / "scripts"
@@ -273,7 +272,7 @@ def test_unreleased_diffs_from_the_newest_released_heading():
 def test_bumping_the_changelog_adds_the_new_version_s_link_definition():
     """The regression guard on the fix: heading and definition move together."""
     sys.path.insert(0, str(SCRIPTS))
-    import bump_version  # noqa: PLC0415
+    import bump_version
 
     text = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf8")
     newest = next(

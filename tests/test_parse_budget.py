@@ -80,7 +80,7 @@ def test_a_deep_legitimate_file_is_not_a_false_positive(tmp_path):
 
 def test_strict_policy_fails_instead_of_skipping(tmp_path):
     root = _repo(tmp_path)
-    with pytest.raises(ParseError, match="exceeded the 1s budget.*bad.cpp"):
+    with pytest.raises(ParseError, match=r"exceeded the 1s budget.*bad\.cpp"):
         build(root, jobs=1, config=BuildConfig(parse_timeout=1.0, parse_policy="strict"))
 
 
@@ -100,7 +100,7 @@ def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch)
         return real(item)
 
     monkeypatch.setattr(graph_mod, "_read_and_parse", slow)
-    ((rel, lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=0.05))
+    ((_rel, _lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=0.05))
     monkeypatch.setattr(graph_mod, "_read_and_parse", real)
     assert read is not None and read[2].parse_skipped == TIMEOUT and read[2].symbols == []
     ((_, _, read),) = parse_all([("small.py", p)], 1, BuildConfig())
@@ -188,3 +188,20 @@ def test_a_pool_whose_workers_never_start_is_abandoned_not_waited_on(monkeypatch
     assert elapsed < ABANDONED_WITHIN_S, (
         f"waited {elapsed:.1f}s on a worker that sleeps for an hour before its first file"
     )
+
+
+def test_windows_cap_memory_invoked_on_win32(monkeypatch):
+    """parsepool._cap_memory binds worker process to Windows Job Object with memory limit."""
+    calls = []
+
+    def fake_win_cap(pid, cap_bytes):
+        calls.append((pid, cap_bytes))
+        return 1234
+
+    import repo2graph.parse as parse_mod
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(parse_mod, "_win_cap_child_memory", fake_win_cap)
+    parsepool._cap_memory(64)
+    assert calls == [(os.getpid(), 64 * 1024 * 1024)]
+    assert parsepool._worker_job == 1234

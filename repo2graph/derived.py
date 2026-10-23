@@ -6,8 +6,9 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
-from .edgemeta import METHOD_CALL_GRAPH, counts_as_call, evidence as make_evidence
-from .parse import ParsedFile, symbol_key
+from .edgemeta import METHOD_CALL_GRAPH, counts_as_call
+from .edgemeta import evidence as make_evidence
+from .parse import ParsedFile, symbol_key, symbol_parent_key
 from .refcapture import VALUE_KINDS
 from .testpaths import is_test_path
 
@@ -47,7 +48,8 @@ def add_reference_edges(
                 name = r["name"]
                 if r.get("field"):
                     how = "same_class"
-                    cands = [f"sym:{rel}::{sym.parent}.{name}"] if sym.parent else []
+                    pkey = symbol_parent_key(sym)
+                    cands = [f"sym:{rel}::{pkey}.{name}"] if pkey else []
                 else:
                     how = "same_file"
                     cands = [f"sym:{rel}::{name}"]
@@ -231,3 +233,261 @@ def _reach(start: str, out: dict[str, Any]) -> int:
                 seen.add(dst)
                 stack.append(dst)
     return len(seen) - 1
+
+
+# ---------- framework edges (`--framework-edges`) ----------
+
+#: The method recorded on every framework edge. The route and DI facts are
+#: syntactic -- the decorator *is* the declaration -- so unlike `CALLS` there is
+#: no tier ladder behind them and no name to guess at. `MODELS` resolves a name
+#: and so can be ambiguous, which is why it carries a confidence below 1.
+METHOD_FRAMEWORK = "framework-resolver"
+
+#: Kinds a `MODELS` edge may point at: an ORM relation names a class.
+MODEL_KINDS = frozenset({"class", "interface", "type", "struct"})
+
+
+def add_framework_edges(
+    g: Graph,
+    parsed: dict[str, ParsedFile],
+    imported_files: dict[str, set[str]],
+    import_aliases: dict[str, dict[str, tuple[str, str | None]]],
+    named_in: Callable[[str, Iterable[str]], list[str]],
+) -> None:
+    """`ROUTES_TO` / `INJECTS` / `MODELS` from captured framework facts.
+
+    Three different resolution problems, deliberately not forced into one shape:
+
+    * **`ROUTES_TO`** needs no name resolution at all. The handler is the
+      decorated symbol, so the edge is exact and carries confidence 1.0. What
+      it does need is a *node* for the route, because the thing an agent asks
+      about ("what serves `POST /orders`?") is the endpoint, and no endpoint
+      existed in the graph before. One `route` node per method-and-path,
+      shared by every handler that declares it -- two handlers on one path is a
+      real thing and the graph should show both rather than silently keeping
+      whichever was parsed last.
+    * **`INJECTS`** resolves a name the same careful way `--reference-edges`
+      does: same-file top level, or imported by that name, never a
+      repository-wide fallback. A dependency that does not bind is counted in
+      `framework_edges_unresolved` and dropped.
+    * **`MODELS`** resolves a class name, which genuinely can be ambiguous --
+      two Django apps each with a `User` model is the ordinary case -- so an
+      unqualified string target falls back to the repository-wide index and is
+      priced at `1/n` and marked `ambiguous`, exactly as `CALLS` is, rather
+      than being picked.
+
+    A class's mount prefix is applied to the routes its methods declare, which
+    is what makes a NestJS `@Controller('users')` plus `@Get(':id')` come out as
+    `GET /users/:id` -- the path a client actually calls, and the only form
+    worth citing back to someone.
+    """
+    from .frameworks import join_path
+
+    for key in ("routes", "injects", "models", "unresolved"):
+        g.stats[f"framework_edges_{key}"] += 0
+
+    # A class's mount prefix, so its methods' routes can be joined onto it.
+    prefixes: dict[tuple[str, str], str] = {}
+    for rel, pf in parsed.items():
+        for sym in pf.symbols:
+            for fact in sym.frameworks:
+                if fact["kind"] == "mount":
+                    prefixes[(rel, symbol_key(sym))] = fact["path"]
+
+    for rel, pf in parsed.items():
+        for sym in pf.symbols:
+            if not sym.frameworks:
+                continue
+            sid = f"sym:{rel}::{symbol_key(sym)}"
+            # The enclosing class's prefix, when this symbol is a method of a
+            # mounted controller. `symbol_parent_key`, not `sym.parent`:
+            # `prefixes` is keyed by `symbol_key`, which carries the `@L<line>`
+            # suffix a second same-named class in one file is given, and the
+            # parent *qualname* does not -- so a qualname lookup missed the
+            # disambiguated class and hit its sibling, handing the second
+            # controller's methods the first one's prefix. A mounted class
+            # declaring routes of its own joins onto itself.
+            pkey = symbol_parent_key(sym)
+            prefix = prefixes.get((rel, pkey), "") if pkey else ""
+            own = prefixes.get((rel, symbol_key(sym)))
+            if own is not None:
+                prefix = own
+
+            # Model relations are grouped by target before they are emitted.
+            # `Graph.add_edge` dedupes on `(src, dst, type)`, so a class with
+            # two relations to the *same* model -- `author` and `editor` both
+            # `ForeignKey(Author)`, which is ordinary -- produced one edge and
+            # silently kept whichever field was parsed first. Grouping makes
+            # the edge carry every declaring field and a `count`, the way a
+            # `CALLS` edge already carries a count for repeated calls.
+            by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
+            for fact in sym.frameworks:
+                kind = fact["kind"]
+                if kind == "route":
+                    _add_route(g, rel, sid, fact, join_path(prefix, fact["path"]))
+                elif kind == "inject":
+                    _add_inject(g, rel, sid, fact, imported_files, import_aliases, named_in)
+                elif kind == "model":
+                    by_target[fact["name"]].append(fact)
+            for group in by_target.values():
+                _add_model(g, rel, sid, group, imported_files, import_aliases, named_in)
+
+
+def _add_route(g: Graph, rel: str, sid: str, fact: dict[str, Any], full: str) -> None:
+    rid = f"route:{fact['method']} {full}"
+    g.add_node(
+        rid,
+        type="route",
+        name=f"{fact['method']} {full}",
+        method=fact["method"],
+        route_path=full,
+        framework_decorator=fact["decorator"],
+        path=rel,
+    )
+    g.add_edge(
+        rid,
+        sid,
+        "ROUTES_TO",
+        confidence=1.0,
+        resolution_kind="decorator",
+        method=METHOD_FRAMEWORK,
+        evidence=make_evidence(rel, fact.get("line")),
+    )
+    g.stats["framework_edges_routes"] += 1
+
+
+def _bind_name(
+    g: Graph,
+    rel: str,
+    name: str,
+    wanted_kinds: frozenset[str] | None,
+    imported_files: dict[str, set[str]],
+    import_aliases: dict[str, dict[str, tuple[str, str | None]]],
+    named_in: Callable[[str, Iterable[str]], list[str]],
+) -> tuple[list[str], str]:
+    """`(candidates, how)` for a name, same-file then imported -- never wider.
+
+    The shared half of `INJECTS` and `MODELS` resolution, and the same policy
+    `add_reference_edges` uses: precision over recall, so a name that does not
+    bind here is reported unresolved rather than matched against the whole
+    repository. `MODELS` adds a wider fallback of its own on top of this.
+    """
+
+    def ok(nid: str) -> bool:
+        node = g.nodes.get(nid, {})
+        if wanted_kinds is None:
+            return node.get("type") == "symbol"
+        return node.get("kind") in wanted_kinds
+
+    cands = [c for c in (f"sym:{rel}::{name}",) if ok(c)]
+    if cands:
+        return cands, "same_file"
+    alias = import_aliases.get(rel, {}).get(name)
+    target = (alias[1] or name) if alias else name
+    how = "import_alias" if alias else "imported_symbol"
+    return [
+        c
+        for c in named_in(target, imported_files.get(rel, ()))
+        if ok(c) and g.nodes[c].get("qualname") == target
+    ], how
+
+
+def _emit(
+    g: Graph,
+    rel: str,
+    sid: str,
+    cands: list[str],
+    etype: str,
+    how: str,
+    fact: dict[str, Any],
+    **extra: Any,
+) -> None:
+    for c in cands:
+        g.add_edge(
+            sid,
+            c,
+            etype,
+            confidence=round(1.0 / len(cands), 3),
+            resolution_kind=how,
+            candidate_count=len(cands),
+            method=METHOD_FRAMEWORK,
+            evidence=make_evidence(rel, fact.get("line")),
+            **extra,
+            **({"ambiguous": True} if len(cands) > 1 else {}),
+        )
+
+
+def _add_inject(
+    g: Graph,
+    rel: str,
+    sid: str,
+    fact: dict[str, Any],
+    imported_files: dict[str, set[str]],
+    import_aliases: dict[str, dict[str, tuple[str, str | None]]],
+    named_in: Callable[[str, Iterable[str]], list[str]],
+) -> None:
+    # `module.provider` binds on its last segment, like a receiver-stripped call.
+    name = fact["name"].rsplit(".", 1)[-1]
+    cands, how = _bind_name(g, rel, name, None, imported_files, import_aliases, named_in)
+    if not cands:
+        g.stats["framework_edges_unresolved"] += 1
+        return
+    _emit(g, rel, sid, cands, "INJECTS", how, fact)
+    g.stats["framework_edges_injects"] += 1
+
+
+def _add_model(
+    g: Graph,
+    rel: str,
+    sid: str,
+    group: list[dict[str, Any]],
+    imported_files: dict[str, set[str]],
+    import_aliases: dict[str, dict[str, tuple[str, str | None]]],
+    named_in: Callable[[str, Iterable[str]], list[str]],
+) -> None:
+    """One `MODELS` edge for every relation this class declares to one target.
+
+    `group` is every field naming the same model. The edge cites the first
+    one's line, because that is the one a reader checking the claim will find,
+    and `fields`/`count` say how many more there are -- the same choice a
+    `CALLS` edge makes for repeated calls of one name.
+    """
+    fact = group[0]
+    target = fact["name"]
+    if target == "self":
+        # Django's `"self"` is the model itself: an honest self-edge, rather
+        # than dropping a relation that genuinely exists.
+        cands, how = [sid], "self_reference"
+    else:
+        cands, how = _bind_name(
+            g, rel, target, MODEL_KINDS, imported_files, import_aliases, named_in
+        )
+        if not cands:
+            # A model named by string and defined in another app is the
+            # ordinary Django case, and the whole point of the string form, so
+            # this is the one framework edge with a repository-wide fallback.
+            how = "repo_wide"
+            cands = [
+                nid
+                for nid, n in g.nodes.items()
+                if n.get("type") == "symbol"
+                and n.get("kind") in MODEL_KINDS
+                and n.get("name") == target
+            ]
+    if not cands:
+        g.stats["framework_edges_unresolved"] += 1
+        return
+    _emit(
+        g,
+        rel,
+        sid,
+        cands,
+        "MODELS",
+        how,
+        fact,
+        relation=fact["relation"],
+        field=fact["field"],
+        count=len(group),
+        **({"fields": sorted({f["field"] for f in group})} if len(group) > 1 else {}),
+    )
+    g.stats["framework_edges_models"] += 1

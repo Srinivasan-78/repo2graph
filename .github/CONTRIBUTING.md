@@ -64,16 +64,23 @@ Two things about `ruff format` that surprise people here:
 - `E501` is in the ignore list, so an over-long line passes `ruff check` and fails
   `ruff format --check`. The two gates disagree on purpose; satisfy both.
 
-`mypy` is strict but only on the modules listed in `pyproject.toml`'s `[[tool.mypy.overrides]]` —
-legacy modules are excluded by name on purpose (see the comment above that table), so a new module
-is strict-checked by default.
+`mypy --strict` covers the **whole** package — all 59 modules, with no per-module exemptions.
+There used to be an override list in `pyproject.toml` naming `cli.py`, `graph.py` and `parse.py`;
+those are annotated now and the list is gone, so there is nothing to add yourself to and a new
+module is strict-checked automatically.
+
+`ruff` runs `E`, `F`, `W`, `BLE`, `B` (bugbear), `S` (bandit), `I`, `UP` and `RUF`. Two notes that
+cost time otherwise: `S` is relaxed per-file for the modules that legitimately spawn `git` and
+`node` (`S603`/`S607` fire on the safe argument-list form too) and switched off entirely under
+`tests/`, `scripts/` and `benchmarks/`; and `benchmarks/corpus/**` is `ALL`-ignored for lint
+because it is parser *input* — deliberately pathological code — while still being formatted.
 
 ## Code style
 
 - Keep changes focused; add or update tests for behavior you touch — see the
   [Architecture & OS Compatibility Invariants](#architecture--os-compatibility-invariants)
   before editing `query.py`, `chunks.py`, `graph.py`, or `parse.py`.
-- `ruff` (line length 100) and `mypy --strict` on the modules it covers are both CI gates.
+- `ruff` (line length 100) and `mypy --strict` over the whole package are both CI gates.
 
 ## Submitting a PR
 
@@ -1108,6 +1115,7 @@ a record of past state, like any other document.
 | Item | Size | Why deferred |
 |---|---|---|
 | **TOCTOU symlink race between `discover()`'s `lstat()` and the later `open()`** | — | Documented as a known limitation, not fixed: exploiting it requires local code execution on the same host, and `O_NOFOLLOW` is POSIX-only, so no fix closes it cross-platform. |
+| **The two readers disagree about a large file with no grammar** | S | `_read_and_parse` routes a file over `max_file_bytes` to `_chunk_and_parse` when `lang not in EMBEDDED_LANGS`, which `None` satisfies. Such a file parses no slice, so it ends up with a `ChunkedParsedFile` carrying no symbols and no language — while the *same* file under the threshold gets `pf=None`. The difference is visible in the artifacts: the file node's `chunked` attribute is `true` on one path and `false` on the other, and `parse.cache.json` records a language of `""`. Found while annotating `graph.py` for `mypy --strict` (the `ParsedFile.lang: str` field was being handed `None`); the type hole is closed, the behaviour difference is not, because aligning them changes byte-identical output and `test_compat.py` pins it. Decide which of the two is right before touching it. |
 
 Issues routing the work deferred during earlier stabilization passes:
 

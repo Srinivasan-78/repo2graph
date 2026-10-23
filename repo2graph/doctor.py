@@ -146,8 +146,8 @@ def check_platform_support() -> CheckResult:
                         "Platform Support",
                         "fail",
                         f"glibc {ver} is below minimum requirement (>= 2.34)",
-                        details=details
-                        + [
+                        details=[
+                            *details,
                             "tree-sitter precompiled grammar wheels require glibc >= 2.34.",
                             "RHEL 8, CentOS 8, Amazon Linux 2, Debian 11, and Ubuntu 20.04 ship glibc < 2.34.",
                         ],

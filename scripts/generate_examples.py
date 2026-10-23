@@ -442,7 +442,7 @@ def _generate_one(entry: dict, results: dict) -> dict:
         )
         g.name = entry["id"]
         build_dir = workdir / "build"
-        written, n_chunks = dump_all(
+        _written, _n_chunks = dump_all(
             g, iter_chunks(g), build_dir, {"jsonl", "overview", "html"}, viz_nodes=300
         )
         build_seconds = round(time.monotonic() - t1, 1)
@@ -544,7 +544,7 @@ def main() -> int:
     if results_path.exists():
         existing = json.loads(results_path.read_text(encoding="utf8")).get("results", [])
     merged = {r["repository"]: r for r in existing}
-    for repo_id, r in results_by_id.items():
+    for _repo_id, r in results_by_id.items():
         merged[r["repository"]] = r
     results_path.write_text(
         json.dumps(

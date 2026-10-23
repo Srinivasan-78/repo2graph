@@ -38,6 +38,14 @@ from .indexes import (
     open_index,
     open_index_or_task,
 )
+from .nodes import (
+    _containing_file,
+    _edge_note,
+    _impact_root,
+    _label,
+    _path_secret,
+    _staleness_note,
+)
 from .retrieval import (
     _AUX_CACHE,
     _aux,
@@ -59,14 +67,6 @@ from .schemas import (
     ToolError,
     tool_annotations,
 )
-from .nodes import (
-    _containing_file,
-    _edge_note,
-    _impact_root,
-    _label,
-    _path_secret,
-    _staleness_note,
-)
 from .traversal import (
     _bidirectional_bfs,
     _clean_edge_types,
@@ -86,12 +86,12 @@ __all__ = [
     "TOOL_DESCRIPTIONS",
     "TOOL_SCHEMAS",
     "TOOL_TITLES",
-    "ToolError",
     "_AUX_CACHE",
     "_INDEXES",
     "_INDEX_LOCKS",
     "_INDEX_LOCKS_GUARD",
     "_INDEX_MTIMES",
+    "ToolError",
     "_aux",
     "_bidirectional_bfs",
     "_build_index",

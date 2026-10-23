@@ -56,7 +56,7 @@ def _reconstruct(
     out: list[tuple[list[str], list[Any]]] = []
     for parent, etype, direction, edge in parents.get(node, [])[:cap]:
         for nodes, edges in _reconstruct(parents, parent, root, cap):
-            out.append((nodes + [node], edges + [(etype, direction, edge)]))
+            out.append(([*nodes, node], [*edges, (etype, direction, edge)]))
             if len(out) >= cap:
                 return out
     return out
@@ -155,7 +155,7 @@ def tool_repo_path_between(
     wanted, type_note = _clean_edge_types(edge_types)
     note += type_note
 
-    dist_f, parents_f, dist_b, parents_b, meet, truncated = _bidirectional_bfs(
+    _dist_f, parents_f, _dist_b, parents_b, meet, truncated = _bidirectional_bfs(
         index, from_id, to_id, wanted, hops, MCP_MAX_PATH_VISITED
     )
 

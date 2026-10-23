@@ -1,6 +1,7 @@
 """Tests for Phase 1: citation-mode neighbours, conditional expansion, and precision-first packing."""
 
 from pathlib import Path
+
 from repo2graph.mcp.guardrails import MCP_MAX_SEARCH_NEIGHBOURS
 from repo2graph.mcp.retrieval import tool_repo_search
 from repo2graph.query import Index, is_lexical_weak

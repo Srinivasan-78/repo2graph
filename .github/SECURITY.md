@@ -38,6 +38,10 @@ redaction, and the generated `graph.html`.
 **no network calls**. They read your local files with tree-sitter, write the graph to `.r2g`, and
 answer questions from that local index. Nothing about your source is sent anywhere by default.
 
+"No network calls" means none *outbound*. It is not the same claim as "opens no socket":
+`repo2graph-mcp --transport sse` listens, which is the one exception below that is a server
+rather than a client.
+
 Every exception is something you ask for by name:
 
 - `repo2graph github`, and a `rag`/`query` target written as `owner/repo` or a URL, clone that
@@ -52,6 +56,14 @@ Every exception is something you ask for by name:
   Without the flag `build` opens no socket.
 - `rag --tokenizer tiktoken` lets the `tiktoken` package fetch its BPE table on first use
   (cached afterwards). The other tokenizers are local arithmetic.
+- `repo2graph-mcp --transport sse` binds a listening HTTP socket, for serving a central index to
+  a container or cluster. It is **inbound**, so it sends your source nowhere, but it does expose
+  the index — `/sse` and `/messages` serve the same cited file content the stdio transport does,
+  to whoever can reach the port. It defaults to `127.0.0.1`. Anything else needs
+  `--auth-token`/`REPO2GRAPH_MCP_AUTH_TOKEN`, and the server refuses to start on a non-loopback
+  address without one rather than serving the index unauthenticated; the `/healthz` and `/readyz`
+  probes are deliberately exempt and return no repository content. Bearer tokens are compared in
+  constant time. The default `--transport stdio` opens no socket at all.
 - `repo2graph rag --answer` sends the assembled context pack (real file content) to an LLM
   provider, the only exception that sends your source anywhere. It:
 
@@ -222,9 +234,14 @@ or a released package, independent of anything the tool does at runtime:
 ## Container deployment
 
 This repository includes a `Dockerfile` for users who wish to build a read-only, non-root
-container image locally (`docker build -t repo2graph .`). The image is not published to any
-container registry and is not currently built in CI — build it yourself if containerized
-execution is required. The container image:
+container image locally (`docker build -t repo2graph .`). The image is **not published to any
+container registry** — build it yourself if containerized execution is required. It *is* built and
+smoke-tested on every pull request by the `container` job in `.github/workflows/ci.yml`, which
+checks the properties claimed below rather than only that the build succeeds: that it runs as
+`10000:10000`, that it can build a graph with `--read-only` and no writable `HOME`, that discovery
+went through `git ls-files` (a gitignored file is absent from the index) and read git history (a
+`CO_CHANGE` edge exists), and that `rag` returns a cited pack from inside the image. The container
+image:
 
 - Runs as UID/GID `10000:10000`, created in the image; nothing in it needs root.
 - `PYTHONDONTWRITEBYTECODE=1`, so a read-only root filesystem does not break the interpreter.
@@ -236,7 +253,10 @@ execution is required. The container image:
   UID with "detected dubious ownership", and `--read-only` leaves no writable `HOME` for a config
   file. Mount the repository anywhere else and git will refuse it rather than trust it.
 
-The image never calls an LLM and never opens a listening socket.
+The image never calls an LLM. It opens no listening socket on any documented entry point —
+`build`, `query` and `rag` — and the only way to make it listen is to ask for it by name with
+`repo2graph-mcp --transport sse`, which refuses a non-loopback bind unless you also pass
+`--auth-token`.
 
 ---
 

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # Keep every module's residue above chunks.py's 40-character `file_residual`
 # floor. A file whose body is entirely `def`s and imports gets a node but no
@@ -494,7 +495,10 @@ def build_demo_index(repo: Path, outdir: Path) -> dict[str, Any]:
 
     g = build(repo, config=BuildConfig(), jobs=1)
     written, n_chunks = dump_all(g, iter_chunks(g), outdir, {"jsonl", "overview", "html"})
-    stats = dict(g.stats)
+    # `dict[str, Any]`, not the `dict[str, int]` that `dict(Counter[str])`
+    # infers: the two keys below are a count and a list of written paths, so
+    # this report is heterogeneous by design.
+    stats: dict[str, Any] = dict(g.stats)
     stats["chunks"] = n_chunks
     stats["written"] = written
     return stats

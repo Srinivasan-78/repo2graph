@@ -3,7 +3,8 @@
 from pathlib import Path
 from typing import Any
 
-from .edgemeta import cite as edge_cite, describe as describe_edge
+from .edgemeta import cite as edge_cite
+from .edgemeta import describe as describe_edge
 from .query import ALL_EDGE_DIRS, RETRIEVE_BUDGET_CHARS, Index, tokenize
 
 
@@ -56,7 +57,7 @@ def explain_node(outdir: Path, node_id: str) -> dict[str, Any]:
 
     in_edges = []
     out_edges = []
-    for other, etype, direction, edge in idx.store.neighbours(node_id):
+    for _other, _etype, direction, edge in idx.store.neighbours(node_id):
         if direction == "in":
             in_edges.append(edge)
         else:

@@ -24,6 +24,8 @@ from .edgemeta import EDGE_SCHEMA_VERSION, METHOD_SCIP, counts_as_call
 from .security import escape_hidden_unicode
 from .viz import (
     EDGE_TYPES,
+    FRAMEWORK_EDGE_TYPES,
+    FRAMEWORK_NODE_TYPES,
     MAX_NODES,
     NODE_COLORS,
     NODE_TYPES,
@@ -219,7 +221,12 @@ def _spring(
     the all-pairs form costs O(n^2) per iteration and dominates big exports.
     """
     n = len(nodes)
-    rng = random.Random(17)
+
+    # positions for the force-directed layout, and byte-identical
+    # artifacts across machines is a documented guarantee (see
+    # architecture.md section 3, Determinism), which a cryptographic
+    # source would break. Nothing here is a secret or a token.
+    rng = random.Random(17)  # noqa: S311
     pos = {nid: [rng.uniform(-1.0, 1.0), rng.uniform(-1.0, 1.0)] for nid in nodes}
     k = 1.0 / math.sqrt(n)
     k2 = k * k
@@ -965,13 +972,19 @@ def write_manifest(
     edge_types = {
         **EDGE_TYPES,
         **{k: v for k, v in REFERENCE_EDGE_TYPES.items() if k in present},
+        **{k: v for k, v in FRAMEWORK_EDGE_TYPES.items() if k in present},
+    }
+    present_nodes = {n.get("type") for n in getattr(g, "nodes", {}).values()}
+    node_types = {
+        **NODE_TYPES,
+        **{k: v for k, v in FRAMEWORK_NODE_TYPES.items() if k in present_nodes},
     }
     edge_fields = EDGE_FIELDS
     if any(e.get("method") == METHOD_SCIP for e in getattr(g, "edges", ())):
         edge_fields = {**EDGE_FIELDS, "method": EDGE_FIELDS["method"] + SCIP_METHOD_NOTE}
     cfg = getattr(g, "config", None)
     if cfg and getattr(cfg, "include_secrets", False):
-        secret_filter_policy = "include-secrets"
+        secret_filter_policy = "include-secrets"  # noqa: S105 - a policy/method name, not a credential
     else:
         secret_filter_policy = (
             getattr(cfg, "secret_policy", "redact-match") if cfg else "redact-match"
@@ -1028,7 +1041,7 @@ def write_manifest(
             name: FILE_NOTES[name]
             for name in sorted({w.split("/", 1)[1] for w in written} & set(FILE_NOTES))
         },
-        "node_types": NODE_TYPES,
+        "node_types": node_types,
         "edge_types": edge_types,
         "edge_fields": edge_fields,
         "edge_schema_version": EDGE_SCHEMA_VERSION,
@@ -1281,8 +1294,8 @@ def write_parse_cache(g: "Graph", path: Path) -> None:
         g: The Graph just built; its `parse_cache` is the payload.
         path: Destination for `parse.cache.json`.
     """
-    from .parsecache import PARSE_CACHE_FORMAT
     from .parse import grammar_fingerprint, parse_cache_identity
+    from .parsecache import PARSE_CACHE_FORMAT
 
     payload = {
         "format": STATE_FORMAT,
@@ -1334,9 +1347,9 @@ def load_parse_cache_report(outdir: Path, config: Any = None) -> tuple[dict[str,
         present; `reason` then says why a cache that *was* there was discarded
         (None when there was simply no cache).
     """
-    from .parsecache import PARSE_CACHE_FORMAT
     from .integrity import is_foreign_index
     from .parse import grammar_fingerprint, parse_cache_identity
+    from .parsecache import PARSE_CACHE_FORMAT
 
     out = Path(outdir)
     cache_path = path(out, "parse.cache.json")
@@ -1532,7 +1545,7 @@ def dump_all(
         raise ValueError(f"output path exists and is not a directory: {outdir}")
 
     if not getattr(g, "build_id", None):
-        setattr(g, "build_id", str(_uuid_mod.uuid4()))
+        g.build_id = str(_uuid_mod.uuid4())
 
     # Create a sibling staging directory for atomic swap
     staging_dir = outdir.parent / (

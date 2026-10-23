@@ -34,15 +34,15 @@ breaking change to the public API described here and in `docs/python-api.md`.
 from typing import Any, Literal, TypedDict
 
 __all__ = [
-    "NodeType",
-    "EdgeType",
-    "NodeRecord",
-    "EdgeRecord",
     "ChunkRecord",
-    "RetrievalResult",
-    "PackResult",
+    "EdgeRecord",
+    "EdgeType",
     "EntrypointRecord",
     "ManifestRecord",
+    "NodeRecord",
+    "NodeType",
+    "PackResult",
+    "RetrievalResult",
     "StatsRecord",
 ]
 

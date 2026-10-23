@@ -5,13 +5,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
 import pytest
 
 from repo2graph.chunks import iter_chunks
 from repo2graph.cli import main
-from repo2graph.export import dump_all
-from repo2graph.graph import build
-from repo2graph.query import Index
 from repo2graph.explain import (
     explain_edge,
     explain_node,
@@ -20,6 +18,9 @@ from repo2graph.explain import (
     format_explain_node,
     format_explain_retrieval,
 )
+from repo2graph.export import dump_all
+from repo2graph.graph import build
+from repo2graph.query import Index
 
 
 @pytest.fixture

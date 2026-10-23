@@ -5,44 +5,9 @@ import os
 import sys
 import time
 from collections import Counter, defaultdict
-from collections.abc import Container, Iterable
+from collections.abc import Container, Iterable, Sequence
 from pathlib import Path
-from typing import Any
-
-from .events import diagnostic
-from .edgemeta import (
-    METHOD_FILESYSTEM,
-    METHOD_NAME_RESOLVER,
-    SCOPED_CALL_KINDS,
-    evidence as make_evidence,
-    normalize as normalize_edge,
-    tree_sitter_method,
-)
-from .parsepool import (
-    CRASH,
-    INPROCESS_MAX_BYTES,
-    PARSE_TIMEOUT_S,
-    TIMEOUT,
-    claim_slot,
-    supervised_map,
-)
-from .discovery import discover
-from .scip import ScipResolver
-from .parse import (
-    CONFIG_EXT,
-    DOC_EXT,
-    SUPER_RECEIVERS,
-    EMBEDDED_LANGS,
-    EXT_LANG,
-    ParseError,
-    ParsedFile,
-    Symbol,
-    disambiguate_key,
-    symbol_key,
-    symbol_parent_key,
-    parse_source,
-    refine_lang,
-)
+from typing import IO, Any
 
 # Split out of this module by responsibility (#315). Re-exported so every
 # `from repo2graph.graph import X` keeps working.
@@ -57,15 +22,74 @@ from .derived import (  # noqa: F401
     ENTRY_KINDS,
     REFERENCE_EDGES,
     TESTS_MAX_HOPS,
+    add_framework_edges,
     add_reference_edges,
     add_tests_edges,
     mark_entrypoints,
 )
+from .discovery import discover
+from .edgemeta import (
+    METHOD_FILESYSTEM,
+    METHOD_NAME_RESOLVER,
+    SCOPED_CALL_KINDS,
+    tree_sitter_method,
+)
+from .edgemeta import (
+    evidence as make_evidence,
+)
+from .edgemeta import (
+    normalize as normalize_edge,
+)
+from .events import diagnostic
 from .imports import import_targets, path_index, repo_context, resolve_import
+from .parse import (
+    CONFIG_EXT,
+    DOC_EXT,
+    EMBEDDED_LANGS,
+    EXT_LANG,
+    SUPER_RECEIVERS,
+    BuildConfig,
+    ParsedFile,
+    ParseError,
+    Symbol,
+    disambiguate_key,
+    parse_source,
+    refine_lang,
+    symbol_key,
+    symbol_parent_key,
+)
 from .parsecache import PARSE_CACHE_FORMAT, ChunkedParsedFile, cache_entry, entry_read  # noqa: F401
+from .parsepool import (
+    INPROCESS_MAX_BYTES,
+    PARSE_TIMEOUT_S,
+    TIMEOUT,
+    claim_slot,
+    supervised_map,
+)
+from .scip import ScipResolver
 
 # Under this many files a process pool costs more to start than it saves.
 PARALLEL_MIN_FILES = 64
+#: One node or edge as this module builds it, before `export.py` serialises it.
+#: Spelled the same way as `store.Record`, which is what reads these back off
+#: disk -- the two are the same shape at opposite ends of the pipeline. `Any`
+#: rather than a union because the attribute set is open by design: `add_node`
+#: and `add_edge` take `**attrs` and every stage adds its own keys.
+Record = dict[str, Any]
+
+#: The measurements `_read_and_parse` takes while it holds a file's bytes:
+#: `(size, line count, the parse result, sha256 of exactly those bytes)`.
+#: `build()` never sees the bytes, so anything derived from them is computed
+#: here or not at all. `ParsedFile` covers the chunked reader too, since
+#: `ChunkedParsedFile` subclasses it.
+ParseMeasurement = tuple[int, int, ParsedFile | None, str]
+
+#: One file's outcome from either reader: `(relative path, language, …)`, with
+#: a `None` payload for a file that could not be read, and a `None` language
+#: for one with no grammar. Both readers run in a process pool, so this is
+#: also the shape that has to pickle.
+ReadResult = tuple[str, str | None, ParseMeasurement | None]
+
 # Soft warning threshold -- past this many nodes or edges a build alerts on stderr.
 LARGE_GRAPH_WARN_THRESHOLD = 50_000
 # How many CALLS edges an ambiguous name is allowed to fan out to, each at 1/n
@@ -198,7 +222,7 @@ def _module_leaves(target: str) -> set[str]:
     return {x for x in (seg.split(".")[0], seg.rsplit(".", 1)[-1], seg.rsplit("::", 1)[-1]) if x}
 
 
-def _home_names(node: dict) -> set[str]:
+def _home_names(node: Record) -> set[str]:
     """Names a receiver could use for the module/type a candidate lives in."""
     path = node.get("path", "")
     stem = Path(path).stem
@@ -276,7 +300,7 @@ class Graph:
         # the one question the manifest exists to answer (#245). A Graph built
         # by hand keeps the default, which is what build() would have used.
         self.max_call_candidates = max_call_candidates
-        self.config = None
+        self.config: BuildConfig | None = None
         # The discovery filters this build actually used, recorded so
         # index.state.json can persist them. Without them, anything that
         # re-runs discovery to compare against the index -- `index-status`,
@@ -285,10 +309,20 @@ class Graph:
         # build with any --exclude reads as permanently stale.
         self.include_globs: list[str] | None = None
         self.exclude_globs: list[str] | None = None
-        self.nodes: dict[str, dict] = {}
-        self.edges: list[dict] = []
-        self._edge_seen: set[tuple] = set()
-        self.stats: Counter = Counter()
+        # Where the build came from when there is no local tree to point at:
+        # `repo2graph github` clones, builds and deletes the clone, so
+        # `index-status` and `doctor` have nothing to compare against and the
+        # remote is recorded instead. `manifest.json` carries it as
+        # `source_remote` (docs/architecture.md section 3), so it is part of the
+        # artifact contract rather than an incidental attribute -- it was being
+        # set on the instance by `fetch.py` under the comment "not a Graph
+        # field", and read back through `getattr(g, "source_remote", None)`,
+        # which is how a documented field stayed invisible to the type checker.
+        self.source_remote: str | None = None
+        self.nodes: dict[str, Record] = {}
+        self.edges: list[Record] = []
+        self._edge_seen: set[tuple[Any, ...]] = set()
+        self.stats: Counter[str] = Counter()
         # {relative path: sha256 of the bytes that were indexed}, written to
         # index.state.json so a later build can tell what actually changed.
         self.file_hashes: dict[str, str] = {}
@@ -296,7 +330,7 @@ class Graph:
         # `--incremental` build can skip re-parsing files that did not change.
         # Populated by every build, full or incremental, so the first full build
         # is what makes the next incremental one possible.
-        self.parse_cache: dict[str, dict] = {}
+        self.parse_cache: dict[str, Record] = {}
         # Filled in by an incremental build only: {"cached": n, "reparsed": m}.
         # Deliberately *not* in `stats`, which is written to stats.json -- an
         # incremental build must produce byte-identical artifacts to a full one,
@@ -341,7 +375,7 @@ class Graph:
                     f"further elements are dropped and the graph is partial",
                 )
 
-    def add_node(self, nid: str, **attrs):
+    def add_node(self, nid: str, **attrs: Any) -> str:
         self._check_memory_and_duration()
         if "build_duration_exceeded" in self.limits_hit or "memory_dropped" in self.limits_hit:
             return nid
@@ -375,7 +409,7 @@ class Graph:
         self._warn_if_large()
         return nid
 
-    def add_edge(self, src: str, dst: str, etype: str, **attrs):
+    def add_edge(self, src: str, dst: str, etype: str, **attrs: Any) -> None:
         key = (src, dst, etype)
         if key in self._edge_seen:
             return
@@ -497,7 +531,9 @@ def _incomplete_utf8_tail(buf: bytes) -> int:
     return 0
 
 
-def _chunk_and_parse(rel, abspath, lang, config, size):
+def _chunk_and_parse(
+    rel: str, abspath: Path, lang: str | None, config: BuildConfig, size: int
+) -> ReadResult:
     chunk_size = config.max_file_bytes
     # One list per parsed slice: keys are only unique within a slice.
     slice_symbols: list[list[Symbol]] = []
@@ -571,7 +607,13 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
                 sniff_header = False
 
             pf = (
-                parse_source(buf, lang, filepath=None, refs=config.reference_edges)
+                parse_source(
+                    buf,
+                    lang,
+                    filepath=None,
+                    refs=config.reference_edges,
+                    frameworks=config.framework_edges,
+                )
                 if lang
                 else None
             )
@@ -640,8 +682,24 @@ def _chunk_and_parse(rel, abspath, lang, config, size):
 
             deduped_symbols.append(sym)
 
+    # `lang or ""`, matching `_abandoned` below: `ParsedFile.lang` is `str`,
+    # and `None` is reachable here. A file over `max_file_bytes` whose
+    # extension no grammar claims is routed to this reader by
+    # `_read_and_parse` -- its guard tests `lang not in EMBEDDED_LANGS`, which
+    # `None` satisfies -- every slice then fails the `if lang` test around
+    # `parse_source`, and this runs with no symbols and no language. `""` is
+    # already the value `_abandoned` stores for the same condition, so this is
+    # the existing convention rather than a new one, and every reader of
+    # `pf.lang` (`== "go"`, `in IMPLICIT_THIS_LANGS`, the cache writer) treats
+    # it exactly as it treated `None`.
+    #
+    # What is *not* fixed here: the same file under the threshold returns
+    # `pf=None`, so the file node's `chunked` attribute is `True` on this path
+    # and `False` on the other for one non-code file. That is a behaviour
+    # difference in byte-identical output rather than a typing question, so it
+    # is recorded in .github/CONTRIBUTING.md's backlog instead.
     pf = ChunkedParsedFile(
-        lang=lang,
+        lang=lang or "",
         symbols=deduped_symbols,
         imports=sorted(set(all_imports)),
         parse_errors=total_parse_errors,
@@ -678,7 +736,7 @@ def _safe_read_bytes(path: Path) -> bytes:
     return path.read_bytes()
 
 
-def _safe_open(path: Path, mode: str = "rb"):
+def _safe_open(path: Path, mode: str = "rb") -> IO[bytes]:
     """Open a file with O_NOFOLLOW where supported.
 
     Like _safe_read_bytes, but returns a file object for chunked reading
@@ -696,10 +754,10 @@ def _safe_open(path: Path, mode: str = "rb"):
             except OSError:
                 pass
             raise
-    return open(path, mode)  # noqa: SIM115
+    return open(path, mode)
 
 
-def _redact_metadata(text: str, g) -> str:
+def _redact_metadata(text: str, g: Graph) -> str:
     """Redact secrets in a signature or docstring before it enters the graph.
 
     These two fields are copied into chunk headers, `nodes.jsonl`, `graph.html`,
@@ -721,7 +779,7 @@ def _redact_metadata(text: str, g) -> str:
     return redacted
 
 
-def _read_and_parse(item):
+def _read_and_parse(item: tuple[str, Path, str | None, BuildConfig | None]) -> ReadResult:
     """Read one file and parse it if it is code.
 
     Top level, and returns only counts plus the ParsedFile, so a process pool
@@ -752,7 +810,13 @@ def _read_and_parse(item):
     pf = None
     try:
         pf = (
-            parse_source(code, lang, filepath=abspath, refs=config.reference_edges)
+            parse_source(
+                code,
+                lang,
+                filepath=abspath,
+                refs=config.reference_edges,
+                frameworks=config.framework_edges,
+            )
             if lang
             else None
         )
@@ -787,7 +851,13 @@ def _last_segment(name: str) -> str:
     return name.rsplit(".", 1)[-1].rsplit("::", 1)[-1].split("<", 1)[0].split("[", 1)[0].strip()
 
 
-def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
+def parse_incremental(
+    files: Iterable[tuple[str, Path]],
+    jobs: int,
+    cache: dict[str, Record],
+    counts: dict[str, int],
+    config: BuildConfig | None = None,
+) -> list[ReadResult]:
     """Read every file, but re-parse only the ones whose bytes changed.
 
     A file's `ParsedFile` is a pure function of its bytes and its language and
@@ -812,9 +882,9 @@ def parse_incremental(files, jobs: int, cache: dict, counts: dict, config=None):
         The same list of `(rel, lang, read)` tuples `parse_all` returns, in
         discovery order, so the build loop cannot tell the two apart.
     """
-    results: dict[str, tuple] = {}
+    results: dict[str, ReadResult] = {}
     order: list[str] = []
-    stale: list[tuple] = []
+    stale: list[tuple[str, Path]] = []
     for rel, abspath in files:
         order.append(rel)
         lang = EXT_LANG.get(abspath.suffix.lower())
@@ -919,7 +989,7 @@ def silence_worker_io(watch: Any = None) -> None:
             import ctypes
             import msvcrt
 
-            kernel32 = getattr(ctypes, "windll").kernel32
+            kernel32 = ctypes.windll.kernel32
             kernel32.SetStdHandle.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
             kernel32.SetStdHandle.restype = ctypes.c_int
             kernel32.SetStdHandle(_STD_INPUT_HANDLE, msvcrt.get_osfhandle(0))
@@ -928,7 +998,9 @@ def silence_worker_io(watch: Any = None) -> None:
             pass
 
 
-def parse_all(files, jobs: int, config=None):
+def parse_all(
+    files: Iterable[tuple[str, Path]], jobs: int, config: BuildConfig | None = None
+) -> list[ReadResult]:
     """Read and parse every file, in discovery order, across `jobs` processes.
 
     tree-sitter parsing is CPU bound and dominates a large build, so this is
@@ -967,7 +1039,11 @@ def parse_all(files, jobs: int, config=None):
                 timeout,
                 silence_worker_io,
             )
-            for i, outcome in zip(pooled, outcomes):
+            # strict: `supervised_map` returns one outcome per input item in
+            # input order or raises `PoolUnavailable`, so an unequal length is
+            # a broken pool contract rather than an input condition. Silently
+            # truncating here would drop files from the index without a count.
+            for i, outcome in zip(pooled, outcomes, strict=True):
                 results[i] = _settle(items[i], outcome, timeout)
         except ParseError:
             # A strict-policy failure is the worker doing its job, not a broken
@@ -994,7 +1070,7 @@ def parse_all(files, jobs: int, config=None):
             res = _read_and_parse(items[i])
             results[i] = _settle(items[i], (res, time.monotonic() - started), timeout)
     if getattr(config, "parse_policy", "best-effort") == "strict":
-        for rel, lang, read in results:
+        for rel, _lang, read in results:
             if read is not None and read[2] is not None and read[2].parse_skipped:
                 raise ParseError(
                     f"Strict parse policy: {_skip_reason(read[2], timeout)} on '{rel}'"
@@ -1009,14 +1085,19 @@ def _size(path: Path) -> int:
         return 0
 
 
-def _settle(item, outcome, timeout: float):
+def _settle(
+    item: tuple[str, Path, str | None, BuildConfig | None],
+    outcome: tuple[ReadResult, float] | str,
+    timeout: float,
+) -> ReadResult:
     """`parse_all`'s result for one file, from what its parse came back with.
 
     `outcome` is `(result, seconds)` or parsepool's TIMEOUT / CRASH marker. A
     parse that finished but over budget is discarded the same as one that had
     to be killed, so where the deadline is noticed never changes the output.
     """
-    if outcome in (TIMEOUT, CRASH):
+    if isinstance(outcome, str):
+        # The only strings parsepool returns are its TIMEOUT / CRASH markers.
         return _abandoned(item, outcome)
     res, elapsed = outcome
     rel, lang, read = res
@@ -1026,7 +1107,7 @@ def _settle(item, outcome, timeout: float):
     return res
 
 
-def _abandoned(item, reason: str):
+def _abandoned(item: tuple[str, Path, str | None, BuildConfig | None], reason: str) -> ReadResult:
     """The result for a file whose worker was killed or died under it (#81).
 
     Read again here because the bytes died with the worker. Size, line count
@@ -1053,13 +1134,15 @@ def _abandoned(item, reason: str):
     return rel, lang, (size, newlines + 1, pf, hasher.hexdigest())
 
 
-def _skip_reason(pf, timeout: float) -> str:
+def _skip_reason(pf: ParsedFile, timeout: float) -> str:
     if pf.parse_skipped == TIMEOUT:
         return f"parse exceeded the {timeout:g}s budget (--parse-timeout)"
     return "parse crashed or exhausted its worker's memory"
 
 
-def _within_byte_budget(files, budget: int, g: "Graph"):
+def _within_byte_budget(
+    files: Sequence[tuple[str, Path]], budget: int, g: "Graph"
+) -> list[tuple[str, Path]]:
     """The leading files whose cumulative size fits in `budget` bytes.
 
     Stops at the first file that would exceed the budget rather than skipping
@@ -1106,14 +1189,14 @@ def _within_byte_budget(files, budget: int, g: "Graph"):
 # ---------- build ----------
 def build(
     root: Path,
-    include=None,
-    exclude=None,
+    include: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
     git_history: int = 0,
     max_files: int = 0,
     jobs: int = 0,
-    cache: dict | None = None,
+    cache: dict[str, Record] | None = None,
     max_call_candidates: int = DEFAULT_MAX_CALL_CANDIDATES,
-    config=None,
+    config: BuildConfig | None = None,
     cochange_min: int = 3,
     max_bytes: int = 0,
     max_edges: int = 0,
@@ -1340,6 +1423,15 @@ def build(
                 evidence=make_evidence(rel, sym.start_line),
             )
 
+        # `pf` being non-None does not imply a language: the chunked reader
+        # returns a `ChunkedParsedFile` for a file over `max_file_bytes` whose
+        # extension no grammar claims, and such a file parsed no slice, so
+        # `pf.imports` is empty and everything below was already a no-op.
+        # Skipping explicitly makes that a fact the type checker can see rather
+        # than one that merely happens to hold -- `import_targets` and
+        # `resolve_import` both dispatch on a real language.
+        if not lang:
+            continue
         import_lines = getattr(pf, "import_lines", None) or []
         for i, raw_imp in enumerate(pf.imports):
             # Index-aligned with `imports` by construction; a cache written by
@@ -1524,7 +1616,7 @@ def build(
             level = nxt
         return []
 
-    def names_home(rel: str, cd: dict, cand: str) -> bool:
+    def names_home(rel: str, cd: Record, cand: str) -> bool:
         """Whether a call's receiver visibly names where `cand` lives.
 
         `Util.remove()` -> a method of `Util`; `store.get()` with `store`
@@ -1587,7 +1679,7 @@ def build(
             # name, so the untyped-receiver check below asks whether *all* of
             # them are on a receiver of unknown type (`d.get()`, never
             # `self.get()`, a bare `get()`, or `store.get()` on a module).
-            details: dict[str, list[dict]] = defaultdict(list)
+            details: dict[str, list[Record]] = defaultdict(list)
             # Names called through super/base/parent and never on self/bare:
             # the caller itself is then never the target.
             super_calls: set[str] = set()
@@ -1856,6 +1948,9 @@ def build(
 
     if getattr(config, "reference_edges", False):
         add_reference_edges(g, parsed, imported_files, import_aliases, named_in)
+
+    if getattr(config, "framework_edges", False):
+        add_framework_edges(g, parsed, imported_files, import_aliases, named_in)
 
     if git_history:
         add_cochange(g, root, git_history, file_index, min_pairs=cochange_min, authors=git_authors)

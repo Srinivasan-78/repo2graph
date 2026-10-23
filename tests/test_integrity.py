@@ -14,11 +14,10 @@ import time
 from pathlib import Path
 
 import pytest
-
 from conftest import write_simple_repo
+
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
-
 
 # ============================================================================
 # helpers
@@ -306,6 +305,7 @@ class TestBuildLock:
 
     def test_stale_lock_threshold_reclaimed(self, tmp_path):
         import time
+
         from repo2graph.lock import BuildLock
 
         idx = tmp_path / "idx"
@@ -348,6 +348,7 @@ class TestBuildLock:
         that alone meant any build over the threshold was joined by a second.
         """
         import time
+
         from repo2graph.lock import BuildLock, LockTimeoutError
 
         idx = tmp_path / "idx"
@@ -396,6 +397,7 @@ class TestBuildLock:
 
     def test_unix_os_lock_and_release(self, tmp_path, monkeypatch):
         import types
+
         from repo2graph.lock import BuildLock
 
         monkeypatch.setattr("sys.platform", "linux")

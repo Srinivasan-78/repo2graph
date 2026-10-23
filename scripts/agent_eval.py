@@ -47,7 +47,7 @@ def _ripgrep_windows(
     cmd = [*rg_cmd, "-n", "-i", "-F", "--no-heading", "-t", RG_TYPES[language]]
     for t in terms:
         cmd += ["-e", t]
-    res = subprocess.run(cmd + ["."], cwd=root, capture_output=True)
+    res = subprocess.run([*cmd, "."], cwd=root, capture_output=True)
     hits: dict[str, dict[int, str]] = defaultdict(dict)
     for raw in res.stdout.decode("utf8", "replace").split("\n"):
         m = re.match(r"^(.+?):(\d+):(.*)$", raw)
@@ -102,7 +102,21 @@ def _simulate_agent_loop(
 
             file_cache: dict[str, list[str]] = {}
 
-            def _read_span(path: str, start: int, end: int) -> tuple[str, dict[str, set[int]]]:
+            # `file_cache` and `root` are bound as defaults rather than closed
+            # over. Every current call sits inside this same iteration, so late
+            # binding resolves correctly today -- but it resolves at *call*
+            # time, so hoisting one of these calls out of the loop, or keeping
+            # the function past the iteration, would silently read another
+            # task's repository through this task's cache. Binding at
+            # definition makes that impossible instead of merely unlikely.
+            def _read_span(
+                path: str,
+                start: int,
+                end: int,
+                *,
+                file_cache: dict[str, list[str]] = file_cache,
+                root: Path = root,
+            ) -> tuple[str, dict[str, set[int]]]:
                 if path not in file_cache:
                     raw = (root / path).read_text(encoding="utf8", errors="replace")
                     file_cache[path] = [ln.rstrip("\r") for ln in raw.split("\n")]

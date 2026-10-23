@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .query import Index
 import json
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from .cli import _emit, _require_index
-from .export import make_path, path as artifact_path, rel as artifact_rel
+
+# Names only, at module scope on purpose: `embed.py` imports on a bare install
+# -- every heavyweight import inside it is function-local -- so a constant can
+# be read from it here without pulling sentence-transformers or model2vec in.
+# It must NOT be a TYPE_CHECKING import: it is read at runtime below.
+from .embed import EMBED_BACKENDS
+from .export import make_path
+from .export import path as artifact_path
+from .export import rel as artifact_rel
+from .query import Index
 
 
 def cmd_embed(args: argparse.Namespace) -> int | None:
@@ -21,7 +26,7 @@ def cmd_embed(args: argparse.Namespace) -> int | None:
         return cmd_verify_rag(args)
     from .embed import (
         build_vectors,
-        default_embedder,
+        make_embedder,
         model_id_of,
         text_hash,
         write_vectors,
@@ -32,8 +37,8 @@ def cmd_embed(args: argparse.Namespace) -> int | None:
     out = Path(args.out)
     chunks = read_jsonl(_require_index(out, "chunks.jsonl"))
     try:
-        embedder = default_embedder(args.model)
-    except RuntimeError as exc:
+        embedder = make_embedder(args.model, getattr(args, "embed_backend", None))
+    except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from None
     model_id = model_id_of(embedder)
 
@@ -109,7 +114,18 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict[str, Any]) -> dict[
         return {}
     if not previous or meta.get("model_id") != model_id:
         return {}
-    stored = dict(zip(meta.get("chunk_ids") or [], meta.get("text_hashes") or []))
+    # `chunk_ids` and `text_hashes` are two parallel lists read off disk, so
+    # they are only as trustworthy as the file. Pairing them with a truncating
+    # `zip` would, on a misaligned pair, associate a chunk id with *another
+    # chunk's* text hash -- and this function's whole job is deciding which
+    # stored vectors are still valid, so a wrong pairing silently reuses a
+    # stale vector rather than recomputing it. An unequal pair means the
+    # metadata is corrupt: recompute everything, like every other failure here.
+    ids = meta.get("chunk_ids") or []
+    text_hashes = meta.get("text_hashes") or []
+    if len(ids) != len(text_hashes):
+        return {}
+    stored = dict(zip(ids, text_hashes, strict=True))
     return {
         cid: vec
         for cid, vec in previous.items()
@@ -118,7 +134,10 @@ def _reusable_vectors(npy: Path, model_id: str, hashes: dict[str, Any]) -> dict[
 
 
 def verify_rag(
-    idx: Index, out: Path, embed_model: str | None = None
+    idx: Index,
+    out: Path,
+    embed_model: str | None = None,
+    embed_backend: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Self-test the dense-retrieval path against one index.
 
@@ -149,8 +168,17 @@ def verify_rag(
         "embedder_model_id": None,
         "embedder_dim": None,
         # Known without loading a model: false/true, never null, so a script
-        # can branch on it even when the index has no vectors yet.
+        # can branch on it even when the index has no vectors yet. This is
+        # specifically "is the `rag` extra importable" -- it is *not* "can
+        # dense retrieval run", which depends on which backend was asked for.
         "rag_extra_installed": _rag_extra_installed(),
+        # Which backend this check used, and whether it could be loaded. Added
+        # with `--embed-backend`: before it, `rag_extra_installed` was
+        # overwritten to True whenever *any* embedder loaded, so a `static`
+        # run reported the sentence-transformers extra as installed when it
+        # was not.
+        "embed_backend": embed_backend or EMBED_BACKENDS[0],
+        "backend_available": None,
     }
     report["vectors_unavailable"] = getattr(idx, "vectors_unavailable", None)
     if not idx.vectors:
@@ -167,13 +195,13 @@ def verify_rag(
     # fusion abandon itself at query time with everything else looking healthy.
     missing = cast(int, report["unvectorised_chunks"])
 
-    from .embed import default_embedder
+    from .embed import make_embedder
 
     try:
-        embedder = default_embedder(embed_model)
-        report["rag_extra_installed"] = True
-    except RuntimeError as exc:
-        report["rag_extra_installed"] = False
+        embedder = make_embedder(embed_model, embed_backend)
+        report["backend_available"] = True
+    except (RuntimeError, ValueError) as exc:
+        report["backend_available"] = False
         return report, str(exc)
     from .embed import dim_of, model_id_of
 
@@ -216,7 +244,7 @@ def cmd_verify_rag(args: argparse.Namespace) -> int | None:
     # `embed` spells it --model/--embed-model; the rag surface spells it
     # --embed-model. Either way it is the *embedding* model, never the LLM.
     model = getattr(args, "embed_model", None) or getattr(args, "model", None)
-    report, error = verify_rag(idx, out, model)
+    report, error = verify_rag(idx, out, model, getattr(args, "embed_backend", None))
     report["ok"] = error is None
     report["error"] = error
     _emit(json.dumps(report, indent=2))

@@ -10,7 +10,6 @@ from typing import Any
 
 from .security import HIDDEN_UNICODE_RE
 
-
 # The Neo4j browser palette, so the map reads the way their graph view does.
 NODE_COLORS = {
     "repo": "#F16667",
@@ -19,6 +18,8 @@ NODE_COLORS = {
     "symbol": "#57C7E3",
     "module": "#8DCC93",
     "external": "#ECB5C9",
+    # `--framework-edges` only. Neo4j's yellow, unused by the types above.
+    "route": "#FFC454",
 }
 OTHER_COLOR = "#C9CBCF"
 
@@ -35,6 +36,11 @@ EDGE_WEIGHT = {
     # Mostly a shortcut over CALLS edges already drawn, so it should not be
     # what decides which nodes make the cut.
     "TESTS": 0.5,
+    # A route is the door into a request path, so it argues as strongly for
+    # its handler as a call does for its callee.
+    "ROUTES_TO": 3.0,
+    "INJECTS": 2.0,
+    "MODELS": 2.0,
 }
 MAX_NODES = 300
 LABEL_CHARS = 15
@@ -53,6 +59,9 @@ AGG_EDGE_TYPES = (
     "READS",
     "WRITES",
     "REFERENCES",
+    "ROUTES_TO",
+    "INJECTS",
+    "MODELS",
 )
 AGG_TOP_MEMBERS = 8
 # Directory groups in the summary: past this a summary stops being one.
@@ -102,6 +111,30 @@ REFERENCE_EDGE_TYPES = {
     "READS": "symbol -> module-level variable/constant or class field it reads",
     "WRITES": "symbol -> module-level variable (Python: under `global`) or class field it assigns",
     "REFERENCES": "symbol -> class/interface/type it names in a type annotation",
+}
+
+# Only with `build --framework-edges`, and listed in manifest.json only when
+# the graph has them, exactly as the reference edges are.
+FRAMEWORK_EDGE_TYPES = {
+    "ROUTES_TO": (
+        "route -> the handler symbol its decorator is attached to; exact, "
+        "confidence 1.0. Decorator-declared routing only (FastAPI, Flask, "
+        "Starlette, Sanic, NestJS); a call-registered route has no edge"
+    ),
+    "INJECTS": "symbol -> a dependency it declares (FastAPI `Depends`/`Security`)",
+    "MODELS": (
+        "model class -> a related model class, from an ORM relation field "
+        "(Django `ForeignKey`/`ManyToManyField`, SQLAlchemy `relationship`); "
+        "carries `relation` and the declaring `field`"
+    ),
+}
+
+# Only with `build --framework-edges`.
+FRAMEWORK_NODE_TYPES = {
+    "route": (
+        "an HTTP endpoint declared by a decorator, named `<METHOD> <path>` "
+        "with the mount prefix already joined on"
+    ),
 }
 
 

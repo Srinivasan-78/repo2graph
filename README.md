@@ -100,6 +100,14 @@ That extra pulls PyTorch, which on Linux brings the NVIDIA CUDA wheels (several 
 fetched from Hugging Face on first use and its own licence and training data are yours to review
 before you adopt it. Once it is cached, set `HF_HUB_OFFLINE=1` so later runs make no request.
 
+If that is too much to carry — on a CI runner, say — `pip install "repo2graph[rag-static]"` and
+`--embed-backend static` get dense retrieval without torch: model2vec is a token→vector table
+plus mean pooling, so inference is numpy, and it costs ~60 MB of packages and a ~31 MB model.
+It is a *different* model (256-dim against 384), not a cheaper way to run the same one, so expect
+it to retrieve differently — the figures above are the `rag` backend's. Pass the same
+`--embed-backend` on the query side as you did to `embed`: the recorded model id is prefixed per
+backend, so a mismatch is refused rather than silently fused.
+
 ### Where repo2graph wins for agents: fewer turns
 
 In simulated agent workflows (`search` → `read` → `answer`, via `scripts/agent_eval.py`). No
@@ -145,7 +153,7 @@ a drop-in replacement — there is no interactive desktop UI — and
 
 | Ask your repo | What the graph adds |
 |---|---|
-| `Where is authentication enforced?` | the guard itself, plus the routes that call it |
+| `Where is authentication enforced?` | the guard itself, plus the routes that call it (`--framework-edges` names each endpoint) |
 | `What calls <function>?` | CALLS edges into it, each with a confidence score |
 | `What tests cover <module>?` | IMPORTS edges from the test module back to the code under test |
 | `What would be affected by changing <api>?` | the definition, then its direct callers from the CALLS edges into it (explain node) |
@@ -170,7 +178,7 @@ calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 
 | Command | Does |
 |---|---|
-| `repo2graph build <path> -o .r2g` | Parse a repo into a graph and chunks (`--incremental`, `--git-history N`) |
+| `repo2graph build <path> -o .r2g` | Parse a repo into a graph and chunks (`--incremental`, `--git-history N`, `--framework-edges`) |
 | `repo2graph query "<q>" -o .r2g` | BM25 search plus one graph hop |
 | `repo2graph rag "<q>" -o .r2g` | Budget-bounded, cited context pack (`--answer` sends it to an LLM: opt-in, the only path that sends code anywhere) |
 | `repo2graph explain <edge\|node\|retrieval>` | Why an edge exists, or why a block was retrieved |
@@ -195,6 +203,11 @@ Build cost up to 50,000 files: [benchmarks/perf/README.md](benchmarks/perf/READM
 - **See dynamic dispatch, reflection or computed imports.** A missing edge doesn't prove that no
   call exists.
 - **Cross language boundaries** (Python calling C++ through bindings).
+- **See a route that is registered by a call.** `build --framework-edges` links
+  decorator-declared routes to their handlers (FastAPI, Flask, Starlette, Sanic, NestJS) and adds
+  a node per endpoint, so `GET /users/{id}` is a thing you can ask about. Express, Hono and
+  Django's `urlpatterns` register with a call instead — `app.get("/x", handler)` — where the
+  handler is an argument and often an inline function, and those get no edge.
 
 <a id="languages"></a>Symbols, calls and classes are extracted for Python, JS, TS, TSX, Go, Rust, Java, Ruby, C, C++,
 C#, PHP, Kotlin, Swift, Scala, Bash, Lua, Objective-C and HCL (Terraform), plus the `<script>` blocks
@@ -225,7 +238,7 @@ read-only, non-root local builds is provided ([.github/SECURITY.md](.github/SECU
 
 | Environment | Status | Details |
 |---|---|---|
-| **Python** | 3.10 – 3.13 | Tested across Linux, macOS, and Windows in CI. Python 3.14+ is untested. |
+| **Python** | 3.10 – 3.14 | Tested across Linux, macOS, and Windows in CI (15 cells). Python 3.15+ is untested. Note that 3.10 reached end of life in October 2026; it remains the supported floor, but upgrading is recommended. |
 | **Linux (glibc)** | Supported (glibc ≥ 2.34) | Precompiled `tree-sitter-language-pack` grammar wheels require glibc ≥ 2.34 (Ubuntu 22.04+, Debian 12+, RHEL 9+, Amazon Linux 2023+). |
 | **Legacy Linux** | Unsupported wheels | RHEL 8, CentOS 8, Amazon Linux 2, Debian 11, and Ubuntu 20.04 ship glibc < 2.34. Wheels fail to load; use a glibc 2.34+ container or compile grammars from source. |
 | **Alpine / musl** | Unsupported wheels | Precompiled grammar wheels are not distributed for musl libc. Use a glibc container or build with a C toolchain. |

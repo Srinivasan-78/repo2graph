@@ -15,13 +15,12 @@ internal agreement with itself.
 import json
 
 import pytest
+from conftest import MINI_QUERY, StubEmbedder, build_mini_index, write_mini_repo
 
 from repo2graph import embed as embed_mod
 from repo2graph.cli import main
 from repo2graph.export import make_paths
 from repo2graph.query import Index
-
-from conftest import MINI_QUERY, StubEmbedder, build_mini_index, write_mini_repo
 
 
 @pytest.fixture

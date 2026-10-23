@@ -4,14 +4,16 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from .export import atomic_write, path as artifact_path
+from .export import atomic_write
+from .export import path as artifact_path
 from .export import paths as artifact_paths
 from .integrity import MAX_JSONL_LINE_BYTES, _iter_raw_lines
-
+from .rerank import CROSS_ENCODER_CANDIDATES, Reranker
+from .rerank import rerank as _rerank
 from .security import (
     SECRET_CONFIG_EXTS,
     SECRET_DIR_NAMES,
@@ -22,29 +24,28 @@ from .security import (
     _is_secret_path,
     redact_content,
 )
+from .store import GraphStore, MemoryGraphStore, SqliteGraphStore
 from .testpaths import is_test_path
-from .store import GraphStore, MemoryGraphStore
-from .rerank import CROSS_ENCODER_CANDIDATES, Reranker, rerank as _rerank
 
 __all__ = [
     "BM25_FORMAT",
     "CALLEE_EDGE_DIRS",
     "CALLER_EDGE_DIRS",
-    "Index",
     "SECRET_CONFIG_EXTS",
     "SECRET_DIR_NAMES",
     "SECRET_EXACT_NAMES",
     "SECRET_EXTS",
     "SECRET_KEYWORDS",
     "SECRET_WORD_RE",
+    "SUPPORTED_INDEX_FORMATS",
+    "Index",
     "_is_secret_path",
     "asks_about_tests",
     "classify_query",
-    "is_test_path",
-    "SUPPORTED_INDEX_FORMATS",
     "edge_dirs_for",
     "format_pack",
     "is_lexical_weak",
+    "is_test_path",
     "read_jsonl",
     "tokenize",
     "write_bm25",
@@ -198,6 +199,16 @@ DEFAULT_EDGE_DIRS = {
     "DEFINES": ("in",),
     "INHERITS": ("out",),
     "IMPORTS": ("out",),
+    # `--framework-edges` only, so these entries cannot change what a default
+    # build retrieves -- the edges do not exist in one. `ROUTES_TO` is walked
+    # "in" because the route node is the *source*: from a handler, the edge
+    # going in is what names the endpoint that reaches it, which is the thing
+    # "where is authentication enforced" needs. `INJECTS` goes "out" to a
+    # handler's dependencies, and `MODELS` both ways, because "what references
+    # this model" is as common a question as "what does it reference".
+    "ROUTES_TO": ("in",),
+    "INJECTS": ("out",),
+    "MODELS": ("out", "in"),
 }
 DEFAULT_EDGE_TYPES = frozenset(DEFAULT_EDGE_DIRS)
 # Edge types whose `confidence` can fall below 1.0 for a reason a caller may
@@ -461,7 +472,7 @@ def count_tokens(text: str) -> int:
 
 #: Reported as `token_count_method` in every pack: this is an estimate, and a
 #: caller comparing it with a model's real limit needs to know that (#290).
-count_tokens.token_count_method = "heuristic"  # type: ignore[attr-defined]
+count_tokens.token_count_method = "heuristic"  # type: ignore[attr-defined]  # noqa: S105
 
 
 # Bound at import so pack_context's `count_tokens=` parameter, which shadows
@@ -589,6 +600,49 @@ def write_bm25(
             fh.write(line + "\n")
 
 
+class SqliteChunkList(Sequence[Record]):
+    """Lightweight sequence of chunks backed by SqliteGraphStore without resident chunk text."""
+
+    def __init__(self, store: SqliteGraphStore):
+        self._store = store
+
+    def __len__(self) -> int:
+        return self._store.chunk_count()
+
+    def __getitem__(self, idx: Any) -> Any:
+        if isinstance(idx, slice):
+            return [self[i] for i in range(*idx.indices(len(self)))]
+        if idx < 0:
+            idx += len(self)
+        if idx < 0 or idx >= len(self):
+            raise IndexError("chunk index out of range")
+        c = self._store.get_chunk_by_seq(idx)
+        if c is None:
+            raise IndexError("chunk index out of range")
+        return c
+
+    def __iter__(self) -> Iterator[Record]:
+        return self._store.iter_chunks()
+
+
+class SqliteByNode(dict[str, list[Record]]):
+    """Mapping of node_id -> list[chunk] backed on demand by SqliteGraphStore."""
+
+    def __init__(self, store: SqliteGraphStore):
+        self._store = store
+        super().__init__()
+
+    def get(self, key: str, default: Any = None) -> Any:
+        res = self._store.get_chunks_by_node(key)
+        return res if res else (default if default is not None else [])
+
+    def __getitem__(self, key: str) -> list[Record]:
+        return self._store.get_chunks_by_node(key)
+
+    def __contains__(self, key: Any) -> bool:
+        return bool(self._store.get_chunks_by_node(str(key)))
+
+
 class Index:
     # (fused, candidates) for the most recent score_rrf call, or None if no
     # fused query has run on this Index yet. A class-level default so every
@@ -603,19 +657,20 @@ class Index:
         self._overview: str | None = None
         self._manifest: dict[str, Any] | None = None
         self._check_manifest_format()
-        self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
         # Every graph read goes through `self.store` (store.py, #306). The
         # default holds the graph in memory, exactly as this class always did.
         self.store: GraphStore = store or MemoryGraphStore(
             read_jsonl(artifact_path(self.dir, "nodes.jsonl")),
             read_jsonl(artifact_path(self.dir, "edges.jsonl")),
         )
-        # The repo map, for pack_context()'s prepend. Both are optional: a
-        # `--formats jsonl` build writes no overview.md, and a build interrupted
-        # before write_manifest leaves no manifest.json. Neither may raise here.
-        self.by_node: dict[str, list[Record]] = defaultdict(list)
-        for c in self.chunks:
-            self.by_node[c["node_id"]].append(c)
+        if isinstance(self.store, SqliteGraphStore) and self.store.has_chunks():
+            self.chunks: Sequence[Record] = SqliteChunkList(self.store)
+            self.by_node: dict[str, list[Record]] = SqliteByNode(self.store)
+        else:
+            self.chunks = read_jsonl(artifact_path(self.dir, "chunks.jsonl"))
+            self.by_node = defaultdict(list)
+            for c in self.chunks:
+                self.by_node[c["node_id"]].append(c)
         if not self._load_bm25():
             self._build_bm25()
         self.vectors: dict[int, Vector] | None = None
@@ -705,7 +760,17 @@ class Index:
             meta_chunk_ids = meta.get("chunk_ids")
             if not isinstance(meta_chunk_ids, list):
                 return False
-            for c, cid in zip(self.chunks, meta_chunk_ids):
+            # The length is checked here as well as through `count` above.
+            # `count` is a separate field in the same untrusted file, so a
+            # truncated `chunk_ids` beside an intact `count` passed this
+            # verification: the truncating `zip` compared only the ids that
+            # were present, every one matched, and a BM25 index covering a
+            # fraction of the chunks was accepted as current. Falling back
+            # (rather than raising) is the documented behaviour for a corrupt
+            # artifact -- see tests/test_bm25_persistence.py.
+            if len(meta_chunk_ids) != len(self.chunks):
+                return False
+            for c, cid in zip(self.chunks, meta_chunk_ids, strict=True):
                 if c.get("id") != cid:
                     return False
 
@@ -1253,7 +1318,7 @@ class Index:
             # raises for one caller mistake and returns for the rest is worse.
             return None, [], "no vectors mapping and no embedder to build one with"
         texts = [self.chunks[i].get("text") or "" for i in candidates]
-        encoded: list[Vector] = list(embedder.encode([query] + texts))
+        encoded: list[Vector] = list(embedder.encode([query, *texts]))
         if len(encoded) != len(texts) + 1:
             return (
                 None,
@@ -1942,7 +2007,7 @@ def _fit_lines(text: str, limit: int, measure: Callable[[str], int] = len) -> st
         return "\n".join(lines[:n_kept])
     kept: list[str] = []
     for line in lines:
-        candidate = "\n".join(kept + [line]) if kept else line
+        candidate = "\n".join([*kept, line]) if kept else line
         if measure(candidate) > limit:
             break
         kept.append(line)

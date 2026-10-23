@@ -1,0 +1,94 @@
+name: codeql
+
+# Static analysis of the *source*, which was the unscanned surface.
+#
+# `provenance.yml` already runs `zizmor` over the workflows and `reuse` over
+# the licensing, and `ci.yml` runs `ruff` (now including the `S`/bandit rules)
+# and `mypy --strict`. None of those does interprocedural taint tracking, and
+# that is the analysis this project actually wants: `security.py` decides which
+# paths are credential-shaped and redacts secret content, `integrity.py`
+# hardens output paths, and `scip.py` parses an untrusted protobuf. Those are
+# dataflow questions -- does an attacker-controlled path reach an `open()`,
+# does unredacted content reach an artifact -- and a linter answers none of them.
+#
+# Scheduled as well as per-PR because CodeQL's query packs are updated
+# independently of this repository: a new query can find something in code that
+# has not changed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # 07:00 Monday. The other weekly jobs sit at 04:00 (self-index), 05:00 (CI
+  # drift canary) and 06:00 (dependency-audit), so this does not contend.
+  schedule:
+    - cron: "0 7 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL Static Analysis (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # upload the SARIF to Code Scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        # `python` is the package. `javascript-typescript` covers
+        # `.github/scripts/prod-igy.js` and the VS Code extension in
+        # `editors/vscode/`, which drives the MCP server and is the one
+        # component that renders untrusted repository content into a webview.
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          # `security-extended` over the default `security` suite: the default
+          # is tuned for a low false-positive rate on application code, and the
+          # extra queries here are the ones about path handling and untrusted
+          # deserialization, which is most of what this package does.
+          queries: security-extended
+
+      # No build step. Both languages are interpreted, so CodeQL's autobuild
+      # has nothing to compile; installing dependencies would only add the
+      # supply-chain surface of a build to a job that reads source.
+      - name: Analyze
+        id: analyze
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d  # v4.38.3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+      - name: Generate CodeQL Step Summary
+        if: always()
+        shell: bash
+        env:
+          # Reports the analysis's real outcome. A hardcoded "✅ Passed" under
+          # `if: always()` is the bug every other summary in this repository
+          # had to have fixed; do not reintroduce it here.
+          ANALYZE: ${{ steps.analyze.outcome }}
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          status() { [ "$1" = "success" ] && echo "✅ Passed" || echo "❌ Failed ($1)"; }
+          # printf with placeholders, never an unquoted heredoc -- `cat << EOF`
+          # performs command substitution, so a backtick in a future row runs.
+          {
+            printf '### 🔎 CodeQL Static Analysis\n\n'
+            printf '| Language | Status | Query suite |\n'
+            printf '| :--- | :---: | :--- |\n'
+            printf '| **%s** | %s | `security-extended` |\n' \
+              "$LANGUAGE" "$(status "$ANALYZE")"
+          } >> "$GITHUB_STEP_SUMMARY"

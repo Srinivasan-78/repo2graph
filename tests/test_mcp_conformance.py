@@ -21,10 +21,10 @@ import pytest
 mcp = pytest.importorskip("mcp")
 
 import anyio  # noqa: E402  (the SDK's own dependency)
+from conftest import MINI_QUERY  # noqa: E402
 from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
-from conftest import MINI_QUERY  # noqa: E402
 from repo2graph.mcp.guardrails import MCP_MAX_BUDGET_TOKENS  # noqa: E402
 from repo2graph.mcp.schemas import (  # noqa: E402
     TOOL_ANNOTATIONS,

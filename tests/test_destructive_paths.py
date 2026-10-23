@@ -19,9 +19,9 @@ cwd, so a pathless MCP config indexed whatever directory the client launched in
 from pathlib import Path
 
 import pytest
-from repo2graph.cli import main
-
 from conftest import write_simple_repo
+
+from repo2graph.cli import main
 
 
 def _mcp():
@@ -130,7 +130,7 @@ def test_pathless_mcp_accepts_a_cwd_that_is_a_project_root(tmp_path, monkeypatch
 def test_pathless_mcp_accepts_any_project_marker(tmp_path, monkeypatch, marker):
     monkeypatch.chdir(tmp_path)
     (tmp_path / marker).write_text("", encoding="utf8")
-    out, repo = _mcp().resolve_paths()
+    _out, repo = _mcp().resolve_paths()
     assert repo is not None
 
 
@@ -152,5 +152,5 @@ def test_an_explicit_out_is_still_trusted(tmp_path):
 
 
 def test_an_explicit_repo_is_still_trusted(tmp_path):
-    out, repo = _mcp().resolve_paths(repo=str(tmp_path))
+    _out, repo = _mcp().resolve_paths(repo=str(tmp_path))
     assert repo == tmp_path

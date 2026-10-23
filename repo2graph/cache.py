@@ -38,7 +38,8 @@ import json
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # Entries kept before the least recently used is evicted.
 DEFAULT_MAX_SIZE = 256

@@ -41,7 +41,7 @@ def _is_pid_alive(pid: int) -> bool:
             import ctypes
             from ctypes import wintypes
 
-            kernel32 = getattr(ctypes, "windll").kernel32
+            kernel32 = ctypes.windll.kernel32
             # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             SYNCHRONIZE = 0x00100000
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000

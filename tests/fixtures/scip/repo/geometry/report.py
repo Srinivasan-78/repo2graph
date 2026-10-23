@@ -1,6 +1,6 @@
 """Calls through typed receivers: exact with SCIP, ambiguous by name alone."""
 
-from typing import Callable
+from collections.abc import Callable
 
 from .shapes import Circle, Square
 

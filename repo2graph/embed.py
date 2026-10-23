@@ -27,6 +27,30 @@ from .export import atomic_write
 # always compares two resolved names and never against None.
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
+#: The static-embedding default for `--embed-backend static`. A model2vec
+#: distillation: a token -> vector table plus mean pooling, with **no
+#: transformer forward pass**, so inference is numpy and the install needs no
+#: torch. Measured on this machine: the `rag-static` extra is ~60 MB of
+#: packages and this model is ~31 MB, against the several GB `rag` pulls on
+#: Linux once torch brings the NVIDIA CUDA wheels.
+#:
+#: 256-dim against MiniLM's 384. It is a *different* model, not a cheaper way
+#: to run the same one, so it must be expected to retrieve differently --
+#: `benchmarks/real/README.md` records the dense result for MiniLM and that
+#: number does not transfer. Re-measure before quoting one.
+DEFAULT_STATIC_MODEL = "minishlab/potion-base-8M"
+
+#: The backends `--embed-backend` accepts. `sentence-transformers` is the
+#: default and is what every published vector number was measured with.
+EMBED_BACKENDS = ("sentence-transformers", "static")
+
+#: Recorded model ids are prefixed per backend, so `vectors.meta.json` carries
+#: which backend wrote it and the existing mismatch guard refuses a cross-
+#: backend reuse on its own. Without the prefix, pointing both backends at one
+#: repo id would produce two incompatible vector sets under one name, and the
+#: guard compares names.
+STATIC_ID_PREFIX = "static:"
+
 # Embedding is dominated by model forward passes; batching amortises the call
 # overhead without holding the whole corpus in memory.
 DEFAULT_BATCH = 64
@@ -342,3 +366,73 @@ def split_model_spec(spec: str) -> tuple[str, str | None]:
     if not sep or not repo_id or not revision or "/" in revision:
         return spec, None
     return repo_id, revision
+
+
+class _StaticEmbedder:
+    """Adapter: model2vec's `StaticModel` -> plain float lists.
+
+    The same shape as `_SentenceTransformerEmbedder`, so `build_vectors`,
+    `model_id_of`, `embedder_dim` and `Index.fuse_ok` need no backend
+    awareness at all -- the `Embedder` protocol was already the seam.
+    """
+
+    def __init__(self, model: Any, model_id: str) -> None:
+        self._model = model
+        self.model_id = model_id
+
+    def encode(self, texts: Iterable[str]) -> list[list[float]]:
+        encoded = self._model.encode(list(texts))
+        return [[float(x) for x in vec] for vec in encoded]
+
+
+def static_embedder(name: str | None = None) -> _StaticEmbedder:
+    """Load a model2vec static model: dense retrieval without torch.
+
+    The import is function-local for the same reason `default_embedder`'s is:
+    `repo2graph.embed` has to import on a bare install, and only this function
+    needs the extra.
+    """
+    spec = name or DEFAULT_STATIC_MODEL
+    repo_id, revision = split_model_spec(spec)
+    try:
+        from model2vec import StaticModel
+    except ImportError:
+        raise RuntimeError(
+            "static embedding needs the optional `rag-static` extra: "
+            'pip install "repo2graph[rag-static]"'
+        ) from None
+    if revision:
+        # `StaticModel.from_pretrained` takes no `revision`, so passing one
+        # through would have been *silently dropped* -- an `@<commit>` pin that
+        # does nothing is worse than one that is refused, because
+        # `vectors.meta.json` would record the pin and the vectors would not
+        # honour it. Resolve the revision to a local snapshot first and load
+        # that path instead; `huggingface_hub` is a model2vec dependency, so it
+        # is present whenever this backend is.
+        from huggingface_hub import snapshot_download
+
+        local = snapshot_download(repo_id=repo_id, revision=revision)
+        model = StaticModel.from_pretrained(local)
+    else:
+        model = StaticModel.from_pretrained(repo_id)
+    return _StaticEmbedder(model, f"{STATIC_ID_PREFIX}{spec}")
+
+
+def make_embedder(name: str | None = None, backend: str | None = None) -> Embedder:
+    """The embedder for `backend`, defaulting to sentence-transformers.
+
+    One entry point so the four call sites do not each grow a branch, and so
+    adding a backend is a case here rather than an edit at every caller.
+
+    Raises:
+        ValueError: `backend` is not one of `EMBED_BACKENDS`.
+        RuntimeError: the chosen backend's extra is not installed.
+    """
+    backend = backend or EMBED_BACKENDS[0]
+    if backend not in EMBED_BACKENDS:
+        raise ValueError(
+            f"unknown embed backend {backend!r}; choose from {', '.join(EMBED_BACKENDS)}"
+        )
+    if backend == "static":
+        return static_embedder(name)
+    return default_embedder(name)

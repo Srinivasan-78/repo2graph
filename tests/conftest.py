@@ -18,14 +18,13 @@ import hashlib
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 from repo2graph.cli import main
 from repo2graph.graph import PARALLEL_MIN_FILES
-
-import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:

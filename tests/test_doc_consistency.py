@@ -382,7 +382,7 @@ def test_no_doc_sends_a_reader_to_a_doctor_check_that_does_not_exist():
     names = {c.name for c in run_doctor(REPO_ROOT).checks}
     assert names, "doctor ran no checks"
     referenced: dict[str, set[str]] = {}
-    for doc in sorted(REPO_ROOT.glob("docs/*.md")) + [README_PATH]:
+    for doc in [*sorted(REPO_ROOT.glob("docs/*.md")), README_PATH]:
         for section in re.findall(
             r"doctor[^|\n]*?(?:→|->)\s*([A-Za-z][\w /.-]*\w)", doc.read_text(encoding="utf-8")
         ):

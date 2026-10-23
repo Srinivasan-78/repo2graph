@@ -1218,7 +1218,7 @@ def test_zizmor_ignore_pins_still_point_at_what_they_suppress():
         # dangerous-triggers: reported against the `on:` mapping, not the trigger.
         ("prod-igy.yml", 16): ("pull_request_target:", 8),
         # self-repository: jobs that run this repo's own composite action
-        ("ci.yml", 454): ("uses: ./", 1),
+        ("ci.yml", 571): ("uses: ./", 1),
         ("index-repo.yml", 67): ("uses: ./", 1),
         ("self-index.yml", 34): ("uses: ./", 1),
         # adhoc-packages: the one pinned npm dependency prod-igy.js has

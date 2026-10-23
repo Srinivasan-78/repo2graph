@@ -13,9 +13,204 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`diff --affected-tests` silently dropped tests behind an ambiguous call (#508).** The reverse
+  walk applied a hardcoded `min_confidence = 0.5`, and a call to a symbol with `n` definitions in
+  scope is recorded at `confidence = 1/n` — so a three-way-ambiguous call sat at 0.33, the edge was
+  pruned, the walk was severed at that hop, and every test reachable only through it vanished from
+  the selection. A CI job gating on the result ran green over code nothing had exercised, which is
+  the single failure the feature exists to prevent. The floor now defaults to `0.0` (keep every
+  edge, including `untyped_receiver` and `shadowed_builtin`), because selecting a test that did not
+  need to run costs seconds while missing one costs correctness. `max_hops` still bounds the walk,
+  but an incomplete answer now says so: `truncated` and `incomplete_reason` in the JSON, a warning
+  in the text and step-summary output, and a stderr warning on `--affected-tests` that leaves
+  stdout the bare file list callers parse. New `--affected-tests-max-hops` and
+  `--affected-tests-min-confidence` expose both knobs.
+
+  Two further holes in the same walk, found reviewing the first fix: a module under `tests/` was
+  treated as a sink, so when `derived.py` seeded a `TESTS` edge into a fixture or assertion helper
+  the walk stopped there and the real `test_*.py` files calling it were never reached — with the
+  frontier drained, so nothing reported the answer as incomplete. Recording a node and expanding
+  it are now separate, and a test-path node is still expanded. And dropping the floor outright
+  over-selected: `shadowed_builtin` edges are now excluded unconditionally, because they are not
+  ambiguous *candidates* the way a `1/n` name-resolution edge is — the call almost certainly went
+  to the builtin — and following them made a two-line edit to a function named `len` select every
+  test in the repo that calls `len()`. That skip is counted in
+  `shadowed_builtin_skipped` and marks the result `truncated`, since the classification is a
+  heuristic. `docs/cli.md` also now records the one incompleteness the bookkeeping *cannot* see: a
+  pytest test that reaches the code only through fixture injection has no call edge to follow, so
+  it is missed with `truncated: false`.
+
+- **An unauthenticated SSE request with one non-ASCII byte crashed the auth middleware.**
+  `hmac.compare_digest` raises `TypeError` on a `str` holding any non-ASCII character, and
+  `latin-1` decodes every byte `0x80`–`0xFF` into one. Because the middleware wraps the Starlette
+  app from outside, its `ServerErrorMiddleware` never saw the exception either, so it surfaced as
+  an unhandled ASGI error rather than a `401` — triggerable on every request by an unauthenticated
+  caller. The comparison is on bytes now. `create_sse_app` is also exported, so an embedder can
+  reach it without `serve()`'s refusal; it now warns when built with no token rather than handing
+  back an open index silently.
+
+- **`OLLAMA_HOST="http://"` was accepted as a valid base URL.** Trailing slashes were trimmed
+  before testing for a scheme, so `http://` became `http:`, looked schemeless, got a second
+  `http://` glued on, and parsed as the host `"http"` — a value with no host at all passed
+  validation.
+
+- **`--affected-tests-min-confidence` accepted `nan`, `inf` and out-of-range values.** It used a
+  bare `float`, while the sibling `--min-conf` already uses `_unit_float`, whose docstring names
+  this exact hazard: every comparison against `nan` is `False`, so `--affected-tests-min-confidence
+  nan` silently behaved like `0.0` instead of erroring.
+
+- **`embed-backend: Static` installed PyTorch.** The Action's embed step compared the input with a
+  case-sensitive `=`, so any casing but lowercase read as "not static", installed several GB of
+  sentence-transformers and CUDA wheels, and only then failed on `--embed-backend Static` — paying
+  exactly the cost the static backend exists to avoid before reporting the typo. Both the embed and
+  the pack step now case-fold first and pass the folded value on, so the install and the CLI
+  argument cannot disagree. This is the same bug the neighbouring `embed` boolean was already
+  fixed for.
+
+- **`OLLAMA_HOST` SSRF guard rejected IPv6 loopback and missed every hostname (#505 follow-up).**
+  `::1` is simultaneously `is_loopback`, `is_reserved` and `is_private`, so testing the block
+  predicates before loopback refused the documented IPv6 local address. The guard also classified
+  only literal IPs: any name — including one whose A record pointed at `169.254.169.254` — raised
+  `ValueError` and was treated as allowed. Loopback is now checked first and always permitted,
+  hostnames are resolved with every returned address checked, IPv4-mapped IPv6 forms are unwrapped,
+  and the metadata endpoints that are not link-local (`fd00:ec2::254`, `192.0.0.192`,
+  `100.100.100.200`) are named. RFC1918 is deliberately *not* blocked: an Ollama server on the LAN
+  is a normal deployment, and the plain-HTTP warning is the proportionate response.
+
+- **`repo2graph-mcp --transport sse` served the index unauthenticated on a public bind.** The auth
+  middleware was installed only when a token was configured, so `--host 0.0.0.0` without
+  `--auth-token` exposed `/sse` and `/messages` — and the cited file content they return — to
+  anything that could route to the port, silently. A non-loopback bind without a token is now
+  refused with an actionable message; loopback stays open for the documented port-forward case.
+  Bearer tokens are compared with `hmac.compare_digest` rather than `==`, which leaked the token's
+  matching prefix length through response timing.
+
+- **`graphdiff` reached for attributes that do not exist.** `index.root`, `store.nodes` and
+  `store.edges` are not on `Index` or the `GraphStore` protocol; the code only worked because its
+  one caller always built a `MemoryGraphStore`, and would have raised `AttributeError` for any
+  `Index` backed by `--store sqlite`. Now uses `index.dir`, `index.nodes` and `index.edges`.
+
+- **The relocated `--store sqlite` cache was a shared-temp hazard.** When the index directory is
+  read-only, the cache falls back to the system temp directory — at a fixed `repo2graph_cache`
+  name, world-writable and with every path computable from the index path, which let another local
+  user pre-create it or plant entries (CWE-377/CWE-668). The fallback directory is now per-uid,
+  created `0700`, verified to be ours rather than trusted, and the symlink refusal the primary path
+  already applied is applied to the fallback file too.
+
+### Added
+
+- **`embed-backend` input on the composite Action, and `--embed-backend` on the README (#497).**
+  The flag was documented in `docs/cli.md` but reachable from neither surface, so the Action could
+  not select the lightweight backend at all. The embed step now installs only the extra its backend
+  needs — `model2vec` rather than torch and the CUDA wheels — and the pack step receives the same
+  backend, so the backend-prefixed model id matches instead of the run paying to embed an index it
+  then refuses.
+
+### Security
+
+- `.github/SECURITY.md` now carries the SSE transport as an enumerated exception. "No network
+  calls" was accurate about outbound traffic but read as "opens no socket", which the new listener
+  contradicted; the container section's flat "never opens a listening socket" is likewise qualified.
+
+### Changed
+
+- `actions/create-github-app-token` 3.2.0 → 3.3.0 and `github/codeql-action` 4.38.2 → 4.38.3
+  (Dependabot #511), the latter applied to `codeql.yml` as well so `init`/`analyze`/`upload-sarif`
+  stay on one version.
+
 ## [4.0.0] — 2026-10-12
 
 ### Added
+
+- **`embed`/`query`/`rag --embed-backend sentence-transformers|static` and `rag-static` extra.**
+  Dense retrieval without PyTorch or CUDA wheels. The new optional dependency group `repo2graph[rag-static]`
+  uses `model2vec` (`minishlab/potion-base-8M`), a static-embedding model (token -> vector table plus mean
+  pooling, no transformer forward pass) running on NumPy alone: ~60 MB of packages and a ~31 MB model,
+  against the several GB `rag` costs on Linux. It is a **different model** (256-dim against MiniLM's 384),
+  so retrieval quality must be measured independently and the dense result in `benchmarks/real/README.md`
+  does not transfer. The recorded model id is prefixed per backend (`static:`), so an index built with one
+  backend is refused by the other rather than silently fused.
+
+- **`build --framework-edges` — `ROUTES_TO`, `INJECTS` and `MODELS` (Python, JS/TS).** The one
+  cap `docs/architecture.md` section 4 named as keeping every language off an A. A name-resolved
+  call graph cannot answer a route question, because nothing in a repository *calls* a request
+  handler — the framework does, at runtime — so a handler was an entrypoint with no incoming edge
+  and nothing in the graph named the endpoint it serves. Two of the five questions the README
+  opens with start at an endpoint.
+  - `ROUTES_TO` links a new `route` node (`route:<METHOD> <path>`) to the handler its decorator is
+    attached to: exact, confidence 1.0, `resolution_kind: decorator`. A class-level mount
+    decorator prefixes its methods' routes, so NestJS `@Controller('users')` plus `@Get(':id')` is
+    one route, `GET /users/:id`. `@app.route("/x", methods=["POST", "PUT"])` is two routes, not
+    one, and one `route` node is shared by every handler declaring it.
+  - `INJECTS` resolves FastAPI `Depends`/`Security` the way reference edges resolve a name — same
+    file or imported by that name, never a repository-wide guess — and counts what does not bind.
+  - `MODELS` links a model class to a related one from an ORM relation field (Django
+    `ForeignKey`/`OneToOne`/`ManyToManyField`, SQLAlchemy `relationship`, Peewee). This is the one
+    framework edge with a repository-wide fallback, because Django's `ForeignKey("Author")` string
+    form exists precisely to name a model in another app; such a target is priced at `1/n` and
+    marked `ambiguous`, never picked. `"self"` becomes an honest self-edge, and several fields
+    relating one class to the same model are one edge carrying `count` and every declaring
+    `field`.
+  - **Decorator-declared routing only.** Express, Hono, Koa and Django's `urlpatterns` register
+    with a call, where the handler is an argument and often an inline function; those get **no
+    edge**, `stats.json` does not pretend otherwise, and `tests/test_framework_edges.py` pins the
+    absence so that resolving them later has to change the test and the documented limit together.
+    Java and Kotlin annotations are not covered: Spring picks the implementation from its container
+    at runtime, so that edge wants its own design rather than a table entry.
+  - Off by default, and with the flag off every artifact is byte-identical to a build that never
+    had the feature — including `parse.cache.json`, whose identity records `framework_edges` so
+    flipping the flag invalidates the cache. A flagged `--incremental` build is byte-identical to a
+    flagged full one. `stats.json` reports `framework_edges_routes`, `_injects`, `_models` and
+    `_unresolved` only when it is on. Also `framework-edges = true` in the config file.
+  - Retrieval follows these edges once they exist (`ROUTES_TO` inwards from a handler to its
+    endpoint, `INJECTS` outwards, `MODELS` both ways); a default build has none, so an unflagged
+    index returns exactly what it did before.
+- **`scripts/llm_agent_eval.py`: a real model driving the real MCP tools.** `agent_eval.py`
+  simulates an agent with a deterministic policy, which is the right instrument for measuring
+  retrieval and the wrong one for measuring a tool surface — a fixed policy cannot be misled by a
+  tool description, cannot page, and cannot waste a turn on the wrong tool. This hands an LLM the
+  shipped `mcp/schemas.py` definitions (read from them, not restated, so it measures what users
+  get), routes its calls through the real `mcp/tools.dispatch`, and scores the transcript against
+  the same pinned evidence spans the retrieval tables use. Reports success rate beside its cost:
+  turns, tool calls, input/output tokens, and how often `llm_agent_eval.py --max-turns` was hit. Its `llm_agent_eval.py --dry-run` mode runs
+  the whole loop with a scripted model, no API key and no network, which is how the test suite
+  covers it. Deliberately **not** a CI gate, and no number is published from it yet — a single
+  run of a non-deterministic model is exactly the best-looking-figure problem
+  `benchmarks/real/README.md` exists to avoid.
+
+- **`query`/`rag --store memory|sqlite`:** selects the graph backend. `store.py` has carried a
+  stdlib-only on-disk `SqliteGraphStore` since #306, written for "graphs too big to keep
+  resident", with `tests/test_store.py` running the same traversals over both backends and
+  comparing them byte for byte -- and no way for a user to reach it: no CLI flag, no MCP option,
+  nothing outside the test suite constructing one. `sqlite` now materialises
+  `<index>/graph.sqlite` from the index on first use and reuses it until the index's `build_id`
+  changes, so only SQLite's page cache stays resident instead of 252,801 nodes and 602,800 edges
+  (the 50,000-file benchmark). Both backends return the same records in the same order and
+  produce byte-identical output. The database is a local cache: it is never published with the
+  index, is not an `export.SECTIONS` artifact, and can be deleted at any time. Chunk *text* is
+  still read into memory either way, so this lowers the ceiling rather than removing it.
+- **`repo2graph/py.typed` (PEP 561).** The package is `mypy --strict` throughout, and none of it
+  was visible to a consumer: a type checker ignores inline annotations in an installed package
+  that ships no marker, so every function in `docs/python-api.md`'s API read as returning `Any`.
+  Declared in `[tool.setuptools.package-data]` as well, because the marker has to be in the
+  wheel rather than merely in the repository -- a failure mode invisible locally.
+- **CodeQL static analysis** (`.github/workflows/codeql.yml`), `security-extended`, over Python
+  and JavaScript/TypeScript, per-PR and weekly. `zizmor` audited the workflows and `reuse` the
+  licensing, but nothing performed interprocedural analysis of the source -- which is the
+  analysis this project wants, given that `security.py` classifies credential paths and redacts
+  secret content, `integrity.py` hardens output paths, and `scip.py` parses untrusted protobuf.
+- **Python 3.14** in the CI matrix (15 cells) and the classifiers. `tests/test_packaging.py` now
+  ties `requires-python` to the declared classifiers so the two cannot drift, and asserts the
+  set is contiguous.
+- **The container image is built and smoke-tested in CI** (`container` job). `.github/SECURITY.md`
+  documented the image in detail and then noted it "is not currently built in CI", so every
+  property it claimed was unverified and a broken `Dockerfile` would not have been noticed. The
+  job checks the claims rather than just the build: non-root `10000:10000`, a graph built with
+  a read-only rootfs and no writable `HOME`, discovery that went through `git ls-files` (a gitignored
+  file is absent from the index) and read git history (a `CO_CHANGE` edge exists), and a cited
+  pack from `rag` inside the image. The image is still not published to any registry.
 
 - **Rails and Spring Framework in the gallery, bringing it to thirteen (#462).** Each is in for a
   limit it makes visible rather than for its size. Rails builds much of its own API at load time
@@ -154,6 +349,26 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Changed
 
+- **`Framework` is no longer a flat 20-or-0 in the language scorecard**, and TypeScript and TSX
+  reach **94 (A)** — the first rows in that table to reach an A overall, which was the stated
+  point of the dimension. The score is read off `frameworks.FRAMEWORK_LANGS` rather than a list
+  repeated in the generator, so adding a language to the capture moves it. It is capped below
+  full marks on purpose: call-registered routing and `CONFIGURES` are still unextracted, so a
+  language with route and DI edges still has framework structure this pipeline cannot see.
+
+- **`mypy --strict` now covers the whole package.** The `[[tool.mypy.overrides]]` list exempting
+  `cli.py`, `graph.py` and `parse.py` -- the three largest modules, 6,000 lines between them --
+  is gone, so there is no per-module escape hatch and a new module is strict-checked with no
+  edit. Annotating them also exposed two errors in *other* modules that an untyped `graph.py`
+  had made unprovable rather than wrong (both listed under Fixed).
+- **`ruff` gained `B` (bugbear), `S` (bandit), `I`, `UP` and `RUF`** on top of `E`/`F`/`W`/`BLE`,
+  which was style plus blind-except and read the source for neither a bug nor a security
+  pattern. 183 findings fixed. `S` is relaxed per-file for the modules that legitimately spawn
+  `git` and `node` (`S603`/`S607` fire on the safe argument-list form too) and off under
+  `tests/`, `scripts/` and `benchmarks/`; `benchmarks/corpus/**` is `ALL`-ignored for lint,
+  because it is parser *input* -- deliberately pathological code pinned as known failures --
+  while still being formatted. `SIM` is deliberately out: ~60 findings, all preference, no bugs.
+
 - **`docs/architecture.md` §5 names every module, and a test keeps it that way (#486).** Nine were
   absent — `config.py`, `federated.py`, `graphdiff.py`, `neo4j.py`, `pagination.py`, `rerank.py`,
   `resources.py`, `tokenizers.py`, `watch.py`, every one added in #477–#481 and eight of them
@@ -191,6 +406,51 @@ makes keeping it current a release-blocking step rather than a good intention.
   as included that `build` skips.
 
 ### Fixed
+
+- **A NestJS controller's mount prefix was invisible**, found while building the route capture:
+  `@Controller('users')` is separated from its `class_declaration` by the `export` **keyword
+  token**, so walking back one sibling found every method's own decorator and never the
+  controller's. Every NestJS route would have come out unprefixed (`GET /:id` rather than
+  `GET /users/:id`). The walk now steps over unnamed tokens and reads every consecutive preceding
+  decorator, which also fixes a stacked `@UseGuards(...)` above `@Get(...)` hiding the route.
+- **The language scorecard had gap rules for only three of its six dimensions**, so a language
+  could score a D on `Symbols`, `Imports` or `Parsing` and be reported with no gaps and no
+  recommended action at all. Python hit exactly that once the tests and framework dimensions
+  stopped firing: `Symbols` 55 (D), zero recommended actions. A scorecard that grades a dimension
+  has to be able to say what to do about it.
+
+- **A truncated `bm25.meta.json` `chunk_ids` list was accepted as a current index.** Verification
+  compared `meta["count"]` against the chunk total and then compared the ids with a truncating
+  `zip`, so dropping entries from `chunk_ids` alone left every surviving id matching its chunk:
+  a BM25 index covering a fraction of the chunks read as current, and retrieval scored against
+  it. The length is now checked directly, and the artifact falls back to recomputation as a
+  corrupt one always should. Found by enabling `B905` (`zip` without `strict=`).
+- **The `Tests Link` column of the language scorecard scored a feature that had already shipped
+  as missing.** `scripts/generate_language_scorecard.py` hardcoded "TESTS edge type not yet
+  implemented in repo2graph" and `docs/architecture.md` section 4 repeated it in prose, while
+  section 2 of the same document specified `TESTS` edges in detail and `derived.add_tests_edges`
+  had been emitting them. The dimension is 10% of the weighted total, so **all nineteen language
+  grades were understated** -- Python read 73 (B-) and is 80 (B), TypeScript 82 (B) and is
+  89 (A-). `test_doc_consistency.py` could not catch it, because it only checks that the
+  published table matches the generator and both were wrong together. The dimension now scores
+  the two inputs the edge actually depends on, each introspected rather than listed: whether
+  `testpaths.is_test_path` recognises the language's test files, and the language's own `Calls`
+  score, since a `TESTS` edge is derived by walking `CALLS` and cannot exist where calls do not
+  resolve. Guarded by `test_tests_dimension_tracks_the_shipped_tests_edge`.
+- **`fetch.py` set `source_remote` on a `Graph` that did not declare it**, under a comment
+  reading "not a Graph field", and `export.py` read it back through
+  `getattr(g, "source_remote", None)`. It is a documented `manifest.json` field
+  (`docs/architecture.md` section 3), so it is now a declared attribute. Surfaced by annotating
+  `graph.py`.
+- **`parse.py`'s Windows job-object helper returned `Any` from a function declared `int | None`**
+  (ctypes `restype = wintypes.HANDLE`), visible only under `mypy --platform win32`.
+- **`docs/architecture.md`'s incremental-build cost model was contradicted by the project's own
+  50,000-file benchmark.** It claimed "parsing dominates a build and resolution is O(edges) and
+  negligible"; at that size parsing is 3.4s of an 81s build (4%), resolution and assembly 26.6s,
+  and writing 46.9s -- and an unchanged `--incremental` rebuild takes 98.2s, *slower* than the
+  full build it shortcuts. The section now states the measured split, and records that the
+  incremental work the profile actually points at is incremental *writing* (`export.py`), not
+  the partial re-resolution that was argued against.
 
 - **`--git-authors` now sees a `git-history` the repo's config file supplied (#391, #394).** The
   check ran before `_with_repo_config`, so it read the raw command line and not the merged

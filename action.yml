@@ -79,6 +79,13 @@ inputs:
     description: "sentence-transformers model for `embed` (blank = the built-in default)"
     required: false
     default: ""
+  # One line, and quoted: `parse_action_block` in tests/test_compat.py is a hand
+  # YAML parser that does not read folded (`>-`) scalars, and it is asserted to
+  # agree with PyYAML on every input here.
+  embed-backend:
+    description: "Dense backend for `embed`: `sentence-transformers` (default) or `static` (model2vec, numpy-only, no torch). A different model, so keep it the same on the embed and query sides or the index is refused."
+    required: false
+    default: ""
   artifact-name:
     description: "Upload the output under this artifact name (blank = no upload)"
     required: false
@@ -375,14 +382,31 @@ runs:
       env:
         R2G_OUT: ${{ inputs.out }}
         R2G_EMBED_MODEL: ${{ inputs.embed-model }}
+        R2G_EMBED_BACKEND: ${{ inputs.embed-backend }}
       run: |
         set -euo pipefail
-        pip install -q "sentence-transformers>=3.0" "numpy>=1.24"
+        # Install only the extra the chosen backend needs. `static` is numpy and
+        # a token->vector table, so pulling sentence-transformers (and with it
+        # torch and the CUDA wheels) would cost several GB the run never loads.
+        #
+        # Case-fold first, for the same reason the pack step case-folds `embed`:
+        # a case-sensitive `=` here read `Static` as "not static", installed
+        # several GB of torch, and only then failed on `--embed-backend Static`
+        # -- paying the whole cost the static backend exists to avoid before
+        # reporting the typo. Normalise once and pass the folded value on, so
+        # the install and the CLI argument cannot disagree.
+        backend="$(printf '%s' "$R2G_EMBED_BACKEND" | tr '[:upper:]' '[:lower:]')"
+        if [ "$backend" = "static" ]; then
+          pip install -q "model2vec>=0.10,<1.0" "numpy>=1.24"
+        else
+          pip install -q "sentence-transformers>=3.0" "numpy>=1.24"
+        fi
         args=(embed -o "$R2G_OUT")
         # --embed-model, not --model: the LLM surface `rag --model` names must
         # never appear in this file (see the note on the rag step), and the
         # embed subcommand accepts both spellings for exactly this reason.
         if [ -n "$R2G_EMBED_MODEL" ]; then args+=(--embed-model "$R2G_EMBED_MODEL"); fi
+        if [ -n "$backend" ]; then args+=(--embed-backend "$backend"); fi
         repo2graph "${args[@]}"
 
     - name: Pack a GraphRAG context
@@ -406,6 +430,7 @@ runs:
         R2G_QUERY_OUT: ${{ inputs.query-out }}
         R2G_EMBED: ${{ inputs.embed }}
         R2G_EMBED_MODEL: ${{ inputs.embed-model }}
+        R2G_EMBED_BACKEND: ${{ inputs.embed-backend }}
       run: |
         set -euo pipefail
         pack="$R2G_QUERY_OUT"
@@ -441,6 +466,17 @@ runs:
           args+=(--vectors)
           if [ -n "$R2G_EMBED_MODEL" ]; then
             args+=(--embed-model "$R2G_EMBED_MODEL")
+          fi
+          # Must match the embed step's backend. The recorded model id is
+          # prefixed per backend, so querying a static-embedded index with the
+          # default backend is refused rather than silently fused -- the same
+          # "paid to embed, then ignored it" failure the --embed-model line
+          # above exists to avoid.
+          # Folded the same way the embed step folds it, so the two steps
+          # cannot disagree about which backend the index was built with.
+          backend="$(printf '%s' "$R2G_EMBED_BACKEND" | tr '[:upper:]' '[:lower:]')"
+          if [ -n "$backend" ]; then
+            args+=(--embed-backend "$backend")
           fi
         fi
         # `--` ends the option list so a query starting with '-' is still a query
