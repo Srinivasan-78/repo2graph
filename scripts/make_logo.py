@@ -21,7 +21,7 @@ from pathlib import Path
 try:
     from PIL import Image, ImageDraw
 except ImportError:  # pragma: no cover - dev tool
-    raise SystemExit("Pillow is required: pip install pillow")
+    raise SystemExit("Pillow is required: pip install pillow") from None
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGES = ROOT / "docs" / "images"

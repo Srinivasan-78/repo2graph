@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    pass
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 from .cli import _effective_exclude, _emit, _require_index, _with_repo_config
-from .export import make_path, register_written, rel as artifact_rel
+from .events import diagnostic
+from .export import make_path, register_written
+from .export import rel as artifact_rel
 
 
 def cmd_map(args: argparse.Namespace) -> int | None:
@@ -121,7 +121,86 @@ def _explain_index_dir(repo: Path, rel: str, out: str | None) -> dict[str, Any] 
 
 
 def cmd_diff(args: argparse.Namespace) -> int | None:
-    """What changed structurally between two index directories (#395)."""
+    """What changed structurally between two index directories or PR blast radius (#395, #508)."""
+    base_commit = getattr(args, "base_commit", None)
+    pr_mode = getattr(args, "pr_mode", False)
+    affected_tests = getattr(args, "affected_tests", False)
+
+    if base_commit or pr_mode or affected_tests:
+        from .graphdiff import (
+            find_affected_tests,
+            render_pr_summary_markdown,
+            render_pr_summary_text,
+        )
+
+        repo_path = Path(getattr(args, "repo", "."))
+        index_dir: Path | None = None
+        if getattr(args, "to_dir", None):
+            index_dir = Path(args.to_dir)
+        elif getattr(args, "from_dir", None):
+            p = Path(args.from_dir)
+            if (p / "agent" / "nodes.jsonl").exists() or (p / "nodes.jsonl").exists():
+                index_dir = p
+        if index_dir is None and getattr(args, "out", None):
+            index_dir = Path(args.out)
+        if index_dir is None:
+            index_dir = repo_path / ".r2g"
+
+        _require_index(index_dir, "nodes.jsonl")
+        _require_index(index_dir, "edges.jsonl")
+
+        old_idx = (
+            Path(args.from_dir)
+            if (getattr(args, "from_dir", None) and getattr(args, "to_dir", None))
+            else None
+        )
+
+        try:
+            pr_result = find_affected_tests(
+                index_dir,
+                base_commit=base_commit,
+                repo_path=repo_path,
+                old_index_dir=old_idx,
+                max_hops=getattr(args, "affected_tests_max_hops", 4),
+                min_confidence=getattr(args, "affected_tests_min_confidence", 0.0),
+                follow_shadowed_builtins=getattr(
+                    args, "affected_tests_follow_shadowed_builtins", False
+                ),
+            )
+        except ValueError as exc:
+            raise SystemExit(f"error: {exc}") from None
+
+        if getattr(args, "github_step_summary", False):
+            summary_md = render_pr_summary_markdown(pr_result)
+            step_summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+            if step_summary_file:
+                with open(step_summary_file, "a", encoding="utf-8") as f:
+                    f.write(summary_md + "\n")
+            else:
+                _emit(summary_md)
+
+        if affected_tests and args.format == "text" and not pr_mode:
+            # This is the shape CI pipes straight into a test runner, so an
+            # incomplete selection has to be loud on stderr -- stdout stays
+            # exactly the bare file list the caller is parsing.
+            if pr_result.get("truncated"):
+                diagnostic(
+                    "warning: this affected-test selection is incomplete "
+                    f"({pr_result.get('incomplete_reason', '')}); run the full suite "
+                    "rather than only these files"
+                )
+            _emit(" ".join(pr_result["affected_tests"]))
+        elif args.format == "json":
+            _emit(json.dumps(pr_result, indent=2))
+        else:
+            _emit(render_pr_summary_text(pr_result))
+        return 0
+
+    if not getattr(args, "from_dir", None) or not getattr(args, "to_dir", None):
+        raise SystemExit(
+            "error: the following arguments are required: FROM, TO (or specify --base-commit / --pr-mode / --affected-tests)"
+        )
+
     from .graphdiff import diff_indexes, render_text
 
     old, new = Path(args.from_dir), Path(args.to_dir)

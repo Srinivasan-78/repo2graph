@@ -321,7 +321,7 @@ stringData:
 def test_k8s_secret_data_values_are_redacted():
     from repo2graph.security import redact_content
 
-    out, n = redact_content(_K8S_SECRET)
+    out, _n = redact_content(_K8S_SECRET)
     for leaked in ("YWRtaW4=", "LS0tLS1CRUdJTg==", "plainvalue"):
         assert leaked not in out
     assert "name: db" in out and out.count("\n") == _K8S_SECRET.count("\n")

@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import action_step_by_name, run_body
 
 from repo2graph import security
 from repo2graph.cli import main
@@ -27,8 +28,6 @@ from repo2graph.security import (
     sanitize_value,
     scan_content_secrets,
 )
-
-from conftest import action_step_by_name, run_body
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BASH = shutil.which("bash")
@@ -236,7 +235,7 @@ def test_scan_content_secrets_returns_spans_not_plaintext():
 
     assert findings == [("github_token", 7, 43)]
     # The span is the contract: a caller holding `text` can still recover it.
-    stype, start, end = findings[0]
+    _stype, start, end = findings[0]
     assert text[start:end] == secret
     assert all(secret not in part for f in findings for part in f if isinstance(part, str))
 
@@ -557,7 +556,7 @@ def test_sanitization_depth_and_cycle_limits():
     # Deeply nested structure > 12 levels
     deep = {}
     curr = deep
-    for i in range(16):
+    for _i in range(16):
         curr["nest"] = {}
         curr = curr["nest"]
     curr["val"] = "deep_secret"

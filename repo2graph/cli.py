@@ -2,36 +2,46 @@
 """repo2graph CLI: build a code graph, query it, export for RAG."""
 
 import argparse
-from typing import Any
 import json
 import math
 import os
 import sys
 import time
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from .events import diagnostic
 from . import __version__
 from .chunks import iter_chunks
+from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
 
 # The name only: `default_embedder` is imported inside the functions that call
 # it, so the heavyweight sentence-transformers import stays off every path that
 # does not embed (and stays patchable through the module object).
-from .embed import DEFAULT_MODEL as EMBED_DEFAULT_MODEL
-from .rerank import DEFAULT_RERANK_MODEL as RERANK_DEFAULT_MODEL
+from .embed import EMBED_BACKENDS
+from .events import diagnostic, encodable, write_safe
+from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
 from .export import (
     dump_all,
     load_parse_cache_report,
-    path as artifact_path,
     register_written,
+)
+from .export import (
+    path as artifact_path,
+)
+from .export import (
     rel as artifact_rel,
 )
-from .events import encodable, write_safe
-from .exclusions import GROUP_NAMES as EXCLUSION_GROUP_NAMES
-from .graph import GraphLimitExceeded as _GraphLimitExceeded, build
-from .parse import ParseError
+from .graph import Graph, build
+from .graph import GraphLimitExceeded as _GraphLimitExceeded
+from .parse import BuildConfig, ParseError
 from .parsepool import PARSE_TIMEOUT_S
+from .rerank import DEFAULT_RERANK_MODEL as RERANK_DEFAULT_MODEL
+from .store import STORE_KINDS, open_graph_store
 from .viz import MAX_NODES
+
+if TYPE_CHECKING:
+    from .query import Index
 
 FORMATS = ("jsonl", "graphml", "cypher", "overview", "html")
 
@@ -80,7 +90,7 @@ def _emit(text: str) -> None:
         write_safe(stream, text)
 
 
-def _effective_exclude(args) -> list[str] | None:
+def _effective_exclude(args: argparse.Namespace) -> list[str] | None:
     """`--exclude` globs plus whatever `--exclude-group` expands to.
 
     Every caller that decides whether a path is indexed goes through this --
@@ -106,7 +116,11 @@ def _effective_exclude(args) -> list[str] | None:
     return explicit + globs_for(groups)
 
 
-def _explicit_dests(root, sub, argv) -> set[str]:
+def _explicit_dests(
+    root: argparse.ArgumentParser,
+    sub: argparse.ArgumentParser,
+    argv: Sequence[str] | None,
+) -> set[str]:
     """The dests the user actually typed on `sub`'s command line.
 
     A config file fills in flags that were not given, and a parsed namespace
@@ -153,7 +167,7 @@ def _with_repo_config(args: argparse.Namespace, repo: Path) -> tuple[argparse.Na
     return merged, applied
 
 
-def _scip_index(args, from_config: bool, repo_path: Path) -> str | None:
+def _scip_index(args: argparse.Namespace, from_config: bool, repo_path: Path) -> str | None:
     """`--scip` as typed, or the config key's path inside the repo (#380)."""
     from .scip import ScipError, index_path
 
@@ -163,14 +177,14 @@ def _scip_index(args, from_config: bool, repo_path: Path) -> str | None:
         raise SystemExit(f"error: {exc}") from None
 
 
-def _require_history_for_authors(args) -> None:
+def _require_history_for_authors(args: argparse.Namespace) -> None:
     if getattr(args, "git_authors", False) and not getattr(args, "git_history", 0):
         raise SystemExit(
             "error: --git-authors reads the commits --git-history walks; pass --git-history N too"
         )
 
 
-def cmd_build(args):
+def cmd_build(args: argparse.Namespace) -> int:
     if getattr(args, "neo4j_uri", None) and "cypher" not in parse_formats(args.formats):
         raise SystemExit("error: --neo4j-uri pushes graph.cypher; add cypher to --formats")
     repo_path = Path(args.repo)
@@ -225,6 +239,7 @@ def cmd_build(args):
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         reference_edges=getattr(args, "reference_edges", False),
+        framework_edges=getattr(args, "framework_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -324,9 +339,13 @@ def cmd_build(args):
     _emit(json.dumps(report, indent=2))
     if getattr(args, "watch", False):
         _watch_and_rebuild(args, repo_path, outdir, config)
+    # Explicit: `main` dispatches with `args.func(args) or 0`, so falling
+    # off the end already meant success. Saying so lets the return type be
+    # `int` rather than `int | None` at every call site.
+    return 0
 
 
-def _push_neo4j(args, outdir: Path) -> dict:
+def _push_neo4j(args: argparse.Namespace, outdir: Path) -> dict[str, Any]:
     from .neo4j import PushError, push
 
     try:
@@ -336,7 +355,9 @@ def _push_neo4j(args, outdir: Path) -> dict:
     return {"statements": applied, "database": args.neo4j_database}
 
 
-def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
+def _watch_and_rebuild(
+    args: argparse.Namespace, repo_path: Path, outdir: Path, config: BuildConfig
+) -> None:
     """After the first build, rebuild incrementally on every settled change (#392)."""
     from .parse import DEFAULT_SKIP_DIRS
     from .watch import poll_interval, snapshot, watch
@@ -345,7 +366,7 @@ def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
     if config.include_vendor:
         skip.discard("vendor")
 
-    def take():
+    def take() -> dict[str, tuple[int, int]]:
         return snapshot(repo_path, skip, outdir)
 
     interval = poll_interval(len(take()), args.watch_interval)
@@ -360,7 +381,7 @@ def _watch_and_rebuild(args, repo_path: Path, outdir: Path, config) -> None:
         diagnostic("stopped watching")
 
 
-def _token_counter(spec):
+def _token_counter(spec: str | None) -> Callable[[str], int]:
     from .tokenizers import get_token_counter
 
     try:
@@ -369,14 +390,21 @@ def _token_counter(spec):
         raise SystemExit(f"error: {exc}") from None
 
 
-def _counting_text(chunks, total: list[int]):
+def _counting_text(chunks: Iterable[dict[str, Any]], total: list[int]) -> Iterator[dict[str, Any]]:
     """Pass chunks through, adding up their text length into total[0]."""
     for c in chunks:
         total[0] += len(c.get("text") or "")
         yield c
 
 
-def _build_performance(g, outdir, written, build_s, write_s, chunk_chars) -> dict:
+def _build_performance(
+    g: Graph,
+    outdir: Path,
+    written: list[str],
+    build_s: float,
+    write_s: float,
+    chunk_chars: int,
+) -> dict[str, Any]:
     """Timings and sizes for one build, for regression gates (#456, #304).
 
     Reported here rather than in stats.json, which must stay byte-identical
@@ -425,7 +453,7 @@ def _peak_rss_mb() -> float | None:
     return round(peak / (1 << 20 if sys.platform == "darwin" else 1 << 10), 1)
 
 
-def cmd_github(args):
+def cmd_github(args: argparse.Namespace) -> int:
     _require_history_for_authors(args)
     from .fetch import index_github
     from .parse import BuildConfig
@@ -464,6 +492,7 @@ def cmd_github(args):
         include_vendor=args.include_vendor,
         chunk_large_files=args.chunk_large_files,
         reference_edges=getattr(args, "reference_edges", False),
+        framework_edges=getattr(args, "framework_edges", False),
         max_nodes=getattr(args, "max_nodes", 0),
         max_edges=getattr(args, "max_edges", 0),
         max_chunks=getattr(args, "max_chunks", 0),
@@ -512,6 +541,10 @@ def cmd_github(args):
     except ParseError as exc:
         raise SystemExit(f"error: {exc}") from None
     _emit(json.dumps(meta, indent=2))
+    # Explicit: `main` dispatches with `args.func(args) or 0`, so falling
+    # off the end already meant success. Saying so lets the return type be
+    # `int` rather than `int | None` at every call site.
+    return 0
 
 
 def _require_index(out: Path, name: str) -> Path:
@@ -537,7 +570,9 @@ def _require_index(out: Path, name: str) -> Path:
     return path
 
 
-def _resolve_vectors(idx, args, out=None):
+def _resolve_vectors(
+    idx: "Index", args: argparse.Namespace, out: Path | None = None
+) -> tuple[dict[int, Any] | None, Any]:
     """(vectors, embedder) for a query, honouring --vectors / --no-vectors.
 
     Dense fusion is **opt-in**. Without `--vectors` the ranking is lexical and
@@ -562,11 +597,13 @@ def _resolve_vectors(idx, args, out=None):
         raise SystemExit(
             f"no vectors in the index at {where}: run `repo2graph embed -o {where}` first"
         )
-    from .embed import default_embedder
+    from .embed import make_embedder
 
     try:
-        embedder = default_embedder(getattr(args, "embed_model", None))
-    except RuntimeError as exc:
+        embedder = make_embedder(
+            getattr(args, "embed_model", None), getattr(args, "embed_backend", None)
+        )
+    except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from None
     ok, reason = idx.fuse_ok(embedder)
     if not ok:
@@ -574,7 +611,7 @@ def _resolve_vectors(idx, args, out=None):
     return idx.vectors, embedder
 
 
-def _resolve_reranker(args):
+def _resolve_reranker(args: argparse.Namespace) -> Any:
     """The cross-encoder for `--rerank`, or None (#381).
 
     Unlike `--vectors`, a reranker that cannot load is not an error: the
@@ -595,7 +632,7 @@ def _resolve_reranker(args):
         return None
 
 
-def _validate_auto_build_out(out, repo_root) -> None:
+def _validate_auto_build_out(out: Path, repo_root: Path) -> None:
     """Harden an auto-build output directory, the way `build` hardens its `-o`.
 
     `build` runs `validate_outdir` before it writes anything. The *implicit*
@@ -621,7 +658,7 @@ def _validate_auto_build_out(out, repo_root) -> None:
         ) from None
 
 
-def _warn_exclude_secrets_deprecated(args) -> None:
+def _warn_exclude_secrets_deprecated(args: argparse.Namespace) -> None:
     """`--exclude-secrets` is accepted for compatibility; it is the default now."""
     if getattr(args, "exclude_secrets", False):
         diagnostic(
@@ -652,7 +689,7 @@ _RETIRED_RETRIEVAL_FLAGS = {
 }
 
 
-def _warn_retired_retrieval_flags(args) -> None:
+def _warn_retired_retrieval_flags(args: argparse.Namespace) -> None:
     """Emit one event per retired retrieval flag the caller actually set."""
     from .events import emit
 
@@ -671,9 +708,9 @@ def _warn_retired_retrieval_flags(args) -> None:
             )
 
 
-def cmd_query(args):
+def cmd_query(args: argparse.Namespace) -> int:
     _warn_retired_retrieval_flags(args)
-    from .query import Index, format_pack
+    from .query import format_pack
 
     if (indexes := _federated(args)) is not None:
         from . import federated
@@ -698,10 +735,7 @@ def cmd_query(args):
     _require_index(out, "chunks.jsonl")
     _require_index(out, "nodes.jsonl")
     _require_index(out, "edges.jsonl")
-    try:
-        idx = Index(out)
-    except ValueError as exc:
-        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    idx = _open_index(out, args)
     vectors, embedder = _resolve_vectors(idx, args)
     _warn_exclude_secrets_deprecated(args)
     res = idx.retrieve(
@@ -722,6 +756,10 @@ def cmd_query(args):
         _emit(json.dumps(res, indent=2))
     else:
         _emit(format_pack(res))
+    # Explicit: `main` dispatches with `args.func(args) or 0`, so falling
+    # off the end already meant success. Saying so lets the return type be
+    # `int` rather than `int | None` at every call site.
+    return 0
 
 
 RAG_TARGET_HELP = (
@@ -731,7 +769,7 @@ RAG_TARGET_HELP = (
 )
 
 
-def _rag_index_dir(args) -> Path:
+def _rag_index_dir(args: argparse.Namespace) -> Path:
     """Resolve the `rag` target to an index directory, building it if needed."""
     out = Path(args.out)
     target = args.target
@@ -785,7 +823,7 @@ def _rag_index_dir(args) -> Path:
     return out
 
 
-def _federated(args):
+def _federated(args: argparse.Namespace) -> list[tuple[str, "Index"]] | None:
     """The --index set, or None; refuses combinations that do not federate (#396)."""
     dirs = getattr(args, "indexes", None)
     if not dirs:
@@ -799,10 +837,9 @@ def _federated(args):
     return open_indexes(dirs)
 
 
-def cmd_rag(args):
+def cmd_rag(args: argparse.Namespace) -> int:
     """Pack an agent-ready, citation-carrying context for one question."""
     _warn_retired_retrieval_flags(args)
-    from .query import Index
 
     if (indexes := _federated(args)) is not None:
         from . import federated
@@ -829,10 +866,7 @@ def cmd_rag(args):
     _require_index(out, "chunks.jsonl")
     _require_index(out, "nodes.jsonl")
     _require_index(out, "edges.jsonl")
-    try:
-        idx = Index(out)
-    except ValueError as exc:
-        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+    idx = _open_index(out, args)
     vectors, embedder = _resolve_vectors(idx, args, out)
     _warn_exclude_secrets_deprecated(args)
     # Excluded by default, --answer or not: an index built with
@@ -860,9 +894,13 @@ def cmd_rag(args):
         rerank=_resolve_reranker(args),
     )
     return _rag_output(args, pack)
+    # Explicit: `main` dispatches with `args.func(args) or 0`, so falling
+    # off the end already meant success. Saying so lets the return type be
+    # `int` rather than `int | None` at every call site.
+    return 0
 
 
-def _rag_output(args, pack):
+def _rag_output(args: argparse.Namespace, pack: dict[str, Any]) -> int:
     if args.answer:
         from .answer import stream_answer
 
@@ -873,6 +911,10 @@ def _rag_output(args, pack):
         _emit(json.dumps(pack, indent=2))
     else:
         _emit(pack["markdown"])
+    # Explicit: `main` dispatches with `args.func(args) or 0`, so falling
+    # off the end already meant success. Saying so lets the return type be
+    # `int` rather than `int | None` at every call site.
+    return 0
 
 
 def _nonneg(value: str) -> int:
@@ -897,7 +939,7 @@ def _posint(value: str) -> int:
     return n
 
 
-def _viz_nodes(value: str):
+def _viz_nodes(value: str) -> int | None:
     """argparse type for --viz-nodes: a non-negative int, or "all" for no cap.
 
     Args:
@@ -943,7 +985,48 @@ def _nonneg_float(value: str) -> float:
     return f
 
 
-def _add_vector_flags(parser) -> None:
+def _add_store_flag(parser: argparse.ArgumentParser) -> None:
+    """`--store`: which graph backend reads `nodes.jsonl` / `edges.jsonl`.
+
+    `store.py` has carried an on-disk backend since #306, written for "graphs
+    too big to keep resident", with `tests/test_store.py` running the same
+    traversals over both backends and comparing byte for byte -- and no way for
+    a user to select it. The interface existed, the implementation existed, and
+    nothing outside the test suite constructed it.
+    """
+    parser.add_argument(
+        "--store",
+        choices=list(STORE_KINDS),
+        default="memory",
+        help="graph backend: memory (default) or sqlite, which keeps the graph on disk "
+        "in <index>/graph.sqlite (built on first use) instead of resident. Chunk text "
+        "stays in memory either way, so this lowers the ceiling rather than removing it",
+    )
+
+
+def _open_index(out: Path, args: argparse.Namespace) -> "Index":
+    """`Index` for `out`, honouring `--store`, with the two failures named.
+
+    Both call sites had this try/except verbatim; the store lookup has to go
+    inside it because a missing or symlinked database is the same class of
+    problem to the user as a corrupt JSONL.
+    """
+    # Imported here, not at module scope, for the reason every other `query`
+    # import in this module is: `repo2graph build` must not pay for the
+    # retrieval layer.
+    from .query import Index
+    from .store import StoreUnusable
+
+    try:
+        store = open_graph_store(out, getattr(args, "store", "memory"))
+        return Index(out, store=store)
+    except StoreUnusable as exc:
+        raise SystemExit(f"error: cannot use --store at {out}: {exc}") from None
+    except (KeyError, ValueError, FileNotFoundError) as exc:
+        raise SystemExit(f"error: corrupt index at {out}: {exc}") from None
+
+
+def _add_vector_flags(parser: argparse.ArgumentParser) -> None:
     """--vectors / --no-vectors / --embed-model, for `query` and `rag`.
 
     `dest="embed_model"`, deliberately not `dest="model"`: on `rag`, `--model`
@@ -974,9 +1057,16 @@ def _add_vector_flags(parser) -> None:
         help="sentence-transformers model used to embed the query for "
         f"--vectors; must match the index, @<commit> pin included (default: {EMBED_DEFAULT_MODEL})",
     )
+    parser.add_argument(
+        "--embed-backend",
+        dest="embed_backend",
+        choices=list(EMBED_BACKENDS),
+        default=None,
+        help="which embedder to use: sentence-transformers (default, needs the `rag` extra and torch) or static, a model2vec table with no transformer forward pass and no torch (needs the `rag-static` extra, ~91 MB all in). The two write different vectors under different recorded model ids, so an index embedded with one is refused by the other rather than silently fused",
+    )
 
 
-def _add_rerank_flags(parser) -> None:
+def _add_rerank_flags(parser: argparse.ArgumentParser) -> None:
     """--rerank / --rerank-model, for `query` and `rag` (#381)."""
     parser.add_argument(
         "--rerank",
@@ -1026,7 +1116,7 @@ def _utf8_stdio() -> None:
             continue
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     # Handlers that live in their own modules (#315); imported here, not at
     # module scope, because they build on this module's helpers.
     from .cli_embed import cmd_embed
@@ -1111,6 +1201,13 @@ def main(argv=None):
         action="store_true",
         help="also record READS/WRITES of module-level variables and class fields, and "
         "REFERENCES to types named in annotations (Python, JS/TS; default: off)",
+    )
+    common.add_argument(
+        "--framework-edges",
+        action="store_true",
+        help="also record ROUTES_TO from decorator-declared HTTP routes to their handlers, "
+        "INJECTS for FastAPI Depends/Security, and MODELS between ORM models "
+        "(Python, JS/TS; default: off)",
     )
     common.add_argument(
         "--cochange-min",
@@ -1447,6 +1544,7 @@ def main(argv=None):
     )
     _add_vector_flags(q)
     _add_rerank_flags(q)
+    _add_store_flag(q)
     q.set_defaults(func=cmd_query)
 
     r = sub.add_parser("rag", help="pack a cited, graph-expanded context for a question")
@@ -1610,6 +1708,7 @@ def main(argv=None):
     )
     _add_vector_flags(r)
     _add_rerank_flags(r)
+    _add_store_flag(r)
     r.set_defaults(func=cmd_rag)
 
     e = sub.add_parser("embed", help="embed an index's chunks for dense retrieval")
@@ -1624,6 +1723,13 @@ def main(argv=None):
         default=None,
         help=f"sentence-transformers model (default: {EMBED_DEFAULT_MODEL}); "
         "append @<commit> to pin a Hugging Face revision, e.g. MODEL@1a2b3c",
+    )
+    e.add_argument(
+        "--embed-backend",
+        dest="embed_backend",
+        choices=list(EMBED_BACKENDS),
+        default=None,
+        help="which embedder to use: sentence-transformers (default, needs the `rag` extra and torch) or static, a model2vec table with no transformer forward pass and no torch (needs the `rag-static` extra, ~91 MB all in). The two write different vectors under different recorded model ids, so an index embedded with one is refused by the other rather than silently fused",
     )
     e.add_argument("--batch", type=_nonneg, default=64, help="texts per encode() call")
     e.add_argument(
@@ -1667,10 +1773,22 @@ def main(argv=None):
     s.set_defaults(func=cmd_stats)
 
     df = sub.add_parser(
-        "diff", help="what changed structurally between two builds (two index directories)"
+        "diff", help="what changed structurally between two builds or PR blast radius"
     )
-    df.add_argument("from_dir", metavar="FROM", help="the older index directory")
-    df.add_argument("to_dir", metavar="TO", help="the newer index directory")
+    df.add_argument(
+        "from_dir",
+        nargs="?",
+        default=None,
+        metavar="FROM",
+        help="the older index directory",
+    )
+    df.add_argument(
+        "to_dir",
+        nargs="?",
+        default=None,
+        metavar="TO",
+        help="the newer index directory",
+    )
     df.add_argument("--format", choices=("text", "json"), default="text")
     df.add_argument(
         "--include-confidence",
@@ -1680,6 +1798,56 @@ def main(argv=None):
     df.add_argument(
         "--limit", type=_posint, default=50, help="lines per section in text output (default: 50)"
     )
+    df.add_argument(
+        "--base-commit",
+        default=None,
+        metavar="COMMIT",
+        help="git base commit or ref (e.g. origin/main) to compute semantic PR diff against",
+    )
+    df.add_argument(
+        "--pr-mode",
+        action="store_true",
+        help="enable PR blast-radius and affected-test analysis mode",
+    )
+    df.add_argument(
+        "--affected-tests",
+        action="store_true",
+        help="output minimal covering set of test files for the diff",
+    )
+    df.add_argument(
+        "--affected-tests-max-hops",
+        type=_posint,
+        default=4,
+        metavar="N",
+        help="reverse-call hops to walk for --affected-tests (default: 4); "
+        "the selection is marked incomplete if the walk is still expanding at the limit",
+    )
+    df.add_argument(
+        "--affected-tests-min-confidence",
+        type=_unit_float,
+        default=0.0,
+        metavar="F",
+        help="drop CALLS edges below this confidence when selecting tests (default: 0.0, "
+        "keep all); raising it narrows the run but can miss tests reached only "
+        "through an ambiguous call",
+    )
+    df.add_argument(
+        "--affected-tests-follow-shadowed-builtins",
+        action="store_true",
+        help="keep CALLS edges to a symbol that shadows a builtin when selecting tests. "
+        "Off by default because the call almost always went to the builtin, and following "
+        "them selects every test that calls e.g. len(); turn it on if your code really does "
+        "define and call its own",
+    )
+    df.add_argument(
+        "--github-step-summary",
+        action="store_true",
+        help="append an executive blast-radius summary to $GITHUB_STEP_SUMMARY",
+    )
+    df.add_argument(
+        "-r", "--repo", default=".", help="repository root (default: current directory)"
+    )
+    df.add_argument("-o", "--out", default=None, help="index directory (default: <repo>/.r2g)")
     df.set_defaults(func=cmd_diff)
 
     ep = sub.add_parser(

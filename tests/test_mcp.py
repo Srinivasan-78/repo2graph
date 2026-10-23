@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 from conftest import (
     MINI_QUERY,
     REPO_ROOT,
@@ -24,6 +23,7 @@ from conftest import (
     build_mini_index,
     write_mini_repo,
 )
+
 from repo2graph.query import Index, _is_secret_path
 
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -1446,8 +1446,7 @@ def test_pool_workers_cannot_reach_the_parents_stdin_or_stdout():
     proc = subprocess.run(
         [sys.executable, str(POOL_STDIO_PROBE)],
         input=b"S",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         cwd=str(REPO_ROOT),
         timeout=POOL_PROBE_TIMEOUT,
     )
@@ -1497,7 +1496,7 @@ def test_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_pat
         stderr=subprocess.PIPE,
         cwd=str(REPO_ROOT),
     )
-    lines: "queue.Queue" = queue.Queue()
+    lines: queue.Queue = queue.Queue()
 
     def pump():
         try:
@@ -1520,7 +1519,9 @@ def test_tools_call_over_serve_completes_on_the_parallel_path(wide_repo, tmp_pat
             try:
                 line = lines.get(timeout=remaining)
             except queue.Empty:
-                raise AssertionError(f"no JSON-RPC response within {timeout}s (the #90 hang)")
+                raise AssertionError(
+                    f"no JSON-RPC response within {timeout}s (the #90 hang)"
+                ) from None
             assert line is not None, "the server closed stdout"
             try:
                 return json.loads(line.decode("utf8"))
@@ -1695,8 +1696,9 @@ def test_mcp_open_index_detects_external_rebuild(tmp_path):
     """Issue 125: open_index detects when index was rebuilt externally and reloads."""
     import os
     import time
-    from repo2graph.export import path as artifact_path
+
     from repo2graph.cache import ResultCache
+    from repo2graph.export import path as artifact_path
 
     mcp = mcp_module()
     repo = write_mini_repo(tmp_path)

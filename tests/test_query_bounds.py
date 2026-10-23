@@ -9,10 +9,9 @@ import json
 from pathlib import Path
 
 import pytest
-
 from conftest import write_simple_repo
-from repo2graph.cli import main
 
+from repo2graph.cli import main
 
 # ============================================================================
 # bounded JSONL reads -- bounded JSONL reads
@@ -360,6 +359,7 @@ def test_pack_reports_both_budgets_and_how_tokens_were_counted(mini_index):
     the rendered context, see what was dropped, and know the token count is an
     estimate rather than a tokenizer's answer."""
     from conftest import MINI_QUERY
+
     from repo2graph.query import Index
 
     idx = Index(mini_index)

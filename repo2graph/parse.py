@@ -6,13 +6,20 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from tree_sitter import Node, Parser
 
 from .events import diagnostic
+from .frameworks import (
+    FRAMEWORK_LANGS,
+    injected_dependencies,
+    model_relations,
+    mount_prefix,
+    route_from_decorator,
+)
 from .parsepool import PARSE_TIMEOUT_S
 from .refcapture import (  # split out by responsibility (#315)
     REF_LANGS,
@@ -515,13 +522,14 @@ class BuildConfig:
     max_build_seconds: float = 0.0
     limit_policy: str | None = None
     include_secrets: bool = False
-    secret_policy: str = "redact-match"
+    secret_policy: str = "redact-match"  # noqa: S105 - a policy name, not a credential
     extra_secret_keywords: list[str] = field(default_factory=list)
     extra_secret_dirs: list[str] = field(default_factory=list)
     parse_policy: str = "best-effort"
     # Opt-in READS / WRITES / REFERENCES edges (#397). Off by default, so the
     # default graph, and every artifact made from it, is unchanged.
     reference_edges: bool = False
+    framework_edges: bool = False
     # Wall-clock budget for one file's parse, in seconds; 0 = none (#81). See
     # parsepool.py for why it needs a worker process and how it was calibrated.
     parse_timeout: float = PARSE_TIMEOUT_S
@@ -602,7 +610,7 @@ def lang_config_fingerprint() -> str:
     import hashlib
     import json
 
-    def _norm(o):
+    def _norm(o: object) -> str | list[str]:
         if isinstance(o, (set, frozenset)):
             return sorted(o, key=repr)
         return repr(o)
@@ -625,11 +633,12 @@ def parse_cache_identity(config: "BuildConfig | None") -> dict[str, str]:
         "secret_policy": str(config.secret_policy),
         # Only when on, so a default build's cache identity is what it was.
         **({"reference_edges": "True"} if config.reference_edges else {}),
+        **({"framework_edges": "True"} if config.framework_edges else {}),
     }
 
 
-@lru_cache(maxsize=None)
-def parser_for(lang: str):
+@cache
+def parser_for(lang: str) -> Parser | None:
     """The parser for `lang`, or None if one cannot be obtained for any reason.
 
     The except clause is deliberately broad. It used to name
@@ -669,8 +678,8 @@ class Symbol:
     docstring: str = ""
     calls: list[str] = field(default_factory=list)
     bases: list[str] = field(default_factory=list)
-    call_details: list[dict] = field(default_factory=list)
-    base_details: list[dict] = field(default_factory=list)
+    call_details: list[dict[str, Any]] = field(default_factory=list)
+    base_details: list[dict[str, Any]] = field(default_factory=list)
     # Unique-in-file id key when `qualname` alone is not unique (overloads,
     # conditional redefinitions): "" means "same as qualname", which is every
     # first definition, so the common-case node id never changes. A later
@@ -682,7 +691,12 @@ class Symbol:
     # `--reference-edges` only (#397): the module/class-level names this
     # symbol reads, writes or names as a type, before resolution. Empty, and
     # left out of the parse cache, otherwise.
-    refs: list[dict] = field(default_factory=list)
+    refs: list[dict[str, Any]] = field(default_factory=list)
+    # `--framework-edges` only: route declarations, injected dependency names
+    # and ORM relation targets read off this symbol's decorators and class
+    # body, before resolution. Empty, and left out of the parse cache,
+    # otherwise -- so a default build's artifacts are byte-identical.
+    frameworks: list[dict[str, Any]] = field(default_factory=list)
 
 
 def symbol_key(sym: Symbol) -> str:
@@ -747,7 +761,7 @@ class ParsedFile:
     parse_skipped: str = ""
 
 
-def _name_of(src: bytes, node, lang: str) -> str | None:
+def _name_of(src: bytes, node: Node, lang: str) -> str | None:
     n = node.child_by_field_name("name")
     if n is not None:
         return _text(src, n).strip()
@@ -788,7 +802,7 @@ def _name_of(src: bytes, node, lang: str) -> str | None:
     return None
 
 
-def _callee_name(src: bytes, node) -> str | None:
+def _callee_name(src: bytes, node: Node) -> str | None:
     # "method": Ruby's `call` node keeps the receiver and the method in separate
     # fields, so named_children[0] is the receiver — `logger.info(x)` would be
     # recorded as a call to `logger`. Read the method field directly instead.
@@ -872,7 +886,7 @@ def _split_receiver_text(txt: str) -> tuple[str, bool]:
     return txt[:cut].strip().rstrip("?").strip(), sep == "::"
 
 
-def _receiver_of(src: bytes, node) -> tuple[str, bool]:
+def _receiver_of(src: bytes, node: Node) -> tuple[str, bool]:
     """(receiver head text, static_scope) of a call node; ("", False) if bare."""
     recv = (
         node.child_by_field_name("object")
@@ -927,7 +941,7 @@ def _classify_receiver(
 
 def _receiver_fields(
     head: str, static: bool, self_names: frozenset[str] = frozenset(), lang: str = ""
-) -> dict:
+) -> dict[str, Any]:
     """The receiver keys of one `call_details` entry.
 
     "receiver" is always present (none/self/other). "receiver_head" is the
@@ -935,7 +949,7 @@ def _receiver_fields(
     imported module (`store.get()`) or a type (`Util.remove()`) from a value of
     unknown type (`d.get()`); "receiver_static" marks a `::`-scoped call.
     """
-    out: dict = {"receiver": _classify_receiver(head, self_names, lang, static)}
+    out: dict[str, Any] = {"receiver": _classify_receiver(head, self_names, lang, static)}
     if head:
         out["receiver_head"] = head[:200]
     if static:
@@ -943,7 +957,7 @@ def _receiver_fields(
     return out
 
 
-def _go_receiver_name(src: bytes, node) -> str | None:
+def _go_receiver_name(src: bytes, node: Node) -> str | None:
     """The receiver identifier of a Go `func (c *T) M()` -- Go's `self`."""
     params = node.child_by_field_name("receiver")
     if params is None:
@@ -962,7 +976,7 @@ def _clean_type_name(txt: str) -> str | None:
     return txt or None
 
 
-def _go_receiver_type(src: bytes, node) -> str | None:
+def _go_receiver_type(src: bytes, node: Node) -> str | None:
     """The receiver type of a Go `func (c *T[K]) M()`, pointer/generics stripped."""
     params = node.child_by_field_name("receiver")
     if params is None:
@@ -974,7 +988,7 @@ def _go_receiver_type(src: bytes, node) -> str | None:
     return None
 
 
-def _kotlin_receiver_type(src: bytes, node) -> str | None:
+def _kotlin_receiver_type(src: bytes, node: Node) -> str | None:
     """The receiver type of a Kotlin extension `fun Foo<T>.bar()`, or None."""
     for c in node.children:
         if c.type == "receiver_type":
@@ -982,7 +996,7 @@ def _kotlin_receiver_type(src: bytes, node) -> str | None:
     return None
 
 
-def _decorator_receiver(src: bytes, node) -> dict:
+def _decorator_receiver(src: bytes, node: Node) -> dict[str, Any]:
     """Receiver keys for a decorator/annotation entry.
 
     `@router.get("/x")` is a call of `get` on `router`. Without these keys the
@@ -1012,7 +1026,7 @@ _HCL_PREFIX = {"variable": "var", "module": "module", "output": "output", "provi
 _HCL_NOT_BLOCKS = frozenset({"count", "each", "path", "self", "terraform"})
 
 
-def _hcl_words(src: bytes, block) -> list[str]:
+def _hcl_words(src: bytes, block: Node) -> list[str]:
     """A block's type and labels: `resource "aws_s3_bucket" "logs"` -> 3 words."""
     words = []
     for c in block.children:
@@ -1025,7 +1039,7 @@ def _hcl_words(src: bytes, block) -> list[str]:
     return words
 
 
-def _hcl_symbol(src: bytes, node) -> tuple[str | None, str | None]:
+def _hcl_symbol(src: bytes, node: Node) -> tuple[str | None, str | None]:
     """(kind, Terraform address) of a top-level block or local; else (None, None).
 
     Only top-level blocks are symbols: a nested `lifecycle {}` or `ingress {}`
@@ -1063,7 +1077,7 @@ def _hcl_symbol(src: bytes, node) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _hcl_reference(src: bytes, node) -> str | None:
+def _hcl_reference(src: bytes, node: Node) -> str | None:
     """The address a `variable_expr` refers to: `aws_s3_bucket.logs.arn` -> `aws_s3_bucket.logs`."""
     head = _text(src, node)
     if head in _HCL_NOT_BLOCKS:
@@ -1077,7 +1091,7 @@ def _hcl_reference(src: bytes, node) -> str | None:
     return ".".join([head, *attrs[:need]]) if len(attrs) >= need else None
 
 
-def _docstring(src: bytes, node, lang: str) -> str:
+def _docstring(src: bytes, node: Node, lang: str) -> str:
     if lang == "python":
         body = node.child_by_field_name("body")
         if body is not None and body.named_child_count:
@@ -1111,7 +1125,7 @@ def _docstring(src: bytes, node, lang: str) -> str:
     return "\n".join(reversed(out)).strip()[:600]
 
 
-def _signature(src: bytes, node) -> str:
+def _signature(src: bytes, node: Node) -> str:
     body = node.child_by_field_name("body")
     end = body.start_byte if body is not None else min(node.end_byte, node.start_byte + 300)
     return src[node.start_byte : end].decode("utf8", "replace").strip()[:300]
@@ -1140,7 +1154,7 @@ _ALIAS_WRAPPERS = frozenset(
 _ALIAS_REFERENCES = frozenset({"identifier", "member_expression", "nested_identifier"})
 
 
-def _alias_target(src: bytes, value) -> str | None:
+def _alias_target(src: bytes, value: Node | None) -> str | None:
     """The name an exported binding's value refers to, or None if it is not a reference."""
     # Bounded rather than recursive: `((x as T)!)` nests, but only a little, and
     # a malformed tree must not spin here.
@@ -1156,7 +1170,7 @@ def _alias_target(src: bytes, value) -> str | None:
     return None
 
 
-def _exported_declarator_alias(src: bytes, node) -> str | None:
+def _exported_declarator_alias(src: bytes, node: Node) -> str | None:
     """The target of `export const NAME = TARGET`, or None.
 
     Only a declarator whose own statement carries the `export` keyword counts.
@@ -1173,7 +1187,7 @@ def _exported_declarator_alias(src: bytes, node) -> str | None:
     return _alias_target(src, node.child_by_field_name("value"))
 
 
-def _export_specifier_alias(src: bytes, node) -> str | None:
+def _export_specifier_alias(src: bytes, node: Node) -> str | None:
     """The new name bound by `export { TARGET as NAME }`, or None.
 
     `export { x as y } from './mod'` is excluded: nothing is defined at that
@@ -1275,7 +1289,7 @@ def _clean_base(text: str) -> str:
     return words[0].split("(")[0].strip(",;") if words else ""
 
 
-def _base_clauses(node):
+def _base_clauses(node: Node) -> list[Node]:
     """Supertype clauses of a definition, preferring the innermost one.
 
     TypeScript wraps extends_clause/implements_clause in a class_heritage and
@@ -1291,10 +1305,12 @@ def _base_clauses(node):
     return out
 
 
-def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[dict]]:
+def _bases_with_details(
+    src: bytes, node: Node, lang: str
+) -> tuple[list[str], list[dict[str, Any]]]:
     """Extract supertype names along with their relationship subtype and raw expression."""
     out: list[str] = []
-    details: list[dict] = []
+    details: list[dict[str, Any]] = []
     if lang == "objc" and node.type == "class_interface":
         # `@interface Cache : NSObject <Store, Codable>`
         sup = node.child_by_field_name("superclass")
@@ -1303,8 +1319,8 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
             details.append({"name": out[-1], "subtype": "EXTENDS", "raw": out[-1]})
         for c in node.children:
             if c.type == "parameterized_arguments":
-                for t in c.named_children:
-                    out.append(_text(src, t).strip())
+                for arg in c.named_children:
+                    out.append(_text(src, arg).strip())
                     details.append({"name": out[-1], "subtype": "IMPLEMENTS", "raw": out[-1]})
     for fname in ("superclasses", "bases", "trait"):
         n = node.child_by_field_name(fname)
@@ -1354,8 +1370,11 @@ def _bases_with_details(src: bytes, node, lang: str) -> tuple[list[str], list[di
                     details.append({"name": clean, "subtype": default_sub, "raw": t})
     seen: set[str] = set()
     uniq_names: list[str] = []
-    uniq_details: list[dict] = []
-    for b, d in zip(out, details):
+    uniq_details: list[dict[str, Any]] = []
+    # strict: `out` and `details` are appended in lockstep in the loop above,
+    # one entry each per accepted name, so they cannot diverge without a bug
+    # in that loop.
+    for b, d in zip(out, details, strict=True):
         if b not in seen:
             seen.add(b)
             uniq_names.append(b)
@@ -1477,7 +1496,12 @@ def _win_cap_child_memory(pid: int, cap_bytes: int) -> int | None:
                 return None
         finally:
             k32.CloseHandle(wintypes.HANDLE(handle))
-        return job
+        # `int(...)`: `CreateJobObjectW` is declared `restype = wintypes.HANDLE`,
+        # so on win32 ctypes hands back `Any` and this function's `int | None`
+        # was unprovable there -- visible only under `mypy --platform win32`,
+        # since `wintypes` is a stub-level no-op elsewhere. A Windows HANDLE is
+        # an integer, and `_win_close_job` already takes it as `int | None`.
+        return int(job)
     except (OSError, AttributeError, ValueError):  # pragma: no cover - defensive
         return None
 
@@ -1900,7 +1924,11 @@ def normalize_source_bytes(source: bytes) -> bytes:
 
 
 def parse_source(
-    source: bytes, lang: str, filepath: Path | str | None = None, refs: bool = False
+    source: bytes,
+    lang: str,
+    filepath: Path | str | None = None,
+    refs: bool = False,
+    frameworks: bool = False,
 ) -> ParsedFile:
     cfg = LANG_CFG.get(lang)
     parser = parser_for(lang)
@@ -1919,7 +1947,7 @@ def parse_source(
     source = normalize_source_bytes(source)
     tree = parser.parse(source)
 
-    def _count_errors(node):
+    def _count_errors(node: Node) -> int:
         errs = 0
         stack = [node]
         while stack:
@@ -1977,6 +2005,7 @@ def parse_source(
     # symbol keys already taken in this file -- see `disambiguate_key`.
     used_keys: set[str] = set()
     rs = _RefState() if refs and lang in REF_LANGS else None
+    want_fw = frameworks and lang in FRAMEWORK_LANGS
     ref_of = _py_ref if lang == "python" else _js_ref
     while stack:
         node, scope, owner = stack.pop()
@@ -2100,8 +2129,8 @@ def parse_source(
                 elif lang == "kotlin" and ntype == "function_declaration" and not scope:
                     recv_type = _kotlin_receiver_type(source, node)
                 if recv_type:
-                    sym_scope = scope + (clean_identifier(recv_type),)
-                qualname = clean_identifier(".".join(sym_scope + (name,)), MAX_QUALNAME_CHARS)
+                    sym_scope = (*scope, clean_identifier(recv_type))
+                qualname = clean_identifier(".".join((*sym_scope, name)), MAX_QUALNAME_CHARS)
                 start_line = node.start_point[0] + 1
                 sym = Symbol(
                     name=name,
@@ -2142,6 +2171,17 @@ def parse_source(
                                         **_decorator_receiver(source, child),
                                     }
                                 )
+                            if want_fw:
+                                sym.frameworks.extend(route_from_decorator(source, child, lang))
+                                prefix = mount_prefix(source, child)
+                                if prefix is not None:
+                                    sym.frameworks.append(
+                                        {
+                                            "kind": "mount",
+                                            "path": prefix,
+                                            "line": child.start_point[0] + 1,
+                                        }
+                                    )
                 else:
                     # Java annotations or JS/TS decorators sit as the previous sibling.
                     prev = node.prev_sibling
@@ -2157,6 +2197,46 @@ def parse_source(
                                     **_decorator_receiver(source, prev),
                                 }
                             )
+                    if want_fw:
+                        # Every consecutive preceding decorator, not just the
+                        # nearest. NestJS stacks them -- `@UseGuards(AuthGuard)`
+                        # above `@Get(':id')` is the ordinary shape of a guarded
+                        # route -- so reading only `prev_sibling` found the
+                        # route on some methods and not others depending on
+                        # which decorator the author happened to put last.
+                        walk = node.prev_sibling
+                        while walk is not None:
+                            if not walk.is_named:
+                                # A keyword token, not a node: `export` sits
+                                # between `@Controller(...)` and the
+                                # `class_declaration` it decorates, so stopping
+                                # at the first non-decorator sibling found the
+                                # routes on a NestJS controller's methods and
+                                # never the controller's own mount prefix --
+                                # every route came out unprefixed.
+                                walk = walk.prev_sibling
+                                continue
+                            if walk.type not in ("annotation", "decorator"):
+                                break
+                            sym.frameworks.extend(route_from_decorator(source, walk, lang))
+                            prefix = mount_prefix(source, walk)
+                            if prefix is not None:
+                                sym.frameworks.append(
+                                    {
+                                        "kind": "mount",
+                                        "path": prefix,
+                                        "line": walk.start_point[0] + 1,
+                                    }
+                                )
+                            walk = walk.prev_sibling
+
+                if want_fw:
+                    # Read off the definition itself rather than its
+                    # decorators: a `Depends(...)` sits in the parameter list
+                    # and an ORM relation in the class body.
+                    sym.frameworks.extend(injected_dependencies(source, node))
+                    if kind not in VALUE_KINDS:
+                        sym.frameworks.extend(model_relations(source, node, lang))
 
                 if lang == "go" and ntype == "method_declaration":
                     go_recv = _go_receiver_name(source, node)
@@ -2164,7 +2244,7 @@ def parse_source(
                         go_self[id(sym)] = frozenset({go_recv})
                 symbols.append(sym)
                 if kind not in VALUE_KINDS:
-                    child_scope, child_owner = sym_scope + (name,), sym
+                    child_scope, child_owner = (*sym_scope, name), sym
         # named_children skips punctuation and keyword tokens: no configured
         # kind/call/import type is anonymous, and half the tree is those tokens.
         # reversed: the stack pops last-pushed first, so this keeps source order

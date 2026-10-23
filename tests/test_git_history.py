@@ -1,8 +1,8 @@
 import os
 import subprocess
 from pathlib import Path
-from repo2graph.graph import Graph
-from repo2graph.graph import add_cochange
+
+from repo2graph.graph import Graph, add_cochange
 
 
 def test_add_cochange_edge_cases(tmp_path: Path):
@@ -18,7 +18,7 @@ def test_add_cochange_edge_cases(tmp_path: Path):
     env["GIT_COMMITTER_EMAIL"] = "test@example.com"
 
     def run_git(*args):
-        subprocess.run(["git"] + list(args), cwd=repo, env=env, check=True)
+        subprocess.run(["git", *list(args)], cwd=repo, env=env, check=True)
 
     def make_blob(content: str) -> str:
         return (

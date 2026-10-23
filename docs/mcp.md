@@ -172,6 +172,23 @@ runtime argument — see [`server.json`](../server.json).
 > path as `command` — `.venv/bin/repo2graph-mcp`, or
 > `.venv\Scripts\repo2graph-mcp.exe` on Windows.
 
+### Remote / SSE clients
+
+For cloud agents, remote devboxes, or centralized index servers, connect over HTTP Server-Sent Events (SSE):
+
+```json
+{
+  "mcpServers": {
+    "repo2graph-remote": {
+      "url": "http://127.0.0.1:8080/sse",
+      "headers": {
+        "Authorization": "Bearer your-secret-token"
+      }
+    }
+  }
+}
+```
+
 ## Server options
 
 `repo2graph-mcp --help` is the full list. Grouped by what they change:
@@ -196,6 +213,15 @@ runtime argument — see [`server.json`](../server.json).
 | `--audit-log` | stderr only | Append audit records to this file as well as stderr. |
 | `--audit-log-level` | `errors` | `none`, `errors` or `all` — which tool calls produce a record. `all` also records every query's text. |
 | `--audit-log-fsync` | off | Sync each record to disk before returning. Slower; stderr already carries every record, so this only hardens the file copy against a crash. |
+
+**Transport and network**
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--transport` | `stdio` | Transport protocol: `stdio` (default) or `sse` (HTTP Server-Sent Events). |
+| `--host` | `127.0.0.1` | Host address to bind the SSE HTTP server to (e.g. `0.0.0.0` in containers). |
+| `--port` | `8080` | Port for the SSE HTTP server. |
+| `--auth-token` | none | Bearer token required to access SSE endpoints. Also read from `REPO2GRAPH_MCP_AUTH_TOKEN`. Requests without a valid bearer token are rejected with HTTP 401. Health probes `/healthz` and `/readyz` remain unauthenticated for container orchestrators. |
 
 ## Tools
 
@@ -1038,3 +1064,27 @@ stdin; press Ctrl-C.
 
 - [Claude Code](#claude-code) — the tool reference and the starter questions
 - [docs/architecture.md](architecture.md) — what the citations and confidence values mean
+
+## Remote container and Kubernetes deployment (SSE transport)
+
+In addition to the standard stdio transport, `repo2graph-mcp` provides an HTTP Server-Sent Events (SSE) network transport for remote container environments, Kubernetes clusters, and centralized index services.
+
+### Starting the SSE server
+
+```bash
+repo2graph-mcp /path/to/repo --transport sse --host 0.0.0.0 --port 8080 --auth-token "$SECRET_TOKEN"
+```
+
+Or configure the token via environment variable:
+
+```bash
+export REPO2GRAPH_MCP_AUTH_TOKEN="your-secure-token"
+repo2graph-mcp /path/to/repo --transport sse --host 0.0.0.0 --port 8080
+```
+
+### Endpoints and Health Probes
+
+- **`GET /sse`**: Establishes a Server-Sent Events stream for an MCP session.
+- **`POST /messages?session_id=<id>`**: Submits client JSON-RPC messages for the active session.
+- **`GET /healthz` and `GET /readyz`**: Standard Kubernetes liveness and readiness probes returning `200 OK`. These endpoints are exempt from Bearer authentication so orchestrator probes succeed without credential exposure.
+

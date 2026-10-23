@@ -1,9 +1,10 @@
 import os
+
 import pytest
 
-from repo2graph.events import is_debug_mode, reraise_if_debug
 from repo2graph.audit import AuditLogger
 from repo2graph.cli import main
+from repo2graph.events import is_debug_mode, reraise_if_debug
 from repo2graph.graph import build
 from repo2graph.parse import BuildConfig
 

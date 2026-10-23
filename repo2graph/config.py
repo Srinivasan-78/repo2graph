@@ -12,9 +12,10 @@ caller falls through to exactly the values it used before.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any, Callable
+from typing import Any
 
 CONFIG_FILE = ".repo2graph.toml"
 PYPROJECT = "pyproject.toml"
@@ -103,6 +104,7 @@ KEYS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "chunk-large-files": ("chunk_large_files", _bool),
     "include-vendor": ("include_vendor", _bool),
     "reference-edges": ("reference_edges", _bool),
+    "framework-edges": ("framework_edges", _bool),
     # `build` only: the in-process auto-builds (`rag <src>`, the MCP server)
     # never read an index, so `build_options` below leaves it out.
     "scip": ("scip", _repo_relative_path),
@@ -223,6 +225,7 @@ _BUILD_CONFIG_DESTS = (
     "include_vendor",
     "chunk_large_files",
     "reference_edges",
+    "framework_edges",
     "secret_policy",
     "extra_secret_keywords",
     "extra_secret_dirs",

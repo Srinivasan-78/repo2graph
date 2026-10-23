@@ -51,37 +51,76 @@ def test_a_runaway_parse_is_stopped_and_counted(tmp_path, capsys, monkeypatch, e
     real_kill = parsepool._kill
     monkeypatch.setattr(parsepool, "_kill", lambda pid: (killed.append(pid), real_kill(pid)))
     g = build(root, jobs=2, config=BuildConfig(parse_timeout=1.0))
-    # At least one, not exactly one: a Windows runner has recorded two kills for
-    # this single file. The per-file outcome below is the contract.
-    assert killed, "the runaway parse was not interrupted"
-    assert g.stats["skipped_parse_timeout"] == 1
+    # *Either* bound may trip, and which one is a property of the runner rather
+    # than of the input. The worker carries a wall clock and, since #507, a
+    # memory cap (`WORKER_MEMORY_MB`, a Windows Job Object), and this input
+    # blows both -- it is quadratic in time *and* space. On a constrained runner
+    # the cap is reached before the 1 s clock, and then the *worker dies to its
+    # own limit*: the parent never calls `_kill`, so `killed` stays empty while
+    # the file lands in `skipped_parse_crash`. Requiring a parent kill therefore
+    # made this a measure of the machine, which is what failed on Windows
+    # 3.10/3.14 in CI while 3.11-3.13 passed on the same commit.
+    #
+    # `_abandoned` gives both bounds the same per-file result, so the contract
+    # is that the runaway was stopped exactly once and the file came out
+    # symbol-less -- not which mechanism got there.
+    crashed = g.stats.get("skipped_parse_crash", 0)
+    assert killed or crashed, "the runaway parse was neither killed nor stopped by its own cap"
+    stopped = g.stats.get("skipped_parse_timeout", 0) + crashed
+    assert stopped == 1, dict(g.stats)
     assert "file:bad.cpp" in g.nodes and not _symbols_in(g, "bad.cpp")
     assert g.nodes["file:bad.cpp"]["size"] == len(RUNAWAY)
     assert _symbols_in(g, "ok.py") == ["sym:ok.py::fine"]
     assert g.stats["parsed"] == 1 + extra
     assert "bad.cpp" not in g.parse_cache  # never cached: the next build retries it
-    assert "'bad.cpp' indexed without symbols: parse exceeded the 1s budget" in (
-        capsys.readouterr().err
-    )
+    err = capsys.readouterr().err
+    assert "'bad.cpp' indexed without symbols: parse " in err
+    assert ("exceeded the 1s budget" in err) or ("exhausted its worker's memory" in err), err
+
+
+def test_the_default_parse_budget_leaves_room_for_the_slowest_real_file():
+    """The budget is a static promise, so assert it statically.
+
+    The slowest real file across the five benchmark corpora took 0.74 s, so the
+    10 s default is a >13x margin. This used to be checked by parsing a deep
+    fixture under the default budget and asserting it was not flagged -- which
+    made the runner's speed part of the assertion and failed intermittently on
+    a contended CI box (seen on ubuntu/3.12 under `-n auto --cov`). The margin
+    is what the test is really about, and it does not need a stopwatch.
+    """
+    assert PARSE_TIMEOUT_S >= 10.0, PARSE_TIMEOUT_S
 
 
 def test_a_deep_legitimate_file_is_not_a_false_positive(tmp_path):
+    """Deep-but-ordinary content must not trip the runaway heuristic.
+
+    The budget here is explicit and generous rather than the default, because
+    what is under test is the *content* -- 425 KB of literals nested 200 deep
+    parses in ~0.8 s on a developer machine -- not how fast the runner is
+    today. See `test_the_default_parse_budget_leaves_room_for_the_slowest_real_file`
+    for the margin the default actually carries.
+    """
     root = tmp_path / "repo"
     root.mkdir()
-    # 425 KB of literals nested 200 deep: ~0.8 s here, against a 10 s budget.
-    # (The slowest real file across the five benchmark corpora took 0.74 s.)
     nest = "[" * 200 + "1" + "]" * 200
     body = "".join(f"def f{i}():\n    return {nest}\n" for i in range(1_000))
     (root / "deep.py").write_text(body, encoding="utf8")
-    g = build(root, jobs=1)
+    g = build(root, jobs=1, config=BuildConfig(parse_timeout=120.0))
     assert "skipped_parse_timeout" not in g.stats
     assert len(_symbols_in(g, "deep.py")) == 1_000
 
 
 def test_strict_policy_fails_instead_of_skipping(tmp_path):
-    root = _repo(tmp_path)
-    with pytest.raises(ParseError, match="exceeded the 1s budget.*bad.cpp"):
-        build(root, jobs=1, config=BuildConfig(parse_timeout=1.0, parse_policy="strict"))
+    # Either bound, for the reason given in
+    # `test_a_runaway_parse_is_stopped_and_counted`: what strict policy promises
+    # is that a skip becomes an error naming the file, not which bound caught it.
+    pattern = r"(exceeded the 1s budget|exhausted its worker's memory).*bad\.cpp"
+    with pytest.raises(ParseError, match=pattern):
+        build(
+            _repo(tmp_path),
+            jobs=1,
+            config=BuildConfig(parse_timeout=1.0, parse_policy="strict"),
+        )
 
 
 def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch):
@@ -100,7 +139,7 @@ def test_an_in_process_parse_over_budget_is_discarded_too(tmp_path, monkeypatch)
         return real(item)
 
     monkeypatch.setattr(graph_mod, "_read_and_parse", slow)
-    ((rel, lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=0.05))
+    ((_rel, _lang, read),) = parse_all([("small.py", p)], 1, BuildConfig(parse_timeout=0.05))
     monkeypatch.setattr(graph_mod, "_read_and_parse", real)
     assert read is not None and read[2].parse_skipped == TIMEOUT and read[2].symbols == []
     ((_, _, read),) = parse_all([("small.py", p)], 1, BuildConfig())
@@ -111,7 +150,12 @@ def test_cli_flag_reaches_the_build(tmp_path, capsys):
     root = _repo(tmp_path)
     out = tmp_path / "out"
     main(["build", str(root), "-o", str(out), "--formats", "jsonl", "--parse-timeout", "1"])
-    assert json.loads(capsys.readouterr().out)["stats"]["skipped_parse_timeout"] == 1
+    stats = json.loads(capsys.readouterr().out)["stats"]
+    # Either bound, as in `test_a_runaway_parse_is_stopped_and_counted`: what
+    # this test is about is that `--parse-timeout` reaches the build at all,
+    # which a `KeyError` on one specific stat name does not measure.
+    stopped = stats.get("skipped_parse_timeout", 0) + stats.get("skipped_parse_crash", 0)
+    assert stopped == 1, stats
     assert PARSE_TIMEOUT_S == BuildConfig().parse_timeout == 10.0
 
 
@@ -188,3 +232,20 @@ def test_a_pool_whose_workers_never_start_is_abandoned_not_waited_on(monkeypatch
     assert elapsed < ABANDONED_WITHIN_S, (
         f"waited {elapsed:.1f}s on a worker that sleeps for an hour before its first file"
     )
+
+
+def test_windows_cap_memory_invoked_on_win32(monkeypatch):
+    """parsepool._cap_memory binds worker process to Windows Job Object with memory limit."""
+    calls = []
+
+    def fake_win_cap(pid, cap_bytes):
+        calls.append((pid, cap_bytes))
+        return 1234
+
+    import repo2graph.parse as parse_mod
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(parse_mod, "_win_cap_child_memory", fake_win_cap)
+    parsepool._cap_memory(64)
+    assert calls == [(os.getpid(), 64 * 1024 * 1024)]
+    assert parsepool._worker_job == 1234

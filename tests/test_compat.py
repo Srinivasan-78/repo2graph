@@ -23,10 +23,10 @@ import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
-
 from conftest import (
     MINI_QUERY,
     REPO_ROOT,
@@ -38,6 +38,7 @@ from conftest import (
     write_golden_json,
     write_golden_text,
 )
+
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
 from repo2graph.query import Index, read_jsonl
@@ -539,6 +540,7 @@ def _resolved_rag_argv(tmp_path: Path, embed: str) -> list:
         R2G_QUERY_OUT="",
         R2G_EMBED=embed,
         R2G_EMBED_MODEL="",
+        R2G_EMBED_BACKEND="",
     )
     proc = subprocess.run(
         [BASH, "-c", script], cwd=str(tmp_path), env=env, capture_output=True, text=True
@@ -673,7 +675,7 @@ def test_the_token_never_appears_in_a_git_argv_word(tmp_path):
     """The exact secret value must not be a word in any `git` invocation's
     argv -- not just the `push` call, since a leak in `remote add` or
     elsewhere would be just as visible to `ps`."""
-    token = "ghs_TotallyFakeIssue165ProbeToken"  # noqa: S105 - test fixture, not a real credential
+    token = "ghs_TotallyFakeIssue165ProbeToken"
     calls = _resolved_push_git_calls(tmp_path, token)
     assert calls, "the step made no git calls"
     for call in calls:
@@ -685,7 +687,7 @@ def test_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
     """`git push`'s own argv is exactly the safe, credential-free form --
     the URL-with-embedded-token this issue reports is gone, and so is any
     other rendering of the credential (e.g. a bare `x-access-token`)."""
-    token = "ghs_TotallyFakeIssue165ProbeToken"  # noqa: S105 - test fixture, not a real credential
+    token = "ghs_TotallyFakeIssue165ProbeToken"
     calls = _resolved_push_git_calls(tmp_path, token)
     push_calls = [c for c in calls if c[:1] == ["push"]]
     assert len(push_calls) == 1, calls
@@ -698,7 +700,7 @@ def test_the_push_call_carries_no_credential_and_no_literal_url(tmp_path):
 @pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
 def test_commit_force_true_uses_force_push(tmp_path):
     """Setting commit-force to true uses force-push (#310, #450)."""
-    token = "ghs_TotallyFakeIssue310ProbeToken"  # noqa: S105
+    token = "ghs_TotallyFakeIssue310ProbeToken"
     calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "true"})
     push_calls = [c for c in calls if c[:1] == ["push"]]
     assert len(push_calls) == 1, calls
@@ -711,7 +713,7 @@ def test_plain_push_builds_on_the_existing_branch(tmp_path):
     step commits on top of its tip instead of a fresh orphan root -- an orphan
     root is never a fast-forward, so every run after the branch's creation was
     rejected with `! [rejected] (fetch first)`."""
-    token = "ghs_TotallyFakeFetchFirstProbeToken"  # noqa: S105
+    token = "ghs_TotallyFakeFetchFirstProbeToken"
     calls = _resolved_push_git_calls(tmp_path, token)
     verbs = [c[0] for c in calls]
     assert "fetch" in verbs, calls
@@ -727,7 +729,7 @@ def test_plain_push_builds_on_the_existing_branch(tmp_path):
 def test_force_push_commits_a_fresh_root(tmp_path):
     """The force path keeps its single-root-commit behaviour: it must not fetch
     the old tip, since the whole point is to replace it."""
-    token = "ghs_TotallyFakeForceRootProbeToken"  # noqa: S105
+    token = "ghs_TotallyFakeForceRootProbeToken"
     calls = _resolved_push_git_calls(tmp_path, token, extra_env={"R2G_COMMIT_FORCE": "true"})
     assert not any(c[0] == "fetch" for c in calls), calls
     assert ["checkout", "-q", "-b", "r2g-graph"] in calls, calls
@@ -746,7 +748,7 @@ def test_push_refused_on_fork_pull_request(tmp_path):
     script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
     env = dict(os.environ)
     env.update(
-        GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+        GITHUB_TOKEN="ghs_FakeToken",
         GITHUB_REPOSITORY="acme/widgets",
         GITHUB_SHA="0" * 40,
         R2G_OUT=str(out_dir),
@@ -776,7 +778,7 @@ def test_force_push_refused_on_non_graph_branch(tmp_path):
     script = 'git() { printf "%s\\x1f" "$@" >> "$GIT_LOG"; printf "\\n" >> "$GIT_LOG"; }\n' + body
     env = dict(os.environ)
     env.update(
-        GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+        GITHUB_TOKEN="ghs_FakeToken",
         GITHUB_REPOSITORY="acme/widgets",
         GITHUB_SHA="0" * 40,
         R2G_OUT=str(out_dir),
@@ -806,7 +808,7 @@ def test_push_refused_on_protected_or_default_branch(tmp_path):
     for protected in ("main", "master", "trunk", "production"):
         env = dict(os.environ)
         env.update(
-            GITHUB_TOKEN="ghs_FakeToken",  # noqa: S105
+            GITHUB_TOKEN="ghs_FakeToken",
             GITHUB_REPOSITORY="acme/widgets",
             GITHUB_SHA="0" * 40,
             R2G_OUT=str(out_dir),
@@ -1417,3 +1419,42 @@ def test_human_messages_go_through_one_helper():
             if pattern.search(line) and not line.lstrip().startswith("#"):
                 offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}")
     assert offenders == [], offenders
+
+
+@pytest.mark.skipif(not BASH, reason="the composite step's shell is bash")
+@pytest.mark.parametrize("backend", ["static", "Static", "STATIC", "sTaTiC"])
+def test_embed_backend_casing_picks_the_right_extra(tmp_path, backend):
+    """R-6 (b): `embed-backend: Static` must not install torch.
+
+    The same bug the `embed` boolean already had: GitHub's `==` is
+    case-insensitive and bash's `=` is not. Here the cost is concrete --
+    a case-sensitive test read `Static` as "not static", installed several GB of
+    sentence-transformers/torch, and only then failed on `--embed-backend
+    Static`, paying exactly what the static backend exists to avoid before
+    reporting the typo.
+    """
+    body = textwrap.dedent(
+        _action_step_by_name(ACTION_YML.read_text(encoding="utf8"), "Embed the chunks")
+    )
+    head, sep, _ = body.partition('repo2graph "${args[@]}"')
+    assert sep, body
+    script = (
+        head.replace(
+            'pip install -q "model2vec>=0.10,<1.0" "numpy>=1.24"', "echo PIP:model2vec"
+        ).replace('pip install -q "sentence-transformers>=3.0" "numpy>=1.24"', "echo PIP:torch")
+        + 'printf "ARGV:%s\n" "${args[*]}"\n'
+    )
+    step = tmp_path / "step.sh"
+    step.write_text(script, encoding="utf8", newline="\n")
+
+    env = dict(os.environ)
+    env.update(R2G_OUT="out", R2G_EMBED_MODEL="", R2G_EMBED_BACKEND=backend)
+    proc = subprocess.run(
+        [BASH, str(step)], cwd=str(tmp_path), env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "PIP:model2vec" in proc.stdout, f"{backend!r} installed the wrong extra"
+    assert "PIP:torch" not in proc.stdout
+    # The folded value is what reaches the CLI, so the install and the argument
+    # cannot disagree about which backend built the index.
+    assert "--embed-backend static" in proc.stdout.replace("\n", " ")

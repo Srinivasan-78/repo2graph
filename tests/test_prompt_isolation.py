@@ -134,7 +134,8 @@ def test_symbol_names_are_capped_and_control_free(tmp_path):
 
 def test_bidi_override_is_counted_and_visible_in_graph_html(tmp_path):
     from repo2graph.chunks import iter_chunks
-    from repo2graph.export import dump_all, path as artifact_path
+    from repo2graph.export import dump_all
+    from repo2graph.export import path as artifact_path
     from repo2graph.graph import build
 
     src = tmp_path / "src"

@@ -7,9 +7,9 @@ import re
 import stat as statmod
 import subprocess
 import sys
+from collections.abc import Iterable, Iterator
 from functools import lru_cache
 from pathlib import Path
-from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING, Any, cast
 
 from .events import diagnostic
@@ -45,7 +45,7 @@ def _is_index_dir(d: Path) -> bool:
     return isinstance(data, dict) and str(data.get("format", "")).startswith(INDEX_MARKER_FORMAT)
 
 
-def _output_rel_prefix(root: Path, config: "BuildConfig") -> tuple[str, ...] | None:
+def _output_rel_prefix(root: Path, config: BuildConfig) -> tuple[str, ...] | None:
     """The configured output dir's path parts relative to `root`, if inside it."""
     if not config.output_dir:
         return None
@@ -452,7 +452,7 @@ def explain_path(
     config: BuildConfig | None = None,
     include_globs: Iterable[str] | None = None,
     exclude_globs: Iterable[str] | None = None,
-    repo_config: "RepoConfig | None" = None,
+    repo_config: RepoConfig | None = None,
 ) -> dict[str, Any]:
     """Evaluate a path against the 10 inclusion/exclusion precedence rules.
 

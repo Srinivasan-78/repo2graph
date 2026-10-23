@@ -49,8 +49,6 @@ SECRET_VALUE_PATTERNS = CONTENT_SECRET_PATTERNS
 LEVELS = ("none", "errors", "all")
 
 __all__ = [
-    "AuditConfig",
-    "AuditLogger",
     "CONTENT_SECRET_PATTERNS",
     "ENTROPY_MIN_LEN",
     "LEVELS",
@@ -59,6 +57,8 @@ __all__ = [
     "REDACTION_HASH_CHARS",
     "SECRET_KEY_RE",
     "SECRET_VALUE_PATTERNS",
+    "AuditConfig",
+    "AuditLogger",
     "_classify_secret_shape",
     "_fingerprint",
     "redact",
@@ -287,5 +287,5 @@ class timer:
         # Never rounds a real call down to 0: a record showing zero duration
         # reads as "never ran", and telling those apart matters in an audit.
         elapsed = (time.perf_counter() - self._start) * 1000.0
-        self.ms = max(1, int(round(elapsed)))
+        self.ms = max(1, round(elapsed))
         return False

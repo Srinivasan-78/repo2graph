@@ -200,7 +200,7 @@ def test_pointer_capture_is_released_on_both_pointerup_and_pointercancel():
     one. This is the one untested-in-a-browser property here.
     """
     for event in ("pointerup", "pointercancel"):
-        handler = re.search(r'svg\.addEventListener\("%s",.*?\n\}\);' % event, TEMPLATE, re.S)
+        handler = re.search(rf'svg\.addEventListener\("{event}",.*?\n\}}\);', TEMPLATE, re.S)
         assert handler, f"no {event} handler found"
         assert "releasePointerCapture(ev.pointerId)" in handler.group(0), (
             f"{event} never releases the pointer capture"

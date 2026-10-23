@@ -5,6 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import pytest
+
 from repo2graph.cli import _max_file_mb
 from repo2graph.graph import build
 from repo2graph.parse import BuildConfig, discover
@@ -13,7 +14,7 @@ from repo2graph.parse import BuildConfig, discover
 def test_max_file_mb_validator():
     assert _max_file_mb("1.5") == 1.5
     assert _max_file_mb("0.1") == 0.1
-    with pytest.raises(argparse.ArgumentTypeError, match="must be at least 0.1"):
+    with pytest.raises(argparse.ArgumentTypeError, match=r"must be at least 0\.1"):
         _max_file_mb("0.09")
     with pytest.raises(argparse.ArgumentTypeError, match="expected a number, got 'abc'"):
         _max_file_mb("abc")
@@ -222,6 +223,7 @@ def test_limit_policy_fail_on_build_seconds(tmp_path):
 
 def test_clean_build_manifest_marks_complete(tmp_path):
     import json
+
     from repo2graph.chunks import iter_chunks
     from repo2graph.export import dump_all
 
@@ -246,6 +248,7 @@ def test_clean_build_manifest_marks_complete(tmp_path):
 
 def test_truncate_marks_manifest_and_overview_incomplete_and_doctor_detects(tmp_path):
     import json
+
     from repo2graph.chunks import iter_chunks
     from repo2graph.export import dump_all
     from repo2graph.integrity import verify_artifacts

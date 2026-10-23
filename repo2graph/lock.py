@@ -41,7 +41,7 @@ def _is_pid_alive(pid: int) -> bool:
             import ctypes
             from ctypes import wintypes
 
-            kernel32 = getattr(ctypes, "windll").kernel32
+            kernel32 = ctypes.windll.kernel32
             # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             SYNCHRONIZE = 0x00100000
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
@@ -102,14 +102,48 @@ class BuildLock:
         target = Path(outdir).resolve()
         # Sibling lock file: persists across directory swaps and protects clean targets
         self.lock_file = target.parent / f".{target.name}.r2glock"
+        # Where to go when the parent cannot be written at all. The documented
+        # read-only-container run is `-o /out` with `/` read-only and only
+        # `/out` mounted writable, so the sibling lands at `/.out.r2glock` and
+        # the build cannot start -- a deployment `.github/SECURITY.md`
+        # describes in detail could not actually run. Inside the target the
+        # lock no longer survives a swap of that directory, which is the
+        # weaker guarantee; it is the right trade when the alternative is
+        # refusing to build, and nothing can swap a directory whose parent is
+        # read-only anyway.
+        self._in_target_lock = target / ".r2glock"
+        self._fell_back = False
         self.timeout = float(timeout)
         self.stale_threshold = float(stale_threshold)
         self._fh: TextIO | None = None
         self._acquired = False
 
+    def _try_fall_back_into_target(self) -> bool:
+        """Point the lock inside the target directory. True if that is usable.
+
+        Only called once, and only after the sibling path has already failed
+        with a permanently-unwritable errno, so this cannot mask ordinary
+        contention -- a held lock is a successful `open()`, not an `OSError`.
+        """
+        if self._in_target_lock == self.lock_file:
+            return False
+        try:
+            self._in_target_lock.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        self.lock_file = self._in_target_lock
+        self._fell_back = True
+        return True
+
     def acquire(self) -> None:
         """Acquire the build lock, retrying until timeout."""
-        self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # The parent may be read-only while the target is writable. Let the
+            # loop below discover that through the real `open()`, which is what
+            # decides whether a fallback is needed.
+            self._try_fall_back_into_target()
         start_time = time.monotonic()
         # The last open() failure that was unwritable-but-retryable, so a
         # timeout spent entirely on one reports that rather than blaming a
@@ -136,6 +170,11 @@ class BuildLock:
                 if fh is None and exc.errno in _UNWRITABLE_ERRNOS:
                     if exc.errno in _RETRY_WHILE_HELD:
                         held_open_exc = exc
+                    elif not self._fell_back and self._try_fall_back_into_target():
+                        # The parent is unwritable but the target itself may not
+                        # be. Retry immediately against the in-target path
+                        # rather than failing a build that can still run.
+                        continue
                     else:
                         raise LockUnavailableError(
                             f"cannot create build lock {self.lock_file}: {exc.strerror} "

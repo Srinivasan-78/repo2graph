@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any
 
 from .edgemeta import counts_as_call
-from .export import atomic_write, make_path, path as artifact_path
+from .export import atomic_write, make_path
+from .export import path as artifact_path
 from .graph import Graph
 from .graphdiff import diff_graphs
 from .query import read_jsonl
@@ -137,7 +138,7 @@ def _edge_line(e: dict[str, Any]) -> str:
 def _section(lines: list[str], count: int) -> list[str]:
     """Cap a section at MAX_ITEMS lines, appending the "... and N more" line."""
     if count > MAX_ITEMS:
-        lines = lines[:MAX_ITEMS] + [f"... and {count - MAX_ITEMS} more"]
+        lines = [*lines[:MAX_ITEMS], f"... and {count - MAX_ITEMS} more"]
     return lines
 
 

@@ -22,6 +22,7 @@ without overlapping.
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pytest
@@ -98,7 +99,7 @@ def test_split_parts_tile_their_symbol_in_order(tmp_path: Path) -> None:
     assert first["start_line"] == 1, "the first part must start where the symbol does"
     assert last["end_line"] >= last["start_line"]
 
-    for earlier, later in zip(parts, parts[1:]):
+    for earlier, later in itertools.pairwise(parts):
         assert earlier["end_line"] <= earlier["end_line"]
         assert later["start_line"] > earlier["start_line"], "parts must advance"
         assert later["start_line"] <= earlier["end_line"] + 1, "parts must not skip lines"
@@ -130,6 +131,7 @@ def test_a_short_symbol_keeps_its_full_range(tmp_path: Path) -> None:
 def _read_index(tmp_path: Path, name: str, source: str):
     """Build `source` into a real on-disk index and open it."""
     from conftest import build_mini_index
+
     from repo2graph.query import Index
 
     repo = tmp_path / "repo"

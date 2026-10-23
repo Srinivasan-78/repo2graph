@@ -182,10 +182,15 @@ def add_cochange(
         g.stats["cochange_output_capped"] = len(stdout)
         # Drop the trailing partial commit: git log delimits commits with a blank
         # line ("\n\n" or "\r\n\r\n").
-        m = None
+        # Track the end offset rather than the last match object: the previous
+        # `for m in ...: pass` form read as a dead loop (B007 flags it, since
+        # `m` is used after the loop rather than in it) and the intent -- "cut
+        # at the last complete delimiter" -- was carried entirely by the
+        # `pass`. No match means no complete commit, hence `b""`, as before.
+        last_end = 0
         for m in re.finditer(rb"(\r?\n){2}", stdout):
-            pass
-        stdout = stdout[: m.end()] if m else b""
+            last_end = m.end()
+        stdout = stdout[:last_end]
     pairs: Counter[tuple[str, str]] = Counter()
     current: list[str] = []
     sampled = 0
@@ -194,7 +199,7 @@ def add_cochange(
     # split("\n"), not splitlines(): with core.quotepath=false git emits paths
     # containing U+2028/U+2029/U+0085 raw, and splitlines() would cut such a path
     # in two so it never matches file_index.
-    for line in stdout.decode("utf8", "surrogateescape").split("\n") + [""]:
+    for line in [*stdout.decode("utf8", "surrogateescape").split("\n"), ""]:
         line = line.rstrip("\r")
         if not line:
             if 1 < len(current) <= 25:

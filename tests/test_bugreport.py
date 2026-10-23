@@ -65,7 +65,7 @@ def test_templates_named_in_prose_exist():
     names = {form.get("name") for form in _forms().values()}
 
     prose = CONTRIBUTING_PATH.read_text(encoding="utf-8")
-    for path, form in _forms().items():
+    for path, _form in _forms().items():
         prose += "\n" + path.read_text(encoding="utf-8")
 
     for referenced in ("Incorrect or missing graph edge", "Language / parser support"):

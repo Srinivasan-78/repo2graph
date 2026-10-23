@@ -104,10 +104,22 @@ def claim_slot(watch: Any) -> None:
     _cap_memory(memory_mb)
 
 
+_worker_job: int | None = None
+
+
 def _cap_memory(memory_mb: int) -> None:
     """Bound this worker's address space, so a runaway parse kills only it."""
+    global _worker_job
+    if sys.platform == "win32":
+        try:
+            from .parse import _win_cap_child_memory
+
+            _worker_job = _win_cap_child_memory(os.getpid(), memory_mb * 1024 * 1024)
+        except (ImportError, OSError, ValueError, AttributeError):
+            pass
+        return
     if not sys.platform.startswith("linux"):
-        return  # macOS does not enforce RLIMIT_AS; Windows has no rlimits
+        return  # macOS does not enforce RLIMIT_AS
     try:
         import resource
 

@@ -24,9 +24,10 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # Rough parse rate used to estimate a build's duration, in files per second.
 # Measured on this repository on a mid-range laptop; it exists to turn a file
@@ -87,7 +88,7 @@ class BuildTask:
         """Estimated seconds remaining; 0 once the build has settled."""
         if self.status != BUILDING:
             return 0
-        return max(0, int(round(self.estimated_s - self._elapsed())))
+        return max(0, round(self.estimated_s - self._elapsed()))
 
     def snapshot(self) -> dict[str, Any]:
         """The status document `repo_build_status` returns."""
@@ -129,7 +130,7 @@ class TaskManager:
         # OrderedDict so eviction can walk oldest-first; insertion order is
         # preserved because `start()` only ever adds a new id, never re-inserts
         # one (a joined in-flight build returns the existing task early).
-        self._by_id: "OrderedDict[str, BuildTask]" = OrderedDict()
+        self._by_id: OrderedDict[str, BuildTask] = OrderedDict()
 
     def start(self, repo: str | Path, out: str | Path) -> BuildTask:
         """Begin (or join) a background build for `out`.

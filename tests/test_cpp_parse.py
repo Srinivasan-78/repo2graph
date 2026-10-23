@@ -2,7 +2,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -372,7 +372,7 @@ def test_run_cpp_stops_a_macro_bomb_at_the_limit():
         + b"".join(b"#define A%d A%d A%d\n" % (i, i - 1, i - 1) for i in range(1, 40))
         + b"A39\n"
     )
-    rc, out = _REAL_RUN_CPP(bomb, 2 * len(bomb), timeout=30)
+    _rc, out = _REAL_RUN_CPP(bomb, 2 * len(bomb), timeout=30)
     assert out is None
 
 

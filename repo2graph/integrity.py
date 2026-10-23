@@ -16,9 +16,10 @@ import os
 import secrets
 import subprocess
 import sys
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, Any, Iterator, Sequence
+from typing import IO, Any
 
 from .security import sanitize_url
 
@@ -680,7 +681,11 @@ def verify_artifacts(outdir: str | Path) -> IntegrityReport:
                     )
                 else:
                     mismatched_texts = 0
-                    for cid, v_hash in zip(v_ids, v_hashes):
+                    # strict: the branch above already reported a length
+                    # mismatch as `corrupt`, so reaching here means equal
+                    # lengths. Stating it keeps the two in step if that
+                    # guard is ever moved.
+                    for cid, v_hash in zip(v_ids, v_hashes, strict=True):
                         if cid in chunk_text_hashes and chunk_text_hashes[cid] != v_hash:
                             mismatched_texts += 1
                     if mismatched_texts > 0:
@@ -738,9 +743,9 @@ def is_foreign_index(outdir: str | Path) -> bool:
     if _is_link_like(manifest_path) or not manifest_path.is_file():
         return True
     try:
-        with open(local_path, "r", encoding="utf8") as fh:
+        with open(local_path, encoding="utf8") as fh:
             local_data = json.load(fh)
-        with open(manifest_path, "r", encoding="utf8") as fh:
+        with open(manifest_path, encoding="utf8") as fh:
             manifest_data = json.load(fh)
         marker = local_data.get("machine_marker")
         build_id = manifest_data.get("build_id")

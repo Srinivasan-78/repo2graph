@@ -11,6 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.generate_language_scorecard import (  # noqa: E402
     DIMENSION_WEIGHTS,
+    _test_suffixes_for,
     audit_test_coverage,
     evaluate_language,
     format_detail_markdown,
@@ -72,10 +73,58 @@ def test_evaluate_language_dimensions():
     assert card.parsing.score >= 90
     assert card.calls.score >= 90
     assert card.imports.score >= 80
-    assert card.tests.score == 30
-    assert card.framework_edges.score == 20
+    # Python detects test files by directory *and* by filename, and resolves
+    # calls at 100 -- so every input a TESTS edge needs is present and this is
+    # the dimension's ceiling. Pinned at 30 while the generator asserted the
+    # edge type did not exist; it has shipped since `derived.add_tests_edges`.
+    assert card.tests.score == 100
+    # 50 for the shipped ROUTES_TO/INJECTS/MODELS capture plus 20 for
+    # decorators-as-calls. Not 100, and the shortfall is the honest part:
+    # call-registered routing (Express, Django `urlpatterns`) and `CONFIGURES`
+    # are still unextracted. Was a flat 20 before `--framework-edges` existed.
+    assert card.framework_edges.score == 70
     assert card.test_coverage_funcs == 6
     assert len(card.priority_actions) > 0
+
+
+def test_tests_dimension_tracks_the_shipped_tests_edge():
+    """The `Tests Link` dimension must describe `derived.add_tests_edges`.
+
+    The generator used to hardcode "TESTS edge type not yet implemented",
+    which cost all nineteen languages 10% of their weighted total for a
+    feature that had already shipped, and which no test caught because
+    `test_doc_consistency` only checks that the table matches the generator --
+    both were wrong together. These three assertions each break one way of
+    reintroducing that: the edge builder going missing, the notes going back
+    to claiming it is unimplemented, and the CALLS dependency being dropped.
+    """
+    import repo2graph.derived as derived
+    import repo2graph.parse as p
+
+    assert callable(derived.add_tests_edges)
+
+    cards = {c.language: c for c in generate_all_scorecards()}
+    for card in cards.values():
+        notes = " ".join(card.tests.notes).lower()
+        assert "not yet implemented" not in notes
+        assert "not implemented" not in notes
+        # Directory conventions alone are a floor every language clears.
+        assert card.tests.score > 0
+
+    # A TESTS edge is CALLS-derived, so the dimension must move with `Calls`.
+    # Ruby and Go both detect test filenames; Ruby resolves calls far better,
+    # and the scores must reflect that ordering rather than being flat.
+    assert cards["ruby"].tests.score > cards["go"].tests.score
+    assert cards["ruby"].calls.score > cards["go"].calls.score
+
+    # A language with no filename convention still scores on directories.
+    assert _test_suffixes_for("lua") == set()
+    assert cards["lua"].tests.score >= 40
+
+    # And the suffixes are read out of `testpaths`, not listed in the script.
+    assert "_test.go" in _test_suffixes_for("go")
+    assert "Test.java" in _test_suffixes_for("java")
+    assert p.EXT_LANG[".rb"] == "ruby"
 
 
 def test_markdown_formatting_is_valid_table():
