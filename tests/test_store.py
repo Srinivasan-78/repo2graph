@@ -390,3 +390,44 @@ def test_an_unusable_cache_dir_is_diagnosed_not_a_traceback(tmp_path, monkeypatc
         main(["query", "hello", "-o", str(out), "--store", "sqlite"])
     assert "cannot use --store" in str(exc.value)
     assert "REPO2GRAPH_CACHE_DIR" in str(exc.value)
+
+
+def test_a_cache_that_cannot_be_opened_rebuilds_instead_of_raising(tmp_path, monkeypatch, capsys):
+    """An `OSError` opening a cache must degrade, not escape.
+
+    The fast path caught only `sqlite3.DatabaseError`, but opening the file can
+    fail for reasons SQLite never sees: another process holding it open at the
+    OS level on Windows, or permissions changed after it was written. Neither is
+    in `_open_index`'s catch list, so it surfaced as a traceback. The right
+    response is the one a corrupt file already gets -- rebuild.
+
+    Simulated, because an OS-level lock SQLite does not translate is not
+    something a test can portably create.
+    """
+    import repo2graph.store as store_mod
+
+    repo = write_simple_repo(tmp_path)
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    capsys.readouterr()
+
+    # Materialise a cache, so the fast path is the branch under test.
+    first = open_graph_store(out, "sqlite")
+    assert isinstance(first, SqliteGraphStore)
+    first.close()
+    assert (out / SQLITE_CACHE_NAME).is_file()
+
+    real_init = store_mod.SqliteGraphStore.__init__
+    calls = {"n": 0}
+
+    def flaky_init(self, path):
+        calls["n"] += 1
+        if calls["n"] == 1:  # only the fast-path open
+            raise PermissionError(13, "Access is denied")
+        return real_init(self, path)
+
+    monkeypatch.setattr(store_mod.SqliteGraphStore, "__init__", flaky_init)
+
+    store = open_graph_store(out, "sqlite")  # must not raise
+    assert store is not None
+    assert calls["n"] >= 2, "the fast path swallowed the error but never rebuilt"

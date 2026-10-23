@@ -163,6 +163,9 @@ def cmd_diff(args: argparse.Namespace) -> int | None:
                 old_index_dir=old_idx,
                 max_hops=getattr(args, "affected_tests_max_hops", 4),
                 min_confidence=getattr(args, "affected_tests_min_confidence", 0.0),
+                follow_shadowed_builtins=getattr(
+                    args, "affected_tests_follow_shadowed_builtins", False
+                ),
             )
         except ValueError as exc:
             raise SystemExit(f"error: {exc}") from None

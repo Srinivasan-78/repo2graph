@@ -591,12 +591,19 @@ def test_affected_tests_admits_it_cannot_see_fixture_injection(tmp_path):
 
     res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
 
-    # The gap itself is a parser limitation and is not fixed here; what is
-    # asserted is that it is no longer silent.
-    assert "tests/conftest.py" in res["affected_tests"]
+    # The gap itself is a parser limitation and is not fixed here (#513); what
+    # is asserted is that it is no longer silent.
     assert res["truncated"] is True, res
     assert "fixture by injection" in res["incomplete_reason"]
     assert "WARNING" in render_pr_summary_text(res)
+    assert res["conftests_reached"] == ["tests/conftest.py"]
+
+    # ...and that the conftest is reported in the warning rather than in the
+    # selection. `affected_tests` is piped straight to a runner, and pytest
+    # collects no test from a conftest, so including it selects nothing while
+    # making the list look like it found something.
+    assert "tests/conftest.py" not in res["affected_tests"]
+    assert all(p.rsplit("/", 1)[-1] != "conftest.py" for p in res["affected_tests"])
 
 
 def test_affected_tests_stays_complete_without_a_conftest(tmp_path):
@@ -628,3 +635,47 @@ def test_affected_tests_stays_complete_without_a_conftest(tmp_path):
     res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
     assert "tests/test_db.py" in res["affected_tests"]
     assert res["truncated"] is False, res["incomplete_reason"]
+
+
+def test_follow_shadowed_builtins_recovers_the_dropped_edges(tmp_path):
+    """The shadowed-builtin exclusion is a heuristic, so it must be overridable.
+
+    Dropping those edges is right by default -- the call almost always went to
+    the builtin -- but a codebase that really does define and call its own `len`
+    would otherwise have no way to select the tests that exercise it, and no way
+    to correct a heuristic that is wrong about their code.
+    """
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "shadow_opt_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("shadow.py", "def len(x):\n    return 42\n")
+    for i in range(4):
+        w(f"mod{i}.py", f"def use{i}(xs):\n    return len(xs)\n")
+        w(
+            f"tests/test_m{i}.py",
+            f"from mod{i} import use{i}\n\ndef test_m{i}():\n    assert use{i}([1]) == 1\n",
+        )
+
+    idx_out = tmp_path / "shadow_opt_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl"])
+    idx = Index(idx_out)
+    spans = {"shadow.py": [(1, 2)]}
+
+    default = find_affected_tests(idx, modified_spans=spans)
+    assert default["affected_tests"] == []
+    assert default["shadowed_builtin_skipped"] > 0
+    assert default["truncated"] is True
+
+    followed = find_affected_tests(idx, modified_spans=spans, follow_shadowed_builtins=True)
+    assert followed["affected_tests"], "the override recovered nothing"
+    # Nothing was skipped on this pass, so the heuristic no longer makes the
+    # answer incomplete -- that reason must disappear rather than persist.
+    assert followed["shadowed_builtin_skipped"] == 0
+    assert "shadowed builtin" not in followed["incomplete_reason"]

@@ -199,3 +199,55 @@ def test_a_build_survives_a_read_only_parent_of_the_output_directory(tmp_path, m
     assert (out / "agent" / "chunks.jsonl").is_file()
     # The in-target staging directory is scratch, not an artifact.
     assert [q.name for q in out.iterdir() if ".staging" in q.name] == []
+
+
+def test_the_in_target_merge_swaps_agent_last(tmp_path):
+    """`agent/` must be the final rename, so readers never see a half-new index.
+
+    `_merge_staging_into` is the read-only-parent fallback and cannot swap the
+    whole directory in one step -- renaming needs write permission on the parent
+    of both names. Per-entry replacement is the best available, so the *order*
+    carries the guarantee: everything `query`, `rag` and the MCP server read
+    lives under `agent/` (including `manifest.json`, and so the `build_id`), and
+    that subtree arrives in a single rename. A reader therefore sees the
+    previous index, whole, right up to the instant the new one replaces it.
+    """
+    from repo2graph.export import AGENT_DIR, _merge_staging_into
+
+    target = tmp_path / "out"
+    staging = target / ".staging.1.abc"
+    staging.mkdir(parents=True)
+    for name in ("human", AGENT_DIR, "local.json", ".gitignore"):
+        p = staging / name
+        if name.endswith(".json") or name.startswith("."):
+            p.write_text("{}", encoding="utf8")
+        else:
+            p.mkdir()
+            (p / "f.jsonl").write_text("{}\n", encoding="utf8")
+
+    # `_merge_staging_into` goes through `export._rename` (which retries a
+    # Windows sharing violation), not `os.replace` directly.
+    import repo2graph.export as export_mod
+
+    renamed: list[str] = []
+    real_rename = export_mod._rename
+
+    def spy(src, dst):
+        renamed.append(Path(str(dst)).name)
+        return real_rename(src, dst)
+
+    try:
+        export_mod._rename = spy
+        _merge_staging_into(staging, target)
+    finally:
+        export_mod._rename = real_rename
+
+    assert renamed, "nothing was renamed"
+    assert renamed[-1] == AGENT_DIR, renamed
+    # Everything arrived, and the scratch directory is gone.
+    assert sorted(p.name for p in target.iterdir()) == [
+        ".gitignore",
+        AGENT_DIR,
+        "human",
+        "local.json",
+    ]

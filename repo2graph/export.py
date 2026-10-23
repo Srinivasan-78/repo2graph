@@ -1446,11 +1446,21 @@ def _merge_staging_into(staging: Path, target: Path) -> None:
     The guarantee is therefore weaker and worth stating. Each top-level entry
     (`agent/`, `human/`, `local.json`) is replaced in one `rename`, so no
     individual artifact is ever half-written, but the directory as a whole is
-    not swapped in one step: a reader arriving mid-merge can see the new
-    `agent/` beside the old `human/`. The build lock keeps other *builds* out,
-    not concurrent readers.
+    not swapped in one step. The build lock keeps other *builds* out, not
+    concurrent readers.
+
+    `AGENT_DIR` is moved **last**, which narrows that window to nothing for the
+    readers that matter. Everything `query`, `rag` and the MCP server consume
+    lives under `agent/` -- including `manifest.json`, and so the `build_id`
+    that identifies the build -- and that whole subtree arrives in a single
+    `rename`. A concurrent reader therefore sees the previous index, complete
+    and self-consistent, right up to the instant the new one replaces it. What
+    can still be observed mid-merge is a new `human/` (a CHANGELOG, an HTML
+    graph) beside an old `agent/`, which is a cosmetic inconsistency rather than
+    a reader-visible one.
     """
-    for entry in sorted(staging.iterdir()):
+    entries = sorted(staging.iterdir(), key=lambda p: (p.name == AGENT_DIR, p.name))
+    for entry in entries:
         dest = target / entry.name
         if dest.is_dir() and not dest.is_symlink():
             shutil.rmtree(dest, ignore_errors=True)

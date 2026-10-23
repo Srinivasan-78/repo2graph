@@ -121,13 +121,34 @@ makes keeping it current a release-blocking step rather than a good intention.
   is conditioned on actually reaching a conftest rather than on the repo containing fixtures, so
   `truncated` stays meaningful.
 
+- **A `conftest.py` is no longer listed as an affected test.** It was being handed back in
+  `affected_tests`, the list a CI caller pipes straight to `pytest` — which collects no test from a
+  conftest, so it selected nothing while making the list look like it had found something. The path
+  now goes to a separate `conftests_reached` and still sets `truncated`, so the caveat lands in the
+  warning instead of in the selection.
+
+- **The shadowed-builtin exclusion is now overridable.** Dropping those edges is right by default,
+  but a codebase that genuinely defines and calls its own `len` or `open` had no way to select the
+  tests that exercise it, and no way to correct a heuristic that was wrong about their code.
+  `--affected-tests-follow-shadowed-builtins` (and `follow_shadowed_builtins=` on the API) keeps
+  them; the skip count and the `truncated` flag already told you when it would matter.
+
+- **The read-only-container index swap is now atomic for every reader.** `_merge_staging_into`
+  cannot swap the whole directory in one step — renaming needs write permission on the parent of
+  both names — so the *order* carries the guarantee instead: `agent/` is moved last. Everything
+  `query`, `rag` and the MCP server read lives under it, `manifest.json` and the `build_id`
+  included, and that subtree arrives in a single `rename`. A concurrent reader sees the previous
+  index, whole and self-consistent, until the instant the new one replaces it. What remains
+  observable mid-merge is a new `human/` beside an old `agent/`, which is cosmetic.
+
 - **An unusable `REPO2GRAPH_CACHE_DIR` gave a raw traceback.** Its `mkdir` sat outside the `OSError`
   handling that guards the primary path, so pointing it at a file — or anywhere unwritable — escaped
   as `FileExistsError`/`PermissionError`, which `_open_index` does not catch. The same defect #501
   fixed for the primary path, reached through the env var instead; now a `StoreUnusable` naming the
   variable. The `graph.sqlite` fast path also caught only `sqlite3.DatabaseError`, so a cache file
   locked at the OS level (Windows) or made unreadable after it was written escaped the same way;
-  it now falls through and rebuilds, as it already did for a corrupt file.
+  it now falls through and rebuilds, as it already did for a corrupt file, and that degradation is
+  covered by a test rather than left as an untested guard.
 
 - **The runaway-parse tests measured the runner, not the parser.** #507 gave each Windows worker a
   `WORKER_MEMORY_MB` Job Object cap, and the runaway C++ fixture is quadratic in *space* as well as

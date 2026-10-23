@@ -672,6 +672,7 @@ Example JSON output:
 | `--affected-tests` | off | Output the minimal covering set of test files for the diff |
 | `--affected-tests-max-hops N` | `4` | Reverse-call hops to walk. If the walk is still expanding at the limit the result is marked incomplete rather than returned as if it were whole |
 | `--affected-tests-min-confidence F` | `0.0` | Drop `CALLS` edges below this confidence. `0.0` keeps every edge, which is the safe default; raising it narrows the run but can miss a test reached only through an ambiguous call |
+| `--affected-tests-follow-shadowed-builtins` | off | Keep `CALLS` edges into a symbol that shadows a builtin. Off because the call almost always went to the builtin, and following them selects every test that calls e.g. `len()`; turn it on if your code really does define and call its own. Skipped edges are counted in `shadowed_builtin_skipped` and mark the result incomplete, so you can tell when this would have mattered |
 | `--github-step-summary` | off | Append an executive blast-radius card to `$GITHUB_STEP_SUMMARY` |
 | `--format` | `text` | `text` or `json` |
 | `--include-confidence` | off | Also list edges whose only change is confidence |
@@ -707,9 +708,13 @@ What the walk can tell is that it is standing on the mechanism: if it reaches a
 `conftest.py` at all, `truncated` is set and `incomplete_reason` names fixture
 injection, so this failure is loud rather than silent. It is conditioned on
 actually reaching one rather than on the repository containing fixtures, so it
-stays meaningful. The underlying limitation is not fixed — if your suite leans
-on fixtures for setup, and most do, treat a `conftest.py` in the output as "run
-the full suite".
+stays meaningful. The conftest itself is listed in `conftests_reached` and kept
+**out** of `affected_tests` — pytest collects no test from a conftest, so
+handing one to a runner selects nothing, and `affected_tests` stays a list you
+can pipe straight to `pytest`. The underlying limitation is not fixed
+([#513](https://github.com/Srinivasan-78/repo2graph/issues/513)): if your suite
+leans on fixtures for setup, and most do, treat a non-empty `conftests_reached`
+as "run the full suite".
 
 ## `index-status` — is this index current, and what is in it?
 

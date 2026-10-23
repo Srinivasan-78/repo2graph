@@ -1832,6 +1832,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "through an ambiguous call",
     )
     df.add_argument(
+        "--affected-tests-follow-shadowed-builtins",
+        action="store_true",
+        help="keep CALLS edges to a symbol that shadows a builtin when selecting tests. "
+        "Off by default because the call almost always went to the builtin, and following "
+        "them selects every test that calls e.g. len(); turn it on if your code really does "
+        "define and call its own",
+    )
+    df.add_argument(
         "--github-step-summary",
         action="store_true",
         help="append an executive blast-radius summary to $GITHUB_STEP_SUMMARY",

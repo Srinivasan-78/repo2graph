@@ -350,6 +350,7 @@ def find_affected_tests(
     old_index_dir: str | Path | None = None,
     max_hops: int = 4,
     min_confidence: float = 0.0,
+    follow_shadowed_builtins: bool = False,
 ) -> dict[str, Any]:
     """Identify modified symbols, impacted callers, and the tests that cover them.
 
@@ -376,6 +377,17 @@ def find_affected_tests(
     The count is still reported in `shadowed_builtin_skipped`, and it marks the
     result `truncated`, because the classification is a heuristic and dropping a
     real edge on a heuristic is exactly what this function promises to admit to.
+    `follow_shadowed_builtins=True` keeps them, which is the escape hatch for a
+    codebase that really does define and call its own `len` or `open`: a
+    heuristic with no override is one the caller cannot correct when it is
+    wrong about their code.
+
+    A `conftest.py` the walk reaches is reported in `conftests_reached` and
+    marks the result `truncated`, but is kept *out* of `affected_tests`: pytest
+    collects no test from a conftest, so handing one to a runner selects
+    nothing, while reaching one is the signal that fixture consumers are
+    invisible (#513). The list stays something a caller can pipe straight to
+    `pytest`; the caveat goes in the warning.
 
     `max_hops` still bounds the walk, so the result can still be incomplete --
     but it says so now. When the frontier is still non-empty at the limit,
@@ -420,11 +432,23 @@ def find_affected_tests(
 
     modified_sym_ids: set[str] = set()
     affected_tests_set: set[str] = set()
+    # Reached `conftest.py` files. Kept apart from `affected_tests_set` because
+    # pytest never collects a test from a conftest -- handing one to a runner
+    # selects nothing -- while reaching one is exactly the signal that fixture
+    # consumers are invisible. So it belongs in the warning, not in the list a
+    # caller pipes to `pytest`.
+    conftests_reached: set[str] = set()
+
+    def _record_test_path(path: str) -> None:
+        if path.rsplit("/", 1)[-1] == "conftest.py":
+            conftests_reached.add(path)
+        else:
+            affected_tests_set.add(path)
 
     for rel_path, line_spans in spans.items():
         rel_norm = rel_path.replace("\\", "/")
         if is_test_path(rel_norm):
-            affected_tests_set.add(rel_norm)
+            _record_test_path(rel_norm)
 
         sym_nodes = [
             n
@@ -482,7 +506,7 @@ def find_affected_tests(
             src_path = src[4:].split("::")[0].replace("\\", "/")
 
         if src_path and is_test_path(src_path):
-            affected_tests_set.add(src_path)
+            _record_test_path(src_path)
             # Deliberately not a sink. `is_test_path` is true of every module
             # under `tests/`, including `conftest.py`, fixtures and assertion
             # helpers that define no test of their own -- for those the real
@@ -519,7 +543,7 @@ def find_affected_tests(
                         # function named `len` select every test in the repo
                         # that calls `len()`, which is the feature failing in
                         # the other direction.
-                        if e.get("shadowed_builtin"):
+                        if e.get("shadowed_builtin") and not follow_shadowed_builtins:
                             shadowed_builtin_skipped += 1
                             continue
                         if min_confidence > 0:
@@ -547,7 +571,7 @@ def find_affected_tests(
                         ) or imp_src.removeprefix("file:")
                         imp_path = imp_path.replace("\\", "/")
                         if imp_path and is_test_path(imp_path):
-                            affected_tests_set.add(imp_path)
+                            _record_test_path(imp_path)
                             visited_nodes.add(imp_src)
 
         frontier = next_frontier
@@ -564,7 +588,7 @@ def find_affected_tests(
                 )
                 imp_path = imp_path.replace("\\", "/")
                 if imp_path and is_test_path(imp_path):
-                    affected_tests_set.add(imp_path)
+                    _record_test_path(imp_path)
                     visited_nodes.add(imp_src)
 
     blast_radius = len(visited_nodes)
@@ -600,7 +624,7 @@ def find_affected_tests(
     # Conditioned on actually having reached one, rather than on the repository
     # merely containing fixtures -- flagging every run would make `truncated`
     # noise, which is the failure the flag exists to avoid.
-    conftests = sorted(p for p in affected_tests_set if p.rsplit("/", 1)[-1] == "conftest.py")
+    conftests = sorted(conftests_reached)
     if conftests:
         reasons.append(
             f"the walk reached {', '.join(conftests)}, and a test that consumes a fixture by "
@@ -618,6 +642,9 @@ def find_affected_tests(
         "truncated": bool(reasons),
         "incomplete_reason": "; ".join(reasons),
         "shadowed_builtin_skipped": shadowed_builtin_skipped,
+        # Reported separately from `affected_tests`, which stays a list a caller
+        # can hand to `pytest` unfiltered.
+        "conftests_reached": conftests,
     }
 
 
