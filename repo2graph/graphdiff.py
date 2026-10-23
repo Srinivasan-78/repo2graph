@@ -590,6 +590,23 @@ def find_affected_tests(
             f"{shadowed_builtin_skipped} CALLS edge(s) were skipped as calls to a "
             "shadowed builtin, which is a heuristic"
         )
+    # Reaching a `conftest.py` means the walk is standing on pytest's fixture
+    # mechanism, and that is the one incompleteness no bookkeeping here can
+    # measure: a test that *receives* a fixture never calls it by name, so there
+    # is no edge to follow and the consumers are invisible. The walk finishes
+    # with an empty frontier and would otherwise report a complete answer whose
+    # only entry is the conftest itself.
+    #
+    # Conditioned on actually having reached one, rather than on the repository
+    # merely containing fixtures -- flagging every run would make `truncated`
+    # noise, which is the failure the flag exists to avoid.
+    conftests = sorted(p for p in affected_tests_set if p.rsplit("/", 1)[-1] == "conftest.py")
+    if conftests:
+        reasons.append(
+            f"the walk reached {', '.join(conftests)}, and a test that consumes a fixture by "
+            "injection rather than by calling it has no call edge to follow, so such tests "
+            "cannot be detected"
+        )
 
     return {
         "modified_symbols": sorted({_format_sym(nid) for nid in modified_sym_ids}),

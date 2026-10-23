@@ -111,6 +111,24 @@ makes keeping it current a release-blocking step rather than a good intention.
   and `local.json` still lands in one `rename`, but a reader arriving mid-merge can see a new
   `agent/` beside an old `human/`. Found by the new container CI job, which is newer than the bug.
 
+- **`--affected-tests` was silent about the one gap it cannot measure.** A pytest test that reaches
+  the change only through *fixture injection* — it declares a `conftest.py` fixture as a parameter
+  and never calls it — has no call edge to follow, so it cannot be detected. Demonstrated: 30 tests
+  reaching a modified function through a fixture produced `affected_tests: ['tests/conftest.py']`
+  with `truncated: false`, i.e. an answer that looked complete and named none of them. Reaching a
+  `conftest.py` now sets `truncated` and names fixture injection in `incomplete_reason`, so the
+  failure is loud. The underlying limitation is a parser one and is tracked separately; the guard
+  is conditioned on actually reaching a conftest rather than on the repo containing fixtures, so
+  `truncated` stays meaningful.
+
+- **An unusable `REPO2GRAPH_CACHE_DIR` gave a raw traceback.** Its `mkdir` sat outside the `OSError`
+  handling that guards the primary path, so pointing it at a file — or anywhere unwritable — escaped
+  as `FileExistsError`/`PermissionError`, which `_open_index` does not catch. The same defect #501
+  fixed for the primary path, reached through the env var instead; now a `StoreUnusable` naming the
+  variable. The `graph.sqlite` fast path also caught only `sqlite3.DatabaseError`, so a cache file
+  locked at the OS level (Windows) or made unreadable after it was written escaped the same way;
+  it now falls through and rebuilds, as it already did for a corrupt file.
+
 - **The runaway-parse tests measured the runner, not the parser.** #507 gave each Windows worker a
   `WORKER_MEMORY_MB` Job Object cap, and the runaway C++ fixture is quadratic in *space* as well as
   time — so on a constrained runner the cap is reached before the 1 s wall clock. The worker then
@@ -148,6 +166,13 @@ makes keeping it current a release-blocking step rather than a good intention.
 - `.github/SECURITY.md` now carries the SSE transport as an enumerated exception. "No network
   calls" was accurate about outbound traffic but read as "opens no socket", which the new listener
   contradicted; the container section's flat "never opens a listening socket" is likewise qualified.
+
+- `.github/SECURITY.md` now states the parse resource bounds a hostile checkout meets — the wall
+  clock and the 2 GB address-space cap, and what `stats.json` records when either trips — and says
+  plainly that **the memory cap is not enforced on macOS**, which honours neither `RLIMIT_AS` nor a
+  Job Object, leaving the wall clock as the only bound there. The code was already honest about it
+  (`parsepool._cap_memory`); the security documentation was silent, so a reader would have assumed
+  the cap was cross-platform. Index untrusted checkouts on macOS under an external memory limit.
 
 - CodeQL replaces GitHub's default code-scanning setup rather than running beside it: Code Scanning
   refuses an advanced configuration's SARIF while default setup is enabled, so the two cannot

@@ -556,3 +556,75 @@ def test_affected_tests_does_not_follow_a_shadowed_builtin(tmp_path):
     assert res["shadowed_builtin_skipped"] == 12, res["shadowed_builtin_skipped"]
     assert res["truncated"] is True
     assert "shadowed builtin" in res["incomplete_reason"]
+
+
+def test_affected_tests_admits_it_cannot_see_fixture_injection(tmp_path):
+    """Reaching a conftest means the untraceable consumers must be declared.
+
+    A test that *receives* a pytest fixture never calls it by name, so there is
+    no call edge and the consumer is invisible to the walk. Here 30 tests reach
+    the modified function only that way: the selection is `['tests/conftest.py']`
+    and the frontier drains, so without this guard the answer would be reported
+    as complete while missing every test that actually exercises the change.
+    """
+    from repo2graph.graphdiff import find_affected_tests, render_pr_summary_text
+    from repo2graph.query import Index
+
+    repo = tmp_path / "fixture_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def setup_database():\n    return {'ok': True}\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom db import setup_database\n\n"
+        "@pytest.fixture\ndef db_fixture():\n    return setup_database()\n",
+    )
+    for i in range(5):
+        w(f"tests/test_db_{i}.py", f"def test_db_{i}(db_fixture):\n    assert db_fixture\n")
+
+    idx_out = tmp_path / "fixture_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+
+    # The gap itself is a parser limitation and is not fixed here; what is
+    # asserted is that it is no longer silent.
+    assert "tests/conftest.py" in res["affected_tests"]
+    assert res["truncated"] is True, res
+    assert "fixture by injection" in res["incomplete_reason"]
+    assert "WARNING" in render_pr_summary_text(res)
+
+
+def test_affected_tests_stays_complete_without_a_conftest(tmp_path):
+    """The fixture caveat must not fire on a repo that has no conftest in range.
+
+    `truncated` is only useful if it means something, so the guard is
+    conditioned on actually reaching a conftest rather than on the repository
+    containing fixtures anywhere.
+    """
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "plain_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def setup_database():\n    return 1\n")
+    w(
+        "tests/test_db.py",
+        "from db import setup_database\n\ndef test_db():\n    assert setup_database() == 1\n",
+    )
+
+    idx_out = tmp_path / "plain_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+    assert "tests/test_db.py" in res["affected_tests"]
+    assert res["truncated"] is False, res["incomplete_reason"]

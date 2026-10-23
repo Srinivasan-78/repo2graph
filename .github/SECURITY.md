@@ -120,6 +120,19 @@ One network caveat: in a *partial* clone (`git clone --filter=blob:none`), git f
 objects from the remote on demand, so `--git-history` can make network requests that a build is
 otherwise documented not to make. Index a full clone (`fetch-depth: 0` in Actions) to avoid it.
 
+A checkout also controls how *expensive* it is to parse. Some inputs are pathological rather than
+malformed — `x = a<b<a<b<…;` read as C++ grows quadratically in both time and memory — so each
+parse worker carries two bounds: a wall clock (`--parse-timeout`, 10 s by default) and an address
+space cap (2 GB). Whichever trips first, the file keeps its file node, gets no symbols, and is
+counted in `stats.json` as `skipped_parse_timeout` or `skipped_parse_crash`; `--parse-policy
+strict` turns that into a build failure naming the file instead.
+
+**The memory cap is not enforced on macOS.** It uses `RLIMIT_AS` on Linux and a Job Object on
+Windows, and macOS honours neither for this purpose, so there the wall clock is the only bound. A
+parse that allocates faster than it runs long can therefore still exhaust memory on a macOS host.
+Indexing a genuinely untrusted checkout on macOS should run under an external limit — a container
+with `--memory`, or a VM — rather than relying on the in-process cap.
+
 ## Index trust model
 
 A `repo2graph` index (`.r2g` directory) is **trusted input equivalent to source code**. An index carries

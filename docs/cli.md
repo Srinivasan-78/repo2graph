@@ -695,15 +695,21 @@ and `--affected-tests` warns on stderr while leaving stdout the bare file list
 you are parsing. Treat `truncated` as "run the full suite" — the subset is a
 speed-up, not a correctness boundary.
 
-**One gap `truncated` cannot see.** A pytest test that reaches your code only
-through *fixture injection* — it declares a `conftest.py` fixture as a parameter
-and never calls it by name — has no call edge to follow, because nothing in the
+**The fixture-injection gap.** A pytest test that reaches your code only through
+*fixture injection* — it declares a `conftest.py` fixture as a parameter and
+never calls it by name — has no call edge to follow, because nothing in the
 source text is a call. The graph cannot record an edge that was never written,
-so such a test is missed and the result still reports `truncated: false`. A test
-that calls a helper in `conftest.py` explicitly is found (helpers under `tests/`
-are expanded, not treated as leaves); a test that only *injects* a fixture is
-not. If your suite leans on fixtures for setup — most do — do not use this as
-the sole gate on what CI runs.
+so such a test cannot be detected. A test that calls a helper in `conftest.py`
+explicitly *is* found (helpers under `tests/` are expanded, not treated as
+leaves); a test that only injects a fixture is not.
+
+What the walk can tell is that it is standing on the mechanism: if it reaches a
+`conftest.py` at all, `truncated` is set and `incomplete_reason` names fixture
+injection, so this failure is loud rather than silent. It is conditioned on
+actually reaching one rather than on the repository containing fixtures, so it
+stays meaningful. The underlying limitation is not fixed — if your suite leans
+on fixtures for setup, and most do, treat a `conftest.py` in the output as "run
+the full suite".
 
 ## `index-status` — is this index current, and what is in it?
 

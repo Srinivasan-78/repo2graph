@@ -476,7 +476,17 @@ def open_graph_store(index_dir: Path | str, kind: str = "memory") -> GraphStore 
     env_cache = os.environ.get("REPO2GRAPH_CACHE_DIR")
     if env_cache:
         target_dir = Path(env_cache)
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # An operator-supplied path, so it can be anything: a file standing
+        # where a directory must go, a device, somewhere unwritable. This
+        # `mkdir` sits outside the `OSError` handling further down, so any of
+        # those surfaced as a raw traceback -- the same defect #501 fixed for
+        # the primary path, reached through the env var instead.
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StoreUnusable(
+                f"REPO2GRAPH_CACHE_DIR={env_cache!r} is not a usable directory: {exc}"
+            ) from None
         db = target_dir / _cache_file_name(index_dir)
     else:
         db = index_dir / SQLITE_CACHE_NAME
@@ -500,7 +510,14 @@ def open_graph_store(index_dir: Path | str, kind: str = "memory") -> GraphStore 
             if _is_fresh(existing):
                 return existing
             existing.close()
-        except sqlite3.DatabaseError:
+        except (sqlite3.DatabaseError, OSError):
+            # `OSError` as well as a SQLite error: opening the cache can fail
+            # for reasons SQLite never sees, such as a file another process has
+            # locked at the OS level on Windows, or one whose permissions were
+            # changed since it was written. Either way the right move is the
+            # same as for a corrupt file -- fall through and rebuild -- rather
+            # than letting it escape, which `_open_index` does not catch and so
+            # became a traceback.
             pass
 
     def _materialize_at(target_db: Path) -> SqliteGraphStore:

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import write_simple_repo
 
 from repo2graph.cli import main
 from repo2graph.export import path as artifact_path
@@ -365,3 +366,27 @@ def test_build_lock_prefers_the_sibling_when_the_parent_is_writable():
     with lock:
         assert lock.lock_file == base / ".out.r2glock", lock.lock_file
         assert not (out / ".r2glock").exists()
+
+
+def test_an_unusable_cache_dir_is_diagnosed_not_a_traceback(tmp_path, monkeypatch, capsys):
+    """`REPO2GRAPH_CACHE_DIR` is operator-supplied, so it can be anything.
+
+    Its `mkdir` sits outside the `OSError` handling that guards the primary
+    path, so a file standing where the directory must go escaped as a raw
+    `FileExistsError` -- `_open_index` catches `(KeyError, ValueError,
+    FileNotFoundError, StoreUnusable)`, and that is none of them. Same defect as
+    #501, reached through the env var instead.
+    """
+    repo = write_simple_repo(tmp_path)
+    out = tmp_path / "idx"
+    main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+    capsys.readouterr()
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory", encoding="utf8")
+    monkeypatch.setenv("REPO2GRAPH_CACHE_DIR", str(blocker / "cache"))
+
+    with pytest.raises(SystemExit) as exc:
+        main(["query", "hello", "-o", str(out), "--store", "sqlite"])
+    assert "cannot use --store" in str(exc.value)
+    assert "REPO2GRAPH_CACHE_DIR" in str(exc.value)
