@@ -1,14 +1,13 @@
 {
   "format": "repo2graph/1",
-  "build_id": "69d316ba-47bc-454c-b5fd-b9e090ec3437",
+  "build_id": "56f39dd4-88f9-4d44-97af-cc64d0be9d64",
   "tool_version": "4.0.0",
   "schema_version": 1,
-  "created_at": "2026-10-19T09:36:44.531035+00:00",
+  "created_at": "2026-10-23T18:29:11.125322+00:00",
   "source_revision": {
-    "commit": "48afbeba61797f3b853c4151cd77208f52fdb49c",
-    "short_commit": "48afbeb",
+    "commit": "9f65d4b759be9f3e6e106856f1e11f0986a383e2",
+    "short_commit": "9f65d4b",
     "branch": "main",
-    "tag": "v4.0.0-0-g48afbeb",
     "dirty": false,
     "base_branch": "main",
     "remote_url": "https://github.com/Srinivasan-78/repo2graph"
@@ -17,19 +16,19 @@
   "incomplete": false,
   "limits_hit": {},
   "checksums": {
-    "agent/nodes.jsonl": "sha256:2f6f3a8cdae3c96e2fd438f824d3463a8352ce66cc8f4f9e3d7e8f9880bdee83",
-    "agent/edges.jsonl": "sha256:1b2b8be4ef4ed76fd1858a6b1ec7e12e417195a5c4819144e11a0334bc32cc16",
-    "agent/chunks.jsonl": "sha256:ac553bf03cf7b8c1ff1ccfd58b0774f149f64aea357709362bc24265b34534b7",
-    "agent/bm25.jsonl": "sha256:3dc55e94f7f836ad6b91b4082c5fdd1813c1b9afc90f2add48c18fab4f153b21",
-    "agent/bm25.meta.json": "sha256:0bd6cd1d49ca925c24a7ea4cbf8928ce342c56252d364ecfda6d2187646c0438",
-    "human/graph.graphml": "sha256:b7208f0e280f89705bd48432c077e340a303ba94de54720d2501a34320ad7a33",
-    "agent/graph.cypher": "sha256:3412aed4adc834ade619d3e06fff3dd438976a138082d72e77461574d340728a",
-    "human/overview.md": "sha256:a6b3a3584fb66834cabc99dc3fca984caec48bcfc607b48183a751f65f951d3e",
-    "agent/overview.md": "sha256:5604ef276c9cede937e9578005a8481d1b9331323c697aaa6eb7fd4fce78478e",
-    "human/graph.html": "sha256:a63f7913d25e29bb35ae1d85add72e454f9a86c7949a7ecf80100a66e0d0fde9",
-    "agent/stats.json": "sha256:ad9119751e41ce9756193dada0c19ca47d0bf0af48e6befbfe581c3caa2b79a5",
-    "agent/index.state.json": "sha256:077d14f1354e54d246a41eb5a33c821c7976258da829fa12ef360876930b30c0",
-    "agent/parse.cache.json": "sha256:edd64de76dde20a6af0ae3c5bbbdb7f26bcfe694b397b80b329636ebb8204d3a",
+    "agent/nodes.jsonl": "sha256:2400db75e4d2505e5bb91b8bf8cafac76bab328c9f6e5167caa270faa82f1649",
+    "agent/edges.jsonl": "sha256:2ed5a35cc2106ad6c579e34fe29be45bc66bb9683f03338f78fdb456a2ccbf1b",
+    "agent/chunks.jsonl": "sha256:328b9180ae52171ffc84674cdbb2f0b83c5305a0c3d785b3390d10bc2efb7950",
+    "agent/bm25.jsonl": "sha256:5c2c212d3b821a82f5d4dd6f19cb6d4c5eed3d392282a8a2ba5a81d2e476603b",
+    "agent/bm25.meta.json": "sha256:96fe731db682f8a67fea3fcc08b6f4c805c4db94fd1d036bd133a4671ae0a619",
+    "human/graph.graphml": "sha256:ccb62de28ca49b7d826e293797e1f4b87d8c78cbf0d22c532d9975aeb4fe5340",
+    "agent/graph.cypher": "sha256:077a3915f5baf35d0ff4d4860acea7b611b9940dba788382be4f849b08ac465f",
+    "human/overview.md": "sha256:75ad57a2b644602c61e8cdac2486a7bbb263cd40286734748e170e05d70ac19a",
+    "agent/overview.md": "sha256:7315c39f05ba0d3afd24a0f144192a15c37c3e0826ce6624df3edbb063a6081a",
+    "human/graph.html": "sha256:091e1bbe28b6a86d27858a5f2a0c71c763cf241cca21f8dda8f29c1f0501ca70",
+    "agent/stats.json": "sha256:1ed9b6d7308cc5124ede1c3008bb70db3d737b46715dbe4c371f296d73d68f04",
+    "agent/index.state.json": "sha256:428f0954c7e6ffe3857750e8348582832ead286d3409f0310c635b8bb862017c",
+    "agent/parse.cache.json": "sha256:823e38412a4d205172619a612cdd82464b23cf0c727fa92abb4bd220c0447130",
     "human/CHANGELOG.md": "sha256:0ea237c8224b394c140f404e2329a1ab05feb80b677dbcac467756f220c39dbc"
   },
   "repo": "repo2graph",
@@ -138,58 +137,58 @@
     "skipped_gitignore": 4,
     "skipped_binary": 9,
     "skipped_dotfile": 2,
-    "files": 390,
-    "edge:CONTAINS": 473,
-    "parsed": 254,
+    "files": 399,
+    "edge:CONTAINS": 482,
+    "parsed": 261,
     "parse_errors": 0,
-    "symbol:function": 3374,
-    "edge:DEFINES": 3706,
-    "edge:IMPORTS": 1853,
-    "imports_unresolved": 1216,
-    "imports_resolved": 1457,
-    "symbol:class": 223,
+    "symbol:function": 3604,
+    "edge:DEFINES": 3947,
+    "edge:IMPORTS": 1971,
+    "imports_unresolved": 1299,
+    "imports_resolved": 1579,
+    "symbol:class": 234,
     "symbol:method": 80,
     "symbol:interface": 25,
     "symbol:type": 4,
     "redacted_secret_metadata": 4,
-    "edge:CALLS_EXTERNAL": 8369,
-    "calls_external": 8369,
-    "edge:CALLS": 9300,
-    "calls_scoped": 4742,
-    "calls_ambiguous": 1440,
-    "ambiguous_calls": 1440,
-    "calls_untyped_receiver": 1072,
-    "edge:INHERITS": 17,
-    "unresolved_bases": 58,
-    "calls_unique_global": 668,
-    "calls_shadowed_builtin": 52,
+    "edge:CALLS_EXTERNAL": 8933,
+    "calls_external": 8933,
+    "edge:CALLS": 9870,
+    "calls_scoped": 5039,
+    "calls_ambiguous": 1586,
+    "ambiguous_calls": 1586,
+    "calls_untyped_receiver": 1141,
+    "edge:INHERITS": 19,
+    "unresolved_bases": 62,
+    "calls_unique_global": 699,
+    "calls_shadowed_builtin": 54,
     "cochange_requested_commits": 500,
-    "cochange_sampled_commits": 401,
+    "cochange_sampled_commits": 407,
     "cochange_min_pairs": 3,
-    "cochange_commits_skipped": 16,
-    "edge:CO_CHANGE": 572,
-    "edge:TESTS": 17799,
-    "testable_symbols": 1072,
-    "tested_symbols": 578,
-    "entrypoints": 2143,
-    "nodes": 5063,
-    "edges": 42089,
+    "cochange_commits_skipped": 17,
+    "edge:CO_CHANGE": 578,
+    "edge:TESTS": 18941,
+    "testable_symbols": 1159,
+    "tested_symbols": 617,
+    "entrypoints": 2268,
+    "nodes": 5362,
+    "edges": 44741,
     "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
-    "redacted_secret_chunks": 201,
+    "redacted_secret_chunks": 205,
     "hidden_unicode_chars": 6
   },
   "quality_metrics": {
-    "files_discovered": 390,
-    "files_parsed": 254,
+    "files_discovered": 399,
+    "files_parsed": 261,
     "parse_errors": 0,
     "files_with_parse_errors": 0,
-    "imports_resolved": 1457,
-    "imports_unresolved": 1216,
-    "calls_scoped": 4742,
-    "calls_unique_global": 668,
-    "calls_ambiguous": 1440,
-    "calls_external": 8369,
-    "calls_untyped_receiver": 1072
+    "imports_resolved": 1579,
+    "imports_unresolved": 1299,
+    "calls_scoped": 5039,
+    "calls_unique_global": 699,
+    "calls_ambiguous": 1586,
+    "calls_external": 8933,
+    "calls_untyped_receiver": 1141
   },
   "entrypoints": [
     {
@@ -197,175 +196,175 @@
       "path": "repo2graph/cli.py",
       "qualname": "cmd_rag",
       "kind": "function",
-      "reach": 544
+      "reach": 596
     },
     {
       "id": "sym:scripts/generate_examples.py::main",
       "path": "scripts/generate_examples.py",
       "qualname": "main",
       "kind": "function",
-      "reach": 433
+      "reach": 465
     },
     {
       "id": "sym:tests/test_index_status.py::test_github_build_is_reported_as_remote_not_stale",
       "path": "tests/test_index_status.py",
       "qualname": "test_github_build_is_reported_as_remote_not_stale",
       "kind": "function",
-      "reach": 422
+      "reach": 459
     },
     {
       "id": "sym:tests/test_repo2graph.py::test_index_github_options",
       "path": "tests/test_repo2graph.py",
       "qualname": "test_index_github_options",
       "kind": "function",
-      "reach": 405
+      "reach": 443
     },
     {
       "id": "sym:repo2graph/cli.py::cmd_github",
       "path": "repo2graph/cli.py",
       "qualname": "cmd_github",
       "kind": "function",
-      "reach": 403
-    },
-    {
-      "id": "sym:tests/test_audit_cli.py::test_mcp_auto_build_skips_output_dir",
-      "path": "tests/test_audit_cli.py",
-      "qualname": "test_mcp_auto_build_skips_output_dir",
-      "kind": "function",
-      "reach": 391
+      "reach": 440
     },
     {
       "id": "sym:tests/test_file_limits.py::test_truncate_marks_manifest_and_overview_incomplete_and_doctor_detects",
       "path": "tests/test_file_limits.py",
       "qualname": "test_truncate_marks_manifest_and_overview_incomplete_and_doctor_detects",
       "kind": "function",
-      "reach": 388
+      "reach": 427
     },
     {
       "id": "sym:tests/test_schema.py::test_inherits_and_external_records_are_declared",
       "path": "tests/test_schema.py",
       "qualname": "test_inherits_and_external_records_are_declared",
       "kind": "function",
-      "reach": 385
+      "reach": 424
     },
     {
       "id": "sym:tests/test_explain.py::secret_repo",
       "path": "tests/test_explain.py",
       "qualname": "secret_repo",
       "kind": "function",
-      "reach": 384
+      "reach": 423
     },
     {
       "id": "sym:tests/test_resource_limits.py::test_max_bytes_stops_at_a_prefix_of_discovery_order",
       "path": "tests/test_resource_limits.py",
       "qualname": "test_max_bytes_stops_at_a_prefix_of_discovery_order",
       "kind": "function",
-      "reach": 382
+      "reach": 421
     },
     {
       "id": "sym:tests/test_resolution_heuristics.py::test_ambiguous_calls_stat_non_heuristic_fanout",
       "path": "tests/test_resolution_heuristics.py",
       "qualname": "test_ambiguous_calls_stat_non_heuristic_fanout",
       "kind": "function",
-      "reach": 374
+      "reach": 411
     },
     {
       "id": "sym:tests/test_secrets_hardening.py::test_policy_off_index_is_redacted_at_serve_time_for_agents",
       "path": "tests/test_secrets_hardening.py",
       "qualname": "test_policy_off_index_is_redacted_at_serve_time_for_agents",
       "kind": "function",
-      "reach": 362
+      "reach": 383
     },
     {
       "id": "sym:tests/test_secrets_hardening.py::test_include_secrets_keeps_content_redaction_on",
       "path": "tests/test_secrets_hardening.py",
       "qualname": "test_include_secrets_keeps_content_redaction_on",
       "kind": "function",
-      "reach": 359
+      "reach": 380
     },
     {
       "id": "sym:tests/test_secrets_hardening.py::test_repo_read_redacts_at_serve_time_like_repo_search_does",
       "path": "tests/test_secrets_hardening.py",
       "qualname": "test_repo_read_redacts_at_serve_time_like_repo_search_does",
       "kind": "function",
-      "reach": 359
+      "reach": 380
     },
     {
       "id": "sym:tests/test_secrets_hardening.py::test_terraform_state_and_json_passwords_never_reach_any_output",
       "path": "tests/test_secrets_hardening.py",
       "qualname": "test_terraform_state_and_json_passwords_never_reach_any_output",
       "kind": "function",
-      "reach": 358
+      "reach": 379
     },
     {
       "id": "sym:tests/test_secrets_hardening.py::test_repo_read_leaves_text_alone_when_build_time_redaction_applied",
       "path": "tests/test_secrets_hardening.py",
       "qualname": "test_repo_read_leaves_text_alone_when_build_time_redaction_applied",
       "kind": "function",
-      "reach": 346
+      "reach": 369
     },
     {
       "id": "sym:tests/test_output_schema.py::test_mcp_neighbours_marks_an_ambiguous_edge",
       "path": "tests/test_output_schema.py",
       "qualname": "test_mcp_neighbours_marks_an_ambiguous_edge",
       "kind": "function",
-      "reach": 345
+      "reach": 368
     },
     {
       "id": "sym:tests/test_cpp_parse.py::test_cpp_fallback_line_numbers_match_original",
       "path": "tests/test_cpp_parse.py",
       "qualname": "test_cpp_fallback_line_numbers_match_original",
       "kind": "function",
-      "reach": 326
+      "reach": 365
     },
     {
       "id": "sym:tests/test_symbol_identity.py::test_every_definition_has_its_own_node_and_chunk",
       "path": "tests/test_symbol_identity.py",
       "qualname": "test_every_definition_has_its_own_node_and_chunk",
       "kind": "function",
-      "reach": 324
+      "reach": 363
     },
     {
       "id": "sym:tests/test_scoped_resolution.py::test_low_confidence_calls_do_not_count_for_hotspots_or_entrypoints",
       "path": "tests/test_scoped_resolution.py",
       "qualname": "test_low_confidence_calls_do_not_count_for_hotspots_or_entrypoints",
       "kind": "function",
-      "reach": 315
+      "reach": 354
     },
     {
       "id": "sym:tests/test_scoped_resolution.py::test_overload_fan_out_still_counts_as_called",
       "path": "tests/test_scoped_resolution.py",
       "qualname": "test_overload_fan_out_still_counts_as_called",
       "kind": "function",
-      "reach": 315
+      "reach": 354
     },
     {
       "id": "sym:tests/test_grammar_availability.py::test_a_chunked_file_is_not_counted_as_parsed_when_its_grammar_is_gone",
       "path": "tests/test_grammar_availability.py",
       "qualname": "test_a_chunked_file_is_not_counted_as_parsed_when_its_grammar_is_gone",
       "kind": "function",
-      "reach": 314
+      "reach": 353
     },
     {
       "id": "sym:tests/test_grammar_availability.py::test_a_chunked_file_parses_normally_when_the_grammar_loads",
       "path": "tests/test_grammar_availability.py",
       "qualname": "test_a_chunked_file_parses_normally_when_the_grammar_loads",
       "kind": "function",
-      "reach": 314
+      "reach": 353
+    },
+    {
+      "id": "sym:tests/test_parse_budget.py::test_a_runaway_parse_is_stopped_and_counted",
+      "path": "tests/test_parse_budget.py",
+      "qualname": "test_a_runaway_parse_is_stopped_and_counted",
+      "kind": "function",
+      "reach": 353
     },
     {
       "id": "sym:tests/test_grammar_availability.py::test_build_does_not_fail_on_a_repo_with_no_supported_source",
       "path": "tests/test_grammar_availability.py",
       "qualname": "test_build_does_not_fail_on_a_repo_with_no_supported_source",
       "kind": "function",
-      "reach": 313
+      "reach": 352
     },
     {
       "id": "sym:tests/test_prompt_isolation.py::test_newline_in_filename_cannot_forge_a_citation",
       "path": "tests/test_prompt_isolation.py",
       "qualname": "test_newline_in_filename_cannot_forge_a_citation",
       "kind": "function",
-      "reach": 313
+      "reach": 352
     }
   ],
   "entrypoint_rule": "a function or method that no CALLS edge points at and that is not nested inside another function",

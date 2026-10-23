@@ -3,122 +3,123 @@
   "skipped_gitignore": 4,
   "skipped_binary": 9,
   "skipped_dotfile": 2,
-  "files": 390,
-  "edge:CONTAINS": 473,
-  "parsed": 254,
+  "files": 399,
+  "edge:CONTAINS": 482,
+  "parsed": 261,
   "parse_errors": 0,
-  "symbol:function": 3374,
-  "edge:DEFINES": 3706,
-  "edge:IMPORTS": 1853,
-  "imports_unresolved": 1216,
-  "imports_resolved": 1457,
-  "symbol:class": 223,
+  "symbol:function": 3604,
+  "edge:DEFINES": 3947,
+  "edge:IMPORTS": 1971,
+  "imports_unresolved": 1299,
+  "imports_resolved": 1579,
+  "symbol:class": 234,
   "symbol:method": 80,
   "symbol:interface": 25,
   "symbol:type": 4,
   "redacted_secret_metadata": 4,
-  "edge:CALLS_EXTERNAL": 8369,
-  "calls_external": 8369,
-  "edge:CALLS": 9300,
-  "calls_scoped": 4742,
-  "calls_ambiguous": 1440,
-  "ambiguous_calls": 1440,
-  "calls_untyped_receiver": 1072,
-  "edge:INHERITS": 17,
-  "unresolved_bases": 58,
-  "calls_unique_global": 668,
-  "calls_shadowed_builtin": 52,
+  "edge:CALLS_EXTERNAL": 8933,
+  "calls_external": 8933,
+  "edge:CALLS": 9870,
+  "calls_scoped": 5039,
+  "calls_ambiguous": 1586,
+  "ambiguous_calls": 1586,
+  "calls_untyped_receiver": 1141,
+  "edge:INHERITS": 19,
+  "unresolved_bases": 62,
+  "calls_unique_global": 699,
+  "calls_shadowed_builtin": 54,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 401,
+  "cochange_sampled_commits": 407,
   "cochange_min_pairs": 3,
-  "cochange_commits_skipped": 16,
-  "edge:CO_CHANGE": 572,
-  "edge:TESTS": 17799,
-  "testable_symbols": 1072,
-  "tested_symbols": 578,
-  "entrypoints": 2143,
-  "nodes": 5063,
-  "edges": 42089,
+  "cochange_commits_skipped": 17,
+  "edge:CO_CHANGE": 578,
+  "edge:TESTS": 18941,
+  "testable_symbols": 1159,
+  "tested_symbols": 617,
+  "entrypoints": 2268,
+  "nodes": 5362,
+  "edges": 44741,
   "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
-  "redacted_secret_chunks": 201,
+  "redacted_secret_chunks": 205,
   "hidden_unicode_chars": 6,
-  "total_symbols": 3706,
+  "total_symbols": 3947,
   "top_hub_nodes": [
     {
-      "node_id": "sym:repo2graph/scip.py::_Strings.get",
-      "label": "_Strings.get",
-      "in_degree": 410
-    },
-    {
-      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
-      "label": "ResultCache.get",
-      "in_degree": 408
-    },
-    {
-      "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
-      "label": "TaskManager.get",
-      "in_degree": 397
+      "node_id": "sym:repo2graph/query.py::SqliteByNode.get",
+      "label": "SqliteByNode.get",
+      "in_degree": 431
     },
     {
       "node_id": "sym:repo2graph/answer.py::_writer.write_text",
       "label": "_writer.write_text",
-      "in_degree": 353
+      "in_degree": 376
     },
     {
       "node_id": "sym:repo2graph/query.py::Index",
       "label": "Index",
-      "in_degree": 234
+      "in_degree": 248
+    },
+    {
+      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
+      "label": "ResultCache.get",
+      "in_degree": 216
+    },
+    {
+      "node_id": "sym:repo2graph/scip.py::_Strings.get",
+      "label": "_Strings.get",
+      "in_degree": 215
+    },
+    {
+      "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
+      "label": "TaskManager.get",
+      "in_degree": 203
     },
     {
       "node_id": "sym:tests/_pool_stdio_probe.py::main",
       "label": "main",
-      "in_degree": 165
+      "in_degree": 188
     },
     {
       "node_id": "sym:tests/_mcp_pool_server.py::main",
       "label": "main",
-      "in_degree": 163
+      "in_degree": 186
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::_run.main",
       "label": "_run.main",
-      "in_degree": 163
+      "in_degree": 186
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::test_auto_build_annotations_admit_side_effects.main",
       "label": "test_auto_build_annotations_admit_side_effects.main",
-      "in_degree": 163
-    },
-    {
-      "node_id": "sym:repo2graph/graph.py::build",
-      "label": "build",
-      "in_degree": 143
+      "in_degree": 186
     }
   ],
   "languages": {
-    "python": 219,
+    "python": 226,
     "md": 54,
     "json": 41,
     "typescript": 25,
-    "yml": 23,
+    "yml": 24,
     "tsx": 8,
     "toml": 3,
     "javascript": 2,
     "yaml": 2,
     "txt": 2,
     "cff": 1,
+    "typed": 1,
     "lock": 1
   },
   "has_vectors": false,
   "index_schema_version": "2",
   "limits_hit": {},
-  "tested_symbol_fraction": 0.539,
-  "built_at_commit": "48afbeb",
+  "tested_symbol_fraction": 0.532,
+  "built_at_commit": "9f65d4b",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/cli.py",
       "file_b": "repo2graph/export.py",
-      "weight": 26
+      "weight": 27
     },
     {
       "file_a": "repo2graph/export.py",

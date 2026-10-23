@@ -4,27 +4,27 @@
 
 | Metric | Value |
 | --- | --- |
-| Files indexed | 390 |
-| Functions | 3374 |
-| Classes | 223 |
-| Total edges | 42089 |
-| Languages | python=219, md=54, json=41, typescript=25, yml=23, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1 |
-| Built at | 48afbeb |
+| Files indexed | 399 |
+| Functions | 3604 |
+| Classes | 234 |
+| Total edges | 44741 |
+| Languages | python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1 |
+| Built at | 9f65d4b |
 
 ## Top 10 most-connected files (by in-degree)
 
 | Rank | File | In-degree | Dominant edge type |
 | --- | --- | --- | --- |
-| 1 | repo2graph/query.py | 76 | IMPORTS |
-| 2 | repo2graph/parse.py | 65 | IMPORTS |
-| 3 | repo2graph/export.py | 62 | IMPORTS |
+| 1 | repo2graph/query.py | 80 | IMPORTS |
+| 2 | repo2graph/export.py | 66 | IMPORTS |
+| 3 | repo2graph/parse.py | 66 | IMPORTS |
 | 4 | repo2graph/graph.py | 60 | IMPORTS |
-| 5 | benchmarks/corpus/python_backend/app/main.py | 53 | IMPORTS |
+| 5 | benchmarks/corpus/python_backend/app/main.py | 58 | IMPORTS |
 | 6 | repo2graph/chunks.py | 28 | IMPORTS |
-| 7 | tests/test_doc_consistency.py | 26 | CO_CHANGE |
-| 8 | repo2graph/cli.py | 24 | CO_CHANGE |
-| 9 | tests/test_mcp.py | 24 | CO_CHANGE |
-| 10 | tests/test_repo2graph.py | 24 | CO_CHANGE |
+| 7 | tests/test_doc_consistency.py | 27 | CO_CHANGE |
+| 8 | tests/conftest.py | 25 | IMPORTS |
+| 9 | repo2graph/cli.py | 24 | CO_CHANGE |
+| 10 | repo2graph/events.py | 24 | IMPORTS |
 
 ## CO_CHANGE hotspots
 
@@ -32,7 +32,7 @@ These files are frequently edited together — treat as implicit dependencies ev
 
 | File A | File B | Co-change count |
 | --- | --- | --- |
-| repo2graph/cli.py | repo2graph/export.py | 26 |
+| repo2graph/cli.py | repo2graph/export.py | 27 |
 | repo2graph/export.py | tests/test_repo2graph.py | 26 |
 | repo2graph/graph.py | tests/test_repo2graph.py | 26 |
 | repo2graph/cli.py | repo2graph/graph.py | 25 |
@@ -42,14 +42,14 @@ These files are frequently edited together — treat as implicit dependencies ev
 
 | Edge type | Count | % of total |
 | --- | --- | --- |
-| TESTS | 17799 | 42.3% |
-| CALLS | 9300 | 22.1% |
-| CALLS_EXTERNAL | 8369 | 19.9% |
-| DEFINES | 3706 | 8.8% |
-| IMPORTS | 1853 | 4.4% |
-| CO_CHANGE | 572 | 1.4% |
-| CONTAINS | 473 | 1.1% |
-| INHERITS | 17 | 0.0% |
+| TESTS | 18941 | 42.3% |
+| CALLS | 9870 | 22.1% |
+| CALLS_EXTERNAL | 8933 | 20.0% |
+| DEFINES | 3947 | 8.8% |
+| IMPORTS | 1971 | 4.4% |
+| CO_CHANGE | 578 | 1.3% |
+| CONTAINS | 482 | 1.1% |
+| INHERITS | 19 | 0.0% |
 
 ## What was skipped
 
