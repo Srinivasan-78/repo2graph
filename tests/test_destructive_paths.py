@@ -16,6 +16,8 @@ cwd, so a pathless MCP config indexed whatever directory the client launched in
 -- a home folder, a desktop, or a OneDrive root.
 """
 
+import errno
+import os
 from pathlib import Path
 
 import pytest
@@ -154,3 +156,46 @@ def test_an_explicit_out_is_still_trusted(tmp_path):
 def test_an_explicit_repo_is_still_trusted(tmp_path):
     _out, repo = _mcp().resolve_paths(repo=str(tmp_path))
     assert repo == tmp_path
+
+
+def test_a_build_survives_a_read_only_parent_of_the_output_directory(tmp_path, monkeypatch):
+    """The documented read-only container run must actually produce an index.
+
+    `.github/SECURITY.md` describes running the image with a read-only rootfs
+    and only `-o /out` mounted writable. Both halves of the write path put
+    their scratch directory *beside* the target -- `BuildLock`'s
+    `.out.r2glock` and `dump_all`'s `.out.staging.<pid>` -- so with `/`
+    read-only the build took the lock failure first and, once that was fixed,
+    died at the staging `mkdir` after doing all of its work. Nothing caught it
+    because the container CI job is newer than the bug.
+
+    Only the sibling staging `mkdir` is blocked, rather than every write under
+    the parent: patching `builtins.open` globally also reaches the parse
+    workers and pytest's own temp handling, which on Windows surfaced as an
+    unrelated `PermissionError`. `BuildLock`'s own fallback is covered
+    directly by `tests/test_store.py`.
+    """
+    real_mkdir = os.mkdir
+
+    def fake_mkdir(path, *args, **kwargs):
+        # Only the *sibling* staging directory, `.out.staging.<pid>.<hex>`.
+        # The in-target fallback is `.staging.<pid>.<hex>` -- matching on
+        # `.staging.` alone blocks that too, and the build has nowhere left.
+        if Path(str(path)).name.startswith(".out.staging."):
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_mkdir(path, *args, **kwargs)
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f():\n    return 1\n", encoding="utf8")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    monkeypatch.setattr(os, "mkdir", fake_mkdir)
+    rc = main(["build", str(repo), "-o", str(out), "--formats", "jsonl"])
+
+    assert rc == 0
+    assert (out / "agent" / "nodes.jsonl").is_file()
+    assert (out / "agent" / "chunks.jsonl").is_file()
+    # The in-target staging directory is scratch, not an artifact.
+    assert [q.name for q in out.iterdir() if ".staging" in q.name] == []

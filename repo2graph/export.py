@@ -1,5 +1,6 @@
 """Serialize the graph: JSONL, GraphML, Cypher, overview, HTML map."""
 
+import errno
 import json
 import math
 import os
@@ -1427,6 +1428,42 @@ def _rename(src: Path, dst: Path) -> None:
             time.sleep(delay)
 
 
+#: Errnos that mean "this directory cannot be written at all", as opposed to a
+#: transient failure worth retrying. `ENOENT`/`ENOTDIR` are deliberately absent:
+#: here the parent of `outdir` is what failed, and those two would mean the path
+#: is wrong rather than read-only, which should still be an error.
+_UNWRITABLE_PARENT_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+def _merge_staging_into(staging: Path, target: Path) -> None:
+    """Move staged entries into `target`, replacing what is there.
+
+    The fallback for a read-only parent, where `_atomic_dir_swap` cannot work:
+    renaming a directory needs write permission on the parent of *both* names,
+    and `staging` lives inside `target` here precisely because the parent is not
+    writable.
+
+    The guarantee is therefore weaker and worth stating. Each top-level entry
+    (`agent/`, `human/`, `local.json`) is replaced in one `rename`, so no
+    individual artifact is ever half-written, but the directory as a whole is
+    not swapped in one step: a reader arriving mid-merge can see the new
+    `agent/` beside the old `human/`. The build lock keeps other *builds* out,
+    not concurrent readers.
+    """
+    for entry in sorted(staging.iterdir()):
+        dest = target / entry.name
+        if dest.is_dir() and not dest.is_symlink():
+            shutil.rmtree(dest, ignore_errors=True)
+        elif dest.exists() or dest.is_symlink():
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        _rename(entry, dest)
+    _fsync_dir(target)
+    shutil.rmtree(staging, ignore_errors=True)
+
+
 def _atomic_dir_swap(staging: Path, target: Path) -> None:
     """Atomically replace target directory with staging directory.
 
@@ -1548,10 +1585,24 @@ def dump_all(
         g.build_id = str(_uuid_mod.uuid4())
 
     # Create a sibling staging directory for atomic swap
-    staging_dir = outdir.parent / (
-        f".{outdir.name}.staging.{os.getpid()}.{_uuid_mod.uuid4().hex[:8]}"
-    )
-    staging_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"staging.{os.getpid()}.{_uuid_mod.uuid4().hex[:8]}"
+    staging_dir = outdir.parent / f".{outdir.name}.{suffix}"
+    # A sibling is what makes the swap atomic, but it needs a writable *parent*.
+    # The documented read-only-container run mounts only `-o /out` writable with
+    # `/` read-only, so the sibling cannot be created and the build died after
+    # doing all of its work. Fall back to staging inside the target, which gives
+    # up whole-directory atomicity for per-entry replacement -- the right trade
+    # when the alternative is not writing the index at all.
+    in_target_staging = False
+    try:
+        staging_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_PARENT_ERRNOS:
+            raise
+        outdir.mkdir(parents=True, exist_ok=True)
+        staging_dir = outdir / f".{suffix}"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        in_target_staging = True
 
     # Preserve files written by other commands (embed, github) so they survive
     # the directory swap.
@@ -1624,7 +1675,10 @@ def dump_all(
         write_local(g, staging_dir)
 
         # All writes succeeded: swap staging -> outdir atomically
-        _atomic_dir_swap(staging_dir, outdir)
+        if in_target_staging:
+            _merge_staging_into(staging_dir, outdir)
+        else:
+            _atomic_dir_swap(staging_dir, outdir)
 
     except BaseException:
         # Clean up staging on any failure, leaving the previous build intact

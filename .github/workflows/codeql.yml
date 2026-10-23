@@ -47,7 +47,15 @@ jobs:
         # `.github/scripts/prod-igy.js` and the VS Code extension in
         # `editors/vscode/`, which drives the MCP server and is the one
         # component that renders untrusted repository content into a webview.
-        language: [python, javascript-typescript]
+        #
+        # `actions` is here because this workflow *replaces* GitHub's default
+        # setup rather than running beside it -- Code Scanning refuses an
+        # advanced configuration's SARIF while default setup is enabled, so the
+        # two cannot coexist. Default setup covered `actions`, and dropping it
+        # would have traded workflow-injection coverage for the extended
+        # queries. `zizmor` in `provenance.yml` audits the workflows too, but
+        # it is a linter and does not do CodeQL's dataflow analysis.
+        language: [python, javascript-typescript, actions]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

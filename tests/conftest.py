@@ -21,6 +21,20 @@ import re
 import sys
 from pathlib import Path
 
+# Before anything imports argparse-driven code. Python 3.14 colourises its own
+# argparse help and tracebacks whenever `_colorize.can_colorize()` agrees, and
+# that honours `FORCE_COLOR` regardless of whether the stream is a terminal --
+# which CI sets (`.github/workflows/ci.yml`, `FORCE_COLOR: 1`). Any test that
+# asserts on help text then compares against
+# `\x1b[1;34musage: \x1b[0m\x1b[1;35mrepo2graph\x1b[0m`, so a plain
+# `"usage: repo2graph" in out` fails on 3.14 and nowhere else.
+#
+# `PYTHON_COLORS` is checked first by `can_colorize`, so this wins over
+# `FORCE_COLOR` without touching pytest's own coloured output, which is a
+# separate mechanism. Set here rather than in the workflow so a local
+# `FORCE_COLOR=1` run behaves the same as CI.
+os.environ.setdefault("PYTHON_COLORS", "0")
+
 import pytest
 
 from repo2graph.cli import main

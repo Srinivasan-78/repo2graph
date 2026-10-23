@@ -99,6 +99,41 @@ makes keeping it current a release-blocking step rather than a good intention.
   created `0700`, verified to be ours rather than trusted, and the symlink refusal the primary path
   already applied is applied to the fallback file too.
 
+- **`build -o /out` could not write an index in a read-only container.** `.github/SECURITY.md`
+  documents running the image with a read-only rootfs and only `-o /out` mounted writable, and both halves
+  of the write path put their scratch directory *beside* the target: `BuildLock`'s
+  `/.out.r2glock` and `dump_all`'s `/.out.staging.<pid>`. With `/` read-only the build failed on
+  the lock, and once that was fixed it died at the staging `mkdir` after doing all of its work —
+  so a deployment the security documentation describes in detail could not run at all. Both now
+  fall back inside the target, and only after the sibling has genuinely failed with a
+  permanently-unwritable errno. The staging fallback trades whole-directory atomicity for
+  per-entry replacement, which is documented on `_merge_staging_into`: each of `agent/`, `human/`
+  and `local.json` still lands in one `rename`, but a reader arriving mid-merge can see a new
+  `agent/` beside an old `human/`. Found by the new container CI job, which is newer than the bug.
+
+- **The runaway-parse tests measured the runner, not the parser.** #507 gave each Windows worker a
+  `WORKER_MEMORY_MB` Job Object cap, and the runaway C++ fixture is quadratic in *space* as well as
+  time — so on a constrained runner the cap is reached before the 1 s wall clock. The worker then
+  dies to its own limit, the parent never calls `_kill`, and the file lands in
+  `skipped_parse_crash`; the tests asserted a parent kill and the timeout stat specifically, so
+  they failed on Windows 3.10/3.14 while 3.11–3.13 passed on the same commit. `_abandoned` already
+  gives both bounds the same per-file result and `_skip_reason` already names the memory case, so
+  the product behaviour was right and the tests were over-specific: they now assert the runaway was
+  stopped exactly once and came out symbol-less, whichever bound caught it. Verified both ways by
+  forcing each bound to win.
+
+- **Three test-harness defects that made CI lie.** `_help_long_flags` in
+  `tests/test_doc_consistency.py` regex-scanned argparse help text, and Python 3.14's argparse
+  colourises its own help whenever `FORCE_COLOR` is set — which CI sets. ANSI escapes end in a
+  letter, so `\x1b[36m--store` put a `\w` character before the flag and defeated the `(?<![\w-])`
+  lookbehind: every flag in a colourised usage line went missing, so the CHANGELOG gate reported
+  brand-new flags as nonexistent while the "docs cover every flag" test passed vacuously.
+  `tests/test_packaging.py` imported `tomllib` at module level, which does not exist on the
+  declared 3.10 floor, so the whole file failed collection there. And
+  `test_a_deep_legitimate_file_is_not_a_false_positive` asserted that a deep fixture parses inside
+  the *default* 10 s budget, making the runner's speed part of the assertion; the margin is now
+  checked statically and the content check given an explicit budget.
+
 ### Added
 
 - **`embed-backend` input on the composite Action, and `--embed-backend` on the README (#497).**
@@ -113,6 +148,11 @@ makes keeping it current a release-blocking step rather than a good intention.
 - `.github/SECURITY.md` now carries the SSE transport as an enumerated exception. "No network
   calls" was accurate about outbound traffic but read as "opens no socket", which the new listener
   contradicted; the container section's flat "never opens a listening socket" is likewise qualified.
+
+- CodeQL replaces GitHub's default code-scanning setup rather than running beside it: Code Scanning
+  refuses an advanced configuration's SARIF while default setup is enabled, so the two cannot
+  coexist. `codeql.yml` therefore also scans `actions`, which default setup covered — keeping
+  workflow-injection analysis rather than trading it for the `security-extended` suite.
 
 ### Changed
 

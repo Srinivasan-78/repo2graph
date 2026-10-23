@@ -299,3 +299,69 @@ def test_sqlite_chunk_list_lazy_chunks(cached):
     assert "id" in c0 and "text" in c0
     assert idx.by_node.get(c0["node_id"])
     store.close()
+
+
+def test_build_lock_falls_back_inside_an_unwritable_parent():
+    """The documented read-only container run must be able to take the lock.
+
+    `BuildLock` puts its file beside the target (`/out` -> `/.out.r2glock`) so
+    it survives a swap of that directory. The documented container run mounts
+    only `/out` writable with `/` read-only, so that sibling is unwritable and
+    `repo2graph build -o /out` failed outright with "cannot create build lock
+    /.out.r2glock: Read-only file system" -- a deployment `.github/SECURITY.md`
+    describes in detail could not actually run. CI never caught it because the
+    container job that exercises it is newer than the bug.
+
+    A lock inside the target is the weaker guarantee, and that is the point of
+    only reaching for it once the sibling has genuinely failed to open with a
+    permanently-unwritable errno.
+    """
+    import builtins
+    import errno
+    import tempfile
+
+    from repo2graph.lock import BuildLock
+
+    # Resolved on both sides: macOS hands out `/var/folders/...` while
+    # `BuildLock` stores `Path(outdir).resolve()`, which is `/private/var/...`
+    # there, so comparing an unresolved path against it fails on macOS only.
+    base = Path(tempfile.mkdtemp()).resolve()
+    out = base / "out"
+    out.mkdir()
+    sibling = (base / ".out.r2glock").resolve()
+
+    real_open = builtins.open
+
+    def fake_open(file, *a, **kw):
+        if Path(str(file)).resolve() == sibling:
+            raise OSError(errno.EROFS, "Read-only file system")
+        return real_open(file, *a, **kw)
+
+    builtins.open = fake_open
+    try:
+        lock = BuildLock(out, timeout=5)
+        with lock:
+            assert lock.lock_file == out / ".r2glock", lock.lock_file
+            assert lock.lock_file.exists()
+    finally:
+        builtins.open = real_open
+
+    # Released cleanly, so a later build does not see a stale holder.
+    assert not (out / ".r2glock").exists()
+
+
+def test_build_lock_prefers_the_sibling_when_the_parent_is_writable():
+    """The fallback must not fire on an ordinary build, or the swap guarantee is lost."""
+    import tempfile
+
+    from repo2graph.lock import BuildLock
+
+    # Resolved for the same reason as the test above.
+    base = Path(tempfile.mkdtemp()).resolve()
+    out = base / "out"
+    out.mkdir()
+
+    lock = BuildLock(out, timeout=5)
+    with lock:
+        assert lock.lock_file == base / ".out.r2glock", lock.lock_file
+        assert not (out / ".r2glock").exists()
