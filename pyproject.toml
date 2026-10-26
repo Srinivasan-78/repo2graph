@@ -44,7 +44,7 @@ dependencies = [
     # `languages` and `groups`, all of which are pre-*download* controls, so there is
     # no configuration that makes 1.x satisfy the no-network claim. Raising this cap
     # therefore means either dropping the claim or vendoring grammars first.
-    "tree-sitter-language-pack>=0.7,<1.0",
+    "tree-sitter-language-pack>=0.7,<2.0",
 ]
 
 [project.urls]
