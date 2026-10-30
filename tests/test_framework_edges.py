@@ -448,3 +448,26 @@ def test_mock_patch_is_not_read_as_a_route(tmp_path):
     out = build(root, tmp_path / "mockout", "--framework-edges")
     assert edges_of(out, "ROUTES_TO") == []
     assert route_map(out) == {}
+
+
+def test_pytest_fixtures_emit_uses_fixture_edges(tmp_path):
+    root = tmp_path / "pytest_repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef db():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "test_api.py").write_text(
+        "def test_get(db):\n    assert db == 1\n",
+        encoding="utf-8",
+    )
+    plain_out = build(root, tmp_path / "plain_out")
+    assert edges_of(plain_out, "USES_FIXTURE") == []
+
+    flagged_out = build(root, tmp_path / "flagged_out", "--framework-edges")
+    fixture_edges = edges_of(flagged_out, "USES_FIXTURE")
+    assert len(fixture_edges) == 1
+    edge = fixture_edges[0]
+    assert edge["src"] == "sym:tests/test_api.py::test_get"
+    assert edge["dst"] == "sym:tests/conftest.py::db"
+    assert edge["resolution_kind"] == "param"

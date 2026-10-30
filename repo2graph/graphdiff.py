@@ -530,7 +530,7 @@ def find_affected_tests(
                 if etype == "TESTS":
                     _note(src)
 
-                elif etype in ("CALLS", "INHERITS", "ROUTES_TO"):
+                elif etype in ("CALLS", "INHERITS", "ROUTES_TO", "USES_FIXTURE"):
                     if etype == "CALLS":
                         # `shadowed_builtin` is dropped unconditionally, and it
                         # is not the same judgement as the confidence floor. An
@@ -626,11 +626,55 @@ def find_affected_tests(
     # noise, which is the failure the flag exists to avoid.
     conftests = sorted(conftests_reached)
     if conftests:
-        reasons.append(
-            f"the walk reached {', '.join(conftests)}, and a test that consumes a fixture by "
-            "injection rather than by calling it has no call edge to follow, so such tests "
-            "cannot be detected"
+        fixture_tracking_active = any(e.get("type") == "USES_FIXTURE" for e in index.edges) or any(
+            bool(n.get("is_fixture")) for n in index.nodes.values()
         )
+
+        if not fixture_tracking_active:
+            reasons.append(
+                f"the walk reached {', '.join(conftests)}, and a test that consumes a fixture by "
+                "injection rather than by calling it has no call edge to follow, so such tests "
+                "cannot be detected"
+            )
+        else:
+            conftest_set = set(conftests)
+            reachable_conftest_syms = [
+                s
+                for s in visited_nodes
+                if s.startswith("sym:")
+                and any(
+                    (index.store.node(s) or {})
+                    .get("path", s[4:].split("::")[0])
+                    .replace("\\", "/")
+                    .endswith(cf)
+                    for cf in conftest_set
+                )
+            ]
+
+            reachable_fixtures = [
+                s
+                for s in reachable_conftest_syms
+                if (index.store.node(s) or {}).get("is_fixture")
+                or any(e.get("type") == "USES_FIXTURE" for e in reverse_edges.get(s, []))
+            ]
+
+            if not reachable_fixtures:
+                reasons.append(
+                    f"the walk reached {', '.join(conftests)}, but no fixture consumers could be identified"
+                )
+            else:
+                unconsumed = []
+                for fix in reachable_fixtures:
+                    incoming_fixture_edges = [
+                        e for e in reverse_edges.get(fix, []) if e.get("type") == "USES_FIXTURE"
+                    ]
+                    if not incoming_fixture_edges:
+                        unconsumed.append(_format_sym(fix))
+                if unconsumed:
+                    reasons.append(
+                        f"the walk reached {', '.join(conftests)}, but unconsumed fixture(s) "
+                        f"({', '.join(sorted(unconsumed))}) have no identified test consumers"
+                    )
 
     return {
         "modified_symbols": sorted({_format_sym(nid) for nid in modified_sym_ids}),

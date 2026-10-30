@@ -13,6 +13,21 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`diff --affected-tests` detects tests that consume fixtures by injection (#513).** A test
+  declaring a `conftest.py` (or local) fixture as a parameter never calls it by name, so no
+  `CALLS` edge exists and the reverse walk previously missed the consumer, truncating with a
+  warning. Under `--framework-edges`, repo2graph now extracts pytest fixtures, tracks parameter
+  injection, `@pytest.mark.usefixtures(...)`, and `autouse=True`, enforces hierarchical `conftest.py`
+  scoping and shadowing, and emits `USES_FIXTURE` edges traversed during affected-test discovery.
+- **Parse-worker memory cap is enforced on macOS via supervisor RSS polling (#514).** Because
+  macOS honours neither `RLIMIT_AS` nor Job Objects, parse workers on macOS were bounded solely by
+  the wall clock (`--parse-timeout`). The supervisor now polls worker resident memory in its
+  management loop across all platforms using Darwin `libproc` (`proc_pidinfo`), Linux `/proc/<pid>/statm`,
+  and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
+  recording `skipped_parse_crash`.
+
 ## [4.1.0] — 2026-10-23
 
 ### Fixed

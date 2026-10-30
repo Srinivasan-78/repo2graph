@@ -351,7 +351,11 @@ def default_embedder(name: str | None = None) -> _SentenceTransformerEmbedder:
         raise RuntimeError(
             'embedding needs the optional `rag` extra: pip install "repo2graph[rag]"'
         ) from None
-    st = SentenceTransformer(repo_id, revision=revision) if revision else SentenceTransformer(repo_id)
+    st = (
+        SentenceTransformer(repo_id, revision=revision)
+        if revision
+        else SentenceTransformer(repo_id)
+    )
     return _SentenceTransformerEmbedder(st, model_id)
 
 

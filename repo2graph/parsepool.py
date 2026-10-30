@@ -11,9 +11,9 @@ file runs over budget.
 The budget is not hypothetical. `x = a<b<a<b<...;` as C++ is quadratic in both
 time and memory: 32 KB takes 1 s and 640 MB, 300 KB was killed by the OOM killer
 at 13.8 GB. Hence two bounds per worker -- wall clock (`PARSE_TIMEOUT_S`, enforced
-by the parent) and, on Linux, address space (`WORKER_MEMORY_MB`, enforced by the
-kernel: tree-sitter crashes when an allocation fails, which kills only the
-worker).
+by the parent) and memory (`WORKER_MEMORY_MB`, enforced by supervisor RSS polling
+across macOS, Linux and Windows, supplemented on Linux by `RLIMIT_AS` and on Windows
+by Job Objects).
 
 Calibration: across the five benchmark corpora (Django, and the indexed scopes of
 Kubernetes, TensorFlow, VS Code and Linux; 18,608 files) the slowest single
@@ -30,17 +30,20 @@ truncated.
 from __future__ import annotations
 
 import concurrent.futures
+import ctypes
 import os
 import signal
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures.process import BrokenProcessPool
+from ctypes import wintypes
 from typing import Any
 
 #: Default wall-clock budget for reading and parsing one file, in seconds.
 PARSE_TIMEOUT_S = 10.0
-#: Address space a worker may add to what it held at start (Linux only).
+#: Memory budget in MB per worker process across platforms.
 WORKER_MEMORY_MB = 2048
 #: Files at most this large may be parsed in the calling process when the build
 #: is serial. Larger ones always go to a supervised worker: the quadratic input
@@ -119,7 +122,7 @@ def _cap_memory(memory_mb: int) -> None:
             pass
         return
     if not sys.platform.startswith("linux"):
-        return  # macOS does not enforce RLIMIT_AS
+        return  # macOS does not enforce RLIMIT_AS; bounded via supervisor RSS polling
     try:
         import resource
 
@@ -133,6 +136,172 @@ def _cap_memory(memory_mb: int) -> None:
             resource.setrlimit(resource.RLIMIT_AS, (limit, hard))
     except (ImportError, OSError, ValueError, IndexError):
         pass  # best effort: the wall-clock budget still applies
+
+
+class _ProcTaskInfo(ctypes.Structure):
+    _fields_ = [
+        ("pti_virtual_size", ctypes.c_uint64),
+        ("pti_resident_size", ctypes.c_uint64),
+        ("pti_total_user", ctypes.c_uint64),
+        ("pti_total_system", ctypes.c_uint64),
+        ("pti_threads_user", ctypes.c_uint64),
+        ("pti_threads_system", ctypes.c_uint64),
+        ("pti_policy", ctypes.c_int32),
+        ("pti_faults", ctypes.c_int32),
+        ("pti_pageins", ctypes.c_int32),
+        ("pti_cow_faults", ctypes.c_int32),
+        ("pti_messages_sent", ctypes.c_int32),
+        ("pti_messages_received", ctypes.c_int32),
+        ("pti_syscalls_mach", ctypes.c_int32),
+        ("pti_syscalls_unix", ctypes.c_int32),
+        ("pti_csw", ctypes.c_int32),
+        ("pti_threadnum", ctypes.c_int32),
+        ("pti_numrunning", ctypes.c_int32),
+        ("pti_priority", ctypes.c_int32),
+    ]
+
+
+class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("PageFaultCount", wintypes.DWORD),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
+_PROC_PIDTASKINFO = 4
+_darwin_libproc_fn: Any = None
+
+
+def _get_darwin_proc_pidinfo() -> Any:
+    global _darwin_libproc_fn
+    if _darwin_libproc_fn is not None:
+        return _darwin_libproc_fn
+    try:
+        import ctypes.util
+
+        path = ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib"
+        try:
+            lib = ctypes.CDLL(path)
+        except OSError:
+            lib = ctypes.CDLL("libproc.dylib")
+        fn = getattr(lib, "proc_pidinfo", None)
+        if fn is None:
+            return None
+        fn.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        fn.restype = ctypes.c_int
+        _darwin_libproc_fn = fn
+        return _darwin_libproc_fn
+    except (OSError, AttributeError):
+        return None
+
+
+def _darwin_rss_bytes(pid: int) -> int | None:
+    fn = _get_darwin_proc_pidinfo()
+    if fn is not None:
+        try:
+            info = _ProcTaskInfo()
+            nb = fn(
+                pid,
+                _PROC_PIDTASKINFO,
+                ctypes.c_uint64(0),
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            )
+            if nb >= ctypes.sizeof(info):
+                return int(info.pti_resident_size)
+        except (OSError, ValueError):
+            pass
+    # Fallback to /bin/ps
+    try:
+        out = subprocess.check_output(  # noqa: S603
+            ["/bin/ps", "-o", "rss=", "-p", str(pid)],
+            timeout=1,
+            stderr=subprocess.DEVNULL,
+        )
+        val = out.strip()
+        if val:
+            return int(val) * 1024
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
+    return None
+
+
+def _linux_rss_bytes(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/statm", encoding="ascii") as fh:
+            pages = int(fh.read().split()[1])
+        page_size = getattr(os, "sysconf", lambda _: 4096)("SC_PAGE_SIZE")
+        return pages * page_size
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        with open(f"/proc/{pid}/status", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _win32_rss_bytes(pid: int) -> int | None:
+    try:
+        windll = getattr(ctypes, "windll", None)
+        if windll is None:
+            return None
+        kernel32 = windll.kernel32
+        psapi = windll.psapi
+        h = kernel32.OpenProcess(0x0410, False, pid)
+        if not h:
+            h = kernel32.OpenProcess(0x1000, False, pid)
+        if not h:
+            return None
+        try:
+            counters = _PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(counters)
+            if psapi.GetProcessMemoryInfo(h, ctypes.byref(counters), counters.cb):
+                return int(counters.WorkingSetSize)
+        finally:
+            kernel32.CloseHandle(h)
+    except (OSError, AttributeError, ValueError):
+        pass
+    return None
+
+
+def _rss_bytes(pid: int) -> int | None:
+    """Return resident set size (RSS) in bytes for process `pid`, or None if unavailable."""
+    if sys.platform == "darwin":
+        return _darwin_rss_bytes(pid)
+    if sys.platform.startswith("linux"):
+        return _linux_rss_bytes(pid)
+    if sys.platform == "win32":
+        return _win32_rss_bytes(pid)
+    try:
+        out = subprocess.check_output(  # noqa: S603
+            ["ps", "-o", "rss=", "-p", str(pid)],  # noqa: S607
+            timeout=1,
+            stderr=subprocess.DEVNULL,
+        )
+        val = out.strip()
+        if val:
+            return int(val) * 1024
+    except (subprocess.SubprocessError, OSError, ValueError):
+        pass
+    return None
 
 
 def run_batch(
@@ -186,13 +355,14 @@ def _round(
     jobs: int,
     timeout: float,
     initializer: Callable[[Any], None],
-) -> tuple[dict[int, tuple[Any, float]], set[int], set[int]]:
-    """One pool over `todo`. Returns (finished, overrun, lost).
+) -> tuple[dict[int, tuple[Any, float]], set[int], set[int], set[int]]:
+    """One pool over `todo`. Returns (finished, overrun, lost, crashed).
 
     `overrun` are the items whose worker was killed for exceeding `timeout`.
+    `crashed` are the items whose worker was killed for exceeding `WORKER_MEMORY_MB`.
     `lost` are the items workers were in the middle of when the pool broke for
-    any other reason (a crash, the memory cap): one of them did it. Items in
-    neither set and not finished did not get to run and can simply be retried.
+    any other reason (an unhandled crash, an OS kill): one of them did it. Items in
+    none of these sets and not finished did not get to run and can simply be retried.
     """
     ctx = _context()
     watch = ctx.Array("d", _FIELDS * jobs)
@@ -200,6 +370,7 @@ def _round(
     batches = [[(i, items[i]) for i in todo[k : k + chunk]] for k in range(0, len(todo), chunk)]
     finished: dict[int, tuple[Any, float]] = {}
     overrun: set[int] = set()
+    crashed: set[int] = set()
     lost: set[int] = set()
     poll = min(0.25, timeout / 4) if timeout > 0 else 0.25
     stall_after = max(STALL_S, 3 * timeout)
@@ -234,7 +405,7 @@ def _round(
                     try:
                         for idx, res, elapsed in fut.result():
                             finished[idx] = (res, elapsed)
-                    except BrokenProcessPool:
+                    except (BrokenProcessPool, MemoryError):
                         broken = True
             running = _running(watch)
             now = time.monotonic()
@@ -249,8 +420,18 @@ def _round(
                         _kill(pid)
                         overrun.add(idx)
                         broken = True
-            if broken and not overrun:
-                # Nothing was killed for time, so a worker died on its own
+            if WORKER_MEMORY_MB > 0 and not broken:
+                limit_bytes = WORKER_MEMORY_MB * 1024 * 1024
+                for pid, idx, _ in running:
+                    if idx in finished or idx in overrun or idx in crashed:
+                        continue
+                    rss = _rss_bytes(pid)
+                    if rss is not None and rss > limit_bytes:
+                        _kill(pid)
+                        crashed.add(idx)
+                        broken = True
+            if broken and not overrun and not crashed:
+                # Nothing was killed for time or memory, so a worker died on its own
                 # and one of the files in flight did it. (After a kill the
                 # other in-flight files are just collateral: retried as usual.)
                 lost = {idx for _, idx, _ in running if idx not in finished}
@@ -272,7 +453,7 @@ def _round(
         pool.shutdown(wait=not stalled, cancel_futures=True)
     if stalled:
         raise PoolUnavailable(f"parse workers made no progress for {stall_after:g}s")
-    return finished, overrun, lost
+    return finished, overrun, lost, crashed
 
 
 def supervised_map(
@@ -299,16 +480,17 @@ def supervised_map(
     out: dict[int, tuple[Any, float] | str] = {}
     todo = list(range(len(items)))
     while todo:
-        finished, overrun, lost = _round(fn, items, todo, jobs, timeout, initializer)
+        finished, overrun, lost, crashed = _round(fn, items, todo, jobs, timeout, initializer)
         out.update(finished)
         out.update(dict.fromkeys(overrun, TIMEOUT))
+        out.update(dict.fromkeys(crashed, CRASH))
         for idx in sorted(lost):
-            alone, over, died = _round(fn, items, [idx], 1, timeout, initializer)
+            alone, over, died, mem_died = _round(fn, items, [idx], 1, timeout, initializer)
             if idx in alone:
                 out[idx] = alone[idx]
             elif idx in over:
                 out[idx] = TIMEOUT
-            elif died:
+            elif died or mem_died:
                 out[idx] = CRASH
             # else: the solo pool never ran it either; the next round retries it
         rest = [i for i in todo if i not in out]

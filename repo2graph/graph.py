@@ -1186,6 +1186,169 @@ def _within_byte_budget(
     return kept
 
 
+def add_pytest_fixture_edges(
+    g: Graph,
+    root: Path,
+    parsed: dict[str, ParsedFile],
+) -> None:
+    """Connect pytest fixtures to test consumers and dependent fixtures with USES_FIXTURE edges."""
+    from .frameworks import extract_pytest_facts
+
+    for key in ("fixtures", "unresolved"):
+        g.stats[f"framework_edges_{key}"] += 0
+
+    fixtures_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    tests_by_file: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    classes_by_file: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+
+    for rel, pf in parsed.items():
+        if getattr(pf, "lang", None) != "python":
+            continue
+        filepath = root / rel
+        try:
+            raw = _safe_read_bytes(filepath)
+        except OSError:
+            continue
+
+        facts = extract_pytest_facts(raw)
+
+        syms_by_full: dict[tuple[str, str | None, int], Symbol] = {}
+        syms_by_name_parent: dict[tuple[str, str | None], list[Symbol]] = defaultdict(list)
+        for s in pf.symbols:
+            syms_by_full[(s.name, s.parent, s.start_line)] = s
+            syms_by_name_parent[(s.name, s.parent)].append(s)
+
+        def _find_symbol(
+            name: str,
+            parent: str | None,
+            line: int,
+            full_map: dict[tuple[str, str | None, int], Symbol] = syms_by_full,
+            name_map: dict[tuple[str, str | None], list[Symbol]] = syms_by_name_parent,
+        ) -> Symbol | None:
+            if (name, parent, line) in full_map:
+                return full_map[(name, parent, line)]
+            cands = name_map.get((name, parent), [])
+            if len(cands) == 1:
+                return cands[0]
+            for c in cands:
+                if c.start_line <= line <= c.end_line:
+                    return c
+            return cands[0] if cands else None
+
+        for f in facts.get("fixtures", []):
+            matched_sym = _find_symbol(f["fn_name"], None, f["start_line"])
+            if matched_sym is not None:
+                sid = f"sym:{rel}::{symbol_key(matched_sym)}"
+                if sid in g.nodes:
+                    g.nodes[sid]["is_fixture"] = True
+                    g.nodes[sid]["fixture_name"] = f["name"]
+                fixtures_by_file[rel].append(
+                    {
+                        "name": f["name"],
+                        "sid": sid,
+                        "autouse": f["autouse"],
+                        "params": f["params"],
+                        "usefixtures": f["usefixtures"],
+                        "line": f["line"],
+                        "rel": rel,
+                    }
+                )
+
+        for cls_name, use_fixes in facts.get("classes", {}).items():
+            matched_sym = _find_symbol(cls_name, None, 0)
+            if matched_sym is not None:
+                sid = f"sym:{rel}::{symbol_key(matched_sym)}"
+                classes_by_file[rel][cls_name] = {
+                    "sid": sid,
+                    "fixtures": use_fixes,
+                    "line": matched_sym.start_line,
+                }
+
+        for t in facts.get("tests", []):
+            matched_sym = _find_symbol(t["name"], t["parent"], t["start_line"])
+            if matched_sym is not None:
+                sid = f"sym:{rel}::{symbol_key(matched_sym)}"
+                tests_by_file[rel].append(
+                    {
+                        "name": t["name"],
+                        "parent": t["parent"],
+                        "sid": sid,
+                        "params": t["params"],
+                        "usefixtures": t["usefixtures"],
+                        "line": t["line"],
+                    }
+                )
+
+    def _emit_edge(consumer_sid: str, fixture_sid: str, how: str, line: int, rel: str) -> None:
+        if consumer_sid not in g.nodes or fixture_sid not in g.nodes:
+            return
+        before = len(g.edges)
+        g.add_edge(
+            consumer_sid,
+            fixture_sid,
+            "USES_FIXTURE",
+            confidence=1.0,
+            resolution_kind=how,
+            method="framework-resolver",
+            evidence=make_evidence(rel, line),
+        )
+        if len(g.edges) > before:
+            g.stats["framework_edges_fixtures"] += 1
+
+    all_files = (
+        set(fixtures_by_file.keys()) | set(tests_by_file.keys()) | set(classes_by_file.keys())
+    )
+    for rel in sorted(all_files):
+        rel_dir = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        parts = rel_dir.split("/") if rel_dir else []
+        dirs = [""] + ["/".join(parts[:i]) for i in range(1, len(parts) + 1)] if parts else [""]
+
+        visible: dict[str, dict[str, Any]] = {}
+        for d in dirs:
+            cf_path = f"{d}/conftest.py" if d else "conftest.py"
+            for fix in fixtures_by_file.get(cf_path, []):
+                visible[fix["name"]] = fix
+
+        for fix in fixtures_by_file.get(rel, []):
+            visible[fix["name"]] = fix
+
+        autouse_fixtures = [fix for fix in visible.values() if fix.get("autouse")]
+
+        for fix in fixtures_by_file.get(rel, []):
+            csid = fix["sid"]
+            for p in fix["params"]:
+                if p in visible and visible[p]["sid"] != csid:
+                    _emit_edge(csid, visible[p]["sid"], "param", fix["line"], rel)
+            for uf in fix["usefixtures"]:
+                if uf in visible and visible[uf]["sid"] != csid:
+                    _emit_edge(csid, visible[uf]["sid"], "usefixtures", fix["line"], rel)
+
+        cls_map = classes_by_file.get(rel, {})
+        for cls_info in cls_map.values():
+            csid = cls_info["sid"]
+            for uf in cls_info["fixtures"]:
+                if uf in visible and visible[uf]["sid"] != csid:
+                    _emit_edge(csid, visible[uf]["sid"], "usefixtures", cls_info["line"], rel)
+
+        for t in tests_by_file.get(rel, []):
+            tsid = t["sid"]
+            all_uf = list(t["usefixtures"])
+            if t["parent"] and t["parent"] in cls_map:
+                all_uf.extend(cls_map[t["parent"]]["fixtures"])
+
+            for p in t["params"]:
+                if p in visible and visible[p]["sid"] != tsid:
+                    _emit_edge(tsid, visible[p]["sid"], "param", t["line"], rel)
+
+            for uf in set(all_uf):
+                if uf in visible and visible[uf]["sid"] != tsid:
+                    _emit_edge(tsid, visible[uf]["sid"], "usefixtures", t["line"], rel)
+
+            for fix in autouse_fixtures:
+                if fix["sid"] != tsid:
+                    _emit_edge(tsid, fix["sid"], "autouse", t["line"], rel)
+
+
 # ---------- build ----------
 def build(
     root: Path,
@@ -1951,6 +2114,7 @@ def build(
 
     if getattr(config, "framework_edges", False):
         add_framework_edges(g, parsed, imported_files, import_aliases, named_in)
+        add_pytest_fixture_edges(g, root, parsed)
 
     if git_history:
         add_cochange(g, root, git_history, file_index, min_pairs=cochange_min, authors=git_authors)
