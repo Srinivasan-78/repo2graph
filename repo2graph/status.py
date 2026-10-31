@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -517,8 +517,8 @@ def _age_seconds(created_at: Any) -> int | None:
     except ValueError:
         return None
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
-    return max(0, int((datetime.now(timezone.utc) - when).total_seconds()))
+        when = when.replace(tzinfo=UTC)
+    return max(0, int((datetime.now(UTC) - when).total_seconds()))
 
 
 def format_age(seconds: int | None) -> str:

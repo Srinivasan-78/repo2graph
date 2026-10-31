@@ -238,7 +238,7 @@ read-only, non-root local builds is provided ([.github/SECURITY.md](.github/SECU
 
 | Environment | Status | Details |
 |---|---|---|
-| **Python** | 3.10 – 3.14 | Tested across Linux, macOS, and Windows in CI (15 cells). Python 3.15+ is untested. Note that 3.10 reached end of life in October 2026; it remains the supported floor, but upgrading is recommended. |
+| **Python** | 3.11 – 3.14 | Tested across Linux, macOS, and Windows in CI (12 cells). Python 3.15+ is untested. Python 3.10 was supported through 4.1.0 and dropped in the next release, after it reached end of life in October 2026. |
 | **Linux (glibc)** | Supported (glibc ≥ 2.34) | Precompiled `tree-sitter-language-pack` grammar wheels require glibc ≥ 2.34 (Ubuntu 22.04+, Debian 12+, RHEL 9+, Amazon Linux 2023+). |
 | **Legacy Linux** | Unsupported wheels | RHEL 8, CentOS 8, Amazon Linux 2, Debian 11, and Ubuntu 20.04 ship glibc < 2.34. Wheels fail to load; use a glibc 2.34+ container or compile grammars from source. |
 | **Alpine / musl** | Unsupported wheels | Precompiled grammar wheels are not distributed for musl libc. Use a glibc container or build with a C toolchain. |

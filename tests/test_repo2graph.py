@@ -1638,7 +1638,7 @@ def test_ci_workflow_tests_job_covers_windows():
     tests_job = text.split("\n  tests:", 1)[1].split("\n  action:", 1)[0]
     assert "windows-latest" in tests_job
     assert "ubuntu-latest" in tests_job
-    assert '"3.10"' in tests_job and '"3.12"' in tests_job
+    assert '"3.11"' in tests_job and '"3.12"' in tests_job
 
 
 # ---------- Level 3b: action.yml <-> CLI parity ----------

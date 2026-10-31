@@ -44,7 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -475,7 +475,7 @@ def _generate_one(entry: dict, results: dict) -> dict:
             "id": repo_id,
             "commit": sha,
             "branch": entry["ref"],
-            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "repo2graph_version": R2G_VERSION,
             "graph_schema_version": GRAPH_SCHEMA_VERSION,
             "languages": entry["language_focus"],
@@ -549,7 +549,7 @@ def main() -> int:
     results_path.write_text(
         json.dumps(
             {
-                "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "results": list(merged.values()),
             },
             indent=2,

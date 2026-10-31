@@ -85,23 +85,23 @@ class DoctorReport:
 
 
 def check_python() -> CheckResult:
-    """Check Python interpreter version (requires >= 3.10, tested <= 3.13)."""
+    """Check Python interpreter version (requires >= 3.11, tested <= 3.13)."""
     vi = sys.version_info
     ver_str = f"{vi[0]}.{vi[1]}.{vi[2]}"
-    if (3, 10) <= vi <= (3, 13):
-        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.10, <= 3.13)")
+    if (3, 11) <= vi <= (3, 13):
+        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.11, <= 3.13)")
     if vi > (3, 13):
         return CheckResult(
             "Python Version",
             "warn",
             f"Python {ver_str} is newer than tested support matrix (<= 3.13)",
-            remediation="Python 3.10 through 3.13 are verified. Python 3.14+ may encounter grammar wheel compatibility issues.",
+            remediation="Python 3.11 through 3.13 are verified. Python 3.14+ may encounter grammar wheel compatibility issues.",
         )
     return CheckResult(
         "Python Version",
         "fail",
-        f"Python {ver_str} is unsupported (< 3.10)",
-        remediation="Upgrade to Python 3.10 or newer.",
+        f"Python {ver_str} is unsupported (< 3.11)",
+        remediation="Upgrade to Python 3.11 or newer.",
     )
 
 

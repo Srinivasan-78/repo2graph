@@ -1682,10 +1682,8 @@ def test_stream_answer_propagates_writer_broken_pipe(monkeypatch):
 
 def test_optional_rag_extra_and_untouched_core_dependencies():
     """Verify the rag extra exists; core deps stay tree-sitter only."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - py3.10
-        pytest.skip("tomllib needs Python 3.11+")
+    import tomllib
+
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))
     extras = data["project"].get("optional-dependencies", {})
     assert extras.get("rag") == ["sentence-transformers>=3.0", "numpy>=1.24"], extras

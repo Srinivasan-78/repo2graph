@@ -240,9 +240,8 @@ authors.
 all read it; `explain-path` does too, and names the file when one of its rules
 decided a path (`Path matches exclude glob 'gen/**' from pyproject.toml
 [tool.repo2graph] exclude`). `github` does not read the cloned repository's
-file. Reading TOML needs Python 3.11+, or the `tomli` package on 3.10; without
-either, a config file is skipped with a one-line note on stderr. With no config
-file, nothing changes. Embedding options (`--embed-backend`, `--embed-model`) are
+file. Reading TOML uses the stdlib `tomllib`, so no extra dependency is involved. With
+no config file, nothing changes. Embedding options (`--embed-backend`, `--embed-model`) are
 per-invocation retrieval choices for `embed`/`query`/`rag` rather than repository build
 configuration, as dense embedding is an optional post-build step requiring specific
 environment extras (`rag` or `rag-static`).
@@ -790,7 +789,7 @@ Inspects the runtime environment and, if one is present, the index's artifacts.
 
 **Environment**
 
-- **Python Version**: checks that Python is >= 3.10.
+- **Python Version**: checks that Python is >= 3.11.
 - **Platform Support**: checks operating system, CPU architecture, and C runtime (glibc >= 2.34 on Linux) compatibility.
 - **Platform Encoding**: reports the default, preferred and stdout encodings,
   which is what distinguishes a genuine parse failure from a cp1252 console

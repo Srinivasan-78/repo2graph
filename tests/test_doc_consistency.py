@@ -30,9 +30,8 @@ NPM_PACKAGE_PATH = REPO_ROOT / "npm" / "package.json"
 
 def _pyproject_version() -> str:
     """`pyproject.toml`'s `[project] version`, read by regex like
-    `scripts/version_surfaces.py` does -- `tomllib` is 3.11+ only and this
-    project's floor is 3.10, so a regex match on the one line that matters
-    avoids adding a TOML-parsing dependency just for this test.
+    `scripts/version_surfaces.py` does -- a regex match on the one line that
+    matters keeps this test independent of how the file is parsed.
     """
     text = PYPROJECT_PATH.read_text(encoding="utf-8")
     m = re.search(r'^version\s*=\s*"(?P<v>[^"]+)"', text, re.MULTILINE)

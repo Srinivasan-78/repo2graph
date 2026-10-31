@@ -22,7 +22,7 @@ lacks. Both are handled here rather than at each call site.
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TextIO
 
 
@@ -143,7 +143,7 @@ def timestamp() -> str:
         microseconds because that is what the audit record format specifies and
         what most SIEM ingesters expect.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 

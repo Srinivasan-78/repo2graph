@@ -137,11 +137,11 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         # 3.14 is here because a classifier claiming it is a promise, and
-        # `tests/test_packaging.py` now ties the two together. 3.10 stays for
-        # now even though it reached end of life in October 2026: it is the
-        # declared `requires-python` floor, and dropping it is a `requires-python`
-        # bump (a breaking change for anyone still on it), not a matrix edit.
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        # `tests/test_packaging.py` now ties the two together. 3.10 was dropped
+        # once it reached end of life (October 2026) and `filelock` stopped
+        # shipping a 3.10-compatible release carrying its advisory fixes -- that
+        # was a `requires-python` bump, a breaking change, not a matrix edit.
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -192,8 +192,8 @@ jobs:
       # `tests/test_mcp.py tests/test_mcp_tools.py` take 17s without `--cov`
       # and 26s with it; on a 4-vCPU runner that multiplier is what turned a
       # 180s subprocess timeout and a worker's startup into failures. Capping
-      # the workers alone was not enough: 3.11 and 3.12 went green, 3.10 still
-      # lost a worker mid-test and 3.13 still timed out spawning the probe.
+      # the workers alone was not enough: 3.11 and 3.12 went green, the since
+      # dropped 3.10 cell lost a worker and 3.13 timed out spawning the probe.
       #
       # Nothing is given up by doing this. Coverage is a property of the test
       # suite, not of the operating system, and the `fail_under = 80` floor is
@@ -270,7 +270,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         # The floor and the newest, which are the two ends upstream breaks at:
         # the floor loses support, the newest gains an untested interpreter.
-        python-version: ["3.10", "3.14"]
+        python-version: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:

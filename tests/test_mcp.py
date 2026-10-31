@@ -565,13 +565,8 @@ def test_repo_build_status_is_the_only_non_build_capable_tool():
 
 
 def load_pyproject() -> dict:
-    # tomllib is stdlib from 3.11; requires-python is >=3.10 and CI runs 3.10,
-    # so guard it the way tests/test_rag.py already does rather than taking a
-    # dependency on tomli just to read our own metadata.
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - py3.10
-        pytest.skip("tomllib needs Python 3.11+")
+    import tomllib
+
     with open(PYPROJECT, "rb") as fh:
         return tomllib.load(fh)
 

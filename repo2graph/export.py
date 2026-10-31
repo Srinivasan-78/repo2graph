@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any
 
@@ -1018,7 +1018,7 @@ def write_manifest(
         "build_id": build_id,
         "tool_version": _tool_ver,
         "schema_version": 1,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "source_revision": source_revision,
         "complete": not incomplete,
         "incomplete": incomplete,
