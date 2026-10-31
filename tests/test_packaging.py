@@ -10,26 +10,15 @@ from __future__ import annotations
 
 import itertools
 
-import pytest
 from conftest import REPO_ROOT
 
 PACKAGE = REPO_ROOT / "repo2graph"
 
 
 def _pyproject() -> dict:
-    """Parse pyproject.toml, or skip where the stdlib cannot.
+    """Parse pyproject.toml. `tomllib` is stdlib on the 3.11 floor."""
+    import tomllib
 
-    `tomllib` is 3.11+ and `requires-python` is `>=3.10`, so a module-level
-    `import tomllib` made the whole file an import error on the declared floor
-    -- collection failed before any test ran. The rest of the suite already
-    handles this by importing inside the function and skipping (see
-    `test_compat.py` and `test_grammar_availability.py`); adding `tomli` just
-    for this would be a new dependency on the floor the package promises.
-    """
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - only on 3.10
-        pytest.skip("tomllib needs Python 3.11+")
     with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
         return tomllib.load(fh)
 

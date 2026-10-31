@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from repo2graph import cli, config
+from repo2graph import cli
 from repo2graph.cli import main
 from repo2graph.config import ConfigError, load
 
@@ -125,19 +125,6 @@ def test_unparseable_pyproject_is_noted_and_ignored(tmp_path, capsys):
     (repo / "pyproject.toml").write_text("[tool.repo2graph\n", encoding="utf8")
     assert not load(repo)
     assert "ignored" in capsys.readouterr().err
-
-
-def test_without_a_toml_parser_config_is_skipped_with_one_note(tmp_path, monkeypatch, capsys):
-    """Python 3.10 without tomli: no new hard dependency, so skip and say so."""
-    monkeypatch.setattr(config, "_toml_loads", lambda: None)
-    repo = _repo(tmp_path)
-    assert not load(repo)
-    assert capsys.readouterr().err == ""  # nothing to skip, nothing said
-    _pyproject(repo, 'exclude = ["gen/**"]\n')
-    assert not load(repo)
-    err = capsys.readouterr().err
-    assert err.count("\n") == 1
-    assert "tomli" in err
 
 
 # --- build -----------------------------------------------------------------

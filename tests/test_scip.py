@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -848,8 +847,6 @@ def test_the_config_key_is_read_relative_to_the_repo(tmp_path):
     repo = copy_fixture(tmp_path)
     shutil.copy(FIXTURE_INDEX, repo / "index.scip")
     (repo / ".repo2graph.toml").write_text('scip = "index.scip"\n', encoding="utf8")
-    if sys.version_info < (3, 11):
-        pytest.importorskip("tomli")
     assert load(repo).values == {"scip": "index.scip"}
     stats = stats_of(cli_build(repo, tmp_path / "out"))
     assert stats["scip_files_covered"] == 5 and stats["scip_calls_ambiguous"] == 0
@@ -859,8 +856,6 @@ def test_the_config_key_is_read_relative_to_the_repo(tmp_path):
     "value", ['"/etc/index.scip"', '"../index.scip"', '"a/../../x"', '""', "1"]
 )
 def test_the_config_key_must_name_a_file_inside_the_repo(tmp_path, value):
-    if sys.version_info < (3, 11):
-        pytest.importorskip("tomli")
     (tmp_path / ".repo2graph.toml").write_text(f"scip = {value}\n", encoding="utf8")
     with pytest.raises(ConfigError, match="'scip'"):
         load(tmp_path)
@@ -882,8 +877,6 @@ def test_a_config_path_may_not_escape_through_a_symlink(tmp_path):
 
 
 def test_the_flag_beats_the_config_key(tmp_path, capsys):
-    if sys.version_info < (3, 11):
-        pytest.importorskip("tomli")
     repo = copy_fixture(tmp_path)
     (repo / ".repo2graph.toml").write_text('scip = "missing.scip"\n', encoding="utf8")
     stats = stats_of(cli_build(repo, tmp_path / "out", "--scip", str(FIXTURE_INDEX)))

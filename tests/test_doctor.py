@@ -34,13 +34,13 @@ def test_doctor_smoke(tmp_path):
 
 
 def test_doctor_python_version_failure():
-    """Verify that Python < 3.10 produces a FAIL result with remediation."""
-    with patch("sys.version_info", (3, 9, 7)):
+    """Verify that Python < 3.11 produces a FAIL result with remediation."""
+    with patch("sys.version_info", (3, 10, 7)):
         res = check_python()
         assert res.status == "fail"
         assert "unsupported" in res.summary
         assert res.remediation is not None
-        assert "3.10" in res.remediation
+        assert "3.11" in res.remediation
 
 
 def test_doctor_tree_sitter_missing():
@@ -262,7 +262,7 @@ def test_doctor_python_version_warn_newer():
         assert res.status == "warn"
         assert "newer" in res.summary
         assert res.remediation is not None
-        assert "3.10 through 3.13" in res.remediation
+        assert "3.11 through 3.13" in res.remediation
 
 
 def test_doctor_platform_support_glibc_failures_and_success():

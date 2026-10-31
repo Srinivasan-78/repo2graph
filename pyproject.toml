@@ -2,7 +2,7 @@
 name = "repo2graph"
 version = "4.1.0"
 description = "Give coding agents cited, budget-bounded answers about any codebase — code graph + MCP server"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
@@ -15,7 +15,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -180,7 +179,7 @@ exclude_also = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 # `E`, `F`, `W` and `BLE` were the whole set for a long time, which is style
@@ -197,7 +196,7 @@ target-version = "py310"
 #                          so "no SAST on the Python source" was the gap least
 #                          consistent with what SECURITY.md promises.
 #   I   isort           -- import order, so a merge does not reorder imports.
-#   UP  pyupgrade       -- syntax the 3.10 floor already allows.
+#   UP  pyupgrade       -- syntax the 3.11 floor already allows.
 #   RUF ruff's own      -- includes `RUF100`, which deletes a `noqa` that has
 #                          stopped suppressing anything; several here had.
 #
@@ -269,7 +268,7 @@ ignore = [
 "benchmarks/corpus/**" = ["ALL"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 ignore_missing_imports = true
 # There is no per-module escape hatch any more. `strict` applies to all 59
@@ -291,14 +290,14 @@ ignore_missing_imports = true
 follow_imports = "silent"
 
 # numpy ships stubs that use PEP 695 `type` statements, which mypy refuses to
-# parse under `python_version = "3.10"` -- it reports a *syntax* error in
+# parse under `python_version = "3.11"` -- it reports a *syntax* error in
 # numpy/__init__.pyi and then stops, so `make typecheck` fails before checking a
 # single line of this package. CI never caught it because CI does not install
 # the `rag` extra; anyone who ran `make install` (which does) saw the whole
-# typecheck target break. `python_version` stays at 3.10 because that is the
-# declared floor in `requires-python`, so the fix is to stop following numpy's
-# stubs rather than to raise the floor. `skip`, not `silent`: `silent` still
-# parses the file.
+# typecheck target break. `python_version` tracks the declared floor in
+# `requires-python`, and PEP 695 is 3.12 syntax, so raising the floor to 3.11 did
+# not fix this; the fix is to stop following numpy's stubs. `skip`, not
+# `silent`: `silent` still parses the file.
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"

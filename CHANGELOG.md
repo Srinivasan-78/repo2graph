@@ -44,6 +44,34 @@ makes keeping it current a release-blocking step rather than a good intention.
   and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
   recording `skipped_parse_crash`.
 
+### Removed
+
+- **Python 3.10 is no longer supported; `requires-python` is now `>=3.11`.** This is a breaking
+  change for anyone still on 3.10, which reached end of life in October 2026. It was forced by the
+  `filelock` advisories below: `filelock` raised its own floor to `>=3.11` at 4.1.1, so the newest
+  release installable on 3.10 is 4.1.0, and 4.1.0 is still inside the `<= 4.2.0` vulnerable range
+  of nine of them. Keeping 3.10 meant keeping a lockfile that resolved a knowingly vulnerable
+  `filelock` for that interpreter, so the floor moved instead.
+
+  The 3.10 classifier and the three 3.10 CI matrix cells are gone (the test matrix is 12 cells, not
+  15), `[tool.ruff] target-version` is `py311` and `[tool.mypy] python_version` is `3.11`. The
+  `tomli` fallback for reading `.repo2graph.toml` and `[tool.repo2graph]` is gone with it —
+  `tomllib` is stdlib from 3.11, so config files are always readable and the "reading TOML needs
+  `pip install tomli`" note can no longer be emitted. `doctor`'s Python check now fails below 3.11.
+
+### Security
+
+- **`filelock` and `setuptools` bumped in `uv.lock`, clearing 15 Dependabot alerts.** `filelock`
+  3.32.7 → 4.2.6 (one high and thirteen moderate/low local-privilege findings: `ReadWriteLock`
+  following a planted symlink into SQLite, `SoftFileLock`/`StrictSoftFileLock` losing mutual
+  exclusion to a directory or PID marker another local user created first, and `WindowsFileLock`
+  ignoring `mode`); `setuptools` 84.0.0 → 84.2.1. Both arrive only transitively, through the
+  `[dev]` extra (`pre-commit` → `virtualenv`) and the optional `[rag]` extra (`torch`,
+  `huggingface-hub`) — neither is a runtime dependency of `repo2graph` itself, whose install
+  footprint remains `tree-sitter` plus `tree-sitter-language-pack`.
+- A further 17 open alerts (`certifi`, `virtualenv`, `opentelemetry-api`) named versions the lock
+  had already moved past in #517–#521 and were stale rather than actionable.
+
 ## [4.1.0] — 2026-10-23
 
 ### Fixed

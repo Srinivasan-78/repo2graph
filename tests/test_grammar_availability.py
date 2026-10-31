@@ -279,10 +279,8 @@ def test_language_pack_is_capped_below_1_0():
     rather than what actually executes. A dependabot bump must not quietly undo
     this, so the bound is asserted rather than merely commented.
     """
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - py3.10
-        pytest.skip("tomllib needs Python 3.11+")
+    import tomllib
+
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf8"))
     pins = [d for d in data["project"]["dependencies"] if "tree-sitter-language-pack" in d]
     assert pins, "tree-sitter-language-pack must stay a declared dependency"

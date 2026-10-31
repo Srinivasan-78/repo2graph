@@ -611,10 +611,8 @@ def test_fallback_version_agrees_with_pyproject():
     """Every `__version__` literal in the package equals the packaged
     version. There is no metadata to read in a source checkout, so the literal
     is the only thing that answers `repo2graph.__version__` there."""
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - py3.10
-        pytest.skip("tomllib needs Python 3.11+")
+    import tomllib
+
     with open(REPO_ROOT / "pyproject.toml", "rb") as fh:
         declared = tomllib.load(fh)["project"]["version"]
     source = (REPO_ROOT / "repo2graph" / "__init__.py").read_text(encoding="utf8")

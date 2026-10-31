@@ -11,7 +11,7 @@ caller falls through to exactly the values it used before.
 
 from __future__ import annotations
 
-import sys
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -130,20 +130,6 @@ class RepoConfig:
         return f"{src} {key}"
 
 
-def _toml_loads() -> Callable[[str], dict[str, Any]] | None:
-    if sys.version_info >= (3, 11):
-        import tomllib
-
-        return tomllib.loads
-    # Python 3.10: tomli is the same parser, but not a dependency of ours.
-    try:
-        import tomli
-    except ImportError:
-        return None
-    loads: Callable[[str], dict[str, Any]] = tomli.loads
-    return loads
-
-
 def _validate(table: Any, where: str) -> dict[str, Any]:
     if not isinstance(table, dict):
         raise ConfigError(f"{where}: expected a table of settings")
@@ -176,18 +162,12 @@ def load(repo: Path | str) -> RepoConfig:
     pyproject = root / PYPROJECT
     own_text = _read(own)
     py_text = _read(pyproject)
-    # The cheap textual check keeps every repo without a table from paying
-    # for (or, on 3.10 without tomli, being warned about) a TOML parse.
+    # The cheap textual check keeps every repo without a table from paying for a
+    # TOML parse.
     if own_text is None and (py_text is None or "repo2graph" not in py_text):
         return RepoConfig()
 
-    loads = _toml_loads()
-    if loads is None:
-        diagnostic(
-            "note: repo2graph config file ignored: reading TOML on Python 3.10 "
-            "needs `pip install tomli`"
-        )
-        return RepoConfig()
+    loads = tomllib.loads
 
     cfg = RepoConfig()
     if own_text is not None:
