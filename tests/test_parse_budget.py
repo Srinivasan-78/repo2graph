@@ -7,6 +7,7 @@ fixture is deep and large but ordinary, and must parse under the default budget.
 
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import sys
@@ -168,11 +169,25 @@ def _work(item):
         time.sleep(value)
     elif kind == "exit":
         os._exit(3)  # a worker that dies under its file, like a parser crash
+    elif kind == "mem":
+        blob = bytearray(value * 1024 * 1024)
+        time.sleep(1.0)
+        return len(blob)
     return value
 
 
 def _init(watch):
     parsepool.claim_slot(watch)
+
+
+def _init_no_cap(watch):
+    watch, _ = watch
+    with watch.get_lock():
+        for k in range(len(watch) // parsepool._FIELDS):
+            if watch[k * parsepool._FIELDS] == 0:
+                watch[k * parsepool._FIELDS] = os.getpid()
+                parsepool._slot, parsepool._watch = k, watch
+                break
 
 
 # A hung item sleeps far longer than the supervisor should ever wait for it;
@@ -206,7 +221,6 @@ def test_supervisor_without_a_time_budget_waits():
     assert [g[0] for g in got] == [0.6, 1]  # type: ignore[index]
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="RLIMIT_AS is enforced on Linux")
 def test_a_parse_that_exhausts_worker_memory_is_a_crash_not_an_oom(tmp_path, monkeypatch):
     # The runaway input needs hundreds of MB, far over a 64 MB cap, and far
     # under the time budget.
@@ -249,3 +263,71 @@ def test_windows_cap_memory_invoked_on_win32(monkeypatch):
     parsepool._cap_memory(64)
     assert calls == [(os.getpid(), 64 * 1024 * 1024)]
     assert parsepool._worker_job == 1234
+
+
+def test_supervisor_rss_kill_stops_worker_exceeding_memory(monkeypatch):
+    """Supervisor RSS polling kills worker exceeding WORKER_MEMORY_MB and returns CRASH."""
+    monkeypatch.setattr(parsepool, "WORKER_MEMORY_MB", 35)
+    killed = []
+    real_kill = parsepool._kill
+    monkeypatch.setattr(parsepool, "_kill", lambda pid: (killed.append(pid), real_kill(pid)))
+    items = [("ok", 1), ("mem", 80), ("ok", 2)]
+    got = supervised_map(_work, items, 1, 5.0, _init_no_cap)
+    res = [g if isinstance(g, str) else g[0] for g in got]
+    assert res == [1, CRASH, 2]
+    assert killed, "the memory-exceeding worker was not killed by the supervisor"
+
+
+def test_rss_bytes_returns_positive_integer_for_current_process():
+    rss = parsepool._rss_bytes(os.getpid())
+    assert isinstance(rss, int)
+    assert rss > 1024 * 1024  # At least 1 MB for active Python process
+
+
+def test_darwin_proc_taskinfo_structure_layout():
+    assert ctypes.sizeof(parsepool._ProcTaskInfo) == 96
+    assert parsepool._ProcTaskInfo.pti_resident_size.offset == 8
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="libproc is macOS Darwin specific")
+def test_darwin_rss_bytes_real_call_on_macos():
+    rss = parsepool._darwin_rss_bytes(os.getpid())
+    assert isinstance(rss, int)
+    assert rss > 1024 * 1024
+    assert parsepool._get_darwin_proc_pidinfo() is not None
+
+
+def test_darwin_rss_bytes_fallback_to_ps(monkeypatch):
+    monkeypatch.setattr(parsepool, "_get_darwin_proc_pidinfo", lambda: None)
+    import subprocess
+
+    fake_output = b"  12345 \n"
+    monkeypatch.setattr(subprocess, "check_output", lambda *args, **kwargs: fake_output)
+    rss = parsepool._darwin_rss_bytes(1234)
+    assert rss == 12345 * 1024
+
+
+def test_linux_rss_bytes_parsing(tmp_path, monkeypatch):
+    proc_dir = tmp_path / "proc" / "9999"
+    proc_dir.mkdir(parents=True)
+    (proc_dir / "statm").write_text("1000 500 200 100 0 50 0\n", encoding="ascii")
+
+    real_open = open
+
+    def fake_open(file, *args, **kwargs):
+        if str(file).startswith("/proc/9999/"):
+            rel = str(file).replace("/proc/9999/", "")
+            return real_open(proc_dir / rel, *args, **kwargs)
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", fake_open)
+    rss = parsepool._linux_rss_bytes(9999)
+    page_size = getattr(os, "sysconf", lambda _: 4096)("SC_PAGE_SIZE")
+    assert rss == 500 * page_size
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows psapi specific")
+def test_win32_rss_bytes_returns_working_set():
+    rss = parsepool._win32_rss_bytes(os.getpid())
+    assert isinstance(rss, int)
+    assert rss > 1024 * 1024

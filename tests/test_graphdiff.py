@@ -679,3 +679,256 @@ def test_follow_shadowed_builtins_recovers_the_dropped_edges(tmp_path):
     # answer incomplete -- that reason must disappear rather than persist.
     assert followed["shadowed_builtin_skipped"] == 0
     assert "shadowed builtin" not in followed["incomplete_reason"]
+
+
+def test_affected_tests_finds_fixture_injection_consumers_issue_513(tmp_path):
+    """Issue #513 reproduction: 30 tests consuming db_fixture via parameter injection.
+
+    When db.py::setup_database() changes, the walk follows CALLS to conftest.py::db_fixture
+    and USES_FIXTURE to all 30 test files, returning complete results without truncation.
+    """
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "issue_513_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def setup_database():\n    return {'ok': True}\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom db import setup_database\n\n"
+        "@pytest.fixture\ndef db_fixture():\n    return setup_database()\n",
+    )
+    for i in range(30):
+        w(f"tests/test_db_{i}.py", f"def test_db_{i}(db_fixture):\n    assert db_fixture\n")
+
+    idx_out = tmp_path / "issue_513_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+
+    assert len(res["affected_tests"]) == 30
+    assert res["affected_tests"] == sorted(f"tests/test_db_{i}.py" for i in range(30))
+    assert res["conftests_reached"] == ["tests/conftest.py"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+    assert res["incomplete_reason"] == ""
+
+
+def test_affected_tests_fixture_chaining(tmp_path):
+    """Fixture chaining: fixture depending on another fixture."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "chain_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("core.py", "def init_engine():\n    return 42\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom core import init_engine\n\n"
+        "@pytest.fixture\ndef engine():\n    return init_engine()\n\n"
+        "@pytest.fixture\ndef session(engine):\n    return f'session_{engine}'\n",
+    )
+    w(
+        "tests/test_chain.py",
+        "def test_session_consumer(session):\n    assert session\n",
+    )
+
+    idx_out = tmp_path / "chain_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"core.py": [(1, 2)]})
+    assert res["affected_tests"] == ["tests/test_chain.py"]
+    assert res["conftests_reached"] == ["tests/conftest.py"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+
+
+def test_affected_tests_usefixtures_mark(tmp_path):
+    """@pytest.mark.usefixtures on both function and test class."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "usefixtures_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def setup():\n    return 'connected'\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom db import setup\n\n"
+        "@pytest.fixture\ndef db_session():\n    return setup()\n",
+    )
+    w(
+        "tests/test_marked_fn.py",
+        "import pytest\n\n@pytest.mark.usefixtures('db_session')\ndef test_fn():\n    pass\n",
+    )
+    w(
+        "tests/test_marked_class.py",
+        "import pytest\n\n"
+        "@pytest.mark.usefixtures('db_session')\n"
+        "class TestSuite:\n"
+        "    def test_method(self):\n        pass\n",
+    )
+
+    idx_out = tmp_path / "usefixtures_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+    assert res["affected_tests"] == ["tests/test_marked_class.py", "tests/test_marked_fn.py"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+
+
+def test_affected_tests_autouse_fixture(tmp_path):
+    """Fixtures declared with autouse=True in a conftest.py apply to all descendant tests."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "autouse_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def reset_db():\n    return True\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom db import reset_db\n\n"
+        "@pytest.fixture(autouse=True)\ndef auto_clean():\n    reset_db()\n",
+    )
+    w("tests/test_one.py", "def test_first():\n    assert True\n")
+    w("tests/sub/test_two.py", "def test_second():\n    assert True\n")
+
+    idx_out = tmp_path / "autouse_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+    assert res["affected_tests"] == ["tests/sub/test_two.py", "tests/test_one.py"]
+    assert res["conftests_reached"] == ["tests/conftest.py"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+
+
+def test_affected_tests_scoping_and_shadowing(tmp_path):
+    """Scoping: conftest shadowing and test module fixture shadowing."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "scoping_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("root_db.py", "def get_root():\n    return 'root'\n")
+    w("sub_db.py", "def get_sub():\n    return 'sub'\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom root_db import get_root\n\n"
+        "@pytest.fixture\ndef client():\n    return get_root()\n",
+    )
+    w(
+        "tests/sub/conftest.py",
+        "import pytest\nfrom sub_db import get_sub\n\n"
+        "@pytest.fixture\ndef client():\n    return get_sub()\n",
+    )
+    w("tests/test_root.py", "def test_root_client(client):\n    assert client == 'root'\n")
+    w("tests/sub/test_sub.py", "def test_sub_client(client):\n    assert client == 'sub'\n")
+
+    idx_out = tmp_path / "scoping_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    # Modifying root_db touches root client, which is only consumed by test_root.py
+    # (because sub/test_sub.py shadows 'client' with sub/conftest.py)
+    root_res = find_affected_tests(Index(idx_out), modified_spans={"root_db.py": [(1, 2)]})
+    assert root_res["affected_tests"] == ["tests/test_root.py"]
+    assert "tests/sub/test_sub.py" not in root_res["affected_tests"]
+    assert root_res["truncated"] is False
+
+    # Modifying sub_db touches sub client, which is only consumed by sub/test_sub.py
+    sub_res = find_affected_tests(Index(idx_out), modified_spans={"sub_db.py": [(1, 2)]})
+    assert sub_res["affected_tests"] == ["tests/sub/test_sub.py"]
+    assert "tests/test_root.py" not in sub_res["affected_tests"]
+    assert sub_res["truncated"] is False
+
+
+def test_affected_tests_unconsumed_fixture_reports_truncated(tmp_path):
+    """When a reachable fixture has no test consumers, it accurately reports unconsumed fixture."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "unconsumed_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w("db.py", "def setup():\n    return 1\n")
+    w(
+        "tests/conftest.py",
+        "import pytest\nfrom db import setup\n\n"
+        "@pytest.fixture\ndef unused_fixture():\n    return setup()\n",
+    )
+    w("tests/test_other.py", "def test_unrelated():\n    assert True\n")
+
+    idx_out = tmp_path / "unconsumed_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"db.py": [(1, 2)]})
+    assert res["truncated"] is True
+    assert "unconsumed fixture" in res["incomplete_reason"]
+    assert "unused_fixture" in res["incomplete_reason"]
+
+
+def test_conftest_exact_path_matching_does_not_collide_nested_conftests(tmp_path):
+    """Exact path matching for conftests prevents collisions with nested conftest.py files (#525)."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "nested_conftest_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w(
+        "conftest.py",
+        "import pytest\n\n@pytest.fixture\ndef root_fix():\n    return 'root'\n",
+    )
+    w(
+        "tests/nested/conftest.py",
+        "import pytest\n\n@pytest.fixture\ndef nested_fix():\n    return 'nested'\n",
+    )
+    w(
+        "tests/test_root.py",
+        "def test_root(root_fix):\n    assert root_fix == 'root'\n",
+    )
+    w(
+        "tests/nested/test_nested.py",
+        "def test_nested(nested_fix):\n    assert nested_fix == 'nested'\n",
+    )
+
+    idx_out = tmp_path / "nested_conftest_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"conftest.py": [(1, 5)]})
+    assert res["affected_tests"] == ["tests/test_root.py"]
+    assert "tests/nested/test_nested.py" not in res["affected_tests"]
+    assert res["conftests_reached"] == ["conftest.py"]
+    assert "tests/nested/conftest.py" not in res["conftests_reached"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+    assert res["incomplete_reason"] == ""
+    assert "nested_fix" not in res["incomplete_reason"]

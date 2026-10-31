@@ -711,10 +711,10 @@ actually reaching one rather than on the repository containing fixtures, so it
 stays meaningful. The conftest itself is listed in `conftests_reached` and kept
 **out** of `affected_tests` — pytest collects no test from a conftest, so
 handing one to a runner selects nothing, and `affected_tests` stays a list you
-can pipe straight to `pytest`. The underlying limitation is not fixed
-([#513](https://github.com/Srinivasan-78/repo2graph/issues/513)): if your suite
-leans on fixtures for setup, and most do, treat a non-empty `conftests_reached`
-as "run the full suite".
+can pipe straight to `pytest`. Under `--framework-edges`, repo2graph resolves
+fixture injection, `@pytest.mark.usefixtures`, and `autouse=True` via `USES_FIXTURE`
+edges (#513); if fixture edges are not built or unconsumed fixtures remain,
+treat a non-empty `conftests_reached` with `truncated: true` as "run the full suite".
 
 ## `index-status` — is this index current, and what is in it?
 

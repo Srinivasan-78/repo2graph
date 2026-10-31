@@ -448,3 +448,164 @@ def test_mock_patch_is_not_read_as_a_route(tmp_path):
     out = build(root, tmp_path / "mockout", "--framework-edges")
     assert edges_of(out, "ROUTES_TO") == []
     assert route_map(out) == {}
+
+
+def test_pytest_fixtures_emit_uses_fixture_edges(tmp_path):
+    root = tmp_path / "pytest_repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef db():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "test_api.py").write_text(
+        "def test_get(db):\n    assert db == 1\n",
+        encoding="utf-8",
+    )
+    plain_out = build(root, tmp_path / "plain_out")
+    assert edges_of(plain_out, "USES_FIXTURE") == []
+
+    flagged_out = build(root, tmp_path / "flagged_out", "--framework-edges")
+    fixture_edges = edges_of(flagged_out, "USES_FIXTURE")
+    assert len(fixture_edges) == 1
+    edge = fixture_edges[0]
+    assert edge["src"] == "sym:tests/test_api.py::test_get"
+    assert edge["dst"] == "sym:tests/conftest.py::db"
+    assert edge["resolution_kind"] == "param"
+
+
+def test_pytest_class_level_fixtures_emit_uses_fixture_edges(tmp_path):
+    root = tmp_path / "pytest_class_repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef base_fix():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "test_widget.py").write_text(
+        "import pytest\n\n"
+        "@pytest.fixture\n"
+        "def module_fix():\n"
+        "    return 2\n\n"
+        "class TestWidget:\n"
+        "    @pytest.fixture\n"
+        "    def class_fix(self, module_fix):\n"
+        "        return module_fix + 1\n\n"
+        "    @pytest.fixture(autouse=True)\n"
+        "    def class_autouse(self):\n"
+        "        return 42\n\n"
+        "    def test_method(self, class_fix):\n"
+        "        assert class_fix == 3\n\n"
+        "def test_module_func(module_fix):\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    flagged_out = build(root, tmp_path / "flagged_out", "--framework-edges")
+    fixture_edges = edges_of(flagged_out, "USES_FIXTURE")
+
+    # test_method has USES_FIXTURE edges to class_fix and class_autouse
+    tm_edges = [
+        e for e in fixture_edges if e["src"] == "sym:tests/test_widget.py::TestWidget.test_method"
+    ]
+    assert any(
+        e["dst"] == "sym:tests/test_widget.py::TestWidget.class_fix"
+        and e["resolution_kind"] == "param"
+        for e in tm_edges
+    )
+    assert any(
+        e["dst"] == "sym:tests/test_widget.py::TestWidget.class_autouse"
+        and e["resolution_kind"] == "autouse"
+        for e in tm_edges
+    )
+
+    # class_fix has USES_FIXTURE edge to module_fix
+    cf_edges = [
+        e for e in fixture_edges if e["src"] == "sym:tests/test_widget.py::TestWidget.class_fix"
+    ]
+    assert any(
+        e["dst"] == "sym:tests/test_widget.py::module_fix" and e["resolution_kind"] == "param"
+        for e in cf_edges
+    )
+
+    # test_module_func does NOT have USES_FIXTURE edge to class_autouse or class_fix
+    tmf_edges = [
+        e for e in fixture_edges if e["src"] == "sym:tests/test_widget.py::test_module_func"
+    ]
+    assert not any(
+        e["dst"]
+        in (
+            "sym:tests/test_widget.py::TestWidget.class_autouse",
+            "sym:tests/test_widget.py::TestWidget.class_fix",
+        )
+        for e in tmf_edges
+    )
+
+    # is_fixture is True on sym:tests/test_widget.py::TestWidget.class_fix
+    nodes = {n["id"]: n for n in records(flagged_out, "nodes.jsonl")}
+    class_fix_node = nodes.get("sym:tests/test_widget.py::TestWidget.class_fix")
+    assert class_fix_node is not None
+    assert class_fix_node.get("is_fixture") is True
+
+
+def test_pytest_asyncio_fixture_emits_uses_fixture_edges(tmp_path):
+    root = tmp_path / "pytest_asyncio_repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "tests" / "test_async.py").write_text(
+        "import pytest_asyncio\n\n"
+        "@pytest_asyncio.fixture\n"
+        "async def async_fix():\n"
+        "    return 1\n\n"
+        "async def test_async_func(async_fix):\n"
+        "    assert async_fix == 1\n",
+        encoding="utf-8",
+    )
+    flagged_out = build(root, tmp_path / "flagged_out", "--framework-edges")
+    fixture_edges = edges_of(flagged_out, "USES_FIXTURE")
+    assert any(
+        e["src"] == "sym:tests/test_async.py::test_async_func"
+        and e["dst"] == "sym:tests/test_async.py::async_fix"
+        for e in fixture_edges
+    )
+
+
+def test_pytest_nested_classes_and_shadowed_fixtures(tmp_path):
+    root = tmp_path / "pytest_nested_repo"
+    (root / "tests").mkdir(parents=True)
+    (root / "conftest.py").write_text(
+        "import pytest\n\n@pytest.fixture\ndef value():\n    return 10\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "test_nested.py").write_text(
+        "import pytest\n\n"
+        "class TestOuter:\n"
+        "    class TestInner:\n"
+        "        @pytest.fixture\n"
+        "        def value(self, value):\n"
+        "            return value + 5\n\n"
+        "        def test_inner(self, value):\n"
+        "            assert value == 15\n",
+        encoding="utf-8",
+    )
+    flagged_out = build(root, tmp_path / "flagged_out", "--framework-edges")
+    fixture_edges = edges_of(flagged_out, "USES_FIXTURE")
+
+    # Overridden fixture value in TestOuter.TestInner depends on outer value from conftest
+    override_edges = [
+        e
+        for e in fixture_edges
+        if e["src"] == "sym:tests/test_nested.py::TestOuter.TestInner.value"
+    ]
+    assert any(
+        e["dst"] == "sym:conftest.py::value" and e["resolution_kind"] == "param"
+        for e in override_edges
+    )
+
+    # test_inner method uses the class fixture TestOuter.TestInner.value
+    test_edges = [
+        e
+        for e in fixture_edges
+        if e["src"] == "sym:tests/test_nested.py::TestOuter.TestInner.test_inner"
+    ]
+    assert any(
+        e["dst"] == "sym:tests/test_nested.py::TestOuter.TestInner.value"
+        and e["resolution_kind"] == "param"
+        for e in test_edges
+    )

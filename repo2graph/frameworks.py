@@ -50,6 +50,8 @@ __all__ = [
     "HTTP_METHODS",
     "MOUNT_DECORATORS",
     "ORM_RELATION_FIELDS",
+    "extract_pytest_facts",
+    "function_parameters",
     "injected_dependencies",
     "model_relations",
     "mount_prefix",
@@ -386,3 +388,153 @@ def _text_of(node: Node) -> str:
     if node.text is not None:
         return node.text.decode("utf8", "replace")
     return ""
+
+
+def function_parameters(src: bytes, node: Node) -> list[str]:
+    """Parameter names declared on a function definition, excluding self/cls/*args/**kwargs."""
+    params = None
+    for child in node.named_children:
+        if child.type in ("parameters", "formal_parameters"):
+            params = child
+            break
+    if params is None:
+        return []
+    out = []
+    for param in params.named_children:
+        if param.type in ("list_splat_pattern", "dictionary_splat_pattern"):
+            continue
+        pname = ""
+        if param.type == "identifier":
+            pname = _text(src, param).strip()
+        elif param.type in ("default_parameter", "typed_parameter", "typed_default_parameter"):
+            for sub in param.named_children:
+                if sub.type == "identifier":
+                    pname = _text(src, sub).strip()
+                    break
+        if pname and pname not in ("self", "cls"):
+            out.append(pname)
+    return out
+
+
+def extract_pytest_facts(src: bytes) -> dict[str, Any]:
+    """Extract pytest fixture definitions, test functions, and test classes from Python source."""
+    from tree_sitter_language_pack import get_parser
+
+    parser = get_parser("python")
+    tree = parser.parse(src)
+
+    fixtures: list[dict[str, Any]] = []
+    tests: list[dict[str, Any]] = []
+    classes: dict[str, list[str]] = {}
+
+    def _get_decorators(node: Node) -> list[Node]:
+        if node.parent is not None and node.parent.type == "decorated_definition":
+            return [c for c in node.parent.children if c.type == "decorator"]
+        return []
+
+    def _get_usefixtures(decorators: list[Node]) -> list[str]:
+        usefixtures_names: list[str] = []
+        for dec in decorators:
+            receiver, name = _decorator_parts(src, dec)
+            name_lower = name.lower()
+            recv_lower = receiver.lower()
+            if name_lower == "usefixtures" and (
+                recv_lower in ("pytest.mark", "mark", "") or recv_lower.endswith(".mark")
+            ):
+                call = _call_of(dec)
+                if call is not None:
+                    args = _arg_list(call)
+                    if args is not None:
+                        for a in args.named_children:
+                            if a.type in _STRING_TYPES:
+                                usefixtures_names.append(_unquote(_text(src, a)))
+        return usefixtures_names
+
+    def walk(node: Node, enclosing_class: str | None = None) -> None:
+        if node.type == "class_definition":
+            cls_name = ""
+            for child in node.named_children:
+                if child.type == "identifier":
+                    cls_name = _text(src, child).strip()
+                    break
+            decs = _get_decorators(node)
+            uf = _get_usefixtures(decs)
+            cls_qualname = f"{enclosing_class}.{cls_name}" if enclosing_class else cls_name
+            if uf and cls_qualname:
+                classes[cls_qualname] = uf
+            for child in node.named_children:
+                walk(child, enclosing_class=cls_qualname)
+            return
+
+        if node.type == "function_definition":
+            fn_name = ""
+            for child in node.named_children:
+                if child.type == "identifier":
+                    fn_name = _text(src, child).strip()
+                    break
+
+            decs = _get_decorators(node)
+            fixture_dec: Node | None = None
+            autouse = False
+            custom_name: str | None = None
+
+            for dec in decs:
+                receiver, name = _decorator_parts(src, dec)
+                name_lower = name.lower()
+                recv_lower = receiver.lower()
+                if name_lower == "fixture" and recv_lower in ("pytest", "pytest_asyncio", ""):
+                    fixture_dec = dec
+                    call = _call_of(dec)
+                    if call is not None:
+                        args = _arg_list(call)
+                        if args is not None:
+                            for a in args.named_children:
+                                if a.type == "keyword_argument":
+                                    parts = a.named_children
+                                    if len(parts) == 2:
+                                        kw = _text(src, parts[0]).strip()
+                                        if kw == "autouse":
+                                            autouse = _text(src, parts[1]).strip().lower() in (
+                                                "true",
+                                                "1",
+                                            )
+                                        elif kw == "name":
+                                            custom_name = _unquote(_text(src, parts[1]))
+
+            usefixtures_names = _get_usefixtures(decs)
+
+            if fixture_dec is not None:
+                fixtures.append(
+                    {
+                        "name": custom_name or fn_name,
+                        "fn_name": fn_name,
+                        "parent": enclosing_class,
+                        "autouse": autouse,
+                        "params": function_parameters(src, node),
+                        "usefixtures": usefixtures_names,
+                        "line": fixture_dec.start_point[0] + 1,
+                        "start_line": node.start_point[0] + 1,
+                    }
+                )
+            else:
+                if fn_name.startswith("test_"):
+                    tests.append(
+                        {
+                            "name": fn_name,
+                            "parent": enclosing_class,
+                            "params": function_parameters(src, node),
+                            "usefixtures": usefixtures_names,
+                            "line": node.start_point[0] + 1,
+                            "start_line": node.start_point[0] + 1,
+                        }
+                    )
+
+            for child in node.named_children:
+                walk(child, enclosing_class=enclosing_class)
+            return
+
+        for child in node.named_children:
+            walk(child, enclosing_class=enclosing_class)
+
+    walk(tree.root_node)
+    return {"fixtures": fixtures, "tests": tests, "classes": classes}

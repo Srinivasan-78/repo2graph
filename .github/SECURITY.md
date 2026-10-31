@@ -127,11 +127,12 @@ space cap (2 GB). Whichever trips first, the file keeps its file node, gets no s
 counted in `stats.json` as `skipped_parse_timeout` or `skipped_parse_crash`; `--parse-policy
 strict` turns that into a build failure naming the file instead.
 
-**The memory cap is not enforced on macOS.** It uses `RLIMIT_AS` on Linux and a Job Object on
-Windows, and macOS honours neither for this purpose, so there the wall clock is the only bound. A
-parse that allocates faster than it runs long can therefore still exhaust memory on a macOS host.
-Indexing a genuinely untrusted checkout on macOS should run under an external limit — a container
-with `--memory`, or a VM — rather than relying on the in-process cap.
+**Parse-worker memory is bounded across all platforms.** It uses `RLIMIT_AS` on Linux, a Job Object
+on Windows, and supervisor RSS polling across all platforms (reading macOS task info via `proc_pidinfo`
+from `libproc` with `/bin/ps` fallback, Linux `/proc/<pid>/statm`, and Windows `GetProcessMemoryInfo`).
+Any worker whose memory exceeds `WORKER_MEMORY_MB` (2 GB by default) is terminated by the supervisor
+and classified as a crash (`skipped_parse_crash`), bounding both time and memory on macOS, Linux,
+and Windows hosts.
 
 ## Index trust model
 
