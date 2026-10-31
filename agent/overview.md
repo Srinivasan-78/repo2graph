@@ -1,6 +1,6 @@
 # Repo map: repo2graph
 
-files: 399  nodes: 5362  edges: 44741
+files: 399  nodes: 5423  edges: 45532
 languages: python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1
 
 ## Most depended-on files
@@ -31,8 +31,8 @@ languages: python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, jav
 - repo2graph/lock.py (in=7)
 
 ## Most called symbols
-- repo2graph/answer.py::_writer.write_text (function, in=376)
-- repo2graph/query.py::Index (class, in=248)
+- repo2graph/answer.py::_writer.write_text (function, in=388)
+- repo2graph/query.py::Index (class, in=255)
 - repo2graph/graph.py::build (function, in=143)
 - repo2graph/export.py::path (function, in=103)
 - repo2graph/cli.py::main (function, in=86)

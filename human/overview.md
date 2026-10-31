@@ -5,11 +5,11 @@
 | Metric | Value |
 | --- | --- |
 | Files indexed | 399 |
-| Functions | 3604 |
-| Classes | 234 |
-| Total edges | 44741 |
+| Functions | 3655 |
+| Classes | 236 |
+| Total edges | 45532 |
 | Languages | python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1 |
-| Built at | be8a483 |
+| Built at | 4a92d42 |
 
 ## Top 10 most-connected files (by in-degree)
 
@@ -42,12 +42,12 @@ These files are frequently edited together — treat as implicit dependencies ev
 
 | Edge type | Count | % of total |
 | --- | --- | --- |
-| TESTS | 18941 | 42.3% |
-| CALLS | 9870 | 22.1% |
-| CALLS_EXTERNAL | 8933 | 20.0% |
-| DEFINES | 3947 | 8.8% |
-| IMPORTS | 1971 | 4.4% |
-| CO_CHANGE | 578 | 1.3% |
+| TESTS | 19310 | 42.4% |
+| CALLS | 10106 | 22.2% |
+| CALLS_EXTERNAL | 9049 | 19.9% |
+| DEFINES | 4000 | 8.8% |
+| IMPORTS | 1980 | 4.3% |
+| CO_CHANGE | 586 | 1.3% |
 | CONTAINS | 482 | 1.1% |
 | INHERITS | 19 | 0.0% |
 

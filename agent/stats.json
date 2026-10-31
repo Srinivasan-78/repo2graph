@@ -7,92 +7,92 @@
   "edge:CONTAINS": 482,
   "parsed": 261,
   "parse_errors": 0,
-  "symbol:function": 3604,
-  "edge:DEFINES": 3947,
-  "edge:IMPORTS": 1971,
-  "imports_unresolved": 1299,
-  "imports_resolved": 1579,
-  "symbol:class": 234,
+  "symbol:function": 3655,
+  "edge:DEFINES": 4000,
+  "edge:IMPORTS": 1980,
+  "imports_unresolved": 1309,
+  "imports_resolved": 1594,
+  "symbol:class": 236,
   "symbol:method": 80,
   "symbol:interface": 25,
   "symbol:type": 4,
   "redacted_secret_metadata": 4,
-  "edge:CALLS_EXTERNAL": 8933,
-  "calls_external": 8933,
-  "edge:CALLS": 9870,
-  "calls_scoped": 5039,
-  "calls_ambiguous": 1586,
-  "ambiguous_calls": 1586,
-  "calls_untyped_receiver": 1141,
+  "edge:CALLS_EXTERNAL": 9049,
+  "calls_external": 9049,
+  "edge:CALLS": 10106,
+  "calls_scoped": 5105,
+  "calls_ambiguous": 1614,
+  "ambiguous_calls": 1614,
+  "calls_untyped_receiver": 1148,
   "edge:INHERITS": 19,
-  "unresolved_bases": 62,
-  "calls_unique_global": 699,
-  "calls_shadowed_builtin": 54,
+  "unresolved_bases": 64,
+  "calls_unique_global": 718,
+  "calls_shadowed_builtin": 55,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 408,
+  "cochange_sampled_commits": 411,
   "cochange_min_pairs": 3,
   "cochange_commits_skipped": 17,
-  "edge:CO_CHANGE": 578,
-  "edge:TESTS": 18941,
-  "testable_symbols": 1159,
-  "tested_symbols": 617,
-  "entrypoints": 2268,
-  "nodes": 5362,
-  "edges": 44741,
+  "edge:CO_CHANGE": 586,
+  "edge:TESTS": 19310,
+  "testable_symbols": 1180,
+  "tested_symbols": 631,
+  "entrypoints": 2295,
+  "nodes": 5423,
+  "edges": 45532,
   "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
   "redacted_secret_chunks": 205,
   "hidden_unicode_chars": 6,
-  "total_symbols": 3947,
+  "total_symbols": 4000,
   "top_hub_nodes": [
     {
       "node_id": "sym:repo2graph/query.py::SqliteByNode.get",
       "label": "SqliteByNode.get",
-      "in_degree": 431
+      "in_degree": 432
     },
     {
       "node_id": "sym:repo2graph/answer.py::_writer.write_text",
       "label": "_writer.write_text",
-      "in_degree": 376
+      "in_degree": 388
     },
     {
       "node_id": "sym:repo2graph/query.py::Index",
       "label": "Index",
-      "in_degree": 248
-    },
-    {
-      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
-      "label": "ResultCache.get",
-      "in_degree": 216
+      "in_degree": 255
     },
     {
       "node_id": "sym:repo2graph/scip.py::_Strings.get",
       "label": "_Strings.get",
-      "in_degree": 215
+      "in_degree": 218
+    },
+    {
+      "node_id": "sym:repo2graph/cache.py::ResultCache.get",
+      "label": "ResultCache.get",
+      "in_degree": 217
     },
     {
       "node_id": "sym:repo2graph/tasks.py::TaskManager.get",
       "label": "TaskManager.get",
-      "in_degree": 203
+      "in_degree": 204
     },
     {
       "node_id": "sym:tests/_pool_stdio_probe.py::main",
       "label": "main",
-      "in_degree": 188
+      "in_degree": 195
     },
     {
       "node_id": "sym:tests/_mcp_pool_server.py::main",
       "label": "main",
-      "in_degree": 186
+      "in_degree": 193
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::_run.main",
       "label": "_run.main",
-      "in_degree": 186
+      "in_degree": 193
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::test_auto_build_annotations_admit_side_effects.main",
       "label": "test_auto_build_annotations_admit_side_effects.main",
-      "in_degree": 186
+      "in_degree": 193
     }
   ],
   "languages": {
@@ -113,8 +113,8 @@
   "has_vectors": false,
   "index_schema_version": "2",
   "limits_hit": {},
-  "tested_symbol_fraction": 0.532,
-  "built_at_commit": "be8a483",
+  "tested_symbol_fraction": 0.535,
+  "built_at_commit": "4a92d42",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/cli.py",
