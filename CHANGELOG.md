@@ -44,6 +44,22 @@ makes keeping it current a release-blocking step rather than a good intention.
   and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
   recording `skipped_parse_crash`.
 
+### Security
+
+- **`filelock` and `setuptools` bumped in `uv.lock` to clear 15 Dependabot alerts.** `filelock`
+  3.32.7 → 4.2.6 (one high and nine moderate/low local-privilege findings: `ReadWriteLock`
+  following a planted symlink into SQLite, `SoftFileLock`/`StrictSoftFileLock` losing mutual
+  exclusion to a directory or PID marker another local user created first, and `WindowsFileLock`
+  ignoring `mode`); `setuptools` 84.0.0 → 84.2.1. Both arrive only transitively, through the
+  `[dev]` extra (`pre-commit` → `virtualenv`) and the optional `[rag]` extra (`torch`,
+  `huggingface-hub`) — neither is a runtime dependency of `repo2graph` itself, whose install
+  footprint remains `tree-sitter` plus `tree-sitter-language-pack`.
+- **`filelock` stays at 4.1.0 on Python 3.10.** `filelock` raised its floor to `>=3.11` at 4.1.1,
+  so 4.1.0 is the newest release installable on the 3.10 this project still supports and it
+  remains inside the `<= 4.2.0` range of nine of those advisories. The lock therefore resolves
+  4.2.6 for 3.11+ and 4.1.0 for 3.10; clearing the residual alerts outright would mean dropping
+  Python 3.10.
+
 ## [4.1.0] — 2026-10-23
 
 ### Fixed
