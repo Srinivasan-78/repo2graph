@@ -1,6 +1,6 @@
 # Repo map: repo2graph
 
-files: 399  nodes: 5423  edges: 45532
+files: 399  nodes: 5421  edges: 45499
 languages: python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1
 
 ## Most depended-on files
@@ -50,9 +50,9 @@ languages: python=226, md=54, json=41, typescript=25, yml=24, tsx=8, toml=3, jav
 - repo2graph/query.py::Index.score (function, in=33)
 - repo2graph/security.py::redact_content (function, in=31)
 - tests/test_mcp_editor.py::mcp_module (function, in=29)
-- .github/scripts/prod-igy.js::runAiEnrichment.skip (function, in=28)
 - repo2graph/audit.py::AuditLogger.record (function, in=27)
 - repo2graph/graph.py::Graph (class, in=27)
 - repo2graph/mcp/indexes.py::open_index (function, in=26)
 - tests/test_vectors.py::run_embed (function, in=26)
 - repo2graph/chunks.py::iter_chunks (function, in=24)
+- repo2graph/frameworks.py::_text (function, in=24)
