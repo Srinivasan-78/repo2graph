@@ -61,16 +61,17 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
-- **`filelock` and `setuptools` bumped in `uv.lock`, clearing 15 Dependabot alerts.** `filelock`
-  3.32.7 → 4.2.6 (one high and thirteen moderate/low local-privilege findings: `ReadWriteLock`
+- **`filelock` and `setuptools` bumped in `uv.lock`, clearing 14 Dependabot alerts.** `filelock`
+  3.32.7 → 4.2.6 (13 local-privilege findings — one high, nine moderate, three low: `ReadWriteLock`
   following a planted symlink into SQLite, `SoftFileLock`/`StrictSoftFileLock` losing mutual
   exclusion to a directory or PID marker another local user created first, and `WindowsFileLock`
   ignoring `mode`); `setuptools` 84.0.0 → 84.2.1. Both arrive only transitively, through the
   `[dev]` extra (`pre-commit` → `virtualenv`) and the optional `[rag]` extra (`torch`,
   `huggingface-hub`) — neither is a runtime dependency of `repo2graph` itself, whose install
   footprint remains `tree-sitter` plus `tree-sitter-language-pack`.
-- A further 17 open alerts (`certifi`, `virtualenv`, `opentelemetry-api`) named versions the lock
-  had already moved past in #517–#521 and were stale rather than actionable.
+- The remaining 17 of the 31 open alerts (`certifi`, `virtualenv`, `opentelemetry-api`) named
+  versions the lock had already moved past in #517–#521 — stale rather than actionable, and
+  closed by the rescan rather than by a bump.
 
 ## [4.1.0] — 2026-10-23
 
