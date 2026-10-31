@@ -90,7 +90,7 @@
 {"id": "file:.github/zizmor.yml", "type": "file", "name": "zizmor.yml", "path": ".github/zizmor.yml", "lang": "yml", "file_type": "config", "size": 4136, "lines": 73, "parse_errors": 0, "chunked": false}
 {"id": "file:.gitignore", "type": "file", "name": ".gitignore", "path": ".gitignore", "lang": "", "file_type": "other", "size": 1654, "lines": 49, "parse_errors": 0, "chunked": false}
 {"id": "file:.pre-commit-config.yaml", "type": "file", "name": ".pre-commit-config.yaml", "path": ".pre-commit-config.yaml", "lang": "yaml", "file_type": "config", "size": 4058, "lines": 82, "parse_errors": 0, "chunked": false}
-{"id": "file:CHANGELOG.md", "type": "file", "name": "CHANGELOG.md", "path": "CHANGELOG.md", "lang": "md", "file_type": "doc", "size": 226404, "lines": 2956, "parse_errors": 0, "chunked": false}
+{"id": "file:CHANGELOG.md", "type": "file", "name": "CHANGELOG.md", "path": "CHANGELOG.md", "lang": "md", "file_type": "doc", "size": 226470, "lines": 2957, "parse_errors": 0, "chunked": false}
 {"id": "file:CITATION.cff", "type": "file", "name": "CITATION.cff", "path": "CITATION.cff", "lang": "cff", "file_type": "other", "size": 1265, "lines": 30, "parse_errors": 0, "chunked": false}
 {"id": "file:CODE_OF_CONDUCT.md", "type": "file", "name": "CODE_OF_CONDUCT.md", "path": "CODE_OF_CONDUCT.md", "lang": "md", "file_type": "doc", "size": 5961, "lines": 146, "parse_errors": 0, "chunked": false}
 {"id": "file:Dockerfile", "type": "file", "name": "Dockerfile", "path": "Dockerfile", "lang": "", "file_type": "other", "size": 2332, "lines": 60, "parse_errors": 0, "chunked": false}

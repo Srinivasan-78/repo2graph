@@ -4286,10 +4286,10 @@
     },
     "CHANGELOG.md": {
       "lang": "",
-      "lines": 2956,
+      "lines": 2957,
       "parsed": null,
-      "sha256": "ea23e6a59d9ed58b86d96d8cca581ec9c2b7299a4711bb41c3ce90149de43b8b",
-      "size": 226404
+      "sha256": "9e7bf6b8aa87b9f3ef72a6d34ad0e01cdc521b53da87c22ddb765695d74f2778",
+      "size": 226470
     },
     "CITATION.cff": {
       "lang": "",

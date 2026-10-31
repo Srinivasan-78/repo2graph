@@ -29,7 +29,7 @@
   "calls_unique_global": 713,
   "calls_shadowed_builtin": 55,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 414,
+  "cochange_sampled_commits": 415,
   "cochange_min_pairs": 3,
   "cochange_commits_skipped": 17,
   "edge:CO_CHANGE": 610,
@@ -114,7 +114,7 @@
   "index_schema_version": "2",
   "limits_hit": {},
   "tested_symbol_fraction": 0.534,
-  "built_at_commit": "49f789a",
+  "built_at_commit": "b1f9a78",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/export.py",
