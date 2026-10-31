@@ -1236,7 +1236,7 @@ def add_pytest_fixture_edges(
             return cands[0] if cands else None
 
         for f in facts.get("fixtures", []):
-            matched_sym = _find_symbol(f["fn_name"], None, f["start_line"])
+            matched_sym = _find_symbol(f["fn_name"], f.get("parent"), f["start_line"])
             if matched_sym is not None:
                 sid = f"sym:{rel}::{symbol_key(matched_sym)}"
                 if sid in g.nodes:
@@ -1245,6 +1245,7 @@ def add_pytest_fixture_edges(
                 fixtures_by_file[rel].append(
                     {
                         "name": f["name"],
+                        "parent": f.get("parent"),
                         "sid": sid,
                         "autouse": f["autouse"],
                         "params": f["params"],
@@ -1303,38 +1304,74 @@ def add_pytest_fixture_edges(
         parts = rel_dir.split("/") if rel_dir else []
         dirs = [""] + ["/".join(parts[:i]) for i in range(1, len(parts) + 1)] if parts else [""]
 
-        visible: dict[str, dict[str, Any]] = {}
+        base_visible: dict[str, dict[str, Any]] = {}
         for d in dirs:
             cf_path = f"{d}/conftest.py" if d else "conftest.py"
             for fix in fixtures_by_file.get(cf_path, []):
-                visible[fix["name"]] = fix
+                if fix.get("parent") is None:
+                    base_visible[fix["name"]] = fix
 
         for fix in fixtures_by_file.get(rel, []):
-            visible[fix["name"]] = fix
+            if fix.get("parent") is None:
+                base_visible[fix["name"]] = fix
 
-        autouse_fixtures = [fix for fix in visible.values() if fix.get("autouse")]
+        cls_fixtures: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+        for fix in fixtures_by_file.get(rel, []):
+            parent = fix.get("parent")
+            if parent is not None:
+                cls_fixtures[parent][fix["name"]] = fix
 
         for fix in fixtures_by_file.get(rel, []):
             csid = fix["sid"]
+            parent = fix.get("parent")
+            if parent is not None:
+                visible = dict(base_visible)
+                visible.update(cls_fixtures.get(parent, {}))
+            else:
+                visible = base_visible
+
             for p in fix["params"]:
-                if p in visible and visible[p]["sid"] != csid:
-                    _emit_edge(csid, visible[p]["sid"], "param", fix["line"], rel)
+                target_fix = (
+                    base_visible.get(p)
+                    if (parent is not None and p == fix["name"])
+                    else visible.get(p)
+                )
+                if target_fix and target_fix["sid"] != csid:
+                    _emit_edge(csid, target_fix["sid"], "param", fix["line"], rel)
             for uf in fix["usefixtures"]:
-                if uf in visible and visible[uf]["sid"] != csid:
-                    _emit_edge(csid, visible[uf]["sid"], "usefixtures", fix["line"], rel)
+                target_fix = (
+                    base_visible.get(uf)
+                    if (parent is not None and uf == fix["name"])
+                    else visible.get(uf)
+                )
+                if target_fix and target_fix["sid"] != csid:
+                    _emit_edge(csid, target_fix["sid"], "usefixtures", fix["line"], rel)
 
         cls_map = classes_by_file.get(rel, {})
-        for cls_info in cls_map.values():
+        for cls_name, cls_info in cls_map.items():
             csid = cls_info["sid"]
+            visible = dict(base_visible)
+            visible.update(cls_fixtures.get(cls_name, {}))
             for uf in cls_info["fixtures"]:
                 if uf in visible and visible[uf]["sid"] != csid:
                     _emit_edge(csid, visible[uf]["sid"], "usefixtures", cls_info["line"], rel)
 
+        base_autouse = [fix for fix in base_visible.values() if fix.get("autouse")]
+
         for t in tests_by_file.get(rel, []):
             tsid = t["sid"]
+            parent = t["parent"]
+            if parent is not None:
+                visible = dict(base_visible)
+                visible.update(cls_fixtures.get(parent, {}))
+                autouse_fixtures = [fix for fix in visible.values() if fix.get("autouse")]
+            else:
+                visible = base_visible
+                autouse_fixtures = base_autouse
+
             all_uf = list(t["usefixtures"])
-            if t["parent"] and t["parent"] in cls_map:
-                all_uf.extend(cls_map[t["parent"]]["fixtures"])
+            if parent and parent in cls_map:
+                all_uf.extend(cls_map[parent]["fixtures"])
 
             for p in t["params"]:
                 if p in visible and visible[p]["sid"] != tsid:

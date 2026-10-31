@@ -15,6 +15,22 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **Class-level and async pytest fixtures are preserved and scoped (#523).** Fixtures defined
+  inside test classes (`class TestX: @pytest.fixture def fix(self): ...`) previously lost their
+  parent identifier, failing symbol resolution and emitting zero `USES_FIXTURE` edges. `repo2graph`
+  now records `parent` on fixture records, resolves class-scoped fixture definitions, recognizes
+  `@pytest_asyncio.fixture`, and isolates class-level autouse fixtures to methods within the declaring class.
+- **`SqliteGraphStore` multi-threading support and context manager lifecycle (#524).** Multi-threaded
+  callers (such as MCP SSE and thread-pooled query workloads) raised `sqlite3.ProgrammingError` or
+  `sqlite3.InterfaceError` because the read-only database connection lacked `check_same_thread=False` and
+  per-connection query serialization. `SqliteGraphStore` now configures `check_same_thread=False`, synchronizes
+  database access via an internal lock, and implements `__enter__` and `__exit__` context managers alongside
+  `MemoryGraphStore` and `GraphStore(Protocol)`, ensuring thread safety, deterministic handle closure, and
+  preventing Windows `PermissionError` on cache file removal.
+- **`diff --affected-tests` conftest path collision on nested test directories (#525).** Conftest symbol
+  attribution in `find_affected_tests` used suffix matching (`.endswith(cf)`), causing symbols from nested
+  `conftest.py` files (e.g. `tests/sub/conftest.py`) to falsely match a root `conftest.py` evaluation.
+  Replaced with exact normalized path matching against reached conftest paths.
 - **`diff --affected-tests` detects tests that consume fixtures by injection (#513).** A test
   declaring a `conftest.py` (or local) fixture as a parameter never calls it by name, so no
   `CALLS` edge exists and the reverse walk previously missed the consumer, truncating with a

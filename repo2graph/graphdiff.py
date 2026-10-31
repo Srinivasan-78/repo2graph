@@ -637,17 +637,14 @@ def find_affected_tests(
                 "cannot be detected"
             )
         else:
-            conftest_set = set(conftests)
+            conftest_set = {cf.replace("\\", "/") for cf in conftests}
             reachable_conftest_syms = [
                 s
                 for s in visited_nodes
                 if s.startswith("sym:")
-                and any(
-                    (index.store.node(s) or {})
-                    .get("path", s[4:].split("::")[0])
-                    .replace("\\", "/")
-                    .endswith(cf)
-                    for cf in conftest_set
+                and (
+                    (index.store.node(s) or {}).get("path", s[4:].split("::")[0]).replace("\\", "/")
+                    in conftest_set
                 )
             ]
 

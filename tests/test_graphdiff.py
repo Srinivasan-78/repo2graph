@@ -890,3 +890,45 @@ def test_affected_tests_unconsumed_fixture_reports_truncated(tmp_path):
     assert res["truncated"] is True
     assert "unconsumed fixture" in res["incomplete_reason"]
     assert "unused_fixture" in res["incomplete_reason"]
+
+
+def test_conftest_exact_path_matching_does_not_collide_nested_conftests(tmp_path):
+    """Exact path matching for conftests prevents collisions with nested conftest.py files (#525)."""
+    from repo2graph.graphdiff import find_affected_tests
+    from repo2graph.query import Index
+
+    repo = tmp_path / "nested_conftest_repo"
+
+    def w(rel, text):
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text, encoding="utf-8")
+
+    w(
+        "conftest.py",
+        "import pytest\n\n@pytest.fixture\ndef root_fix():\n    return 'root'\n",
+    )
+    w(
+        "tests/nested/conftest.py",
+        "import pytest\n\n@pytest.fixture\ndef nested_fix():\n    return 'nested'\n",
+    )
+    w(
+        "tests/test_root.py",
+        "def test_root(root_fix):\n    assert root_fix == 'root'\n",
+    )
+    w(
+        "tests/nested/test_nested.py",
+        "def test_nested(nested_fix):\n    assert nested_fix == 'nested'\n",
+    )
+
+    idx_out = tmp_path / "nested_conftest_idx"
+    main(["build", str(repo), "-o", str(idx_out), "--formats", "jsonl", "--framework-edges"])
+
+    res = find_affected_tests(Index(idx_out), modified_spans={"conftest.py": [(1, 5)]})
+    assert res["affected_tests"] == ["tests/test_root.py"]
+    assert "tests/nested/test_nested.py" not in res["affected_tests"]
+    assert res["conftests_reached"] == ["conftest.py"]
+    assert "tests/nested/conftest.py" not in res["conftests_reached"]
+    assert res["truncated"] is False, res["incomplete_reason"]
+    assert res["incomplete_reason"] == ""
+    assert "nested_fix" not in res["incomplete_reason"]

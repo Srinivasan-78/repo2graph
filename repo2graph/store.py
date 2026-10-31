@@ -37,6 +37,7 @@ import secrets
 import sqlite3
 import sys
 import tempfile
+import threading
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path
@@ -65,6 +66,12 @@ class GraphStore(Protocol):
     def iter_edges(self) -> Iterator[Record]: ...
 
     def node_count(self) -> int: ...
+
+    def close(self) -> None: ...
+
+    def __enter__(self) -> GraphStore: ...
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None: ...
 
 
 class MemoryGraphStore:
@@ -104,6 +111,15 @@ class MemoryGraphStore:
     def node_count(self) -> int:
         return len(self.nodes)
 
+    def __enter__(self) -> MemoryGraphStore:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        pass
+
 
 _SCHEMA = """
 CREATE TABLE nodes (seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, rec TEXT NOT NULL);
@@ -131,8 +147,17 @@ class SqliteGraphStore:
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
+        self._lock = threading.Lock()
         # Read-only: a query must never write to the index it reads.
-        self._db = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True)
+        self._db = sqlite3.connect(
+            f"{self.path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False
+        )
+
+    def __enter__(self) -> SqliteGraphStore:
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close()
 
     @classmethod
     def build(
@@ -228,95 +253,117 @@ class SqliteGraphStore:
         stale cache to be rebuilt, not a corrupt file to fail on.
         """
         try:
-            row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+            with self._lock:
+                row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         except sqlite3.DatabaseError:
             return None
         return None if row is None else str(row[0])
 
     def close(self) -> None:
-        self._db.close()
+        with self._lock:
+            self._db.close()
 
     def node(self, node_id: str) -> Record | None:
-        row = self._db.execute("SELECT rec FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        with self._lock:
+            row = self._db.execute("SELECT rec FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return None if row is None else json.loads(row[0])
 
     def has(self, node_id: str) -> bool:
-        return (
-            self._db.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is not None
-        )
+        with self._lock:
+            row = self._db.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return row is not None
 
     def neighbours(self, node_id: str) -> Sequence[Incident]:
-        rows = self._db.execute(
-            "SELECT other, type, dir, rec FROM ("
-            " SELECT seq, 0 AS side, dst AS other, type, 'out' AS dir, rec FROM edges WHERE src = ?"
-            " UNION ALL"
-            " SELECT seq, 1 AS side, src AS other, type, 'in' AS dir, rec FROM edges WHERE dst = ?"
-            ") ORDER BY seq, side",
-            (node_id, node_id),
-        )
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT other, type, dir, rec FROM ("
+                " SELECT seq, 0 AS side, dst AS other, type, 'out' AS dir, rec FROM edges WHERE src = ?"
+                " UNION ALL"
+                " SELECT seq, 1 AS side, src AS other, type, 'in' AS dir, rec FROM edges WHERE dst = ?"
+                ") ORDER BY seq, side",
+                (node_id, node_id),
+            ).fetchall()
         return [(other, etype, d, json.loads(rec)) for other, etype, d, rec in rows]
 
     def iter_nodes(self) -> Iterator[Record]:
-        for (rec,) in self._db.execute("SELECT rec FROM nodes ORDER BY seq"):
+        with self._lock:
+            rows = self._db.execute("SELECT rec FROM nodes ORDER BY seq").fetchall()
+        for (rec,) in rows:
             yield json.loads(rec)
 
     def iter_edges(self) -> Iterator[Record]:
-        for (rec,) in self._db.execute("SELECT rec FROM edges ORDER BY seq"):
+        with self._lock:
+            rows = self._db.execute("SELECT rec FROM edges ORDER BY seq").fetchall()
+        for (rec,) in rows:
             yield json.loads(rec)
 
     def node_count(self) -> int:
-        return int(self._db.execute("SELECT COUNT(*) FROM nodes").fetchone()[0])
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) FROM nodes").fetchone()
+        return int(row[0])
 
     def has_chunks(self) -> bool:
         try:
-            return (
-                self._db.execute(
+            with self._lock:
+                row = self._db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks'"
                 ).fetchone()
-                is not None
-            )
+            return row is not None
         except sqlite3.DatabaseError:
             return False
 
     def chunk_count(self) -> int:
         try:
-            return int(self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
+            with self._lock:
+                row = self._db.execute("SELECT COUNT(*) FROM chunks").fetchone()
+            return int(row[0])
         except sqlite3.DatabaseError:
             return 0
 
     def get_chunk(self, chunk_id: str) -> Record | None:
         try:
-            row = self._db.execute("SELECT rec FROM chunks WHERE id = ?", (chunk_id,)).fetchone()
+            with self._lock:
+                row = self._db.execute(
+                    "SELECT rec FROM chunks WHERE id = ?", (chunk_id,)
+                ).fetchone()
             return None if row is None else json.loads(row[0])
         except sqlite3.DatabaseError:
             return None
 
     def get_chunks_by_node(self, node_id: str) -> list[Record]:
         try:
-            rows = self._db.execute(
-                "SELECT rec FROM chunks WHERE node_id = ? ORDER BY seq", (node_id,)
-            )
+            with self._lock:
+                rows = self._db.execute(
+                    "SELECT rec FROM chunks WHERE node_id = ? ORDER BY seq", (node_id,)
+                ).fetchall()
             return [json.loads(rec) for (rec,) in rows]
         except sqlite3.DatabaseError:
             return []
 
     def get_chunk_by_seq(self, seq: int) -> Record | None:
         try:
-            row = self._db.execute("SELECT rec FROM chunks WHERE seq = ?", (seq + 1,)).fetchone()
+            with self._lock:
+                row = self._db.execute(
+                    "SELECT rec FROM chunks WHERE seq = ?", (seq + 1,)
+                ).fetchone()
             return None if row is None else json.loads(row[0])
         except sqlite3.DatabaseError:
             return None
 
     def iter_chunk_ids(self) -> Iterator[str]:
         try:
-            for (cid,) in self._db.execute("SELECT id FROM chunks ORDER BY seq"):
+            with self._lock:
+                rows = self._db.execute("SELECT id FROM chunks ORDER BY seq").fetchall()
+            for (cid,) in rows:
                 yield cid
         except sqlite3.DatabaseError:
             return
 
     def iter_chunks(self) -> Iterator[Record]:
         try:
-            for (rec,) in self._db.execute("SELECT rec FROM chunks ORDER BY seq"):
+            with self._lock:
+                rows = self._db.execute("SELECT rec FROM chunks ORDER BY seq").fetchall()
+            for (rec,) in rows:
                 yield json.loads(rec)
         except sqlite3.DatabaseError:
             return

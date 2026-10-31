@@ -459,10 +459,11 @@ def extract_pytest_facts(src: bytes) -> dict[str, Any]:
                     break
             decs = _get_decorators(node)
             uf = _get_usefixtures(decs)
-            if uf and cls_name:
-                classes[cls_name] = uf
+            cls_qualname = f"{enclosing_class}.{cls_name}" if enclosing_class else cls_name
+            if uf and cls_qualname:
+                classes[cls_qualname] = uf
             for child in node.named_children:
-                walk(child, enclosing_class=cls_name or enclosing_class)
+                walk(child, enclosing_class=cls_qualname)
             return
 
         if node.type == "function_definition":
@@ -481,7 +482,7 @@ def extract_pytest_facts(src: bytes) -> dict[str, Any]:
                 receiver, name = _decorator_parts(src, dec)
                 name_lower = name.lower()
                 recv_lower = receiver.lower()
-                if name_lower == "fixture" and recv_lower in ("pytest", ""):
+                if name_lower == "fixture" and recv_lower in ("pytest", "pytest_asyncio", ""):
                     fixture_dec = dec
                     call = _call_of(dec)
                     if call is not None:
@@ -507,6 +508,7 @@ def extract_pytest_facts(src: bytes) -> dict[str, Any]:
                     {
                         "name": custom_name or fn_name,
                         "fn_name": fn_name,
+                        "parent": enclosing_class,
                         "autouse": autouse,
                         "params": function_parameters(src, node),
                         "usefixtures": usefixtures_names,
@@ -515,12 +517,7 @@ def extract_pytest_facts(src: bytes) -> dict[str, Any]:
                     }
                 )
             else:
-                is_test = fn_name.startswith("test_") or (
-                    enclosing_class is not None
-                    and (enclosing_class.startswith("Test") or enclosing_class in classes)
-                    and fn_name.startswith("test_")
-                )
-                if is_test:
+                if fn_name.startswith("test_"):
                     tests.append(
                         {
                             "name": fn_name,

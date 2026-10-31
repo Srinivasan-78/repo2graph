@@ -90,6 +90,47 @@ def test_legacy_attributes_still_work_and_materialise_once(out, tmp_path):
     assert set(idx.adj) <= set(nodes) | {e["dst"] for e in idx.edges}
 
 
+def test_sqlite_store_concurrent_thread_queries(pair):
+    import concurrent.futures
+
+    _, disk = pair
+    nodes = list(disk.store.iter_nodes())
+    assert nodes
+    nid = nodes[0]["id"]
+
+    def query_task(i: int) -> bool:
+        rec = disk.store.node(nid)
+        assert rec is not None and rec["id"] == nid
+        neighbours = disk.store.neighbours(nid)
+        assert isinstance(neighbours, list)
+        assert disk.store.has(nid) is True
+        return True
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(query_task, i) for i in range(50)]
+        for f in concurrent.futures.as_completed(futures):
+            assert f.result() is True
+
+
+def test_store_context_manager(out, tmp_path):
+    import sqlite3
+
+    db_path = tmp_path / "g.sqlite"
+    with SqliteGraphStore.from_index(out, db_path) as store:
+        assert isinstance(store, SqliteGraphStore)
+        assert store.node_count() > 0
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        store._db.execute("SELECT 1")
+
+    db_path.unlink()
+    assert not db_path.exists()
+
+    with MemoryGraphStore([], []) as mem:
+        assert isinstance(mem, MemoryGraphStore)
+        assert mem.node_count() == 0
+
+
 # --------------------------------------------------------------------------
 # `--store`, and the cache's freshness test
 #
