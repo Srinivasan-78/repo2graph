@@ -3,7 +3,7 @@ name: Publish
 # Unified Release Pipeline:
 # 1. prepare-release: Bumps version across all files, commits, tags, and validates consistency.
 # 2. publish: Tests and publishes to PyPI via OIDC, waits for CDN, then publishes to the MCP Registry.
-# 3. release: Creates GitHub Release from CHANGELOG.md and advances the floating major tag (e.g. v1).
+# 3. release: GitHub Release from CHANGELOG.md, advances the floating major tag, syncs default branch.
 #
 # workflow_dispatch only, deliberately. prepare-release's own tag push and the
 # release job's `gh release create` each used to match this same workflow's
@@ -568,6 +568,43 @@ jobs:
           git tag -f "$major" "$TAG"
           git push -f origin "refs/tags/$major"
           echo "Advanced floating tag $major to $TAG" >> "$GITHUB_STEP_SUMMARY"
+
+      # REL-01: `main` is the repository's default branch, so every visitor,
+      # every `git clone`, the rendered README and the PyPI documentation
+      # links all resolve to whatever it points at. Nothing advanced it after
+      # a release, so it sat at 2.2.0 while 5.0.0 was on PyPI -- three
+      # versions live at once, and the stale one was the one with all the
+      # traffic. Doing it here makes "default branch" and "latest release" the
+      # same commit by construction instead of by someone remembering to merge
+      # back, which is the part that failed.
+      #
+      # Fast-forward only, and deliberately not `-f`: if the default branch
+      # holds a commit the tag does not, that is a real divergence for a human
+      # to resolve and a force push would silently discard it. This fails
+      # loudly instead. It also fails loudly if the release identity is not
+      # permitted to push to the default branch -- which is the correct
+      # outcome, because a silently skipped sync is exactly how REL-01
+      # happened.
+      - name: Sync default branch to the released tag
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          TAG: ${{ needs.prepare-release.outputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          target="${DEFAULT_BRANCH:-main}"
+          git fetch --no-tags origin "+refs/heads/$target:refs/remotes/origin/$target"
+          head_sha="$(git rev-parse "refs/remotes/origin/$target")"
+          tag_sha="$(git rev-parse "$TAG^{commit}")"
+          if [ "$head_sha" = "$tag_sha" ]; then
+            echo "- **Default branch**: \`$target\` is already at $TAG" >> "$GITHUB_STEP_SUMMARY"
+          elif git merge-base --is-ancestor "$head_sha" "$tag_sha"; then
+            git push origin "$tag_sha:refs/heads/$target"
+            echo "- **Default branch**: fast-forwarded \`$target\` to $TAG" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::'$target' has commits $TAG does not contain; refusing to force the default branch. Merge $TAG into '$target' by hand."
+            exit 1
+          fi
 
       - name: Release summary
         env:
