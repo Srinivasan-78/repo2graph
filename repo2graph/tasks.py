@@ -242,10 +242,16 @@ def _default_estimator(repo: str | Path) -> float:
 
 
 def _default_builder(repo: str | Path, out: str | Path) -> None:
-    """Build an index the same way the synchronous path does."""
-    from .mcp.tools import _build_index
+    """Build an index the same way the synchronous path does.
 
-    _build_index(Path(repo), Path(out))
+    `from .autobuild import build_index`, not `from .mcp.tools import
+    _build_index`: this module is core, and importing the project's central
+    operation out of the MCP interface layer made that layer own it (ARCH-01).
+    The function is the same one; it just no longer lives upstairs.
+    """
+    from .autobuild import build_index
+
+    build_index(Path(repo), Path(out))
 
 
 BUILDING_MESSAGE = (

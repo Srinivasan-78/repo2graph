@@ -630,6 +630,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `audit.py` | 291 | Audit log sink. |
 | `schema.py` | 315 | The record shapes the artifacts promise. |
 | `tasks.py` | 260 | Background `--async-build` state. |
+| `autobuild.py` | 75 | Building an index on the tool's own initiative rather than on request: hardened output path, the repo's own config, the same `BuildLock`, and the `.gitignore` that keeps an unasked-for index out of a commit. Core, not MCP — `tasks.py` and the MCP server are both callers. |
 | `changelog.py` | 230 | The per-push structural graph diff in `human/CHANGELOG.md`. |
 | `cache.py` | 223 | The MCP result cache. A leaf. |
 | `events.py` | 190 | Structured event sink. |
