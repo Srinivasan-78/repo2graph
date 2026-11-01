@@ -1,8 +1,11 @@
 """Tests for repo2graph doctor command and diagnostic probes."""
 
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from repo2graph.cli import main
 from repo2graph.doctor import (
@@ -256,13 +259,49 @@ def test_doctor_cli_text_and_json(tmp_path, capsys):
 
 
 def test_doctor_python_version_warn_newer():
-    """Verify that Python > 3.13 produces a WARN result (untested support matrix)."""
-    with patch("sys.version_info", (3, 14, 0)):
+    """Verify that Python > 3.14 produces a WARN result (untested support matrix)."""
+    with patch("sys.version_info", (3, 15, 0)):
         res = check_python()
         assert res.status == "warn"
         assert "newer" in res.summary
         assert res.remediation is not None
-        assert "3.11 through 3.13" in res.remediation
+        assert "3.11 through 3.14" in res.remediation
+
+
+def test_doctor_python_version_ok_on_running_interpreter():
+    """`doctor` must report ok for the interpreter it is actually running on.
+
+    This is the check that was missing: every other case patches
+    `sys.version_info`, so nothing asserted the unpatched truth. CI runs
+    3.11-3.14 and `pyproject.toml` advertises that range, so an `ok` here is
+    the contract -- `doctor` is the onboarding trust tool, and a spurious
+    warning on a supported interpreter is a visible one.
+    """
+    res = check_python()
+    assert res.status == "ok", f"doctor warns on its own interpreter: {res.summary}"
+    assert f"{sys.version_info[0]}.{sys.version_info[1]}" in res.summary
+
+
+@pytest.mark.parametrize(
+    "version_info",
+    [
+        (3, 11, 9, "final", 0),
+        (3, 12, 7, "final", 0),
+        (3, 13, 15, "final", 0),
+        (3, 14, 0, "final", 0),
+    ],
+)
+def test_doctor_python_version_ok_across_supported_matrix(version_info):
+    """Every supported version is ok, asserted with realistic 5-tuples.
+
+    `sys.version_info` is a 5-tuple in reality. The original comparison used
+    the whole tuple against `(3, 13)`, so 3.13.x sorted *after* its own prefix
+    and warned. Patching with 3-tuples -- as the other tests here do -- cannot
+    reproduce that, which is why the defect shipped.
+    """
+    with patch("sys.version_info", version_info):
+        res = check_python()
+        assert res.status == "ok", f"{version_info} should be supported: {res.summary}"
 
 
 def test_doctor_platform_support_glibc_failures_and_success():

@@ -85,17 +85,25 @@ class DoctorReport:
 
 
 def check_python() -> CheckResult:
-    """Check Python interpreter version (requires >= 3.11, tested <= 3.13)."""
+    """Check Python interpreter version (requires >= 3.11, tested <= 3.14)."""
     vi = sys.version_info
     ver_str = f"{vi[0]}.{vi[1]}.{vi[2]}"
-    if (3, 11) <= vi <= (3, 13):
-        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.11, <= 3.13)")
-    if vi > (3, 13):
+    # Compare `vi[:2]`, never `vi`. `sys.version_info` is a 5-tuple, so
+    # `(3, 13, 15, "final", 0) <= (3, 13)` is False -- a longer tuple sorts
+    # *after* its own prefix -- which sent every 3.13.x install down the
+    # "newer than tested" branch and warned the majority of users that their
+    # supported interpreter was untested. The existing tests missed it because
+    # they patched `sys.version_info` with 3-tuples, where the prefix rule
+    # never bites.
+    minor = vi[:2]
+    if (3, 11) <= minor <= (3, 14):
+        return CheckResult("Python Version", "ok", f"Python {ver_str} (>= 3.11, <= 3.14)")
+    if minor > (3, 14):
         return CheckResult(
             "Python Version",
             "warn",
-            f"Python {ver_str} is newer than tested support matrix (<= 3.13)",
-            remediation="Python 3.11 through 3.13 are verified. Python 3.14+ may encounter grammar wheel compatibility issues.",
+            f"Python {ver_str} is newer than tested support matrix (<= 3.14)",
+            remediation="Python 3.11 through 3.14 are verified. Newer versions may encounter grammar wheel compatibility issues.",
         )
     return CheckResult(
         "Python Version",
