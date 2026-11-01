@@ -44,6 +44,81 @@ makes keeping it current a release-blocking step rather than a good intention.
   and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
   recording `skipped_parse_crash`.
 
+- **`doctor` no longer warns that a supported Python is untested (COMPAT-01).** `check_python()`
+  compared `sys.version_info` -- a 5-tuple -- against the 2-tuple `(3, 13)`. A longer tuple sorts
+  after its own prefix, so `(3, 13, 15, "final", 0) <= (3, 13)` is `False` and every 3.13.x install
+  fell through to the "newer than tested support matrix" branch. Since `doctor` is the onboarding
+  trust tool, it was telling the large majority of users their interpreter was unsupported. It now
+  compares `vi[:2]`, and the matrix reads 3.11-3.14 rather than warning about the 3.14 CI already
+  tests. The existing tests missed it because they patched `sys.version_info` with 3-tuples, where
+  the prefix rule never bites.
+- **A missing `NPM_TOKEN` fails the npm publish instead of skipping it (CI-02).** It printed
+  `::warning::` and exited 0. Because `release` deliberately does not depend on the npm job, that
+  warning was invisible in practice: the run went green, the GitHub Release was created, and the
+  launcher users reach through `npx` stayed on the previous version with nothing to say so.
+- **The dependency audit runs on every pull request (CI-05).** It carried
+  `pull_request: branches: [main]`, the only base filter among the security workflows. Since
+  feature work lands on `develop` first, `pip-audit` never ran on the PRs that actually introduce
+  dependencies; a CVE would surface only on the promotion PR, long after the change that brought
+  it in.
+
+### Added
+
+- **The default branch is advanced to the released tag by `publish.yml` (REL-01).** `main` is what
+  every repository visitor, `git clone`, rendered README and PyPI documentation link resolves to,
+  and nothing moved it after a release -- so it sat at 2.2.0 while 5.0.0 was on PyPI and `develop`
+  was 240 commits ahead. The `release` job now fast-forwards it, making "default branch" and
+  "latest release" the same commit by construction rather than by someone remembering. Fast-forward
+  only and deliberately not `-f`: a divergence is for a human to resolve, and a silently skipped
+  sync is how this happened.
+- **A cyclomatic-complexity gate (`C901`, threshold 20) (CQ-06).** Nothing stopped the large
+  functions getting larger; `graph.build()` measures 110. The 21 functions already above the line
+  carry `# noqa: C901` with their measured complexity at the `def`, rather than a
+  `per-file-ignores` entry for their 16 modules -- ignoring a whole module would let a brand-new
+  90-branch function in the same file pass, and those modules are where new code lands. `RUF100`
+  deletes each marker once its function is decomposed, so the list cannot become permanent.
+- **An on-disk format compatibility contract (TEST-02).** Five majors shipped in under two months
+  with nothing asserting what happens to an index written by an older one. All five version
+  literals are now pinned against hand-written values, and each kind of mismatch has an asserted
+  outcome: an unreadable `.r2g` index is refused in `Index.__init__` with a message naming both
+  what it found and what it would accept, while the derived sqlite cache is rebuilt silently. The
+  failure being excluded is not "an old index raises" but an old index read as if it were current.
+- **Dependabot watches `npm` and `docker` (DEP-02).** The published npx launcher and the VS Code
+  extension had no alert path at all, nor did the Dockerfile's base image -- which matters more
+  than usual because it is tag-pinned rather than digest-pinned. The `benchmarks/corpus` manifests
+  are deliberately excluded: that corpus is input to the parser, not code that runs.
+- **Every environment variable the package reads is documented (CFG-01).**
+  `REPO2GRAPH_CACHE_DIR`, `GITHUB_SERVER_URL` and `REPO2GRAPH_ALLOW_INSECURE_OLLAMA` were read by
+  code and documented nowhere. The last is a security control -- it disables the SSRF guard on
+  `OLLAMA_HOST` -- and was discoverable only by tripping the error that names it.
+
+### Changed
+
+- **Concurrency tests assert results, not the absence of a crash (TEST-05).** They checked that
+  nothing raised, which is blind to the failure they exist to catch: an unsynchronised shared
+  `sqlite3` connection interleaves cursors and hands one thread another thread's row, with no
+  exception. All three now compare against a baseline computed single-threaded before any worker
+  starts. `test_sqlite_store_concurrent_thread_queries` also runs 60 iterations per worker rather
+  than one pass: measured against an unlocked store, 8 workers x 1 pass reproduced the fault in
+  only ~80% of runs, where 8 x 60 reproduced it in 10 of 10 trials and 0 of 10 with the lock.
+- **Building an index moved out of the MCP layer into `repo2graph.autobuild` (ARCH-01).**
+  `tasks.py`, which is core, reached up into the interface layer with
+  `from .mcp.tools import _build_index`, making the MCP package the owner of the one thing this
+  project exists to do. The MCP layer and `tasks.py` are now both callers. Existing names are
+  re-exported, so no caller or test moves.
+- **`provenance.yml` is now `compliance.yml` (CI-03).** It generated no build attestation despite
+  the name: both jobs are compliance audits. The attestation that does exist is produced where the
+  artifacts are, in `publish.yml`. Job names are unchanged, so no required-check context moves.
+- **SSE tests poll for readiness instead of sleeping 0.4s (TEST-03).** The fixed sleep was wrong in
+  both directions -- slow locally, and too short on a loaded runner, where the connect that follows
+  fails with `ConnectionRefusedError` as a flake that reads like a server bug.
+- **Documentation accuracy (DOC-01 … DOC-05).** `SECURITY.md`'s CI matrix said 3.10-3.13 where it
+  is 3.11-3.14. README carried its own copy of the no-network exception list, two behind the
+  authoritative one (`build --neo4j-uri` and `rag --tokenizer tiktoken` were missing), so the
+  shorter list implied fewer outbound calls than the tool can make; it now links there instead.
+  README's "The 3.x CLI ... follows semver" named a major the project is three past, and
+  `docs/mcp.md` said "the first eight" of nine tools answer questions about code where it is seven.
+
 ### Removed
 
 - **Python 3.10 is no longer supported; `requires-python` is now `>=3.11`.** This is a breaking
@@ -61,6 +136,16 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
+- **Artifacts are owner-only when the build is told not to redact (SEC-01).**
+  `--secret-policy warn-only` and `off` write matched secrets through, and `--include-secrets`
+  indexes credential files wholesale; the output still inherited the default file mode, 0644 under
+  a typical umask, readable by every local account. Passing a flag that says "do not redact" is not
+  consent to that. `chmod 0600` is applied in staging, before the atomic swap, so the restricted
+  mode is in place before the artifacts are reachable. The redacting default is untouched.
+- **The `tree-sitter-language-pack<1.0` cap is recorded as accepted, tracked risk (DEP-01).** The
+  rationale for the cap was already documented; what was missing is that the 0.x line appears
+  frozen upstream, so there is no in-range exit. A grammar advisory against 0.x is an incident
+  requiring the vendoring work, not a version bump.
 - **`filelock` and `setuptools` bumped in `uv.lock`, clearing 14 Dependabot alerts.** `filelock`
   3.32.7 → 4.2.6 (13 local-privilege findings — one high, nine moderate, three low: `ReadWriteLock`
   following a planted symlink into SQLite, `SoftFileLock`/`StrictSoftFileLock` losing mutual
