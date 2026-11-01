@@ -234,7 +234,7 @@ or a released package, independent of anything the tool does at runtime:
   `Package Distribution & MCP Stdio Smoke Test`, `GitHub Action Composite Integration Test`,
   `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (the synthetic regression suite in `benchmarks/corpus/`).
 
-  CI *runs* more than it *requires*. In `provenance.yml`, `License & Copyright Compliance (REUSE/SPDX)`
+  CI *runs* more than it *requires*. In `compliance.yml`, `License & Copyright Compliance (REUSE/SPDX)`
   and `Workflow Security Audit (zizmor)` run on every push and PR to audit licenses and GitHub Actions configuration.
   Verify against the live ruleset rather than this list if you are relying on it:
   `gh api repos/Srinivasan-78/repo2graph/rules/branches/main --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]'`.

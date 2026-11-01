@@ -671,9 +671,16 @@ jobs:
             echo "repo2graph-mcp $VERSION is already on npm"
             exit 0
           fi
+          # A hard failure, not a warning. This job's entire purpose is to
+          # publish, and `release` deliberately does not depend on it so that a
+          # failed npm publish cannot half-complete the PyPI release -- which
+          # means a `::warning::` here was invisible in practice: the release
+          # went green, the GitHub Release was created, and the launcher that
+          # users reach through `npx` stayed on the previous version with
+          # nothing to say so. Red job, completed release, obvious cause.
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::warning::NPM_TOKEN is not set; repo2graph-mcp $VERSION was not published to npm"
-            exit 0
+            echo "::error::NPM_TOKEN is not set; repo2graph-mcp $VERSION cannot be published to npm"
+            exit 1
           fi
           # The token goes in a file outside the checkout, never on argv.
           printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$RUNNER_TEMP/npmrc"

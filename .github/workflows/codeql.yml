@@ -2,7 +2,7 @@ name: codeql
 
 # Static analysis of the *source*, which was the unscanned surface.
 #
-# `provenance.yml` already runs `zizmor` over the workflows and `reuse` over
+# `compliance.yml` already runs `zizmor` over the workflows and `reuse` over
 # the licensing, and `ci.yml` runs `ruff` (now including the `S`/bandit rules)
 # and `mypy --strict`. None of those does interprocedural taint tracking, and
 # that is the analysis this project actually wants: `security.py` decides which
@@ -53,7 +53,7 @@ jobs:
         # advanced configuration's SARIF while default setup is enabled, so the
         # two cannot coexist. Default setup covered `actions`, and dropping it
         # would have traded workflow-injection coverage for the extended
-        # queries. `zizmor` in `provenance.yml` audits the workflows too, but
+        # queries. `zizmor` in `compliance.yml` audits the workflows too, but
         # it is a linter and does not do CodeQL's dataflow analysis.
         language: [python, javascript-typescript, actions]
     steps:
