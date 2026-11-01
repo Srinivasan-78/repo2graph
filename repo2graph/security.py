@@ -258,7 +258,9 @@ SENSITIVE_QUERY_PARAMS_RE = re.compile(
 # With `{0,40}` the engine tries at most 41 lengths per offset, which is linear
 # (966 KB in 0.0084 s) and still admits every real label -- `RSA`, `DSA`, `EC`,
 # `OPENSSH`, `ENCRYPTED`, `ENCRYPTED RSA`, and the bare `PRIVATE KEY`.
-# Python 3.10 is the floor here, so possessive `*+` is not available.
+# The bound is what makes this linear, and it stays the bound even though the
+# floor is now 3.11 and possessive `*+` is available: `{0,40}` is the form that
+# was measured above, and it also caps the label length, which `*+` would not.
 _PEM_LABEL = r"[-A-Z0-9_ ]{0,40}"
 # Three armour families, not one. The original pattern demanded `PRIVATE KEY`
 # followed immediately by five dashes, which silently excluded two formats that

@@ -17,15 +17,8 @@ import ast
 import re
 import subprocess
 import sys
+import tomllib  # stdlib on the 3.11 floor; the tomli fallback went with 3.10
 from pathlib import Path
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
 
 import pytest
 from conftest import REPO_ROOT
@@ -38,11 +31,8 @@ import version_surfaces as vs  # noqa: E402
 
 def declared_version() -> str:
     content = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf8")
-    if tomllib is not None:
-        return tomllib.loads(content)["project"]["version"]
-    m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', content)
-    assert m is not None, "could not find version in pyproject.toml"
-    return m.group(1)
+    version: str = tomllib.loads(content)["project"]["version"]
+    return version
 
 
 def test_every_surface_matches_something_in_every_file_it_claims():

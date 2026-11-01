@@ -86,7 +86,8 @@ def source_version(root: Path = ROOT) -> str:
     install's dist-info keeps whatever version it was installed at -- a 2.2.0
     run was labelled 2.1.0. pyproject.toml's `[project] version` is what the
     code on disk is; the `__init__` fallback constant is the second source.
-    (Regex, not tomllib: Python 3.10 is supported.)
+    (Regex, not tomllib: this reads one `version = "..."` line and is kept
+    dependency-free and identical across the benchmark scripts.)
     """
     try:
         text = (root / "pyproject.toml").read_text(encoding="utf8")
