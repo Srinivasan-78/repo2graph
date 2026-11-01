@@ -524,6 +524,24 @@ others do:
   `--formats`, which takes one comma-separated value.
 - **A renamed flag keeps its old name** as an alias, so scripts do not break.
 
+## Environment variables
+
+Every variable the tool reads. There is no hidden configuration file: this table
+and the flags above are the whole surface.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `REPO2GRAPH_DEBUG` | unset | `1` re-raises unexpected internal errors instead of swallowing them. Same as `--debug`. |
+| `REPO2GRAPH_CACHE_DIR` | alongside the index | Moves the SQLite query cache out of the index directory. Set it when the index lives on a read-only or network volume. The path must be a usable directory — a file standing where a directory must go is a hard error naming the variable, not a silent fallback. |
+| `REPO2GRAPH_MCP_AUTH_TOKEN` | unset | Bearer token for the MCP SSE transport, equivalent to `--auth-token`. See [docs/mcp.md](mcp.md). |
+| `REPO2GRAPH_ALLOW_INSECURE_OLLAMA` | unset | **A security control, not a convenience.** `1` disables the SSRF guard on `OLLAMA_HOST`, allowing `rag --answer` to post your code pack to a loopback, link-local, private-range or otherwise blocked address. Set it only when such a host is genuinely your own Ollama server. Leaving it unset is what keeps a crafted `OLLAMA_HOST` from turning `--answer` into a request against your internal network. |
+| `OLLAMA_HOST` | unset | Where `rag --answer --provider ollama` sends the pack; it is that provider's required credential slot, so there is no default. Must be an `http(s)` URL or `host:port` (a schemeless `127.0.0.1:11434` is accepted and gets `http://`). Plain HTTP to a non-loopback host warns: the code and the answer cross the network unencrypted. |
+| `GITHUB_SERVER_URL` | `https://github.com` | The GitHub host `repo2graph github` and GitHub-spec targets clone from, for GitHub Enterprise. Also scopes which host the token header is attached to, so a token is not sent to github.com when you are pointed at an Enterprise server. |
+| `GITHUB_TOKEN` / `GH_TOKEN` | unset | Credentials for cloning a private repository. Passed to git through `GIT_CONFIG_*` for the configured server only, never written to disk. |
+
+`PYTHONIOENCODING` is read but not a setting of ours — it is consulted when
+re-encoding stdout on Windows.
+
 ## How retrieval works
 
 1. **Text search first.** BM25, the standard word-matching score, with one twist:

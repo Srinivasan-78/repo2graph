@@ -237,7 +237,7 @@ For cloud agents, remote devboxes, or centralized index servers, connect over HT
 | `repo_cache_stats` | none | JSON object with cache metrics (hits, misses, size, etc.). |
 | `repo_build_status` | `task_id` | JSON object with build task status, progress, and error details. |
 
-The first eight answer questions about the code and exclude secrets
+The first seven answer questions about the code and exclude secrets
 unconditionally. The last two report on the server itself, never read a chunk,
 and are never served from the cache — a cached cache-stats or progress reading is
 the one answer guaranteed to be out of date.

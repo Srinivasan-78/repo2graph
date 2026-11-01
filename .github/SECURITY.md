@@ -42,7 +42,11 @@ answer questions from that local index. Nothing about your source is sent anywhe
 `repo2graph-mcp --transport sse` listens, which is the one exception below that is a server
 rather than a client.
 
-Every exception is something you ask for by name:
+Every exception is something you ask for by name. **This list is the authoritative one.** Other
+documents link here rather than restating it: README used to carry its own copy, which drifted
+two exceptions behind (`build --neo4j-uri` and `rag --tokenizer tiktoken` were missing), so a
+reader checking the shorter list would have concluded the tool made fewer outbound calls than it
+can. Add a new exception here, and nowhere else.
 
 - `repo2graph github`, and a `rag`/`query` target written as `owner/repo` or a URL, clone that
   repository. A target that looks like a local path is never sent to GitHub: if it does not
@@ -187,6 +191,16 @@ relevant if you're running it where an untrusted caller can pick the arguments.
   no-network guarantee above and the read-only container below. 1.x exposes no offline switch, so
   raising the cap means vendoring grammars first. `tests/test_grammar_availability.py` asserts the
   bound so a dependency bump cannot quietly undo it.
+
+  **Accepted risk, recorded rather than resolved.** The 0.x line appears frozen upstream, so this
+  cap is security debt with no in-range exit: if a grammar vulnerability is found in 0.x, there is
+  no patched 0.x to bump to, and the fix would land in a 1.x this project cannot take. The
+  trade is deliberate — a fetch of unsigned native code on every first parse is a larger and
+  *certain* exposure than a hypothetical future grammar bug — but it is a trade, not an absence
+  of risk. Vendoring the grammars is the eventual exit and is scoped as multi-week work; until
+  then the cap stays and Dependabot PRs that raise it are closed with a link to this section.
+  Treat a tree-sitter advisory against 0.x as an incident requiring the vendoring work, not a
+  version bump.
 - **A broken grammar fails the build instead of emptying the graph.** If no grammar can be loaded
   for any supported file that was discovered, `build` exits non-zero and says so. It used to exit
   0 with a graph of files and directories and no symbols, calls or imports — while `doctor`
@@ -207,7 +221,7 @@ or a released package, independent of anything the tool does at runtime:
 
 - **Maintainer review posture:** repo2graph is developed and maintained by a single maintainer
   ([@Srinivasan-78](https://github.com/Srinivasan-78)). Pull requests must pass automated CI checks
-  before merging to `main` (linting, typechecking, multi-platform test matrices across Python 3.10-3.13,
+  before merging to `main` (linting, typechecking, multi-platform test matrices across Python 3.11-3.14,
   and synthetic regression benchmarks), but PRs require 0 third-party approvals, and commit signing
   is not currently enforced on `main`. Downstream infra users requiring strict cryptographic guarantees
   should verify PyPI provenance attestations or pin exact commit SHAs.
@@ -216,7 +230,7 @@ or a released package, independent of anything the tool does at runtime:
   branch cannot be removed.
 - **Status checks gate every merge**, all of which must pass before the PR is mergeable:
   `Code Quality & Static Analysis` (ruff lint, formatting, mypy, and version surfaces),
-  `Test Suite` across `ubuntu-latest`, `windows-latest` and `macos-latest` (Python 3.10, 3.11, 3.12, 3.13),
+  `Test Suite` across `ubuntu-latest`, `windows-latest` and `macos-latest` (Python 3.11, 3.12, 3.13, 3.14),
   `Package Distribution & MCP Stdio Smoke Test`, `GitHub Action Composite Integration Test`,
   `Windows CP1252 Non-UTF8 Pipeline Compatibility`, and `Benchmark Regression Gate` (the synthetic regression suite in `benchmarks/corpus/`).
 
