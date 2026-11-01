@@ -180,6 +180,16 @@ exclude_also = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# ruff formats fenced Python inside Markdown, and `audit-reports/` quotes
+# source verbatim as evidence: the snippets are what a file *did* look like at
+# a given commit, and reformatting them would make the report misdescribe the
+# code it is citing. One of them illustrates a nested-class collision with two
+# `def ...: pass` bodies on single lines precisely because the collision is
+# easier to see that way. Excluded rather than reformatted, so the reports
+# stay quotations. A top-level `exclude`, not `per-file-ignores`, because the
+# formatter is what has to skip them -- `per-file-ignores` only binds the
+# linter.
+exclude = ["audit-reports"]
 
 [tool.ruff.lint]
 # `E`, `F`, `W` and `BLE` were the whole set for a long time, which is style
