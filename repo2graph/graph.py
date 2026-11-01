@@ -1186,7 +1186,7 @@ def _within_byte_budget(
     return kept
 
 
-def add_pytest_fixture_edges(
+def add_pytest_fixture_edges(  # noqa: C901 - complexity 47; see CQ-01/CQ-03
     g: Graph,
     root: Path,
     parsed: dict[str, ParsedFile],
@@ -1387,7 +1387,7 @@ def add_pytest_fixture_edges(
 
 
 # ---------- build ----------
-def build(
+def build(  # noqa: C901 - complexity 110; see CQ-01/CQ-03
     root: Path,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,

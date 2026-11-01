@@ -191,6 +191,26 @@ target-version = "py311"
 # linter.
 exclude = ["audit-reports"]
 
+[tool.ruff.lint.mccabe]
+# 20 is generous -- most functions here are in single digits -- and the point is
+# not to hit the existing offenders, which are already at 21-110 and are
+# tracked as decomposition work (`graph.build` at 110 is the largest). It is to
+# stop the *next* one appearing without anyone deciding to accept it.
+#
+# The 21 functions already above the line carry `# noqa: C901` with their
+# measured complexity at the `def`, rather than being excused by a
+# `per-file-ignores` entry for their modules. That choice matters: ignoring
+# `graph.py` wholesale would mean a brand-new 90-branch function in the same
+# file also passes silently, and those 16 modules are exactly where new code
+# lands. A site-level `noqa` grandfathers one function and leaves the rest of
+# the file gated -- and `RUF100` deletes the marker once the function is
+# decomposed below the threshold, so the list cannot rot into permanence.
+#
+# `scripts/**` is ignored by module instead: it is build-and-benchmark tooling
+# that is not shipped, already exempt from `S`, and not on the decomposition
+# roadmap.
+max-complexity = 20
+
 [tool.ruff.lint]
 # `E`, `F`, `W` and `BLE` were the whole set for a long time, which is style
 # plus blind-except: nothing in CI read the *code* for a bug or a security
@@ -209,10 +229,13 @@ exclude = ["audit-reports"]
 #   UP  pyupgrade       -- syntax the 3.11 floor already allows.
 #   RUF ruff's own      -- includes `RUF100`, which deletes a `noqa` that has
 #                          stopped suppressing anything; several here had.
+#   C901 mccabe         -- a ceiling on branch count, so the large functions
+#                          cannot quietly get larger. See the threshold note
+#                          under [tool.ruff.lint.mccabe].
 #
 # `SIM` is deliberately out: ~60 findings, all preference (`SIM105` wants
 # `contextlib.suppress` for a bare try/except/pass), and none of them is a bug.
-select = ["E", "F", "W", "BLE", "B", "S", "I", "UP", "RUF"]
+select = ["E", "F", "W", "BLE", "B", "S", "I", "UP", "RUF", "C901"]
 ignore = [
     "E501",
     "E702",
@@ -264,7 +287,7 @@ ignore = [
 # how several fixtures here are deliberately shaped -- a fake clock built on
 # `itertools.count()`, a stub whose class-level list collects calls.
 "tests/**" = ["S", "B011", "B017", "RUF012", "B008"]
-"scripts/**" = ["S"]
+"scripts/**" = ["S", "C901"]
 ".github/scripts/**" = ["S"]
 "benchmarks/**" = ["S"]
 # The synthetic corpus is *input to the parser*, not code that runs: it exists

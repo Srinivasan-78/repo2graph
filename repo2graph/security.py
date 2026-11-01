@@ -740,7 +740,7 @@ I18N_DIR_NAMES = frozenset(
 )
 
 
-def _is_secret_path(
+def _is_secret_path(  # noqa: C901 - complexity 26; see CQ-01/CQ-03
     path: str,
     extra_keywords: tuple[str, ...] | list[str] | set[str] | None = None,
     extra_dirs: tuple[str, ...] | list[str] | set[str] | None = None,

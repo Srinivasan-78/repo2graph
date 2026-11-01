@@ -1565,7 +1565,7 @@ _PRESERVE_ACROSS_BUILDS = (
 )
 
 
-def dump_all(
+def dump_all(  # noqa: C901 - complexity 21; see CQ-01/CQ-03
     g: "Graph",
     chunks: Iterable[Record] | None,
     outdir: Path,

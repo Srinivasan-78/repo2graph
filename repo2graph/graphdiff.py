@@ -340,7 +340,7 @@ def get_git_diff_spans(
         raise ValueError(f"failed to run git diff against '{base_commit}': {exc}") from exc
 
 
-def find_affected_tests(
+def find_affected_tests(  # noqa: C901 - complexity 58; see CQ-01/CQ-03
     index_or_dir: Any,
     *,
     base_commit: str | None = None,
