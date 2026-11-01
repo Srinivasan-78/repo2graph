@@ -13,6 +13,8 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-11-01
+
 ### Fixed
 
 - **Class-level and async pytest fixtures are preserved and scoped (#523).** Fixtures defined
@@ -2934,7 +2936,8 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/Srinivasan-78/repo2graph/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.2.0...v3.0.0
