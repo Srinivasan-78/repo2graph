@@ -1565,6 +1565,45 @@ _PRESERVE_ACROSS_BUILDS = (
 )
 
 
+def _restrict_if_unredacted(g: "Graph", staging_dir: Path, written: Iterable[str]) -> None:
+    """`chmod 0600` the artifacts when this build was told not to redact.
+
+    The default `--secret-policy redact-match`, and `exclude-file`, mean a
+    matched secret never reaches an artifact, so the ordinary file mode is the
+    right one. `warn-only` and `off` both write the matched content through,
+    and `--include-secrets` indexes credential *files* wholesale. In those
+    cases the index is exactly as sensitive as the repository's secrets, and
+    leaving it at the umask's discretion -- 0644 under a typical one, readable
+    by every local account -- is not a decision the operator made when they
+    passed the flag.
+
+    Applied in staging, before the directory swap, so the restricted mode is
+    already in place when the artifacts first become reachable at `outdir`
+    rather than briefly world-readable there.
+
+    Best-effort by design. On Windows `chmod` moves only the read-only bit, so
+    this is a POSIX-permissions measure; it is a second line behind the
+    redaction itself, never a substitute for it.
+    """
+    cfg = getattr(g, "config", None)
+    if cfg is None:
+        return
+    unredacted = getattr(cfg, "include_secrets", False) or getattr(
+        cfg, "secret_policy", "redact-match"
+    ) in ("warn-only", "off")
+    if not unredacted:
+        return
+    for rel_path in written:
+        p = staging_dir / rel_path
+        try:
+            if p.exists():
+                p.chmod(0o600)
+        except OSError:
+            # A filesystem that refuses the mode change must not fail a build
+            # that otherwise succeeded; the artifacts are already written.
+            pass
+
+
 def dump_all(  # noqa: C901 - complexity 21; see CQ-01/CQ-03
     g: "Graph",
     chunks: Iterable[Record] | None,
@@ -1683,6 +1722,8 @@ def dump_all(  # noqa: C901 - complexity 21; see CQ-01/CQ-03
 
         write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
         write_local(g, staging_dir)
+
+        _restrict_if_unredacted(g, staging_dir, written)
 
         # All writes succeeded: swap staging -> outdir atomically
         if in_target_staging:

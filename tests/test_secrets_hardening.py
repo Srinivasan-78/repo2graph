@@ -1437,3 +1437,129 @@ def test_single_quoted_and_yaml_credential_pairs_are_redacted(text):
 )
 def test_auth_json_under_a_translation_dir_is_not_secret(path, secret):
     assert _is_secret_path(path) is secret
+
+
+# --------------------------------------------------------------------------
+# SEC-01: artifact file mode when redaction is disabled
+# --------------------------------------------------------------------------
+
+
+def _artifact_modes(out: Path) -> dict[str, int]:
+    """{relative path: permission bits} for every written artifact."""
+    return {
+        str(p.relative_to(out)): p.stat().st_mode & 0o777 for p in out.rglob("*") if p.is_file()
+    }
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="chmod moves only the read-only bit on Windows; the mode bits are a POSIX measure",
+)
+@pytest.mark.parametrize("policy", ["warn-only", "off"])
+def test_unredacted_artifacts_are_owner_only(tmp_path: Path, policy):
+    """`warn-only` and `off` write secrets through, so the index must not be
+    left at the umask's discretion -- 0644 under a typical one, readable by
+    every local account on the machine."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "client.py").write_text(
+        "def connect():\n    token = 'ghp_0123456789abcdefghijklmnopqrstuvwxyz'\n    return token\n",
+        encoding="utf8",
+    )
+    out = tmp_path / "out"
+    rc = main(["build", str(src), "-o", str(out), "--formats", "jsonl", "--secret-policy", policy])
+    assert rc == 0
+
+    modes = _artifact_modes(out)
+    assert modes, "no artifacts were written"
+    too_open = {rel: oct(mode) for rel, mode in modes.items() if mode & 0o077}
+    assert not too_open, f"group/other can read unredacted artifacts: {too_open}"
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="chmod moves only the read-only bit on Windows; the mode bits are a POSIX measure",
+)
+def test_redacting_build_leaves_artifact_modes_alone(tmp_path: Path):
+    """The default policy redacts, so there is nothing to protect and the
+    tightening must not fire -- an index nobody can share is its own problem."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "client.py").write_text("def ok():\n    return 42\n", encoding="utf8")
+    out = tmp_path / "out"
+    rc = main(
+        [
+            "build",
+            str(src),
+            "-o",
+            str(out),
+            "--formats",
+            "jsonl",
+            "--secret-policy",
+            "redact-match",
+        ]
+    )
+    assert rc == 0
+
+    modes = _artifact_modes(out)
+    assert modes, "no artifacts were written"
+    assert any(mode & 0o044 for mode in modes.values()), (
+        "every artifact came out owner-only under the redacting default; "
+        "the SEC-01 tightening is firing when it should not"
+    )
+
+
+@pytest.mark.parametrize(
+    ("policy", "include_secrets", "expect_restricted"),
+    [
+        ("redact-match", False, False),
+        ("exclude-file", False, False),
+        ("warn-only", False, True),
+        ("off", False, True),
+        # --include-secrets indexes credential files wholesale, so the index is
+        # sensitive whatever the content policy says.
+        ("redact-match", True, True),
+    ],
+)
+def test_restrict_decision_matches_the_policy(tmp_path, policy, include_secrets, expect_restricted):
+    """Which policies tighten the artifact mode, asserted without needing POSIX.
+
+    The mode-bit tests above are skipped on Windows, which would leave the
+    decision itself unexercised on a Windows checkout. This drives the helper
+    directly and records the attempt, so the mapping from policy to "tighten"
+    is covered on every platform.
+    """
+    from repo2graph import export
+
+    class _Cfg:
+        secret_policy = policy
+        include_secrets = False
+
+    class _G:
+        config = _Cfg()
+
+    _G.config.include_secrets = include_secrets
+
+    artifact = tmp_path / "agent" / "nodes.jsonl"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("{}\n", encoding="utf8")
+
+    chmodded: list[int] = []
+    original = Path.chmod
+
+    def spy(self, mode, **kw):
+        chmodded.append(mode)
+        return original(self, mode, **kw)
+
+    try:
+        Path.chmod = spy
+        export._restrict_if_unredacted(_G(), tmp_path, ["agent/nodes.jsonl"])
+    finally:
+        Path.chmod = original
+
+    assert bool(chmodded) is expect_restricted, (
+        f"policy={policy} include_secrets={include_secrets}: "
+        f"chmod calls {chmodded}, expected restricted={expect_restricted}"
+    )
+    if expect_restricted:
+        assert chmodded == [0o600]
