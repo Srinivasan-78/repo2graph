@@ -289370,10 +289370,10 @@
     }
   },
   "format": "repo2graph/state-1",
-  "grammars": "tree-sitter=0.26.0 tree-sitter-language-pack=0.13.0",
+  "grammars": "tree-sitter=0.26.1 tree-sitter-language-pack=0.13.0",
   "identity": {
     "chunk_large_files": "False",
-    "grammars": "tree-sitter=0.26.0 tree-sitter-language-pack=0.13.0",
+    "grammars": "tree-sitter=0.26.1 tree-sitter-language-pack=0.13.0",
     "lang_config": "ba7db4bc3b706a9d",
     "max_file_bytes": "1500000",
     "secret_policy": "redact-match"
