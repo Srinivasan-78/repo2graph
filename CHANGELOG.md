@@ -15,6 +15,17 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Fixed
 
+- **A failed read no longer closes a file descriptor twice.** `graph._safe_read_bytes`
+  wrapped its whole `with os.fdopen(fd, "rb")` block in a handler that called
+  `os.close(fd)`. `os.fdopen` owns the descriptor once it returns and `with` closes it
+  on the way out, so a raising `read()` -- an EIO, or a FIFO a size flag let through --
+  closed the same number twice. The second close is not merely redundant: `tasks.py`
+  runs `build()` in a thread while the MCP server keeps serving on another, and
+  `parse.py` and `cochange.py` each run reader threads, so the kernel can hand that
+  number straight back to a concurrent `open()` in between, and the handler then closes
+  *that* file. The manual close now covers only the one case where the descriptor is
+  still ours -- `os.fdopen` itself raising -- and the `except OSError: pass` that turned
+  a double close into a silent EBADF is gone.
 - **Class-level and async pytest fixtures are preserved and scoped (#523).** Fixtures defined
   inside test classes (`class TestX: @pytest.fixture def fix(self): ...`) previously lost their
   parent identifier, failing symbol resolution and emitting zero `USES_FIXTURE` edges. `repo2graph`
