@@ -1565,7 +1565,7 @@ _PRESERVE_ACROSS_BUILDS = (
 )
 
 
-def _restrict_if_unredacted(g: "Graph", staging_dir: Path, written: Iterable[str]) -> None:
+def _restrict_if_unredacted(g: "Graph", staging_dir: Path) -> None:
     """`chmod 0600` the artifacts when this build was told not to redact.
 
     The default `--secret-policy redact-match`, and `exclude-file`, mean a
@@ -1584,6 +1584,15 @@ def _restrict_if_unredacted(g: "Graph", staging_dir: Path, written: Iterable[str
     Best-effort by design. On Windows `chmod` moves only the read-only bit, so
     this is a POSIX-permissions measure; it is a second line behind the
     redaction itself, never a substitute for it.
+
+    The staging tree is walked rather than the manifest's `written` list. That
+    list is the set of artifacts the manifest accounts for, which is not the
+    set of files in the index: `write_local` adds `local.json` and
+    `.gitignore` *after* the manifest is written, so keying off `written` left
+    both at 0644 -- and `local.json` carries the source root and the machine
+    marker. Walking the directory is also the version that stays correct when
+    a future artifact is added, since it describes the goal (nothing in this
+    index is group/other-readable) rather than a list to keep in sync.
     """
     cfg = getattr(g, "config", None)
     if cfg is None:
@@ -1593,11 +1602,11 @@ def _restrict_if_unredacted(g: "Graph", staging_dir: Path, written: Iterable[str
     ) in ("warn-only", "off")
     if not unredacted:
         return
-    for rel_path in written:
-        p = staging_dir / rel_path
+    for p in staging_dir.rglob("*"):
         try:
-            if p.exists():
-                p.chmod(0o600)
+            # Directories keep owner `x` so the owner can still traverse; the
+            # point is to drop group and other, not to lock out the builder.
+            p.chmod(0o700 if p.is_dir() else 0o600)
         except OSError:
             # A filesystem that refuses the mode change must not fail a build
             # that otherwise succeeded; the artifacts are already written.
@@ -1723,7 +1732,7 @@ def dump_all(  # noqa: C901 - complexity 21; see CQ-01/CQ-03
         write_manifest(g, out("manifest.json")[0], written, checksums=checksums)
         write_local(g, staging_dir)
 
-        _restrict_if_unredacted(g, staging_dir, written)
+        _restrict_if_unredacted(g, staging_dir)
 
         # All writes succeeded: swap staging -> outdir atomically
         if in_target_staging:

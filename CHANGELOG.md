@@ -108,7 +108,10 @@ makes keeping it current a release-blocking step rather than a good intention.
   indexes credential files wholesale; the output still inherited the default file mode, 0644 under
   a typical umask, readable by every local account. Passing a flag that says "do not redact" is not
   consent to that. `chmod 0600` is applied in staging, before the atomic swap, so the restricted
-  mode is in place before the artifacts are reachable. The redacting default is untouched.
+  mode is in place before the artifacts are reachable; the whole staged tree is walked rather than
+  the manifest's list of written artifacts, which does not include the `local.json` and
+  `.gitignore` that `write_local` adds after the manifest -- and `local.json` carries the source
+  root and the machine marker. The redacting default is untouched.
 - **The `tree-sitter-language-pack<1.0` cap is recorded as accepted, tracked risk (DEP-01).** The
   rationale for the cap was already documented; what was missing is that the 0.x line appears
   frozen upstream, so there is no in-range exit. A grammar advisory against 0.x is an incident

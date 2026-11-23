@@ -1553,7 +1553,7 @@ def test_restrict_decision_matches_the_policy(tmp_path, policy, include_secrets,
 
     try:
         Path.chmod = spy
-        export._restrict_if_unredacted(_G(), tmp_path, ["agent/nodes.jsonl"])
+        export._restrict_if_unredacted(_G(), tmp_path)
     finally:
         Path.chmod = original
 
@@ -1562,4 +1562,6 @@ def test_restrict_decision_matches_the_policy(tmp_path, policy, include_secrets,
         f"chmod calls {chmodded}, expected restricted={expect_restricted}"
     )
     if expect_restricted:
-        assert chmodded == [0o600]
+        # The whole staging tree: 0600 for the artifact, 0700 for the
+        # directory holding it, which keeps the owner's traverse bit.
+        assert sorted(chmodded) == [0o600, 0o700]
