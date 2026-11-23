@@ -1,9 +1,9 @@
 {
   "format": "repo2graph/1",
-  "build_id": "cbfcbec4-b041-4968-8558-ba3b5a0fbcaf",
+  "build_id": "ec699ab2-591c-4220-99a9-42de98943a9e",
   "tool_version": "5.0.0",
   "schema_version": 1,
-  "created_at": "2026-11-16T12:26:53.389330+00:00",
+  "created_at": "2026-11-23T14:02:16.851639+00:00",
   "source_revision": {
     "commit": "2a30c17e121408e1c7d520c0354cdd07800f385f",
     "short_commit": "2a30c17",
@@ -29,7 +29,7 @@
     "human/graph.html": "sha256:aa4d1c936445079d37880c56787ca5bc85d3a9340c124643622300afac816a06",
     "agent/stats.json": "sha256:e1cdfb703ba990572dccf567912f542216558e585cec35c40ca4597d675c915b",
     "agent/index.state.json": "sha256:7cbe9b9c630419c5140e5ea8cd461bc164a232aa1fc2a64b27d12b8fd66700af",
-    "agent/parse.cache.json": "sha256:d970de12bf9c60afb6fe64abb2dd225afeb09909eb91b8a43cde91d7eaed552f",
+    "agent/parse.cache.json": "sha256:07e9d0fc9bfc745016a54f81e0f5a5e5efa74aede1d7c4b40a328004399b3007",
     "human/CHANGELOG.md": "sha256:0ea237c8224b394c140f404e2329a1ab05feb80b677dbcac467756f220c39dbc"
   },
   "repo": "repo2graph",
