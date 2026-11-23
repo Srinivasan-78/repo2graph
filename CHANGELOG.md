@@ -26,35 +26,6 @@ makes keeping it current a release-blocking step rather than a good intention.
   *that* file. The manual close now covers only the one case where the descriptor is
   still ours -- `os.fdopen` itself raising -- and the `except OSError: pass` that turned
   a double close into a silent EBADF is gone.
-- **Class-level and async pytest fixtures are preserved and scoped (#523).** Fixtures defined
-  inside test classes (`class TestX: @pytest.fixture def fix(self): ...`) previously lost their
-  parent identifier, failing symbol resolution and emitting zero `USES_FIXTURE` edges. `repo2graph`
-  now records `parent` on fixture records, resolves class-scoped fixture definitions, recognizes
-  `@pytest_asyncio.fixture`, and isolates class-level autouse fixtures to methods within the declaring class.
-- **`SqliteGraphStore` multi-threading support and context manager lifecycle (#524).** Multi-threaded
-  callers (such as MCP SSE and thread-pooled query workloads) raised `sqlite3.ProgrammingError` or
-  `sqlite3.InterfaceError` because the read-only database connection lacked `check_same_thread=False` and
-  per-connection query serialization. `SqliteGraphStore` now configures `check_same_thread=False`, synchronizes
-  database access via an internal lock, and implements `__enter__` and `__exit__` context managers alongside
-  `MemoryGraphStore` and `GraphStore(Protocol)`, ensuring thread safety, deterministic handle closure, and
-  preventing Windows `PermissionError` on cache file removal.
-- **`diff --affected-tests` conftest path collision on nested test directories (#525).** Conftest symbol
-  attribution in `find_affected_tests` used suffix matching (`.endswith(cf)`), causing symbols from nested
-  `conftest.py` files (e.g. `tests/sub/conftest.py`) to falsely match a root `conftest.py` evaluation.
-  Replaced with exact normalized path matching against reached conftest paths.
-- **`diff --affected-tests` detects tests that consume fixtures by injection (#513).** A test
-  declaring a `conftest.py` (or local) fixture as a parameter never calls it by name, so no
-  `CALLS` edge exists and the reverse walk previously missed the consumer, truncating with a
-  warning. Under `--framework-edges`, repo2graph now extracts pytest fixtures, tracks parameter
-  injection, `@pytest.mark.usefixtures(...)`, and `autouse=True`, enforces hierarchical `conftest.py`
-  scoping and shadowing, and emits `USES_FIXTURE` edges traversed during affected-test discovery.
-- **Parse-worker memory cap is enforced on macOS via supervisor RSS polling (#514).** Because
-  macOS honours neither `RLIMIT_AS` nor Job Objects, parse workers on macOS were bounded solely by
-  the wall clock (`--parse-timeout`). The supervisor now polls worker resident memory in its
-  management loop across all platforms using Darwin `libproc` (`proc_pidinfo`), Linux `/proc/<pid>/statm`,
-  and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
-  recording `skipped_parse_crash`.
-
 - **`doctor` no longer warns that a supported Python is untested (COMPAT-01).** `check_python()`
   compared `sys.version_info` -- a 5-tuple -- against the 2-tuple `(3, 13)`. A longer tuple sorts
   after its own prefix, so `(3, 13, 15, "final", 0) <= (3, 13)` is `False` and every 3.13.x install
@@ -130,6 +101,52 @@ makes keeping it current a release-blocking step rather than a good intention.
   README's "The 3.x CLI ... follows semver" named a major the project is three past, and
   `docs/mcp.md` said "the first eight" of nine tools answer questions about code where it is seven.
 
+### Security
+
+- **Artifacts are owner-only when the build is told not to redact (SEC-01).**
+  `--secret-policy warn-only` and `off` write matched secrets through, and `--include-secrets`
+  indexes credential files wholesale; the output still inherited the default file mode, 0644 under
+  a typical umask, readable by every local account. Passing a flag that says "do not redact" is not
+  consent to that. `chmod 0600` is applied in staging, before the atomic swap, so the restricted
+  mode is in place before the artifacts are reachable. The redacting default is untouched.
+- **The `tree-sitter-language-pack<1.0` cap is recorded as accepted, tracked risk (DEP-01).** The
+  rationale for the cap was already documented; what was missing is that the 0.x line appears
+  frozen upstream, so there is no in-range exit. A grammar advisory against 0.x is an incident
+  requiring the vendoring work, not a version bump.
+
+## [5.0.0] — 2026-11-01
+
+### Fixed
+
+- **Class-level and async pytest fixtures are preserved and scoped (#523).** Fixtures defined
+  inside test classes (`class TestX: @pytest.fixture def fix(self): ...`) previously lost their
+  parent identifier, failing symbol resolution and emitting zero `USES_FIXTURE` edges. `repo2graph`
+  now records `parent` on fixture records, resolves class-scoped fixture definitions, recognizes
+  `@pytest_asyncio.fixture`, and isolates class-level autouse fixtures to methods within the declaring class.
+- **`SqliteGraphStore` multi-threading support and context manager lifecycle (#524).** Multi-threaded
+  callers (such as MCP SSE and thread-pooled query workloads) raised `sqlite3.ProgrammingError` or
+  `sqlite3.InterfaceError` because the read-only database connection lacked `check_same_thread=False` and
+  per-connection query serialization. `SqliteGraphStore` now configures `check_same_thread=False`, synchronizes
+  database access via an internal lock, and implements `__enter__` and `__exit__` context managers alongside
+  `MemoryGraphStore` and `GraphStore(Protocol)`, ensuring thread safety, deterministic handle closure, and
+  preventing Windows `PermissionError` on cache file removal.
+- **`diff --affected-tests` conftest path collision on nested test directories (#525).** Conftest symbol
+  attribution in `find_affected_tests` used suffix matching (`.endswith(cf)`), causing symbols from nested
+  `conftest.py` files (e.g. `tests/sub/conftest.py`) to falsely match a root `conftest.py` evaluation.
+  Replaced with exact normalized path matching against reached conftest paths.
+- **`diff --affected-tests` detects tests that consume fixtures by injection (#513).** A test
+  declaring a `conftest.py` (or local) fixture as a parameter never calls it by name, so no
+  `CALLS` edge exists and the reverse walk previously missed the consumer, truncating with a
+  warning. Under `--framework-edges`, repo2graph now extracts pytest fixtures, tracks parameter
+  injection, `@pytest.mark.usefixtures(...)`, and `autouse=True`, enforces hierarchical `conftest.py`
+  scoping and shadowing, and emits `USES_FIXTURE` edges traversed during affected-test discovery.
+- **Parse-worker memory cap is enforced on macOS via supervisor RSS polling (#514).** Because
+  macOS honours neither `RLIMIT_AS` nor Job Objects, parse workers on macOS were bounded solely by
+  the wall clock (`--parse-timeout`). The supervisor now polls worker resident memory in its
+  management loop across all platforms using Darwin `libproc` (`proc_pidinfo`), Linux `/proc/<pid>/statm`,
+  and Windows `GetProcessMemoryInfo`, killing runaway workers that exceed `WORKER_MEMORY_MB` and
+  recording `skipped_parse_crash`.
+
 ### Removed
 
 - **Python 3.10 is no longer supported; `requires-python` is now `>=3.11`.** This is a breaking
@@ -147,16 +164,6 @@ makes keeping it current a release-blocking step rather than a good intention.
 
 ### Security
 
-- **Artifacts are owner-only when the build is told not to redact (SEC-01).**
-  `--secret-policy warn-only` and `off` write matched secrets through, and `--include-secrets`
-  indexes credential files wholesale; the output still inherited the default file mode, 0644 under
-  a typical umask, readable by every local account. Passing a flag that says "do not redact" is not
-  consent to that. `chmod 0600` is applied in staging, before the atomic swap, so the restricted
-  mode is in place before the artifacts are reachable. The redacting default is untouched.
-- **The `tree-sitter-language-pack<1.0` cap is recorded as accepted, tracked risk (DEP-01).** The
-  rationale for the cap was already documented; what was missing is that the 0.x line appears
-  frozen upstream, so there is no in-range exit. A grammar advisory against 0.x is an incident
-  requiring the vendoring work, not a version bump.
 - **`filelock` and `setuptools` bumped in `uv.lock`, clearing 14 Dependabot alerts.** `filelock`
   3.32.7 → 4.2.6 (13 local-privilege findings — one high, nine moderate, three low: `ReadWriteLock`
   following a planted symlink into SQLite, `SoftFileLock`/`StrictSoftFileLock` losing mutual
@@ -3030,7 +3037,8 @@ A whole-repository audit landed as one batch:
 - First release: tree-sitter parsing into a code graph, JSONL/GraphML/Cypher
   exports, an interactive HTML map, retrieval chunks, and a GitHub Action.
 
-[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v4.1.0...HEAD
+[Unreleased]: https://github.com/Srinivasan-78/repo2graph/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v4.1.0...v5.0.0
 [4.1.0]: https://github.com/Srinivasan-78/repo2graph/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v3.0.0...v4.0.0
 [3.0.0]: https://github.com/Srinivasan-78/repo2graph/compare/v2.2.0...v3.0.0
