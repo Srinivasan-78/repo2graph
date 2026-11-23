@@ -19,14 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
-
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
+import tomllib  # stdlib on the 3.11 floor; the tomli fallback went with 3.10
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -298,15 +291,7 @@ def main() -> int:
         target_arg = sys.argv[1]
 
     content = (ROOT / "pyproject.toml").read_text(encoding="utf8")
-    if tomllib is not None:
-        pyproject = tomllib.loads(content)
-        current_ver = pyproject["project"]["version"]
-    else:
-        m = re.search(r'(?m)^version\s*=\s*["\']([^"\']+)["\']', content)
-        if not m:
-            print("error: could not determine version from pyproject.toml", file=sys.stderr)
-            return 1
-        current_ver = m.group(1)
+    current_ver = tomllib.loads(content)["project"]["version"]
 
     new_ver = compute_next_version(current_ver, target_arg)
     print(f"Bumping version: {current_ver} -> {new_ver}")

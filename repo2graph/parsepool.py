@@ -348,7 +348,7 @@ def _kill(pid: int) -> None:
         pass  # already gone
 
 
-def _round(
+def _round(  # noqa: C901 - complexity 25; see CQ-01/CQ-03
     fn: Callable[[Any], Any],
     items: Sequence[Any],
     todo: list[int],

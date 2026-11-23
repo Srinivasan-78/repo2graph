@@ -1,5 +1,4 @@
 import importlib.metadata
-import re
 from pathlib import Path
 from typing import Any
 
@@ -18,56 +17,42 @@ __all__ = ["Graph", "build", "build_chunks", "iter_chunks", "write_html"]
 __version__ = "5.0.0"
 
 
-def _parse_toml(content: str) -> tuple[bool, dict[str, Any] | None]:
-    """`(tomllib_was_available, parsed_or_None)`.
+def _parse_toml(content: str) -> dict[str, Any] | None:
+    """Parsed TOML, or None if the content is malformed.
 
-    The two failures have to stay distinguishable: no tomllib means fall back
-    to the regex reader, whereas tomllib rejecting the file means the file is
-    malformed and there is nothing to fall back *to*.
+    `tomllib` is stdlib on the 3.11 floor, so there is no availability case to
+    distinguish any more -- this used to return
+    `(tomllib_was_available, parsed_or_None)` and carry a regex reader for
+    3.10, where the import could fail. Both went with the 3.10 drop.
 
-    tomllib is 3.11+ and this project supports 3.10, so the import must be
-    conditional. Returning the result rather than rebinding the module name to
-    None is deliberate: `tomllib = None` in an except branch needs a
-    `type: ignore[assignment]` under a mypy run that can see the module, and
-    that same ignore is reported as unused under one that cannot -- so the
-    pattern fails under exactly one of the two `python_version` settings
-    whichever way it is written. A local import with no rebinding is correct
-    under both.
+    A local import rather than a module-level one: `import repo2graph` should
+    not pay for `tomllib` unless a version actually has to be resolved from a
+    source checkout.
     """
+    import tomllib
+
     try:
-        import tomllib
-    except ModuleNotFoundError:
-        return False, None
-    try:
-        return True, tomllib.loads(content)
+        return tomllib.loads(content)
     except (ValueError, TypeError):
-        return True, None
+        return None
 
 
 def _pyproject_version(pyproject: Path) -> str | None:
     """`[project] version` read straight out of a pyproject.toml, or None.
 
-    stdlib-only and tomllib-with-regex-fallback, matching the same pattern
-    scripts/check_version.py and tests/test_version_surfaces.py already use:
-    tomllib is 3.11+ and this project supports 3.10.
+    stdlib-only, matching what scripts/check_version.py and
+    tests/test_version_surfaces.py do.
     """
     try:
         content = pyproject.read_text(encoding="utf8")
     except OSError:
         return None
-    available, data = _parse_toml(content)
-    if available:
-        if data is None:
-            return None
-        project = data.get("project") if isinstance(data, dict) else None
-        if isinstance(project, dict) and project.get("name") == "repo2graph":
-            v = project.get("version")
-            return v if isinstance(v, str) else None
-        return None
-    if not re.search(r'(?m)^name\s*=\s*"repo2graph"', content):
-        return None
-    m = re.search(r'(?m)^version\s*=\s*"([^"]+)"', content)
-    return m.group(1) if m else None
+    data = _parse_toml(content)
+    project = data.get("project") if isinstance(data, dict) else None
+    if isinstance(project, dict) and project.get("name") == "repo2graph":
+        v = project.get("version")
+        return v if isinstance(v, str) else None
+    return None
 
 
 def _resolve_version() -> str:

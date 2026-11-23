@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-# Formats needed by the served index.
-AUTO_BUILD_FORMATS = {"jsonl", "overview"}
+# Formats needed by the served index. Defined in `repo2graph.autobuild`, beside
+# the build that writes them, and re-exported here because `mcp.__init__` and
+# the tools address it as a guardrail constant. The redundant-looking `as`
+# makes it an explicit re-export, which is what `strict` mypy requires of a
+# name other modules import from here.
+from ..autobuild import AUTO_BUILD_FORMATS as AUTO_BUILD_FORMATS
 
 # Directory name for default index location.
 INDEX_DIRNAME = ".r2g"

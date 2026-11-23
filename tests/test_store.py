@@ -91,25 +91,72 @@ def test_legacy_attributes_still_work_and_materialise_once(out, tmp_path):
 
 
 def test_sqlite_store_concurrent_thread_queries(pair):
+    """Concurrent readers must return the same records a single reader does.
+
+    This is the regression gate for #524, and it asserts *result correctness*
+    against a sequentially-computed baseline rather than "nothing raised".
+    That distinction is the whole point: an unsynchronised shared `sqlite3`
+    connection fails by interleaving cursors and handing one thread another
+    thread's row, which raises nothing at all. When the store's lock was
+    reverted, the assertion that caught it was on record identity, not an
+    exception -- and the chunk accessors convert `DatabaseError` to an empty
+    result by design, so corruption there is silent too.
+
+    Iterations are deliberately high. Measured against the unlocked store,
+    8 workers x 1 pass reproduced the fault in only ~80% of runs -- too
+    unreliable to gate a merge on. Exceptions are collected as data rather
+    than propagated so a race reports every disagreement at once instead of
+    whichever worker happened to fail first.
+    """
     import concurrent.futures
 
     _, disk = pair
-    nodes = list(disk.store.iter_nodes())
+    store = disk.store
+
+    # The baseline: single-threaded, computed before any worker starts. This
+    # is what a correct store owes every caller regardless of concurrency.
+    nodes = list(store.iter_nodes())
     assert nodes
-    nid = nodes[0]["id"]
+    probes = [n["id"] for n in nodes]
+    baseline = {
+        nid: (store.node(nid), list(store.neighbours(nid)), store.has(nid)) for nid in probes
+    }
+    baseline_count = store.node_count()
 
-    def query_task(i: int) -> bool:
-        rec = disk.store.node(nid)
-        assert rec is not None and rec["id"] == nid
-        neighbours = disk.store.neighbours(nid)
-        assert isinstance(neighbours, list)
-        assert disk.store.has(nid) is True
-        return True
+    workers, iterations = 8, 60
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(query_task, i) for i in range(50)]
-        for f in concurrent.futures.as_completed(futures):
-            assert f.result() is True
+    def query_task(worker: int) -> list[str]:
+        failures: list[str] = []
+        for i in range(iterations):
+            nid = probes[(worker + i) % len(probes)]
+            want_rec, want_nbrs, want_has = baseline[nid]
+            try:
+                rec = store.node(nid)
+                nbrs = list(store.neighbours(nid))
+                has = store.has(nid)
+                count = store.node_count()
+            except Exception as exc:  # noqa: BLE001 - reported below, not swallowed
+                failures.append(f"w{worker} i{i} {nid}: raised {type(exc).__name__}: {exc}")
+                continue
+            if rec != want_rec:
+                failures.append(f"w{worker} i{i} {nid}: node() -> {rec!r}, want {want_rec!r}")
+            if nbrs != want_nbrs:
+                failures.append(f"w{worker} i{i} {nid}: neighbours() disagreed with baseline")
+            if has != want_has:
+                failures.append(f"w{worker} i{i} {nid}: has() -> {has}, want {want_has}")
+            if count != baseline_count:
+                failures.append(f"w{worker} i{i}: node_count() -> {count}, want {baseline_count}")
+        return failures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        batches = [f.result() for f in [executor.submit(query_task, w) for w in range(workers)]]
+
+    failures = [msg for batch in batches for msg in batch]
+    assert not failures, (
+        f"{len(failures)} concurrent reads disagreed with the single-threaded "
+        f"baseline ({workers} workers x {iterations} iterations); first 5:\n"
+        + "\n".join(failures[:5])
+    )
 
 
 def test_store_context_manager(out, tmp_path):
@@ -297,24 +344,53 @@ def test_directory_at_sqlite_path_exits_diagnosed(cached, capsys):
 
 
 def test_concurrent_store_materialization(cached):
-    """Concurrent threads materializing the store race safely on BuildLock."""
+    """Concurrent threads materializing the store race safely on BuildLock.
+
+    Asserts every thread observes the *same graph* as an uncontended build,
+    not merely that opening did not raise. A half-written or doubly-written
+    cache satisfies `node_count() > 0` in all 16 threads while they disagree
+    with each other, which is the failure this test exists to exclude.
+    """
     import concurrent.futures
 
     db = cached / SQLITE_CACHE_NAME
+
+    # Baseline from one uncontended materialisation.
+    if db.exists():
+        db.unlink()
+    baseline_store = open_graph_store(cached, "sqlite")
+    assert baseline_store is not None
+    try:
+        want_count = baseline_store.node_count()
+        want_ids = sorted(n["id"] for n in baseline_store.iter_nodes())
+    finally:
+        baseline_store.close()
+    assert want_count > 0
+
+    # Force every worker to race on materialising it again from scratch.
     if db.exists():
         db.unlink()
 
-    def _open():
+    def _open() -> tuple[int, list[str]]:
         s = open_graph_store(cached, "sqlite")
         assert s is not None
-        assert s.node_count() > 0
-        s.close()
-        return True
+        try:
+            return s.node_count(), sorted(n["id"] for n in s.iter_nodes())
+        finally:
+            s.close()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        futures = [pool.submit(_open) for _ in range(16)]
-        for f in concurrent.futures.as_completed(futures):
-            assert f.result() is True
+        observed = [f.result() for f in [pool.submit(_open) for _ in range(16)]]
+
+    mismatched = [
+        f"node_count={count}, {len(ids)} ids"
+        for count, ids in observed
+        if count != want_count or ids != want_ids
+    ]
+    assert not mismatched, (
+        f"{len(mismatched)}/16 concurrent materialisations disagreed with the "
+        f"single-threaded baseline of {want_count} nodes: {mismatched[:5]}"
+    )
 
 
 def test_relocatable_and_fallback_cache(cached, monkeypatch, tmp_path):

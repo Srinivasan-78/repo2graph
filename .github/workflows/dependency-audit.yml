@@ -22,8 +22,13 @@ name: Dependency audit
 # pip-audit already reads from the PyPI Advisory Database and OSV. If the
 # duplicate coverage is ever wanted, that trade is the thing to weigh.
 on:
+  # Every PR, not just those based on `main`. With `branches: [main]` this was
+  # the only security workflow carrying a base filter -- `ci.yml`, `codeql.yml`,
+  # `compliance.yml` and `dependency-review.yml` all run on any PR -- and since
+  # feature work lands on `develop` first, the audit simply never ran on the PRs
+  # that actually introduce dependencies. A CVE could reach `develop` and only
+  # be seen on the promotion PR, long after the change that brought it in.
   pull_request:
-    branches: [main]
   schedule:
     # Weekly, so a CVE published after a PR merges is still caught.
     - cron: "0 6 * * 1"

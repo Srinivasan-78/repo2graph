@@ -1305,7 +1305,7 @@ def _base_clauses(node: Node) -> list[Node]:
     return out
 
 
-def _bases_with_details(
+def _bases_with_details(  # noqa: C901 - complexity 21; see CQ-01/CQ-03
     src: bytes, node: Node, lang: str
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """Extract supertype names along with their relationship subtype and raw expression."""
@@ -1651,7 +1651,7 @@ def _cpp_available() -> bool:
     return True
 
 
-def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:
+def parse_import_details(raw: str, lang: str) -> list[ImportDetail]:  # noqa: C901 - complexity 45; see CQ-01/CQ-03
     """Extract structured import metadata (modules, names, aliases)."""
     raw_clean = raw.strip()
     if not raw_clean:
@@ -1923,7 +1923,7 @@ def normalize_source_bytes(source: bytes) -> bytes:
     return source
 
 
-def parse_source(
+def parse_source(  # noqa: C901 - complexity 67; see CQ-01/CQ-03
     source: bytes,
     lang: str,
     filepath: Path | str | None = None,

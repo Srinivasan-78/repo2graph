@@ -206,7 +206,19 @@ def _cli_inventory(monkeypatch) -> dict:
 def test_every_baseline_subcommand_and_flag_survives(monkeypatch):
     """Verify every baseline subcommand still parses and still accepts every
     flag it accepted, with the same default, type, nargs and choices. New
-    subcommands and new flags are allowed; removals and changes are not."""
+    subcommands and new flags are allowed; removals and changes are not.
+
+    `cli_inventory.json` is a backward-compatibility **floor, not an
+    inventory**, despite the file name: it pins the subcommands that were
+    public when the contract was introduced, and the assertion below is
+    `set(baseline) <= set(inventory)` precisely so that adding a subcommand
+    is not a breaking change. It therefore covers fewer subcommands than the
+    CLI has -- currently 9 of ~17 -- which is deliberate and not a gap to
+    fill by regenerating. Anything listed here is frozen; anything absent is
+    simply not yet promised. Regeneration is opt-in via `R2G_REGEN_GOLDEN=1`,
+    and widening the floor means widening what can never change again, so it
+    is a deliberate decision rather than a refresh.
+    """
     inventory = _cli_inventory(monkeypatch)
     if REGEN:
         write_golden_json("cli_inventory.json", inventory)
@@ -222,7 +234,11 @@ def test_every_baseline_subcommand_and_flag_survives(monkeypatch):
 
 
 def test_baseline_subcommands_are_all_present(monkeypatch):
-    """Verify expected baseline subcommands are all present."""
+    """Verify the eight subcommands that are promised still exist.
+
+    Not every subcommand the CLI has -- the promised set, which is smaller.
+    See the floor-not-inventory note above.
+    """
     inventory = _cli_inventory(monkeypatch)
     expected = {"build", "github", "gh", "query", "rag", "map", "stats", "version"}
     assert expected <= set(inventory), expected - set(inventory)

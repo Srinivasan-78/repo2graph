@@ -3025,6 +3025,93 @@ def test_safe_read_bytes_uses_o_nofollow(tmp_path, monkeypatch):
     assert opened_flags[0] & 0x20000 == 0x20000
 
 
+def test_safe_read_bytes_does_not_close_the_fd_twice(tmp_path, monkeypatch):
+    """A read that raises must not hand the descriptor back for a second close.
+
+    `os.fdopen` owns the fd once it returns, and `with` closes it on the way
+    out. Closing it again in the handler is a free-list number that a
+    concurrent `open()` on another thread (`tasks.py` builds in one; `parse.py`
+    and `cochange.py` run reader threads) may already have been given -- so the
+    handler would close an unrelated file. EBADF made it silent.
+    """
+    import os
+
+    from repo2graph.graph import _safe_read_bytes
+
+    f = tmp_path / "unreadable.txt"
+    f.write_bytes(b"payload")
+
+    real_open, real_fdopen = os.open, os.fdopen
+    extra_closes = []
+
+    def fake_open(path, flags, *args, **kwargs):
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    class _RaisesOnRead:
+        """Owns the fd exactly as the real file object does, but fails mid-read."""
+
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._fh.close()
+            return False
+
+        def read(self):
+            raise OSError(5, "simulated EIO")
+
+    def fake_fdopen(fd, mode, *args, **kwargs):
+        return _RaisesOnRead(real_fdopen(fd, mode, *args, **kwargs))
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(os, "fdopen", fake_fdopen)
+    monkeypatch.setattr(os, "close", lambda fd: extra_closes.append(fd))
+
+    with pytest.raises(OSError, match="simulated EIO"):
+        _safe_read_bytes(f)
+
+    assert extra_closes == [], f"descriptor closed again after `with` released it: {extra_closes}"
+
+
+def test_safe_read_bytes_closes_the_fd_when_fdopen_fails(tmp_path, monkeypatch):
+    """`os.fdopen` leaves the fd open when it raises, so that one close is ours."""
+    import os
+
+    from repo2graph.graph import _safe_read_bytes
+
+    f = tmp_path / "file.txt"
+    f.write_bytes(b"payload")
+
+    real_open, real_close = os.open, os.close
+    closes = []
+
+    def fake_open(path, flags, *args, **kwargs):
+        real_flags = flags & ~0x20000 if os.name == "nt" else flags
+        return real_open(path, real_flags, *args, **kwargs)
+
+    def spy_close(fd):
+        closes.append(fd)
+        real_close(fd)
+
+    def exploding_fdopen(fd, mode, *args, **kwargs):
+        raise ValueError("invalid mode")
+
+    monkeypatch.setattr(os, "O_NOFOLLOW", 0x20000, raising=False)
+    monkeypatch.setattr(os, "open", fake_open)
+    monkeypatch.setattr(os, "fdopen", exploding_fdopen)
+    monkeypatch.setattr(os, "close", spy_close)
+
+    with pytest.raises(ValueError, match="invalid mode"):
+        _safe_read_bytes(f)
+
+    assert len(closes) == 1, f"the fd fdopen refused must be closed exactly once: {closes}"
+
+
 def test_make_path_avoids_mkdir_when_parent_exists(tmp_path, monkeypatch):
     """Verify make_path and make_paths avoid mkdir on existing parent directories (read-only safe)."""
     from repo2graph.export import make_path, make_paths

@@ -137,7 +137,7 @@ def _go_dir_by_tail(ctx: dict[str, Any]) -> dict[str, list[str]]:
     return table
 
 
-def resolve_import(
+def resolve_import(  # noqa: C901 - complexity 57; see CQ-01/CQ-03
     target: str, from_path: str, lang: str, file_index: set[str], ctx: dict[str, Any] | None = None
 ) -> str | None:
     """Map an import target to an in-repo file path when possible."""

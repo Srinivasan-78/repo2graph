@@ -1,4 +1,11 @@
-name: provenance
+# Named for what it does. This was `provenance.yml`, which promised build
+# attestation it never produced: both jobs below are compliance audits -- REUSE
+# licensing and a zizmor audit of the workflows. The attestation that does exist
+# is produced where the artifacts are, in `publish.yml`: PyPI trusted publishing
+# via OIDC and `npm publish --provenance`. A workflow whose name claims a
+# supply-chain control it does not implement is worse than one with a dull name,
+# because the name is what a reader audits against.
+name: compliance
 
 on:
   pull_request:

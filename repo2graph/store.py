@@ -466,7 +466,7 @@ def _private_cache_dir(base: Path) -> Path:
     return target
 
 
-def open_graph_store(index_dir: Path | str, kind: str = "memory") -> GraphStore | None:
+def open_graph_store(index_dir: Path | str, kind: str = "memory") -> GraphStore | None:  # noqa: C901 - complexity 23; see CQ-01/CQ-03
     """The store for an index, or None to let `Index` build the default.
 
     `memory` returns None rather than a `MemoryGraphStore`, so the default path
