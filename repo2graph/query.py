@@ -1534,7 +1534,7 @@ class Index:
                 parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
-    def pack_context(
+    def pack_context(  # noqa: C901 - complexity 53; see CQ-01/CQ-03
         self,
         query: str,
         k: int = 8,

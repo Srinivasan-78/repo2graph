@@ -416,7 +416,7 @@ def function_parameters(src: bytes, node: Node) -> list[str]:
     return out
 
 
-def extract_pytest_facts(src: bytes) -> dict[str, Any]:
+def extract_pytest_facts(src: bytes) -> dict[str, Any]:  # noqa: C901 - complexity 32; see CQ-01/CQ-03
     """Extract pytest fixture definitions, test functions, and test classes from Python source."""
     from tree_sitter_language_pack import get_parser
 
@@ -450,7 +450,7 @@ def extract_pytest_facts(src: bytes) -> dict[str, Any]:
                                 usefixtures_names.append(_unquote(_text(src, a)))
         return usefixtures_names
 
-    def walk(node: Node, enclosing_class: str | None = None) -> None:
+    def walk(node: Node, enclosing_class: str | None = None) -> None:  # noqa: C901 - complexity 22; see CQ-01/CQ-03
         if node.type == "class_definition":
             cls_name = ""
             for child in node.named_children:

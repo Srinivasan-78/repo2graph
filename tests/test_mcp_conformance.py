@@ -156,7 +156,15 @@ def test_output_is_clamped_at_the_wire(big_index):
 
 
 def test_concurrent_calls_on_one_session_all_complete(mini_index):
-    """The mcp 1.x hang (#407) was on concurrent tools/call; pin it for 2.x."""
+    """The mcp 1.x hang (#407) was on concurrent tools/call; pin it for 2.x.
+
+    Completion is necessary but not sufficient. Concurrent calls also have to
+    return the *same answers* a sequential caller gets: these route through
+    `SqliteGraphStore`, whose failure mode under concurrency is a cursor
+    interleave that hands one caller another's row -- answered promptly, not
+    an error, and wrong. So the concurrent answers are compared against a
+    sequential replay of the identical queries in the same session.
+    """
 
     async def body(session):
         results: dict[int, object] = {}
@@ -173,12 +181,25 @@ def test_concurrent_calls_on_one_session_all_complete(mini_index):
         async with anyio.create_task_group() as tg:
             for i in range(8):
                 tg.start_soon(one, i)
-        return results, took
 
-    results, took = _run(mini_index, body)
+        # The baseline: the same queries, one at a time, no concurrency.
+        baseline: dict[int, object] = {}
+        for i in range(8):
+            with anyio.move_on_after(CALL_TIMEOUT):
+                baseline[i] = await session.call_tool("repo_search", {"query": f"{MINI_QUERY} {i}"})
+        return results, took, baseline
+
+    results, took, baseline = _run(mini_index, body)
     missing = sorted(set(range(8)) - set(results))
     assert not missing, f"calls {missing} got no response within {CALL_TIMEOUT}s; answered: {took}"
     assert all(not r.is_error for r in results.values())
+
+    assert sorted(baseline) == list(range(8)), "sequential baseline did not complete"
+    wrong = [i for i in range(8) if _text(results[i]) != _text(baseline[i])]
+    assert not wrong, (
+        f"calls {wrong} answered differently under concurrency than sequentially -- "
+        "the store returned another caller's rows"
+    )
 
 
 def test_a_garbage_frame_does_not_kill_the_server(mini_index):

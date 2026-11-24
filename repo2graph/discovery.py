@@ -234,7 +234,7 @@ def candidate_files(root: Path, skip_dirs: Iterable[str]) -> list[Path]:
     return files if files is not None else _walk_files(root, skip_dirs=skip_dirs)
 
 
-def discover(
+def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
     root: Path,
     include_globs: Iterable[str] | None = None,
     exclude_globs: Iterable[str] | None = None,
@@ -446,7 +446,7 @@ def discover(
         )
 
 
-def explain_path(
+def explain_path(  # noqa: C901 - complexity 24; see CQ-01/CQ-03
     root: Path | str,
     target: Path | str,
     config: BuildConfig | None = None,

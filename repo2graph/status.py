@@ -154,7 +154,7 @@ def remote_freshness(remote: str, agent_dir: Path, out: Path | str) -> Freshness
     return fresh
 
 
-def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:
+def compute_freshness(repo: Path, idx_dir: Path, agent_dir: Path) -> Freshness:  # noqa: C901 - complexity 27; see CQ-01/CQ-03
     """Three independent signals that the index no longer matches the tree.
 
     Cheapest first, and each one degrades to a note rather than an error:

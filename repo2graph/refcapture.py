@@ -127,7 +127,7 @@ class _RefState:
         owner.refs.append(ref)
 
 
-def _py_ref(src: bytes, node: Node, owner: Symbol, st: _RefState) -> None:
+def _py_ref(src: bytes, node: Node, owner: Symbol, st: _RefState) -> None:  # noqa: C901 - complexity 25; see CQ-01/CQ-03
     ntype = node.type
     oid = id(owner)
     line = node.start_point[0] + 1

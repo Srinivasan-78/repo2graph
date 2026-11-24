@@ -85,7 +85,7 @@ _COMMIT_HASH = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 MAX_FILE_AUTHORS = 5
 
 
-def add_cochange(
+def add_cochange(  # noqa: C901 - complexity 23; see CQ-01/CQ-03
     g: Graph,
     root: Path,
     commits: int,

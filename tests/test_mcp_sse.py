@@ -2,6 +2,7 @@
 
 import asyncio
 import socket
+import time
 from typing import Any
 
 import pytest
@@ -26,6 +27,39 @@ def _get_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
+
+
+async def _await_server_ready(uv_server: Any, port: int, timeout: float = 30.0) -> None:
+    """Block until the server is actually accepting connections.
+
+    This replaces a fixed `await asyncio.sleep(0.4)`, which was a guess that
+    was wrong in both directions: needlessly slow on a warm local run, and too
+    short on a loaded CI runner, where the connect that follows would fail with
+    `ConnectionRefusedError` -- a flake that reads like a server bug rather
+    than a test that started too early.
+
+    Two conditions, because neither alone is sufficient: uvicorn sets `started`
+    when its startup completes, and a real connect confirms the listening
+    socket is reachable. Polling at 10ms also makes the common case faster than
+    the old sleep, since a local server is ready in well under 400ms.
+    """
+    deadline = time.monotonic() + timeout
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        if getattr(uv_server, "started", False):
+            try:
+                _, writer = await asyncio.open_connection("127.0.0.1", port)
+                writer.close()
+                await writer.wait_closed()
+                return
+            except OSError as exc:
+                last_error = exc
+        await asyncio.sleep(0.01)
+    raise AssertionError(
+        f"server on 127.0.0.1:{port} was not accepting connections within "
+        f"{timeout}s (started={getattr(uv_server, 'started', None)}, "
+        f"last connect error={last_error!r})"
+    )
 
 
 def test_sse_probes_unauthenticated(mini_index):
@@ -128,7 +162,7 @@ def test_sse_roundtrip_with_real_client(mini_index):
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
         uv_server = uvicorn.Server(config)
         server_task = asyncio.create_task(uv_server.serve())
-        await asyncio.sleep(0.4)
+        await _await_server_ready(uv_server, port)
 
         try:
             async with sse_client(f"http://127.0.0.1:{port}/sse") as streams:
@@ -167,7 +201,7 @@ def test_sse_authenticated_roundtrip(mini_index):
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
         uv_server = uvicorn.Server(config)
         server_task = asyncio.create_task(uv_server.serve())
-        await asyncio.sleep(0.4)
+        await _await_server_ready(uv_server, port)
 
         try:
             # 1. Unauthenticated client connection fails with HTTP 401
@@ -218,7 +252,7 @@ def test_sse_concurrent_sessions(mini_index):
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
         uv_server = uvicorn.Server(config)
         server_task = asyncio.create_task(uv_server.serve())
-        await asyncio.sleep(0.4)
+        await _await_server_ready(uv_server, port)
 
         try:
             r1, r2 = await asyncio.gather(_client_call(1), _client_call(2))

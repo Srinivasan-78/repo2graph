@@ -719,20 +719,32 @@ def _safe_read_bytes(path: Path) -> bytes:
     symlink (protecting against an attacker replacing a discovered regular file with a
     symlink to a sensitive file before open). On Windows, O_NOFOLLOW is not supported
     by the OS open(), so standard read flags are used.
+
+    `fd` is closed by hand only while it is still *ours*: `os.fdopen` takes
+    ownership on success, so a failure after that point must not close it
+    again. The handler used to wrap the whole `with`, which meant a raising
+    `read()` -- an EIO on a failing disk, a FIFO that a size flag let through
+    -- closed the descriptor twice, once on `with` exit and once here. A
+    second close is not merely redundant: `tasks.py` runs `build()` in a
+    thread while the MCP server keeps serving on another, and `parse.py` and
+    `cochange.py` each run reader threads, so the kernel can hand that same
+    number straight back to a concurrent `open()` in between -- and the
+    handler then closes *that* file. `except OSError: pass` is what hid it,
+    since a double close on a number nothing has reclaimed is a silent EBADF.
     """
     o_nofollow = getattr(os, "O_NOFOLLOW", None)
     if o_nofollow is not None:
         flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | o_nofollow
         fd = os.open(path, flags)
         try:
-            with os.fdopen(fd, "rb") as fh:
-                return fh.read()
+            fh = os.fdopen(fd, "rb")
         except Exception:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            # `os.fdopen` is `io.open(fd, closefd=True)`, which leaves `fd`
+            # open when it raises, so this close is the only one.
+            os.close(fd)
             raise
+        with fh:
+            return fh.read()
     return path.read_bytes()
 
 
@@ -1186,7 +1198,7 @@ def _within_byte_budget(
     return kept
 
 
-def add_pytest_fixture_edges(
+def add_pytest_fixture_edges(  # noqa: C901 - complexity 47; see CQ-01/CQ-03
     g: Graph,
     root: Path,
     parsed: dict[str, ParsedFile],
@@ -1387,7 +1399,7 @@ def add_pytest_fixture_edges(
 
 
 # ---------- build ----------
-def build(
+def build(  # noqa: C901 - complexity 110; see CQ-01/CQ-03
     root: Path,
     include: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,

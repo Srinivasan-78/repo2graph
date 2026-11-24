@@ -36,3 +36,41 @@ updates:
         update-types: ["minor", "patch"]
     cooldown:
       default-days: 7
+  # npm: the two manifests that are actually shipped or installed from.
+  # `benchmarks/corpus/*/package.json` are deliberately NOT here -- that corpus
+  # is input to the parser, not code that runs, and its dependencies exist to
+  # contain the reflection dispatch and barrel re-exports the benchmark pins as
+  # known failures. Bumping them would change benchmark baselines for no
+  # security benefit.
+  #
+  # `npm/` is the npx launcher published to the registry; `editors/vscode/` is
+  # the extension. Both were unwatched, so a vulnerable transitive dev
+  # dependency in either had no alert path at all.
+  - package-ecosystem: "npm"
+    directories:
+      - "/npm"
+      - "/editors/vscode"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    assignees: ["Srinivasan-78"]
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    cooldown:
+      default-days: 7
+  # docker: the root Dockerfile's base image. Tag-pinned today rather than
+  # digest-pinned (DEP-04), so this is what surfaces a rebuilt base image.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    assignees: ["Srinivasan-78"]
+    groups:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]
+    cooldown:
+      default-days: 7

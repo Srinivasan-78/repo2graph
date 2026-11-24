@@ -475,7 +475,7 @@ language has been exercised against real code".
 | **tsx** | Tier 1 | **94 (A)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 1 funcs |
 | **typescript** | Tier 1 | **94 (A)** | 95 (A) | 100 (A) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 3 funcs |
 | **javascript** | Tier 1 | **90 (A-)** | 95 (A) | 80 (B) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 5 funcs |
-| **python** | Tier 1 | **85 (B+)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 10 funcs |
+| **python** | Tier 1 | **85 (B+)** | 95 (A) | 55 (D) | 100 (A) | 90 (A-) | 100 (A) | 70 (B-) | 12 funcs |
 | **java** | Tier 2 | **73 (B-)** | 90 (A-) | 65 (C+) | 75 (B-) | 80 (B) | 92 (A-) | 20 (F) | 1 funcs |
 | **go** | Tier 2 | **72 (B-)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 86 (B+) | 0 (F) | 5 funcs |
 | **kotlin** | Tier 2 | **70 (B-)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 86 (B+) | 0 (F) | 4 funcs |
@@ -630,6 +630,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `audit.py` | 291 | Audit log sink. |
 | `schema.py` | 315 | The record shapes the artifacts promise. |
 | `tasks.py` | 260 | Background `--async-build` state. |
+| `autobuild.py` | 75 | Building an index on the tool's own initiative rather than on request: hardened output path, the repo's own config, the same `BuildLock`, and the `.gitignore` that keeps an unasked-for index out of a commit. Core, not MCP — `tasks.py` and the MCP server are both callers. |
 | `changelog.py` | 230 | The per-push structural graph diff in `human/CHANGELOG.md`. |
 | `cache.py` | 223 | The MCP result cache. A leaf. |
 | `events.py` | 190 | Structured event sink. |

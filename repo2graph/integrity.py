@@ -524,7 +524,7 @@ def get_source_provenance(root: str | Path) -> dict[str, Any]:
     return provenance
 
 
-def verify_artifacts(outdir: str | Path) -> IntegrityReport:
+def verify_artifacts(outdir: str | Path) -> IntegrityReport:  # noqa: C901 - complexity 29; see CQ-01/CQ-03
     """Verify an index's integrity, schema, checksums, and vector correspondence."""
     out = Path(outdir).resolve()
     report = IntegrityReport(status="valid")

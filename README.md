@@ -20,9 +20,11 @@ One tree-sitter pass records who calls whom, who imports what, and which files k
 together in git. Retrieval starts from BM25 matches and follows those links.
 
 It needs no model, no API key, no language server and no database. Building, querying and the
-MCP server make no network calls; the only exceptions are `rag --answer` (opt-in, sends the pack
-to an LLM), `repo2graph github` and a `rag`/`query` target given as a GitHub spec (both clone a
-repository), and `--vectors`/`embed` (download the embedding model on first use). Parsers are part of that promise:
+MCP server make no network calls. Every exception is opt-in and asked for by name; they are
+enumerated once, in
+[SECURITY.md](.github/SECURITY.md#what-never-leaves-your-machine) — that list is the
+authoritative one and is deliberately not duplicated here, because the copy that used to live
+in this paragraph fell two exceptions behind it. Parsers are part of that promise:
 `tree-sitter-language-pack` is pinned below 1.0 so every grammar arrives compiled into the
 installed wheel, rather than being downloaded on first parse — see
 [SECURITY.md](.github/SECURITY.md#why-this-is-safe-for-enterprise-use). Use it from the CLI, as an MCP server in Claude Code or Cursor, or as a GitHub Action.
@@ -228,7 +230,7 @@ been visible without a real repository to ask questions about.
 
 ## Status
 
-The 3.x CLI, MCP tools and output schema follow semver. Default paths run locally, send no telemetry and exclude secrets from agent replies
+The CLI, MCP tools and output schema follow semver. Default paths run locally, send no telemetry and exclude secrets from agent replies
 unconditionally ([what never leaves your machine](.github/SECURITY.md#what-never-leaves-your-machine),
 [how credential files are excluded](.github/SECURITY.md#how-credential-files-are-excluded),
 [reporting a vulnerability](.github/SECURITY.md#reporting-a-vulnerability)). A Dockerfile for

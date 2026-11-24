@@ -198,7 +198,7 @@ def _decode_source(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def iter_chunks(
+def iter_chunks(  # noqa: C901 - complexity 43; see CQ-01/CQ-03
     g: Any, include_files: bool = True, max_chunks: int = 0
 ) -> Iterator[dict[str, Any]]:
     """Yield chunk dicts ready for embedding, one at a time.

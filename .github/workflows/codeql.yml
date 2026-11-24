@@ -2,7 +2,7 @@ name: codeql
 
 # Static analysis of the *source*, which was the unscanned surface.
 #
-# `provenance.yml` already runs `zizmor` over the workflows and `reuse` over
+# `compliance.yml` already runs `zizmor` over the workflows and `reuse` over
 # the licensing, and `ci.yml` runs `ruff` (now including the `S`/bandit rules)
 # and `mypy --strict`. None of those does interprocedural taint tracking, and
 # that is the analysis this project actually wants: `security.py` decides which
@@ -53,7 +53,7 @@ jobs:
         # advanced configuration's SARIF while default setup is enabled, so the
         # two cannot coexist. Default setup covered `actions`, and dropping it
         # would have traded workflow-injection coverage for the extended
-        # queries. `zizmor` in `provenance.yml` audits the workflows too, but
+        # queries. `zizmor` in `compliance.yml` audits the workflows too, but
         # it is a linter and does not do CodeQL's dataflow analysis.
         language: [python, javascript-typescript, actions]
     steps:
@@ -62,7 +62,7 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        uses: github/codeql-action/init@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
         with:
           languages: ${{ matrix.language }}
           # `security-extended` over the default `security` suite: the default
@@ -76,7 +76,7 @@ jobs:
       # supply-chain surface of a build to a job that reads source.
       - name: Analyze
         id: analyze
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370  # v4.39.1
+        uses: github/codeql-action/analyze@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea  # v4.39.4
         with:
           category: "/language:${{ matrix.language }}"
 
