@@ -3,46 +3,46 @@
   "skipped_gitignore": 4,
   "skipped_binary": 9,
   "skipped_dotfile": 2,
-  "files": 399,
-  "edge:CONTAINS": 482,
-  "parsed": 261,
+  "files": 430,
+  "edge:CONTAINS": 515,
+  "parsed": 263,
   "parse_errors": 0,
-  "symbol:function": 3653,
-  "edge:DEFINES": 3998,
-  "edge:IMPORTS": 1976,
-  "imports_unresolved": 1305,
-  "imports_resolved": 1593,
-  "symbol:class": 236,
+  "symbol:function": 3682,
+  "edge:DEFINES": 4030,
+  "edge:IMPORTS": 1987,
+  "imports_unresolved": 1309,
+  "imports_resolved": 1609,
+  "symbol:class": 239,
   "symbol:method": 80,
   "symbol:interface": 25,
   "symbol:type": 4,
   "redacted_secret_metadata": 4,
-  "edge:CALLS_EXTERNAL": 9044,
-  "calls_external": 9044,
-  "edge:CALLS": 10096,
-  "calls_scoped": 5101,
-  "calls_ambiguous": 1613,
-  "ambiguous_calls": 1613,
-  "calls_untyped_receiver": 1147,
+  "edge:CALLS_EXTERNAL": 9122,
+  "calls_external": 9122,
+  "edge:CALLS": 10175,
+  "calls_scoped": 5119,
+  "calls_ambiguous": 1633,
+  "ambiguous_calls": 1633,
+  "calls_untyped_receiver": 1154,
   "edge:INHERITS": 19,
   "unresolved_bases": 64,
-  "calls_unique_global": 713,
+  "calls_unique_global": 718,
   "calls_shadowed_builtin": 55,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 416,
+  "cochange_sampled_commits": 434,
   "cochange_min_pairs": 3,
-  "cochange_commits_skipped": 17,
-  "edge:CO_CHANGE": 610,
-  "edge:TESTS": 19274,
-  "testable_symbols": 1179,
-  "tested_symbols": 630,
-  "entrypoints": 2294,
-  "nodes": 5421,
-  "edges": 45499,
+  "cochange_commits_skipped": 18,
+  "edge:CO_CHANGE": 618,
+  "edge:TESTS": 19290,
+  "testable_symbols": 1180,
+  "tested_symbols": 629,
+  "entrypoints": 2314,
+  "nodes": 5491,
+  "edges": 45756,
   "parse_errors_summary": "Files with parse errors: 0  (0 C/C++ files used cpp fallback)",
-  "redacted_secret_chunks": 205,
+  "redacted_secret_chunks": 209,
   "hidden_unicode_chars": 6,
-  "total_symbols": 3998,
+  "total_symbols": 4030,
   "top_hub_nodes": [
     {
       "node_id": "sym:repo2graph/query.py::SqliteByNode.get",
@@ -52,12 +52,12 @@
     {
       "node_id": "sym:repo2graph/answer.py::_writer.write_text",
       "label": "_writer.write_text",
-      "in_degree": 388
+      "in_degree": 393
     },
     {
       "node_id": "sym:repo2graph/query.py::Index",
       "label": "Index",
-      "in_degree": 255
+      "in_degree": 257
     },
     {
       "node_id": "sym:repo2graph/scip.py::_Strings.get",
@@ -77,27 +77,27 @@
     {
       "node_id": "sym:tests/_pool_stdio_probe.py::main",
       "label": "main",
-      "in_degree": 195
+      "in_degree": 198
     },
     {
       "node_id": "sym:tests/_mcp_pool_server.py::main",
       "label": "main",
-      "in_degree": 193
+      "in_degree": 196
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::_run.main",
       "label": "_run.main",
-      "in_degree": 193
+      "in_degree": 196
     },
     {
       "node_id": "sym:tests/test_mcp_conformance.py::test_auto_build_annotations_admit_side_effects.main",
       "label": "test_auto_build_annotations_admit_side_effects.main",
-      "in_degree": 193
+      "in_degree": 196
     }
   ],
   "languages": {
-    "python": 226,
-    "md": 54,
+    "python": 228,
+    "md": 83,
     "json": 41,
     "typescript": 25,
     "yml": 24,
@@ -113,9 +113,14 @@
   "has_vectors": false,
   "index_schema_version": "2",
   "limits_hit": {},
-  "tested_symbol_fraction": 0.534,
-  "built_at_commit": "2a30c17",
+  "tested_symbol_fraction": 0.533,
+  "built_at_commit": "9265748",
   "co_change_hotspots": [
+    {
+      "file_a": "repo2graph/graph.py",
+      "file_b": "tests/test_repo2graph.py",
+      "weight": 27
+    },
     {
       "file_a": "repo2graph/export.py",
       "file_b": "tests/test_repo2graph.py",
@@ -128,17 +133,12 @@
     },
     {
       "file_a": "repo2graph/graph.py",
-      "file_b": "tests/test_repo2graph.py",
+      "file_b": "repo2graph/parse.py",
       "weight": 26
     },
     {
-      "file_a": "repo2graph/cli.py",
+      "file_a": "repo2graph/export.py",
       "file_b": "repo2graph/graph.py",
-      "weight": 25
-    },
-    {
-      "file_a": "repo2graph/graph.py",
-      "file_b": "repo2graph/parse.py",
       "weight": 25
     }
   ]
