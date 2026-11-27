@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from ._native import get_rust_core
 from .events import diagnostic
 from .integrity import GIT_HARDENING_ARGS, _clean_git_env
 from .parse import (
@@ -92,12 +93,16 @@ def _git_files(root: Path) -> list[Path] | None:
 def _walk_files(root: Path, skip_dirs: Iterable[str] | None = None) -> list[Path]:
     if skip_dirs is None:
         skip_dirs = DEFAULT_SKIP_DIRS
+    skip_set = set(skip_dirs)
+    rust = get_rust_core()
+    if rust is not None:
+        return [Path(p) for p in rust.walk_files(str(root), list(skip_set))]
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirpath_p = Path(dirpath)
         # Exclude skip_dirs and submodules (.git inside subdirectories) so walk matches git discovery (W14).
         dirnames[:] = [
-            d for d in dirnames if d not in skip_dirs and not (dirpath_p / d / ".git").exists()
+            d for d in dirnames if d not in skip_set and not (dirpath_p / d / ".git").exists()
         ]
         for fn in filenames:
             files.append(dirpath_p / fn)
@@ -175,6 +180,10 @@ def is_binary(path: Path) -> bool:
     return b"\0" in header
 
 
+_ORIG_IS_BINARY = is_binary
+_ORIG_PATH_LSTAT = Path.lstat
+
+
 def _count_gitignored(root: Path) -> int:
     """How many untracked files .gitignore (or another exclude-standard rule)
     kept out of _git_files' listing.
@@ -234,7 +243,158 @@ def candidate_files(root: Path, skip_dirs: Iterable[str]) -> list[Path]:
     return files if files is not None else _walk_files(root, skip_dirs=skip_dirs)
 
 
-def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
+def _build_skip_dirs(
+    config: BuildConfig, include_globs: Iterable[str] | None
+) -> tuple[set[str], set[str]]:
+    skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
+    if config.include_vendor:
+        skip_dirs.discard("vendor")
+    walk_skip_dirs = set(skip_dirs)
+    if include_globs:
+        for pat in include_globs:
+            for part in pat.strip("/").split("/"):
+                if "*" in part or "?" in part or "[" in part:
+                    break
+                walk_skip_dirs.discard(part)
+    return skip_dirs, walk_skip_dirs
+
+
+def _should_keep_candidate(
+    rp: str,
+    rel: Path,
+    abspath: Path,
+    skip_dirs: set[str],
+    include_globs: Iterable[str] | None,
+    exclude_globs: Iterable[str] | None,
+    config: BuildConfig,
+    seen_case: set[str],
+    stats: dict[str, Any] | None,
+) -> tuple[bool, bool]:
+    """Return (keep, is_secret_dir_source) for a candidate path."""
+    try:
+        rp.encode("utf8")
+    except UnicodeEncodeError:
+        if stats is not None:
+            stats["skipped_undecodable_path"] = stats.get("skipped_undecodable_path", 0) + 1
+        return False, False
+    if has_unsafe_path_chars(rp):
+        if stats is not None:
+            stats["skipped_unsafe_path"] = stats.get("skipped_unsafe_path", 0) + 1
+        return False, False
+    if os.name == "nt" or sys.platform == "darwin":
+        rp_lower = rp.lower()
+        if rp_lower in seen_case:
+            if stats is not None:
+                stats["skipped_case_collision"] = stats.get("skipped_case_collision", 0) + 1
+            return False, False
+        seen_case.add(rp_lower)
+
+    rescued = bool(include_globs and matches_any(rp, include_globs))
+    skip_part = next((part for part in rel.parts if part in skip_dirs), None)
+    if skip_part is not None and not rescued:
+        if stats is not None:
+            key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
+            stats[key] += 1
+        return False, False
+    if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
+        if stats is not None:
+            stats["skipped_dotfile"] += 1
+        return False, False
+    if any(_SWAP_DIR_RE.match(part) for part in rel.parts[:-1]):
+        if stats is not None:
+            stats["skipped_dotfile"] += 1
+        return False, False
+    if not config.include_secrets:
+        from .security import _is_secret_path
+
+        if _is_secret_path(
+            rp,
+            extra_keywords=config.extra_secret_keywords,
+            extra_dirs=config.extra_secret_dirs,
+        ):
+            secret_src = False
+            if stats is not None:
+                stats["skipped_secret"] += 1
+                if Path(rp).suffix.lower() in EXT_LANG and not _is_secret_path(
+                    rel.name, extra_keywords=config.extra_secret_keywords
+                ):
+                    secret_src = True
+            return False, secret_src
+    if include_globs and not matches_any(rp, include_globs):
+        return False, False
+    if exclude_globs and matches_any(rp, exclude_globs):
+        return False, False
+    return True, False
+
+
+def _inspect_candidates_python(
+    candidates: list[tuple[str, Path]],
+    config: BuildConfig,
+    stats: dict[str, Any] | None,
+) -> Iterator[tuple[str, Path]]:
+    for rp, abspath in candidates:
+        try:
+            st = abspath.lstat()
+        except OSError:
+            if stats is not None:
+                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
+            continue
+        if not statmod.S_ISREG(st.st_mode):
+            continue
+        if st.st_size > config.max_file_bytes and not config.chunk_large_files:
+            if stats is not None:
+                stats["skipped_too_large"] += 1
+            continue
+        if st.st_size < 512:
+            try:
+                with open(abspath, "rb") as fh:
+                    header = fh.read(256)
+                if is_lfs_pointer(header):
+                    if stats is not None:
+                        stats["skipped_lfs"] = stats.get("skipped_lfs", 0) + 1
+                    continue
+            except OSError:
+                pass
+        try:
+            if is_binary(abspath):
+                if stats is not None:
+                    stats["skipped_binary"] += 1
+                continue
+        except OSError:
+            if stats is not None:
+                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
+            continue
+        yield rp, abspath
+
+
+def _inspect_candidates_rust(
+    rust: Any,
+    candidates: list[tuple[str, Path]],
+    config: BuildConfig,
+    stats: dict[str, Any] | None,
+) -> Iterator[tuple[str, Path]]:
+    inspected = rust.inspect_files(
+        [str(p) for _, p in candidates],
+        config.max_file_bytes,
+        config.chunk_large_files,
+        0,
+    )
+    for (rp, abspath), (status, _size, _lines, _sha, _raw) in zip(
+        candidates, inspected, strict=True
+    ):
+        if status == 0:
+            yield rp, abspath
+        elif status == 1 and stats is not None:
+            stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
+        elif status == 3 and stats is not None:
+            stats["skipped_too_large"] += 1
+        elif status == 4 and stats is not None:
+            stats["skipped_lfs"] = stats.get("skipped_lfs", 0) + 1
+        elif status == 5 and stats is not None:
+            stats["skipped_binary"] += 1
+
+
+def discover(
     root: Path,
     include_globs: Iterable[str] | None = None,
     exclude_globs: Iterable[str] | None = None,
@@ -244,18 +404,7 @@ def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
     """Yield (relative_path, absolute_path) for candidate source files."""
     if config is None:
         config = BuildConfig()
-    skip_dirs = set(DEFAULT_SKIP_DIRS) | set(config.extra_exclude_dirs)
-    if config.include_vendor:
-        skip_dirs.discard("vendor")
-
-    walk_skip_dirs = set(skip_dirs)
-    if include_globs:
-        for pat in include_globs:
-            parts = pat.strip("/").split("/")
-            for part in parts:
-                if "*" in part or "?" in part or "[" in part:
-                    break
-                walk_skip_dirs.discard(part)
+    skip_dirs, walk_skip_dirs = _build_skip_dirs(config, include_globs)
 
     root = root.resolve()
     secret_dir_source = 0
@@ -268,10 +417,6 @@ def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
         files = _walk_files(root, skip_dirs=walk_skip_dirs)
         if stats is not None:
             stats["discovery"] = "walk"
-        # Not a git checkout is ordinary. A checkout where git itself failed
-        # (git missing, dubious ownership, a corrupt index) is not: the walk
-        # ignores .gitignore, so untracked and ignored files -- build output,
-        # local secrets -- are indexed with nothing saying the file set changed.
         if (root / ".git").exists():
             if stats is not None:
                 stats["discovery_git_failed"] = 1
@@ -281,27 +426,11 @@ def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
                 "so untracked and ignored files will be indexed"
             )
 
-    # Discovery order *is* artifact order: node ids are emitted in the order
-    # files are parsed, and edges and chunks follow the nodes. `git ls-files`
-    # happens to sort its output, but `os.walk` yields whatever order the
-    # filesystem hands back -- alphabetical on NTFS, hash order on ext4 with
-    # dir_index. So the same tree indexed on two machines produced nodes.jsonl,
-    # edges.jsonl and chunks.jsonl that differed byte-for-byte while describing
-    # exactly the same graph.
-    #
-    # Sorting here rather than in _walk_files covers both sources with one
-    # rule, so the invariant holds no matter which branch ran, and a future
-    # third discovery source inherits it. The key is the resolved path's posix
-    # form: str(Path) would sort on "\" on Windows and "/" elsewhere, which is
-    # the same cross-machine divergence one level down.
     files = sorted(files, key=lambda p: p.as_posix())
-
     out_parts = _output_rel_prefix(root, config)
     index_dir_cache: dict[tuple[str, ...], bool] = {}
 
     def _inside_index(parts: tuple[str, ...]) -> bool:
-        # Never index a repo2graph output directory: the one this build writes
-        # to (explicit), or any directory an earlier build left behind (marker).
         if out_parts is not None and parts[: len(out_parts)] == out_parts:
             return True
         for i in range(1, len(parts)):
@@ -314,6 +443,7 @@ def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
         return False
 
     seen_case: set[str] = set()
+    candidates: list[tuple[str, Path]] = []
 
     for abspath in files:
         try:
@@ -323,119 +453,24 @@ def discover(  # noqa: C901 - complexity 54; see CQ-01/CQ-03
         if _inside_index(rel.parts):
             continue
         rp = rel.as_posix()
-        # A filename that is not valid UTF-8 decodes to lone surrogates, which
-        # no UTF-8 writer downstream (JSONL, overview, HTML) can encode. Skip it
-        # and count it rather than crash the whole build on one file.
-        try:
-            rp.encode("utf8")
-        except UnicodeEncodeError:
-            if stats is not None:
-                stats["skipped_undecodable_path"] = stats.get("skipped_undecodable_path", 0) + 1
-            continue
-        # A control or hidden character in a path forges structure wherever the
-        # path is printed: a newline starts a fake `[cite: ...]` header in a pack.
-        if has_unsafe_path_chars(rp):
-            if stats is not None:
-                stats["skipped_unsafe_path"] = stats.get("skipped_unsafe_path", 0) + 1
-            continue
-        # Case collision deduplication on case-insensitive filesystems (W17)
-        if os.name == "nt" or sys.platform == "darwin":
-            rp_lower = rp.lower()
-            if rp_lower in seen_case:
-                if stats is not None:
-                    stats["skipped_case_collision"] = stats.get("skipped_case_collision", 0) + 1
-                continue
-            seen_case.add(rp_lower)
+        keep, secret_src = _should_keep_candidate(
+            rp, rel, abspath, skip_dirs, include_globs, exclude_globs, config, seen_case, stats
+        )
+        if secret_src:
+            secret_dir_source += 1
+        if keep:
+            candidates.append((rp, abspath))
 
-        # Precedence: explicit --include rescues directories otherwise dropped by skip_dirs (W11)
-        rescued = bool(include_globs and matches_any(rp, include_globs))
-        skip_part = next((part for part in rel.parts if part in skip_dirs), None)
-        if skip_part is not None and not rescued:
-            if stats is not None:
-                key = "skipped_dotfile" if skip_part.startswith(".") else "skipped_vendor"
-                stats[key] += 1
-            continue
-        # BuildLock (lock.py) deliberately places its lock file as a *sibling*
-        # of the output directory, not inside it, so the file survives the
-        # transactional dir-swap in export.py's dump_all. That means a build
-        # whose outdir lives directly under the scanned root sees its own
-        # in-progress lock file on disk -- skip it like any other dotfile
-        # rather than indexing a "r2glock"-language node for it.
-        if abspath.name.startswith(".") and abspath.name.endswith(".r2glock"):
-            if stats is not None:
-                stats["skipped_dotfile"] += 1
-            continue
-        # dump_all's staging and backup siblings. A crash mid-swap leaves one
-        # behind holding a full copy of an index, which is not source; when the
-        # output lives under the root, discovery would otherwise index it.
-        if any(_SWAP_DIR_RE.match(part) for part in rel.parts[:-1]):
-            if stats is not None:
-                stats["skipped_dotfile"] += 1
-            continue
-        try:
-            st = abspath.lstat()
-        except OSError:
-            if stats is not None:
-                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
-            continue
-        # Two independent rejections, deliberately not one branch. When they
-        # shared a condition the `chunk_large_files` escape hatch dropped out of
-        # *both*, so an entry that was non-regular AND over max_file_bytes
-        # skipped the S_ISREG check and was yielded into _chunk_and_parse ->
-        # _safe_open -> a blocking read() on a FIFO or device. A size flag must
-        # never be able to waive the file-type check; splitting them also ties
-        # skipped_too_large to the reason the path was actually skipped.
-        if not statmod.S_ISREG(st.st_mode):
-            continue
-        if st.st_size > config.max_file_bytes and not config.chunk_large_files:
-            if stats is not None:
-                stats["skipped_too_large"] += 1
-            continue
-        if not config.include_secrets:
-            from .security import _is_secret_path
-
-            if _is_secret_path(
-                rp,
-                extra_keywords=config.extra_secret_keywords,
-                extra_dirs=config.extra_secret_dirs,
-            ):
-                if stats is not None:
-                    stats["skipped_secret"] += 1
-                    # Source code dropped only for living under a `secrets/`-
-                    # style directory is often the secret-handling code itself,
-                    # not a secret: count it apart so the drop is visible.
-                    if Path(rp).suffix.lower() in EXT_LANG and not _is_secret_path(
-                        rel.name, extra_keywords=config.extra_secret_keywords
-                    ):
-                        secret_dir_source += 1
-                continue
-        if include_globs and not matches_any(rp, include_globs):
-            continue
-        if exclude_globs and matches_any(rp, exclude_globs):
-            continue
-
-        # Check LFS pointer file (W16)
-        if st.st_size < 512:
-            try:
-                with open(abspath, "rb") as fh:
-                    header = fh.read(256)
-                if is_lfs_pointer(header):
-                    if stats is not None:
-                        stats["skipped_lfs"] = stats.get("skipped_lfs", 0) + 1
-                    continue
-            except OSError:
-                pass
-
-        try:
-            if is_binary(abspath):
-                if stats is not None:
-                    stats["skipped_binary"] += 1
-                continue
-        except OSError:
-            if stats is not None:
-                stats["skipped_unreadable"] = stats.get("skipped_unreadable", 0) + 1
-            continue
-        yield rp, abspath
+    rust = get_rust_core()
+    if (
+        rust is not None
+        and candidates
+        and Path.lstat is _ORIG_PATH_LSTAT
+        and is_binary is _ORIG_IS_BINARY
+    ):
+        yield from _inspect_candidates_rust(rust, candidates, config, stats)
+    else:
+        yield from _inspect_candidates_python(candidates, config, stats)
 
     if secret_dir_source:
         if stats is not None:

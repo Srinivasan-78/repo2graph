@@ -894,19 +894,36 @@ def parse_incremental(
         The same list of `(rel, lang, read)` tuples `parse_all` returns, in
         discovery order, so the build loop cannot tell the two apart.
     """
+    file_list = list(files)
     results: dict[str, ReadResult] = {}
     order: list[str] = []
     stale: list[tuple[str, Path]] = []
-    for rel, abspath in files:
+
+    from ._native import get_rust_core
+
+    rust = get_rust_core()
+    hashed = (
+        rust.hash_files([str(abspath) for _, abspath in file_list]) if rust is not None else None
+    )
+
+    for idx, (rel, abspath) in enumerate(file_list):
         order.append(rel)
-        lang = EXT_LANG.get(abspath.suffix.lower())
-        try:
-            raw = _safe_read_bytes(abspath)
-        except OSError:
-            results[rel] = (rel, lang, None)
-            continue
-        lang = refine_lang(lang, abspath.suffix.lower(), raw)[0]
-        digest = hashlib.sha256(raw).hexdigest()
+        ext = abspath.suffix.lower()
+        lang = EXT_LANG.get(ext)
+        if hashed is not None and ext not in (".h", ".m"):
+            h = hashed[idx]
+            if h is None:
+                results[rel] = (rel, lang, None)
+                continue
+            _size, _lines, digest = h
+        else:
+            try:
+                raw = _safe_read_bytes(abspath)
+            except OSError:
+                results[rel] = (rel, lang, None)
+                continue
+            lang = refine_lang(lang, ext, raw)[0]
+            digest = hashlib.sha256(raw).hexdigest()
         entry = cache.get(rel)
         read = None
         # The language must match too: the same bytes parsed as a different
