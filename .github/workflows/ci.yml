@@ -632,3 +632,19 @@ jobs:
             printf '| **GraphRAG Pack Chars** | `%s` | %s |\n' "$PACK_CHARS" "$(citations_status)"
             printf '| **Citations Verified** | %s | %s |\n' "$(citations_value)" "$(citations_status)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  rust-core:
+    name: Rust Core (Cargo Test & Build)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Rust unit tests
+        run: cargo test --manifest-path rust-scanner/Cargo.toml --bin repo2graph-scanner
+
+      - name: Build Rust release library
+        run: cargo build --manifest-path rust-scanner/Cargo.toml --release --lib

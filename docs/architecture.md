@@ -480,7 +480,7 @@ language has been exercised against real code".
 | **go** | Tier 2 | **72 (B-)** | 95 (A) | 65 (C+) | 55 (D) | 100 (A) | 86 (B+) | 0 (F) | 5 funcs |
 | **kotlin** | Tier 2 | **70 (B-)** | 90 (A-) | 70 (B-) | 55 (D) | 90 (A-) | 86 (B+) | 0 (F) | 4 funcs |
 | **php** | Tier 3 | **75 (B-)** | 90 (A-) | 85 (B+) | 80 (B) | 90 (A-) | 64 (C) | 0 (F) | 5 funcs |
-| **rust** | Tier 3 | **70 (B-)** | 90 (A-) | 75 (B-) | 55 (D) | 100 (A) | 56 (D) | 0 (F) | 1 funcs |
+| **rust** | Tier 3 | **70 (B-)** | 90 (A-) | 75 (B-) | 55 (D) | 100 (A) | 56 (D) | 0 (F) | 3 funcs |
 | **ruby** | Tier 3 | **68 (C+)** | 90 (A-) | 45 (F) | 80 (B) | 80 (B) | 94 (A) | 0 (F) | 3 funcs |
 | **csharp** | Tier 3 | **67 (C+)** | 90 (A-) | 60 (C) | 65 (C+) | 90 (A-) | 60 (C) | 0 (F) | 3 funcs |
 | **c** | Tier 3 | **60 (C)** | 75 (B-) | 60 (C) | 55 (D) | 80 (B) | 56 (D) | 0 (F) | 1 funcs |
@@ -574,6 +574,7 @@ Sizes are a rough guide to where the complexity is, not a target.
 | `cochange.py` | 239 | `CO_CHANGE` (and `--git-authors`) from a bounded, timed read of `git log`. |
 | `parse.py` | 2,098 | The language table (`LANG_CFG`, `EXT_LANG`), content sniffing, tree-sitter invocation, symbol and import extraction, `_callee_name`. |
 | `discovery.py` | 727 | Which files a build indexes (`discover`, `_git_files`, `_walk_files`, exclusions) and `explain_path`. |
+| `_native.py` | 62 | Optional loader for the compiled PyO3 Rust core (`repo2graph._rust`) with `REPO2GRAPH_NO_RUST` opt-out and pure-Python fallback. |
 | `refcapture.py` | 280 | Reference capture for `--reference-edges`: reads, writes and type references per symbol. A leaf. |
 | `frameworks.py` | 366 | `--framework-edges` capture: routes, injected dependencies and ORM relation targets read off a decorated definition. All the framework knowledge lives in its tables. A leaf. |
 | `export.py` | 1,621 | Every artifact writer — JSONL, GraphML, Cypher, manifest, overview — plus the `.r2g` directory layout. |

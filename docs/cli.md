@@ -825,6 +825,9 @@ Inspects the runtime environment and, if one is present, the index's artifacts.
   and the Action never import it. It does **not** read your client's
   configuration files; those belong to other tools and `doctor --json` is meant
   to be safe to paste into a bug report.
+- **Rust Core**: reports whether the optional native PyO3 Rust extension
+  (`repo2graph._rust`) is active for parallel discovery, hashing, BM25 indexing,
+  and hidden-Unicode scanning, or whether the pure-Python fallback is in use.
 - **Permissions**: verifies the target directory can be created and written to,
   cleaning up anything it had to create to find out.
 

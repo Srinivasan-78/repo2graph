@@ -221,19 +221,58 @@ def iter_chunks(  # noqa: C901 - complexity 43; see CQ-01/CQ-03
     # off scanning of the text that ends up in chunks.jsonl and agent replies.
     policy = getattr(getattr(g, "config", None), "secret_policy", "redact-match")
 
+    from ._native import get_rust_core
+
+    rust = get_rust_core()
     src_cache: dict[str, str] = {}
+    ordered_paths: list[str] = []
+    if rust is not None:
+        seen_paths: set[str] = set()
+        for n in g.nodes.values():
+            p = n.get("path")
+            if n["type"] == "symbol" and p and p not in seen_paths:
+                seen_paths.add(p)
+                ordered_paths.append(p)
+        if include_files:
+            for n in g.nodes.values():
+                p = n.get("path")
+                if n["type"] == "file" and p and p not in seen_paths:
+                    seen_paths.add(p)
+                    ordered_paths.append(p)
+    prefetch_idx = 0
+    _PREFETCH_BATCH = 256
+
+    def _decode_raw(path: str, raw: bytes) -> str:
+        if path.lower().endswith(".ipynb"):
+            # The code cells at their own lines, not the JSON around
+            # them (#398): outputs can be megabytes of base64 images.
+            from .parse import notebook_code
+
+            raw = notebook_code(raw)
+        return _decode_source(raw)
 
     def source_of(path: str) -> str:
+        nonlocal prefetch_idx
         if path not in src_cache:
+            if rust is not None and prefetch_idx < len(ordered_paths):
+                batch_end = min(prefetch_idx + _PREFETCH_BATCH, len(ordered_paths))
+                batch = [
+                    p
+                    for p in ordered_paths[prefetch_idx:batch_end]
+                    if p not in src_cache and p != path
+                ]
+                prefetch_idx = batch_end
+                if path not in src_cache:
+                    batch.append(path)
+                if batch:
+                    raw_list = rust.read_files_bytes([str(g.root / p) for p in batch])
+                    for bp, raw in zip(batch, raw_list, strict=True):
+                        src_cache[bp] = _decode_raw(bp, raw) if raw is not None else ""
+                    if path in src_cache:
+                        return src_cache[path]
             try:
                 raw = (g.root / path).read_bytes()
-                if path.lower().endswith(".ipynb"):
-                    # The code cells at their own lines, not the JSON around
-                    # them (#398): outputs can be megabytes of base64 images.
-                    from .parse import notebook_code
-
-                    raw = notebook_code(raw)
-                src_cache[path] = _decode_source(raw)
+                src_cache[path] = _decode_raw(path, raw)
             except OSError:
                 src_cache[path] = ""
         return src_cache[path]

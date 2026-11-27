@@ -702,6 +702,11 @@ def clean_identifier(name: str, cap: int = MAX_SYMBOL_NAME_CHARS) -> str:
 
 
 def count_hidden_unicode(text: str) -> int:
+    from ._native import get_rust_core
+
+    rust = get_rust_core()
+    if rust is not None:
+        return rust.count_hidden_unicode(text)
     return len(HIDDEN_UNICODE_RE.findall(text))
 
 
