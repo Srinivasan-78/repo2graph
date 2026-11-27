@@ -991,7 +991,7 @@ workflow.
     artifact-name: repo-graph
 ```
 
-`@v5` follows every 5.x release. Pin an exact version (`@v5.0.0`) if you would
+`@v5` follows every 5.x release. Pin an exact version (`@v5.1.0`) if you would
 rather upgrade by hand.
 
 The action never calls an LLM: `--answer` is deliberately not exposed. It packs
@@ -1045,7 +1045,7 @@ the step.
 | `commit-branch` | `""` | Push the map to this orphan branch. Blank pushes nothing. |
 | `commit-force` | `false` | Whether to force-push when pushing to `commit-branch`. Force-push is only permitted for dedicated graph branches (branches containing 'graph'). |
 | `token` | `""` | Token that can read `repo` when the target is private. Note: cross-repo indexing stores the target repository's graph and chunk excerpts in the caller's workflow artifacts. |
-| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==5.0.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
+| `version` | `""` | pip spec to install repo2graph from, e.g. `repo2graph==5.1.0`. Blank installs the action checkout you pinned with `uses:`, which is what every run did before. |
 | `include-secrets` | `false` | Set to `true` to index secret/credential files. By default, sensitive files (.env, keys, certs) are excluded. |
 | `secret-policy` | `redact-match` | Policy for inline content secrets: `redact-match`, `exclude-file`, `warn-only`, `off`. |
 | `incremental` | `false` | Set to `true` to enable incremental graph builds using the parse cache. |
@@ -1070,7 +1070,7 @@ Publishing with attested provenance:
 ```yaml
 - uses: Srinivasan-78/repo2graph@v5
   with:
-    version: repo2graph==5.0.0
+    version: repo2graph==5.1.0
 ```
 
 Any pip spec works (`repo2graph>=1.4,<2`, a `git+https://…@<ref>` URL, a local
