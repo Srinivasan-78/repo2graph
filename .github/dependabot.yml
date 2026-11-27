@@ -60,6 +60,10 @@ updates:
         update-types: ["minor", "patch"]
     cooldown:
       default-days: 7
+    ignore:
+      # Pinned to match `engines.vscode` (`^1.85.0`) in editors/vscode/package.json;
+      # tests/test_vscode_extension.py enforces exact parity.
+      - dependency-name: "@types/vscode"
   # docker: the root Dockerfile's base image. Tag-pinned today rather than
   # digest-pinned (DEP-04), so this is what surfaces a rebuilt base image.
   - package-ecosystem: "docker"
