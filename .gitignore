@@ -46,3 +46,6 @@ examples/*/manifest.json
 examples/*/metadata.json
 examples/*/stats.json
 examples/*/flows/
+# Compiled native Rust extension (built locally or in CI)
+repo2graph/_rust.pyd
+repo2graph/_rust*.so

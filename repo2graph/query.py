@@ -481,6 +481,11 @@ _DEFAULT_MEASURE = count_tokens
 
 
 def tokenize(text: str) -> list[str]:
+    from ._native import get_rust_core
+
+    rust = get_rust_core()
+    if rust is not None:
+        return rust.tokenize(text)
     out: list[str] = []
     for t in TOKEN_RE.findall(text):
         low = t.lower()
@@ -697,14 +702,38 @@ class Index:
 
     def _memory(self) -> MemoryGraphStore:
         if not isinstance(self.store, MemoryGraphStore):
+            from .events import diagnostic
+
+            diagnostic(
+                "repo2graph: warning: materialising sqlite-backed graph into memory "
+                "(Index.nodes/.edges/.adj accessed)"
+            )
             self.store = MemoryGraphStore(self.store.iter_nodes(), self.store.iter_edges())
         return self.store
 
     def _build_bm25(self) -> None:
         """Compute the BM25 inverted index dynamically across all chunks."""
+        from ._native import get_rust_core
+
         self.df: Counter[str] = Counter()
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lengths: list[int] = []
+
+        rust = get_rust_core()
+        if rust is not None and self.chunks:
+            texts = [c.get("text") or "" for c in self.chunks]
+            qualnames = [c.get("qualname") or "" for c in self.chunks]
+            names = [c.get("name") or "" for c in self.chunks]
+            df_map, postings_map, lengths, avgdl = rust.build_bm25(
+                texts, qualnames, names, BM25_AVG_LEN
+            )
+            self.df = Counter(df_map)
+            self.postings = defaultdict(list, postings_map)
+            self.lengths = lengths
+            self.N = len(self.chunks)
+            self.avgdl = avgdl
+            return
+
         for i, c in enumerate(self.chunks):
             # `or ""`: a hand-edited chunks.jsonl (the manifest says records are
             # inspectable) with a null text/qualname must not TypeError in re.findall.

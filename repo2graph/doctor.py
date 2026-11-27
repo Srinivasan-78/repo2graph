@@ -459,6 +459,25 @@ def check_artifact_integrity(path: Path | str) -> CheckResult:
         )
 
 
+def check_rust_core() -> CheckResult:
+    """Check whether the optional native Rust core (`repo2graph._rust`) is active."""
+    from ._native import get_rust_core
+
+    rust = get_rust_core()
+    if rust is not None:
+        return CheckResult(
+            "Rust Core",
+            "ok",
+            "Native Rust core active (parallel discovery, hashing, BM25, unicode scan)",
+        )
+    return CheckResult(
+        "Rust Core",
+        "ok",
+        "Using pure-Python fallback (native Rust extension not built or disabled)",
+        details=["Build with: cargo build --manifest-path rust-scanner/Cargo.toml --release --lib"],
+    )
+
+
 def run_doctor(path: str | Path = ".") -> DoctorReport:
     """Execute diagnostic checks against the specified environment and path."""
     target_path = Path(path).resolve()
@@ -469,6 +488,7 @@ def run_doctor(path: str | Path = ".") -> DoctorReport:
     report.checks.append(check_git(target_path))
     report.checks.append(check_tree_sitter())
     report.checks.append(check_mcp_server())
+    report.checks.append(check_rust_core())
     report.checks.append(check_permissions(target_path))
     report.checks.append(check_artifact_integrity(target_path))
     return report

@@ -1,7 +1,13 @@
-.PHONY: install lint format format-check typecheck test test-serial test-cov clean
+.PHONY: install build-rust lint format format-check typecheck test test-serial test-cov clean
 
 install:
 	pip install -e ".[dev,rag,mcp]"
+
+build-rust:
+	cargo build --manifest-path rust-scanner/Cargo.toml --release --lib
+	@if [ -f rust-scanner/target/release/lib_rust.so ]; then cp rust-scanner/target/release/lib_rust.so repo2graph/_rust.so; fi
+	@if [ -f rust-scanner/target/release/lib_rust.dylib ]; then cp rust-scanner/target/release/lib_rust.dylib repo2graph/_rust.so; fi
+	@if [ -f rust-scanner/target/release/_rust.dll ]; then cp rust-scanner/target/release/_rust.dll repo2graph/_rust.pyd; fi
 
 lint:
 	ruff check .
