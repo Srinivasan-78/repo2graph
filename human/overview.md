@@ -9,7 +9,7 @@
 | Classes | 240 |
 | Total edges | 46537 |
 | Languages | python=230, md=83, json=41, typescript=25, yml=24, tsx=8, toml=4, rust=3, javascript=2, yaml=2, txt=2 |
-| Built at | f1f8005 |
+| Built at | 8cca103 |
 
 ## Top 10 most-connected files (by in-degree)
 
@@ -36,7 +36,7 @@ These files are frequently edited together — treat as implicit dependencies ev
 | repo2graph/export.py | tests/test_repo2graph.py | 27 |
 | repo2graph/cli.py | repo2graph/export.py | 27 |
 | repo2graph/graph.py | repo2graph/parse.py | 26 |
-| repo2graph/export.py | repo2graph/graph.py | 25 |
+| CHANGELOG.md | README.md | 25 |
 
 ## Edge type breakdown
 

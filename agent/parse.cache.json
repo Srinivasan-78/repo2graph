@@ -4286,16 +4286,16 @@
     },
     "CHANGELOG.md": {
       "lang": "",
-      "lines": 3064,
+      "lines": 3067,
       "parsed": null,
-      "sha256": "1711ac4f063ecfb43a8feb7eb3ea2ac056db650be612752a36756830c3228c94",
-      "size": 234841
+      "sha256": "ff9a855ce0100f674cb8aa14d9f8fbb6f8d77e5c3593effc8750fb301b115642",
+      "size": 234945
     },
     "CITATION.cff": {
       "lang": "",
       "lines": 30,
       "parsed": null,
-      "sha256": "bdee36af5c65baf34f5a8bcc487b869586ed0afd31ae7ce5d017b2102928d1ca",
+      "sha256": "51595f520f99d664813fe52cc4912dc52a3c5a0c868942ba6e708cca868cc6dc",
       "size": 1265
     },
     "CODE_OF_CONDUCT.md": {
@@ -4337,7 +4337,7 @@
       "lang": "",
       "lines": 274,
       "parsed": null,
-      "sha256": "402d419c08d41ad587abec141a7343a15b283292ffacf67c89485988d7db708b",
+      "sha256": "0a87ab7a0edc3268f16399438eef2b9b4995b79ba7887c42db9bc690cccad1da",
       "size": 17097
     },
     "REUSE.toml": {
@@ -11047,7 +11047,7 @@
       "lang": "",
       "lines": 1260,
       "parsed": null,
-      "sha256": "3b3268f6c1d4725c40ed06a7061f4d4de9b6ac1c5ac33cd60df0db33d9557fb7",
+      "sha256": "3db62a2c4fdcf0091dbbb4763fb1a98c96b6d1d4da1a0b7506742c2af6604405",
       "size": 78827
     },
     "docs/comparison.md": {
@@ -20835,14 +20835,14 @@
       "lang": "",
       "lines": 40,
       "parsed": null,
-      "sha256": "c17b755cc2112b73ca856a4a0e76bfa1363169b65e268427b9cd6202065b15c8",
+      "sha256": "db9d2a84e0c8da18008884a9890984b8ee8ae34232a2642404ac49834383fdc1",
       "size": 873
     },
     "pyproject.toml": {
       "lang": "",
       "lines": 343,
       "parsed": null,
-      "sha256": "dca4d1ec69df6a3f513b9e6fe9835afdad0a2de9a3118de1cdeced419036608a",
+      "sha256": "5c4bc43e88a0064cd888a41012a4768d3cd03f40c287bd7fe72a2cb931f21c4e",
       "size": 17695
     },
     "repo2graph/__init__.py": {
@@ -21092,7 +21092,7 @@
         "undecodable_slices": 0,
         "used_cpp": false
       },
-      "sha256": "7aa2849ff83c68850fcc8deecaac37932a18d0d9d495f6ed8aaaa5c96a939088",
+      "sha256": "0025f9b627d04ca084026dc17feab739c37e903c2ee36b0e28d8f9c85192596f",
       "size": 3293
     },
     "repo2graph/_native.py": {
@@ -130670,7 +130670,7 @@
       "lang": "",
       "lines": 50,
       "parsed": null,
-      "sha256": "a89205cffa9ba10f315bc225bc506e024de38c2f1aa08f3dda1649a4771f79f1",
+      "sha256": "261f9acf07f22c6d09738a8b4a308045f15814427d6cc8dfc5fa48ac4fb4a02c",
       "size": 1764
     },
     "tests/_mcp_pool_server.py": {
@@ -296551,7 +296551,7 @@
       "lang": "",
       "lines": 2916,
       "parsed": null,
-      "sha256": "34d573dfecdc74c321a7329f3e09177b914fccef4397bf70b74269235afdce09",
+      "sha256": "ae70251a7243246f2e574f60b5f86bc945741ec308a1957f158b742326bf3582",
       "size": 565709
     }
   },

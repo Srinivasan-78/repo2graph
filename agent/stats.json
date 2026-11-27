@@ -31,7 +31,7 @@
   "calls_unique_global": 732,
   "calls_shadowed_builtin": 55,
   "cochange_requested_commits": 500,
-  "cochange_sampled_commits": 439,
+  "cochange_sampled_commits": 440,
   "cochange_min_pairs": 3,
   "cochange_commits_skipped": 18,
   "edge:CO_CHANGE": 625,
@@ -117,7 +117,7 @@
   "index_schema_version": "2",
   "limits_hit": {},
   "tested_symbol_fraction": 0.524,
-  "built_at_commit": "f1f8005",
+  "built_at_commit": "8cca103",
   "co_change_hotspots": [
     {
       "file_a": "repo2graph/graph.py",
@@ -140,8 +140,8 @@
       "weight": 26
     },
     {
-      "file_a": "repo2graph/export.py",
-      "file_b": "repo2graph/graph.py",
+      "file_a": "CHANGELOG.md",
+      "file_b": "README.md",
       "weight": 25
     }
   ]
