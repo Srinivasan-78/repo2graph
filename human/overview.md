@@ -4,26 +4,26 @@
 
 | Metric | Value |
 | --- | --- |
-| Files indexed | 430 |
-| Functions | 3682 |
-| Classes | 239 |
-| Total edges | 45756 |
-| Languages | python=228, md=83, json=41, typescript=25, yml=24, tsx=8, toml=3, javascript=2, yaml=2, txt=2, cff=1 |
-| Built at | 9265748 |
+| Files indexed | 438 |
+| Functions | 3734 |
+| Classes | 240 |
+| Total edges | 46537 |
+| Languages | python=230, md=83, json=41, typescript=25, yml=24, tsx=8, toml=4, rust=3, javascript=2, yaml=2, txt=2 |
+| Built at | f1f8005 |
 
 ## Top 10 most-connected files (by in-degree)
 
 | Rank | File | In-degree | Dominant edge type |
 | --- | --- | --- | --- |
-| 1 | repo2graph/query.py | 82 | IMPORTS |
-| 2 | repo2graph/export.py | 69 | IMPORTS |
-| 3 | repo2graph/parse.py | 66 | IMPORTS |
-| 4 | repo2graph/graph.py | 61 | IMPORTS |
+| 1 | repo2graph/query.py | 85 | IMPORTS |
+| 2 | repo2graph/export.py | 70 | IMPORTS |
+| 3 | repo2graph/parse.py | 67 | IMPORTS |
+| 4 | repo2graph/graph.py | 63 | IMPORTS |
 | 5 | benchmarks/corpus/python_backend/app/main.py | 59 | IMPORTS |
-| 6 | repo2graph/chunks.py | 28 | IMPORTS |
-| 7 | tests/test_doc_consistency.py | 27 | CO_CHANGE |
-| 8 | repo2graph/events.py | 26 | IMPORTS |
-| 9 | repo2graph/security.py | 26 | IMPORTS |
+| 6 | repo2graph/chunks.py | 30 | IMPORTS |
+| 7 | repo2graph/security.py | 27 | IMPORTS |
+| 8 | tests/test_doc_consistency.py | 27 | CO_CHANGE |
+| 9 | repo2graph/events.py | 26 | IMPORTS |
 | 10 | tests/conftest.py | 26 | IMPORTS |
 
 ## CO_CHANGE hotspots
@@ -42,13 +42,13 @@ These files are frequently edited together — treat as implicit dependencies ev
 
 | Edge type | Count | % of total |
 | --- | --- | --- |
-| TESTS | 19290 | 42.2% |
-| CALLS | 10175 | 22.2% |
-| CALLS_EXTERNAL | 9122 | 19.9% |
-| DEFINES | 4030 | 8.8% |
-| IMPORTS | 1987 | 4.3% |
-| CO_CHANGE | 618 | 1.4% |
-| CONTAINS | 515 | 1.1% |
+| TESTS | 19565 | 42.0% |
+| CALLS | 10357 | 22.3% |
+| CALLS_EXTERNAL | 9330 | 20.0% |
+| DEFINES | 4089 | 8.8% |
+| IMPORTS | 2027 | 4.4% |
+| CO_CHANGE | 625 | 1.3% |
+| CONTAINS | 525 | 1.1% |
 | INHERITS | 19 | 0.0% |
 
 ## What was skipped
