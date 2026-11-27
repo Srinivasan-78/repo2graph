@@ -13,7 +13,7 @@ fn inspect_files(
     chunk_large_files: bool,
     read_max_bytes: usize,
 ) -> Vec<(u8, u64, usize, String, Option<Py<PyBytes>>)> {
-    let results = py.allow_threads(|| {
+    let results = py.detach(|| {
         core::inspect_files_batch(&paths, max_file_bytes, chunk_large_files, read_max_bytes)
     });
     results
@@ -27,12 +27,12 @@ fn inspect_files(
 
 #[pyfunction]
 fn hash_files(py: Python<'_>, paths: Vec<String>) -> Vec<Option<(u64, usize, String)>> {
-    py.allow_threads(|| core::hash_files_batch(&paths))
+    py.detach(|| core::hash_files_batch(&paths))
 }
 
 #[pyfunction]
 fn read_files_bytes(py: Python<'_>, paths: Vec<String>) -> Vec<Option<Py<PyBytes>>> {
-    let raw = py.allow_threads(|| core::read_files_bytes_batch(&paths));
+    let raw = py.detach(|| core::read_files_bytes_batch(&paths));
     raw.into_iter()
         .map(|opt| opt.map(|b| PyBytes::new(py, &b).unbind()))
         .collect()
@@ -41,7 +41,7 @@ fn read_files_bytes(py: Python<'_>, paths: Vec<String>) -> Vec<Option<Py<PyBytes
 #[pyfunction]
 fn walk_files(py: Python<'_>, root: String, skip_dirs: Vec<String>) -> Vec<String> {
     let skip: HashSet<String> = skip_dirs.into_iter().collect();
-    py.allow_threads(|| core::walk_files(Path::new(&root), &skip))
+    py.detach(|| core::walk_files(Path::new(&root), &skip))
 }
 
 #[pyfunction]
@@ -63,7 +63,7 @@ fn build_bm25(
     f64,
 ) {
     let data =
-        py.allow_threads(|| core::build_bm25_data(&texts, &qualnames, &names, default_avg_len));
+        py.detach(|| core::build_bm25_data(&texts, &qualnames, &names, default_avg_len));
     (data.df, data.postings, data.lengths, data.avgdl)
 }
 

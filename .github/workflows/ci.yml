@@ -643,6 +643,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+
       - name: Run Rust unit tests
         run: cargo test --manifest-path rust-scanner/Cargo.toml --bin repo2graph-scanner
 
