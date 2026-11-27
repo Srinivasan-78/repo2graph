@@ -173,7 +173,7 @@ a drop-in replacement — there is no interactive desktop UI — and
     commit-branch: graph     # optional: publish graph.html to a browsable branch
 ```
 
-`@v5` follows every 5.x release; pin an exact tag (`@v5.0.0`) to upgrade by hand. The Action never
+`@v5` follows every 5.x release; pin an exact tag (`@v5.1.0`) to upgrade by hand. The Action never
 calls an LLM. Inputs and outputs: [docs/cli.md](docs/cli.md).
 
 ## Commands
