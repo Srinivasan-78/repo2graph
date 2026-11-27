@@ -196,7 +196,7 @@
     "test": "node --test out/test/*.test.js"
   },
   "devDependencies": {
-    "@types/node": "20.17.6",
+    "@types/node": "26.6.6",
     "@types/vscode": "1.85.0",
     "typescript": "7.0.2"
   }
